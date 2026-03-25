@@ -248,6 +248,7 @@ P3 已经完成前两个切片，但当前仍然只宣称“ownership foundation
   - `move` closure 会在创建时消费当前 body 中被捕获的 direct local
   - 普通 closure capture 现在会被视为一次真实 local 读取
   - `ql ownership` 能展示 `consume(move closure capture)` 事件
+  - closure capture facts 现在已经 materialize 到 MIR，borrowck 不再需要在这条路径上重新遍历 HIR 收集 capture
 - `ql-analysis` 已聚合 borrowck diagnostics，并提供 ownership dump 渲染
 - `ql ownership <file>` 已可直接输出当前 ownership facts
 

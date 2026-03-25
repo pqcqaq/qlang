@@ -263,6 +263,23 @@ fn main() -> Int {
     }
 
     #[test]
+    fn rendered_mir_exposes_explicit_closure_capture_facts() {
+        let analysis = analyze_source(
+            r#"
+fn main() -> Int {
+    let value = 1
+    let make = move (extra) => value + extra
+    return 0
+}
+"#,
+        )
+        .expect("source should analyze");
+
+        let rendered = analysis.render_mir();
+        assert!(rendered.contains("[captures: value@"));
+    }
+
+    #[test]
     fn exposes_rendered_ownership_for_debugging() {
         let analysis = analyze_source(
             r#"

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ql_ast::{BinaryOp, ReceiverKind};
 use ql_hir::{
@@ -9,9 +9,9 @@ use ql_resolve::{ResolutionMap, ValueResolution};
 
 use crate::{
     AggregateField, BasicBlock, BasicBlockId, BodyOwner, CallArgument, CleanupAction, CleanupKind,
-    Constant, LocalDecl, LocalId, LocalKind, LocalOrigin, MatchArmTarget, MirBody, MirModule,
-    MirScope, Operand, Place, ProjectionElem, Rvalue, ScopeId, ScopeKind, Statement, StatementKind,
-    Terminator, TerminatorKind,
+    ClosureCapture, Constant, LocalDecl, LocalId, LocalKind, LocalOrigin, MatchArmTarget, MirBody,
+    MirModule, MirScope, Operand, Place, ProjectionElem, Rvalue, ScopeId, ScopeKind, Statement,
+    StatementKind, Terminator, TerminatorKind,
 };
 
 pub fn lower_module(hir: &hir::Module, resolution: &ResolutionMap) -> MirModule {
@@ -627,6 +627,7 @@ impl<'a> BodyBuilder<'a> {
                 params,
                 body,
             } => {
+                let captures = self.collect_closure_captures(*body);
                 let params = params
                     .iter()
                     .map(|local_id| self.hir.local(*local_id).name.clone())
@@ -638,6 +639,7 @@ impl<'a> BodyBuilder<'a> {
                     Rvalue::Closure {
                         is_move: *is_move,
                         params,
+                        captures,
                         body: *body,
                     },
                 )
@@ -925,6 +927,164 @@ impl<'a> BodyBuilder<'a> {
                 Operand::Constant(Constant::Import(path.clone()))
             }
             None => Operand::Constant(Constant::UnresolvedName(name.to_owned())),
+        }
+    }
+
+    fn local_for_resolution(&self, resolution: &ValueResolution) -> Option<LocalId> {
+        match resolution {
+            ValueResolution::Local(local_id) => self.local_map.get(local_id).copied(),
+            ValueResolution::Param(binding) => self
+                .param_locals
+                .get(binding.index)
+                .and_then(|local| *local),
+            ValueResolution::SelfValue => self.self_local,
+            ValueResolution::Item(_) | ValueResolution::Import(_) => None,
+        }
+    }
+
+    fn direct_local_for_expr(&self, expr_id: ExprId) -> Option<LocalId> {
+        match &self.hir.expr(expr_id).kind {
+            ExprKind::Name(_) => self
+                .resolution
+                .expr_resolution(expr_id)
+                .and_then(|resolution| self.local_for_resolution(resolution)),
+            _ => None,
+        }
+    }
+
+    fn collect_closure_captures(&self, expr_id: ExprId) -> Vec<ClosureCapture> {
+        let mut captures = Vec::new();
+        let mut seen = HashSet::new();
+        self.collect_expr_captures(expr_id, &mut captures, &mut seen);
+        captures
+    }
+
+    fn collect_expr_captures(
+        &self,
+        expr_id: ExprId,
+        captures: &mut Vec<ClosureCapture>,
+        seen: &mut HashSet<LocalId>,
+    ) {
+        if let Some(local) = self.direct_local_for_expr(expr_id)
+            && seen.insert(local)
+        {
+            captures.push(ClosureCapture {
+                local,
+                span: self.hir.expr(expr_id).span,
+            });
+        }
+
+        match &self.hir.expr(expr_id).kind {
+            ExprKind::Name(_)
+            | ExprKind::Integer(_)
+            | ExprKind::String { .. }
+            | ExprKind::Bool(_)
+            | ExprKind::NoneLiteral => {}
+            ExprKind::Tuple(items) | ExprKind::Array(items) => {
+                for item in items {
+                    self.collect_expr_captures(*item, captures, seen);
+                }
+            }
+            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
+                self.collect_block_captures(*block_id, captures, seen);
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_expr_captures(*condition, captures, seen);
+                self.collect_block_captures(*then_branch, captures, seen);
+                if let Some(else_branch) = else_branch {
+                    self.collect_expr_captures(*else_branch, captures, seen);
+                }
+            }
+            ExprKind::Match { value, arms } => {
+                self.collect_expr_captures(*value, captures, seen);
+                for arm in arms {
+                    if let Some(guard) = arm.guard {
+                        self.collect_expr_captures(guard, captures, seen);
+                    }
+                    self.collect_expr_captures(arm.body, captures, seen);
+                }
+            }
+            ExprKind::Closure { body, .. } => {
+                self.collect_expr_captures(*body, captures, seen);
+            }
+            ExprKind::Call { callee, args } => {
+                self.collect_expr_captures(*callee, captures, seen);
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(value) => {
+                            self.collect_expr_captures(*value, captures, seen)
+                        }
+                        CallArg::Named { value, .. } => {
+                            self.collect_expr_captures(*value, captures, seen)
+                        }
+                    }
+                }
+            }
+            ExprKind::Member { object, .. } => {
+                self.collect_expr_captures(*object, captures, seen);
+            }
+            ExprKind::Bracket { target, items } => {
+                self.collect_expr_captures(*target, captures, seen);
+                for item in items {
+                    self.collect_expr_captures(*item, captures, seen);
+                }
+            }
+            ExprKind::StructLiteral { fields, .. } => {
+                for field in fields {
+                    self.collect_expr_captures(field.value, captures, seen);
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.collect_expr_captures(*left, captures, seen);
+                self.collect_expr_captures(*right, captures, seen);
+            }
+            ExprKind::Unary { expr, .. } | ExprKind::Question(expr) => {
+                self.collect_expr_captures(*expr, captures, seen);
+            }
+        }
+    }
+
+    fn collect_block_captures(
+        &self,
+        block_id: hir::BlockId,
+        captures: &mut Vec<ClosureCapture>,
+        seen: &mut HashSet<LocalId>,
+    ) {
+        let block = self.hir.block(block_id);
+        for stmt_id in &block.statements {
+            self.collect_stmt_captures(*stmt_id, captures, seen);
+        }
+        if let Some(tail) = block.tail {
+            self.collect_expr_captures(tail, captures, seen);
+        }
+    }
+
+    fn collect_stmt_captures(
+        &self,
+        stmt_id: hir::StmtId,
+        captures: &mut Vec<ClosureCapture>,
+        seen: &mut HashSet<LocalId>,
+    ) {
+        match &self.hir.stmt(stmt_id).kind {
+            StmtKind::Let { value, .. } => self.collect_expr_captures(*value, captures, seen),
+            StmtKind::Return(Some(expr)) | StmtKind::Defer(expr) => {
+                self.collect_expr_captures(*expr, captures, seen);
+            }
+            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::While { condition, body } => {
+                self.collect_expr_captures(*condition, captures, seen);
+                self.collect_block_captures(*body, captures, seen);
+            }
+            StmtKind::Loop { body } => self.collect_block_captures(*body, captures, seen),
+            StmtKind::For { iterable, body, .. } => {
+                self.collect_expr_captures(*iterable, captures, seen);
+                self.collect_block_captures(*body, captures, seen);
+            }
+            StmtKind::Expr { expr, .. } => self.collect_expr_captures(*expr, captures, seen),
         }
     }
 

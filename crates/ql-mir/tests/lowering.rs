@@ -98,3 +98,19 @@ fn main(stream: Stream, command: Command) -> Int {
     assert!(rendered.contains("match "));
     assert!(rendered.contains("bind_pattern event <-"));
 }
+
+#[test]
+fn materializes_explicit_closure_capture_facts() {
+    let rendered = render(
+        r#"
+fn main() -> Int {
+    let value = 1
+    let make = move (extra) => value + extra
+    return 0
+}
+"#,
+    );
+
+    assert!(rendered.contains("[captures: value@"));
+    assert!(!rendered.contains("[captures: extra@"));
+}

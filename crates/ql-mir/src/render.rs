@@ -280,12 +280,14 @@ fn render_rvalue(hir: &hir::Module, body: &crate::MirBody, value: &Rvalue) -> St
         Rvalue::Closure {
             is_move,
             params,
-            body,
+            captures,
+            body: closure_body,
         } => format!(
-            "{}({}) => {}",
+            "{}{}({}) => {}",
             if *is_move { "move " } else { "" },
+            render_closure_captures(body, captures),
             params.join(", "),
-            render_expr(hir, *body)
+            render_expr(hir, *closure_body)
         ),
         Rvalue::Question(operand) => format!("{}?", render_operand(body, operand)),
         Rvalue::OpaqueExpr(expr) => format!("<opaque {}>", render_expr(hir, *expr)),
@@ -298,6 +300,28 @@ fn render_fields(body: &crate::MirBody, fields: &[AggregateField]) -> String {
         .map(|field| format!("{}: {}", field.name, render_operand(body, &field.value)))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn render_closure_captures(body: &crate::MirBody, captures: &[crate::ClosureCapture]) -> String {
+    if captures.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "[captures: {}] ",
+        captures
+            .iter()
+            .map(|capture| {
+                format!(
+                    "{}@{}..{}",
+                    body.local(capture.local).name,
+                    capture.span.start,
+                    capture.span.end
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn render_operand(body: &crate::MirBody, operand: &Operand) -> String {

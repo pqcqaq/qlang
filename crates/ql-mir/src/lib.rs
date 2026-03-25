@@ -328,6 +328,7 @@ pub enum Rvalue {
     Closure {
         is_move: bool,
         params: Vec<String>,
+        captures: Vec<ClosureCapture>,
         body: ExprId,
     },
     Question(Operand),
@@ -344,6 +345,12 @@ pub struct CallArgument {
 pub struct AggregateField {
     pub name: String,
     pub value: Operand,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClosureCapture {
+    pub local: LocalId,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

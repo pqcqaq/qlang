@@ -166,6 +166,7 @@ source
 - 当前同一阶段还补上了 move closure capture ownership：
   - `move` closure 创建时会消费当前 body 的 direct-local captures
   - 普通 closure capture 也会作为一次真实 read 进入 ownership facts
+  - closure capture facts 现在直接 materialize 到 `Rvalue::Closure`，后续 ownership / escape / drop 工作不需要再从 HIR 临时回推 capture 列表
 
 这意味着 P3 的下一步应继续建立在这层 MIR + ownership facts 之上做更一般的 call contract、borrow / escape 分析和 drop elaboration，而不是重新回头改 HIR。
 
