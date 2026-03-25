@@ -1,0 +1,3 @@
+error: tests/ui/type_call_arg_mismatch.ql:6:19: call argument has type mismatch: expected `Int`, found `String`
+      return add(1, "x")
+                    ^^^ expression here

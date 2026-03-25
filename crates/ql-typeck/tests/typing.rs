@@ -114,6 +114,20 @@ fn main() -> Int {
 }
 
 #[test]
+fn reports_tuple_pattern_type_mismatches() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let (left, right) = 1
+    return 0
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"tuple pattern requires a tuple value, found `Int`".to_string()));
+}
+
+#[test]
 fn reports_call_arity_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -185,6 +199,51 @@ fn main() -> Int {
 }
 
 #[test]
+fn reports_unknown_struct_members() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct User {
+    name: String,
+}
+
+fn main() -> Int {
+    let user = User { name: "ql" }
+    user.age
+    return 0
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"unknown member `age` on type `User`".to_string()));
+}
+
+#[test]
+fn accepts_method_selection_without_field_false_positives() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn get(self) -> Int {
+        return self.value
+    }
+
+    fn next(self) -> Int {
+        return self.get()
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_struct_literal_shape_and_field_type_errors() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -204,4 +263,73 @@ fn main() -> User {
     ));
     assert!(diagnostics.contains(&"unknown field `missing` in struct literal".to_string()));
     assert!(diagnostics.contains(&"missing required field `name` in struct literal".to_string()));
+}
+
+#[test]
+fn reports_pattern_root_type_mismatches() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct User {
+    name: String,
+}
+
+struct Point {
+    x: Int,
+}
+
+fn main() -> Int {
+    let Point { x } = User { name: "ql" }
+    return x
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"struct pattern has type mismatch: expected `User`, found `Point`".to_string()
+        )
+    );
+}
+
+#[test]
+fn reports_variant_pattern_type_mismatches() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct User {
+    name: String,
+}
+
+enum Result {
+    Ok(Int),
+    Err(String),
+}
+
+fn main() -> Int {
+    let user = User { name: "ql" }
+    match user {
+        Result.Ok(value) => value,
+        _ => 0,
+    }
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"tuple-struct pattern has type mismatch: expected `User`, found `Result`".to_string()
+    ));
+}
+
+#[test]
+fn reports_equality_operand_mismatches() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Bool {
+    return 1 == "x"
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"equality operator `==` expects compatible operands, found `Int` and `String`".to_string()
+    ));
 }

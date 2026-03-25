@@ -238,10 +238,7 @@ impl<'a> Checker<'a> {
             }
             ExprKind::Closure { params, body, .. } => self.check_closure(params, *body, expected),
             ExprKind::Call { callee, args } => self.check_call(expr_id, *callee, args),
-            ExprKind::Member { object, field } => {
-                let object_ty = self.check_expr(*object, None);
-                self.lookup_member_type(&object_ty, field)
-            }
+            ExprKind::Member { object, field } => self.check_member(expr_id, *object, field),
             ExprKind::Bracket { target, items } => {
                 self.check_expr(*target, None);
                 for &item in items {
@@ -360,6 +357,64 @@ impl<'a> Checker<'a> {
 
         self.check_call_args(expr_id, &signature, args);
         signature.ret
+    }
+
+    fn check_member(&mut self, expr_id: ExprId, object: ExprId, field: &str) -> Ty {
+        let object_ty = self.check_expr(object, None);
+        let Ty::Item { item_id, .. } = &object_ty else {
+            return Ty::Unknown;
+        };
+
+        if self.has_method_candidate(&object_ty, field) {
+            return Ty::Unknown;
+        }
+
+        match &self.module.item(*item_id).kind {
+            ItemKind::Struct(struct_decl) => {
+                if let Some(field) = struct_decl
+                    .fields
+                    .iter()
+                    .find(|candidate| candidate.name == field)
+                {
+                    lower_type(self.module, self.resolution, field.ty)
+                } else {
+                    self.diagnostics.push(
+                        Diagnostic::error(format!(
+                            "unknown member `{field}` on type `{object_ty}`"
+                        ))
+                        .with_label(
+                            Label::new(self.module.expr(expr_id).span)
+                                .with_message("member access here"),
+                        ),
+                    );
+                    Ty::Unknown
+                }
+            }
+            _ => Ty::Unknown,
+        }
+    }
+
+    fn has_method_candidate(&self, object_ty: &Ty, field: &str) -> bool {
+        self.module
+            .items
+            .iter()
+            .copied()
+            .any(|item_id| match &self.module.item(item_id).kind {
+                ItemKind::Impl(impl_block) => {
+                    let target_ty = lower_type(self.module, self.resolution, impl_block.target);
+                    object_ty.compatible_with(&target_ty)
+                        && impl_block.methods.iter().any(|method| method.name == field)
+                }
+                ItemKind::Extend(extend_block) => {
+                    let target_ty = lower_type(self.module, self.resolution, extend_block.target);
+                    object_ty.compatible_with(&target_ty)
+                        && extend_block
+                            .methods
+                            .iter()
+                            .any(|method| method.name == field)
+                }
+                _ => false,
+            })
     }
 
     fn call_signature(&self, callee: ExprId, callee_ty: &Ty) -> Option<Signature> {
@@ -563,7 +618,25 @@ impl<'a> Checker<'a> {
                 );
                 Ty::Unknown
             }
-            BinaryOp::EqEq | BinaryOp::BangEq => Ty::Builtin(ql_resolve::BuiltinType::Bool),
+            BinaryOp::EqEq | BinaryOp::BangEq => {
+                if left_ty.compatible_with(&right_ty) {
+                    Ty::Builtin(ql_resolve::BuiltinType::Bool)
+                } else {
+                    self.diagnostics.push(
+                        Diagnostic::error(format!(
+                            "equality operator `{}` expects compatible operands, found `{}` and `{}`",
+                            op_text(op),
+                            left_ty,
+                            right_ty
+                        ))
+                        .with_label(
+                            Label::new(self.module.expr(expr_id).span)
+                                .with_message("expression here"),
+                        ),
+                    );
+                    Ty::Unknown
+                }
+            }
             BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Lt | BinaryOp::LtEq => {
                 if (left_ty.is_numeric() || left_ty.is_unknown())
                     && (right_ty.is_numeric() || right_ty.is_unknown())
@@ -635,12 +708,21 @@ impl<'a> Checker<'a> {
                         self.bind_pattern(item, &Ty::Unknown);
                     }
                 } else {
+                    if !expected.is_unknown() {
+                        self.diagnostics.push(
+                            Diagnostic::error(format!(
+                                "tuple pattern requires a tuple value, found `{expected}`"
+                            ))
+                            .with_label(Label::new(pattern.span).with_message("pattern here")),
+                        );
+                    }
                     for &item in items {
                         self.bind_pattern(item, &Ty::Unknown);
                     }
                 }
             }
             PatternKind::TupleStruct { items, .. } => {
+                self.check_pattern_root(pattern_id, expected, "tuple-struct pattern");
                 let expected_items = self.tuple_struct_pattern_items(pattern_id);
                 if let Some(expected_items) = expected_items {
                     if expected_items.len() != items.len() {
@@ -666,6 +748,7 @@ impl<'a> Checker<'a> {
                 }
             }
             PatternKind::Struct { fields, .. } => {
+                self.check_pattern_root(pattern_id, expected, "struct pattern");
                 let field_types = self.struct_pattern_fields(pattern_id);
                 for field in fields {
                     let field_ty = field_types
@@ -678,12 +761,103 @@ impl<'a> Checker<'a> {
                     self.bind_pattern(field.pattern, &field_ty);
                 }
             }
-            PatternKind::Path(_)
-            | PatternKind::Integer(_)
-            | PatternKind::String(_)
-            | PatternKind::Bool(_)
-            | PatternKind::NoneLiteral
-            | PatternKind::Wildcard => {}
+            PatternKind::Path(_) => {
+                self.check_pattern_root(pattern_id, expected, "path pattern");
+            }
+            PatternKind::Integer(_) => {
+                self.check_literal_pattern(
+                    pattern_id,
+                    expected,
+                    &Ty::Builtin(ql_resolve::BuiltinType::Int),
+                    "integer pattern",
+                );
+            }
+            PatternKind::String(_) => {
+                self.check_literal_pattern(
+                    pattern_id,
+                    expected,
+                    &Ty::Builtin(ql_resolve::BuiltinType::String),
+                    "string pattern",
+                );
+            }
+            PatternKind::Bool(_) => {
+                self.check_literal_pattern(
+                    pattern_id,
+                    expected,
+                    &Ty::Builtin(ql_resolve::BuiltinType::Bool),
+                    "bool pattern",
+                );
+            }
+            PatternKind::NoneLiteral | PatternKind::Wildcard => {}
+        }
+    }
+
+    fn check_pattern_root(&mut self, pattern_id: PatternId, expected: &Ty, context: &str) {
+        let Some(actual) = self.pattern_root_ty(pattern_id) else {
+            return;
+        };
+
+        if expected.compatible_with(&actual) {
+            return;
+        }
+
+        self.diagnostics.push(
+            Diagnostic::error(format!(
+                "{context} has type mismatch: expected `{expected}`, found `{actual}`"
+            ))
+            .with_label(
+                Label::new(self.module.pattern(pattern_id).span).with_message("pattern here"),
+            ),
+        );
+    }
+
+    fn check_literal_pattern(
+        &mut self,
+        pattern_id: PatternId,
+        expected: &Ty,
+        actual: &Ty,
+        context: &str,
+    ) {
+        if expected.compatible_with(actual) {
+            return;
+        }
+
+        self.diagnostics.push(
+            Diagnostic::error(format!(
+                "{context} has type mismatch: expected `{expected}`, found `{actual}`"
+            ))
+            .with_label(
+                Label::new(self.module.pattern(pattern_id).span).with_message("pattern here"),
+            ),
+        );
+    }
+
+    fn pattern_root_ty(&self, pattern_id: PatternId) -> Option<Ty> {
+        let pattern = self.module.pattern(pattern_id);
+        let path = match &pattern.kind {
+            PatternKind::Path(path)
+            | PatternKind::TupleStruct { path, .. }
+            | PatternKind::Struct { path, .. } => path,
+            _ => return None,
+        };
+
+        let Some(ValueResolution::Item(item_id)) = self.resolution.pattern_resolution(pattern_id)
+        else {
+            return None;
+        };
+
+        match &self.module.item(*item_id).kind {
+            ItemKind::Struct(_) if path.segments.len() == 1 => Some(Ty::Item {
+                item_id: *item_id,
+                name: item_display_name(self.module, *item_id),
+                args: Vec::new(),
+            }),
+            ItemKind::Enum(_) if path.segments.len() >= 2 => Some(Ty::Item {
+                item_id: *item_id,
+                name: item_display_name(self.module, *item_id),
+                args: Vec::new(),
+            }),
+            _ => None,
         }
     }
 
@@ -786,22 +960,6 @@ impl<'a> Checker<'a> {
                 })
                 .collect(),
         )
-    }
-
-    fn lookup_member_type(&self, object_ty: &Ty, field: &str) -> Ty {
-        let Ty::Item { item_id, .. } = object_ty else {
-            return Ty::Unknown;
-        };
-
-        match &self.module.item(*item_id).kind {
-            ItemKind::Struct(struct_decl) => struct_decl
-                .fields
-                .iter()
-                .find(|candidate| candidate.name == field)
-                .map(|field| lower_type(self.module, self.resolution, field.ty))
-                .unwrap_or(Ty::Unknown),
-            _ => Ty::Unknown,
-        }
     }
 
     fn unify_branch_types(&mut self, expr_id: ExprId, left: Ty, right: Ty, context: &str) -> Ty {

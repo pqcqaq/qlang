@@ -95,6 +95,9 @@ source
 - 新增 tuple-based multi-return destructuring 的第一层约束
 - 新增 direct closure against expected callable type 的 first-pass checking
 - 新增 struct literal 的 field / missing-field 检查
+- 新增 equality operand compatibility checking
+- 新增 struct member existence checking
+- 新增 pattern root / literal compatibility checking
 
 当前依然保守的边界：
 
@@ -170,6 +173,9 @@ source
 - name resolution tests 已拆到 `crates/ql-resolve/tests/`，并按 value / type / scopes / rendering 分组
 - semantic tests 已拆到 `crates/ql-typeck/tests/`，并按 duplicates / typing / rendering 分组
 - 精确 name span 与 shorthand lowering 回归已建立
-- UI diagnostics snapshot harness 还未开始，这是 P2 后续要补的关键基础设施
+- 黑盒 UI diagnostics snapshot harness 已建立：
+  - fixture 位于仓库根 `tests/ui/`
+  - `crates/ql-cli/tests/ui.rs` 会驱动真实 `ql` 二进制
+  - 当前已锁住 parser / resolve / duplicate-semantic / type diagnostics 的最终 stderr 输出
 
 这也是目录结构设计要前置考虑的原因。

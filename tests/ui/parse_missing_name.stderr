@@ -1,0 +1,3 @@
+error: tests/ui/parse_missing_name.ql:1:4: expected function name
+  fn (value: Int) -> Int {
+     ^

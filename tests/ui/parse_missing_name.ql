@@ -1,0 +1,3 @@
+fn (value: Int) -> Int {
+    return value
+}

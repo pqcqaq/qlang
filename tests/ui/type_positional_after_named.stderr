@@ -1,0 +1,8 @@
+error: tests/ui/type_positional_after_named.ql:6:25: positional argument cannot appear after named arguments
+      return run(left: 1, 2)
+                 ^^^^ named arguments start here
+      return run(left: 1, 2)
+                          ^ positional argument here
+error: tests/ui/type_positional_after_named.ql:6:12: missing argument `right`
+      return run(left: 1, 2)
+             ^^^^^^^^ call here

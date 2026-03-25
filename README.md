@@ -72,6 +72,9 @@ Current semantic baseline in `ql check`:
   - direct closure checking against expected callable types
   - struct literal field checking and missing-field validation
   - positional-after-named call ordering diagnostics
+  - equality-operand compatibility checks
+  - struct member existence checks
+  - pattern root / literal compatibility checks in destructuring and `match`
 - duplicate checks currently cover:
   - top-level definitions
   - generic parameters
@@ -85,6 +88,7 @@ Current semantic baseline in `ql check`:
 Current intentional gap:
 
 - default parameters are part of the language design docs, but they are not lowered into AST/HIR or checked yet
+- import / module / prelude unresolved-name strictness is still intentionally deferred
 
 Quick start:
 
