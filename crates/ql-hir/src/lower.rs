@@ -79,6 +79,7 @@ impl Lowerer {
             abi: function.abi.clone(),
             generics: self.lower_generics(&function.generics, span),
             name: function.name.clone(),
+            name_span: function.name_span,
             params: function
                 .params
                 .iter()
@@ -95,9 +96,13 @@ impl Lowerer {
 
     fn lower_param(&mut self, param: &ast::Param, fallback_span: Span) -> Param {
         match param {
-            ast::Param::Regular { name, ty } => Param::Regular(RegularParam {
+            ast::Param::Regular {
+                name,
+                name_span,
+                ty,
+            } => Param::Regular(RegularParam {
                 name: name.clone(),
-                span: ty.span,
+                name_span: *name_span,
                 ty: self.lower_type_expr(ty),
             }),
             ast::Param::Receiver(kind) => Param::Receiver(ReceiverParam {
@@ -116,7 +121,7 @@ impl Lowerer {
             .iter()
             .map(|generic| GenericParam {
                 name: generic.name.clone(),
-                span: fallback_span,
+                name_span: prefer_span(generic.name_span, fallback_span),
                 bounds: generic.bounds.clone(),
             })
             .collect()
@@ -137,6 +142,7 @@ impl Lowerer {
             span,
             visibility: global.visibility.clone(),
             name: global.name.clone(),
+            name_span: global.name_span,
             ty: self.lower_type_expr(&global.ty),
             value: self.lower_expr(&global.value),
         }
@@ -148,6 +154,7 @@ impl Lowerer {
             visibility: struct_decl.visibility.clone(),
             is_data: struct_decl.is_data,
             name: struct_decl.name.clone(),
+            name_span: struct_decl.name_span,
             generics: self.lower_generics(&struct_decl.generics, span),
             fields: struct_decl
                 .fields
@@ -167,7 +174,7 @@ impl Lowerer {
 
         Field {
             name: field.name.clone(),
-            span: prefer_span(span, fallback_span),
+            name_span: prefer_span(field.name_span, prefer_span(span, fallback_span)),
             ty: self.lower_type_expr(&field.ty),
             default,
         }
@@ -178,6 +185,7 @@ impl Lowerer {
             span,
             visibility: enum_decl.visibility.clone(),
             name: enum_decl.name.clone(),
+            name_span: enum_decl.name_span,
             generics: self.lower_generics(&enum_decl.generics, span),
             variants: enum_decl
                 .variants
@@ -203,7 +211,7 @@ impl Lowerer {
 
         EnumVariant {
             name: variant.name.clone(),
-            span: fallback_span,
+            name_span: prefer_span(variant.name_span, fallback_span),
             fields,
         }
     }
@@ -213,6 +221,7 @@ impl Lowerer {
             span,
             visibility: trait_decl.visibility.clone(),
             name: trait_decl.name.clone(),
+            name_span: trait_decl.name_span,
             generics: self.lower_generics(&trait_decl.generics, span),
             methods: trait_decl
                 .methods
@@ -258,6 +267,7 @@ impl Lowerer {
             visibility: alias.visibility.clone(),
             is_opaque: alias.is_opaque,
             name: alias.name.clone(),
+            name_span: alias.name_span,
             generics: self.lower_generics(&alias.generics, span),
             ty: self.lower_type_expr(&alias.ty),
         }
@@ -369,15 +379,31 @@ impl Lowerer {
         })
     }
 
+    fn lower_binding_local(&mut self, name: &str, span: Span) -> crate::PatternId {
+        let local = self.module.alloc_local(Local {
+            name: name.to_owned(),
+            span,
+        });
+        self.module.alloc_pattern(Pattern {
+            span,
+            kind: PatternKind::Binding(local),
+        })
+    }
+
+    fn lower_name_expr_shorthand(&mut self, name: &str, span: Span) -> crate::ExprId {
+        self.module.alloc_expr(Expr {
+            span,
+            kind: ExprKind::Name(name.to_owned()),
+        })
+    }
+
     fn lower_pattern(&mut self, pattern: &ast::Pattern) -> crate::PatternId {
+        if let ast::PatternKind::Name(name) = &pattern.kind {
+            return self.lower_binding_local(name, pattern.span);
+        }
+
         let kind = match &pattern.kind {
-            ast::PatternKind::Name(name) => {
-                let local = self.module.alloc_local(Local {
-                    name: name.clone(),
-                    span: pattern.span,
-                });
-                PatternKind::Binding(local)
-            }
+            ast::PatternKind::Name(_) => unreachable!("name patterns return early as bindings"),
             ast::PatternKind::Tuple(items) => {
                 PatternKind::Tuple(items.iter().map(|item| self.lower_pattern(item)).collect())
             }
@@ -394,20 +420,18 @@ impl Lowerer {
                 path: path.clone(),
                 fields: fields
                     .iter()
-                    .map(|field| PatternField {
-                        name: field.name.clone(),
-                        span: prefer_span(
-                            field
-                                .pattern
-                                .as_ref()
-                                .map(|pattern| pattern.span)
-                                .unwrap_or(pattern.span),
-                            pattern.span,
-                        ),
-                        pattern: field
-                            .pattern
-                            .as_ref()
-                            .map(|pattern| self.lower_pattern(pattern)),
+                    .map(|field| {
+                        let name_span = prefer_span(field.name_span, pattern.span);
+                        let field_pattern = match &field.pattern {
+                            Some(pattern) => self.lower_pattern(pattern),
+                            None => self.lower_binding_local(&field.name, name_span),
+                        };
+
+                        PatternField {
+                            name: field.name.clone(),
+                            name_span,
+                            pattern: field_pattern,
+                        }
                     })
                     .collect(),
                 has_rest: *has_rest,
@@ -464,10 +488,10 @@ impl Lowerer {
                 is_move: *is_move,
                 params: params
                     .iter()
-                    .map(|name| {
+                    .map(|param| {
                         self.module.alloc_local(Local {
-                            name: name.clone(),
-                            span: expr.span,
+                            name: param.name.clone(),
+                            span: param.span,
                         })
                     })
                     .collect(),
@@ -489,17 +513,18 @@ impl Lowerer {
                 path: path.clone(),
                 fields: fields
                     .iter()
-                    .map(|field| StructLiteralField {
-                        name: field.name.clone(),
-                        span: prefer_span(
-                            field
-                                .value
-                                .as_ref()
-                                .map(|value| value.span)
-                                .unwrap_or(expr.span),
-                            expr.span,
-                        ),
-                        value: field.value.as_ref().map(|value| self.lower_expr(value)),
+                    .map(|field| {
+                        let name_span = prefer_span(field.name_span, expr.span);
+                        let value = match &field.value {
+                            Some(value) => self.lower_expr(value),
+                            None => self.lower_name_expr_shorthand(&field.name, name_span),
+                        };
+
+                        StructLiteralField {
+                            name: field.name.clone(),
+                            name_span,
+                            value,
+                        }
                     })
                     .collect(),
             },
@@ -597,10 +622,54 @@ fn main() {
     }
 
     #[test]
-    fn lower_module_preserves_struct_literal_fields() {
+    fn lower_module_normalizes_struct_pattern_shorthand_bindings() {
         let source = r#"
 fn main() {
-    Point { x: 1, y: 2 };
+    let Point { x, y: alias } = point;
+}
+"#;
+        let ast = parse_source(source).expect("source should parse");
+        let hir = lower_module(&ast);
+
+        let function = match &hir.item(hir.items[0]).kind {
+            ItemKind::Function(function) => function,
+            other => panic!("expected function item, got {other:?}"),
+        };
+        let body = hir.block(function.body.expect("function should have body"));
+        let stmt = hir.stmt(body.statements[0]);
+        let pattern_id = match &stmt.kind {
+            StmtKind::Let { pattern, .. } => *pattern,
+            other => panic!("expected let statement, got {other:?}"),
+        };
+        let pattern = hir.pattern(pattern_id);
+
+        let PatternKind::Struct { fields, .. } = &pattern.kind else {
+            panic!("expected struct pattern");
+        };
+
+        let x = hir.pattern(fields[0].pattern);
+        let alias = hir.pattern(fields[1].pattern);
+        let x_local = match x.kind {
+            PatternKind::Binding(local) => local,
+            _ => panic!("expected shorthand binding"),
+        };
+        let alias_local = match alias.kind {
+            PatternKind::Binding(local) => local,
+            _ => panic!("expected explicit binding"),
+        };
+
+        assert_eq!(fields[0].name, "x");
+        assert_eq!(hir.local(x_local).name, "x");
+        assert_eq!(fields[1].name, "y");
+        assert_eq!(hir.local(alias_local).name, "alias");
+        assert_eq!(hir.locals().len(), 2);
+    }
+
+    #[test]
+    fn lower_module_normalizes_struct_literal_shorthand_fields() {
+        let source = r#"
+fn main() {
+    Point { x, y: 2 };
 }
 "#;
         let ast = parse_source(source).expect("source should parse");
@@ -624,6 +693,10 @@ fn main() {
 
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0].name, "x");
+        assert!(matches!(hir.expr(fields[0].value).kind, ExprKind::Name(ref name) if name == "x"));
         assert_eq!(fields[1].name, "y");
+        assert!(
+            matches!(hir.expr(fields[1].value).kind, ExprKind::Integer(ref value) if value == "2")
+        );
     }
 }

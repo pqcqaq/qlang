@@ -276,7 +276,7 @@ fn format_function(function: &FunctionDecl, indent: usize, show_abi: bool, out: 
             out.push_str(", ");
         }
         match param {
-            Param::Regular { name, ty } => {
+            Param::Regular { name, ty, .. } => {
                 format_ident(name, out);
                 out.push_str(": ");
                 format_type(ty, out);
@@ -625,7 +625,7 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
                 if idx > 0 {
                     out.push_str(", ");
                 }
-                out.push_str(param);
+                out.push_str(&param.name);
             }
             out.push_str(") => ");
             format_expr(body, indent, out);

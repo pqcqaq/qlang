@@ -80,13 +80,17 @@ impl Parser {
                     self.eat(TokenKind::Comma);
                     break;
                 }
-                let name = self.expect_ident("expected pattern field")?;
+                let name = self.expect_ident_token("expected pattern field")?;
                 let pattern = if self.eat(TokenKind::Colon) {
                     Some(Box::new(self.parse_pattern()?))
                 } else {
                     None
                 };
-                fields.push(PatternField { name, pattern });
+                fields.push(PatternField {
+                    name: name.text,
+                    name_span: name.span,
+                    pattern,
+                });
                 if !self.eat(TokenKind::Comma) {
                     break;
                 }

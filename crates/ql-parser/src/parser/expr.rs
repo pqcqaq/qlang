@@ -1,4 +1,4 @@
-use ql_ast::{BinaryOp, CallArg, Expr, ExprKind, MatchArm, StructLiteralField};
+use ql_ast::{BinaryOp, CallArg, ClosureParam, Expr, ExprKind, MatchArm, StructLiteralField};
 use ql_lexer::TokenKind;
 use ql_span::Span;
 
@@ -211,7 +211,11 @@ impl Parser {
         )?;
         let mut params = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
-            params.push(self.expect_ident("expected closure parameter name")?);
+            let param = self.expect_ident_token("expected closure parameter name")?;
+            params.push(ClosureParam {
+                name: param.text,
+                span: param.span,
+            });
             if !self.eat(TokenKind::Comma) {
                 break;
             }
@@ -345,13 +349,17 @@ impl Parser {
     fn parse_struct_literal_fields(&mut self) -> Result<Vec<StructLiteralField>, ()> {
         let mut fields = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
-            let name = self.expect_ident("expected field name in struct literal")?;
+            let name = self.expect_ident_token("expected field name in struct literal")?;
             let value = if self.eat(TokenKind::Colon) {
                 Some(self.parse_expr()?)
             } else {
                 None
             };
-            fields.push(StructLiteralField { name, value });
+            fields.push(StructLiteralField {
+                name: name.text,
+                name_span: name.span,
+                value,
+            });
             if !self.eat(TokenKind::Comma) {
                 break;
             }

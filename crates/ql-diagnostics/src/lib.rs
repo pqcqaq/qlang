@@ -25,6 +25,7 @@ impl DiagnosticSeverity {
 pub struct Label {
     pub span: Span,
     pub message: Option<String>,
+    pub is_primary: bool,
 }
 
 impl Label {
@@ -32,11 +33,17 @@ impl Label {
         Self {
             span,
             message: None,
+            is_primary: true,
         }
     }
 
     pub fn with_message(mut self, message: impl Into<String>) -> Self {
         self.message = Some(message.into());
+        self
+    }
+
+    pub fn secondary(mut self) -> Self {
+        self.is_primary = false;
         self
     }
 }
@@ -104,7 +111,14 @@ fn render_diagnostic(output: &mut String, path: &Path, source: &str, diagnostic:
     let header_span = diagnostic
         .labels
         .first()
-        .map(|label| label.span)
+        .map(|label| {
+            diagnostic
+                .labels
+                .iter()
+                .find(|candidate| candidate.is_primary)
+                .unwrap_or(label)
+                .span
+        })
         .unwrap_or_default();
     let header_location = locate(source, header_span);
 
@@ -171,5 +185,20 @@ mod tests {
 
         assert!(rendered.contains("warning: sample.ql:1:1: semantic warning"));
         assert!(rendered.contains("note: details survive"));
+    }
+
+    #[test]
+    fn render_diagnostics_uses_primary_label_for_header_location() {
+        let diagnostic = Diagnostic::error("duplicate item")
+            .with_label(
+                Label::new(Span::new(0, 2))
+                    .secondary()
+                    .with_message("first seen here"),
+            )
+            .with_label(Label::new(Span::new(10, 12)).with_message("duplicate here"));
+        let rendered =
+            render_diagnostics(Path::new("sample.ql"), "aa\nbbbbbbbb\ncc\n", &[diagnostic]);
+
+        assert!(rendered.contains("error: sample.ql:2:8: duplicate item"));
     }
 }

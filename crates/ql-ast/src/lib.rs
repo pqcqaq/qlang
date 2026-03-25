@@ -80,6 +80,7 @@ pub struct FunctionDecl {
     pub abi: Option<String>,
     pub generics: Vec<GenericParam>,
     pub name: String,
+    pub name_span: Span,
     pub params: Vec<Param>,
     pub return_type: Option<TypeExpr>,
     pub where_clause: Vec<WherePredicate>,
@@ -88,7 +89,11 @@ pub struct FunctionDecl {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Param {
-    Regular { name: String, ty: TypeExpr },
+    Regular {
+        name: String,
+        name_span: Span,
+        ty: TypeExpr,
+    },
     Receiver(ReceiverKind),
 }
 
@@ -103,6 +108,7 @@ pub enum ReceiverKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GenericParam {
     pub name: String,
+    pub name_span: Span,
     pub bounds: Vec<Path>,
 }
 
@@ -118,6 +124,7 @@ pub struct WherePredicate {
 pub struct GlobalDecl {
     pub visibility: Visibility,
     pub name: String,
+    pub name_span: Span,
     pub ty: TypeExpr,
     pub value: Expr,
 }
@@ -127,6 +134,7 @@ pub struct StructDecl {
     pub visibility: Visibility,
     pub is_data: bool,
     pub name: String,
+    pub name_span: Span,
     pub generics: Vec<GenericParam>,
     pub fields: Vec<FieldDecl>,
 }
@@ -134,6 +142,7 @@ pub struct StructDecl {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FieldDecl {
     pub name: String,
+    pub name_span: Span,
     pub ty: TypeExpr,
     pub default: Option<Expr>,
 }
@@ -142,6 +151,7 @@ pub struct FieldDecl {
 pub struct EnumDecl {
     pub visibility: Visibility,
     pub name: String,
+    pub name_span: Span,
     pub generics: Vec<GenericParam>,
     pub variants: Vec<EnumVariant>,
 }
@@ -149,6 +159,7 @@ pub struct EnumDecl {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EnumVariant {
     pub name: String,
+    pub name_span: Span,
     pub fields: VariantFields,
 }
 
@@ -164,6 +175,7 @@ pub enum VariantFields {
 pub struct TraitDecl {
     pub visibility: Visibility,
     pub name: String,
+    pub name_span: Span,
     pub generics: Vec<GenericParam>,
     pub methods: Vec<FunctionDecl>,
 }
@@ -191,6 +203,7 @@ pub struct TypeAliasDecl {
     pub visibility: Visibility,
     pub is_opaque: bool,
     pub name: String,
+    pub name_span: Span,
     pub generics: Vec<GenericParam>,
     pub ty: TypeExpr,
 }
@@ -321,7 +334,14 @@ pub enum PatternKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PatternField {
     pub name: String,
+    pub name_span: Span,
     pub pattern: Option<Box<Pattern>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClosureParam {
+    pub name: String,
+    pub span: Span,
 }
 
 /// Expression nodes preserved by the AST before HIR lowering.
@@ -362,7 +382,7 @@ pub enum ExprKind {
     },
     Closure {
         is_move: bool,
-        params: Vec<String>,
+        params: Vec<ClosureParam>,
         body: Box<Expr>,
     },
     Call {
@@ -409,6 +429,7 @@ pub enum CallArg {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructLiteralField {
     pub name: String,
+    pub name_span: Span,
     pub value: Option<Expr>,
 }
 

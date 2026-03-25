@@ -87,7 +87,7 @@ impl Checker {
                         &mut seen,
                         "duplicate top-level definition",
                         &function.name,
-                        function.span,
+                        function.name_span,
                     );
                 }
                 ItemKind::Const(global) | ItemKind::Static(global) => {
@@ -95,7 +95,7 @@ impl Checker {
                         &mut seen,
                         "duplicate top-level definition",
                         &global.name,
-                        global.span,
+                        global.name_span,
                     );
                 }
                 ItemKind::Struct(struct_decl) => {
@@ -103,7 +103,7 @@ impl Checker {
                         &mut seen,
                         "duplicate top-level definition",
                         &struct_decl.name,
-                        struct_decl.span,
+                        struct_decl.name_span,
                     );
                 }
                 ItemKind::Enum(enum_decl) => {
@@ -111,7 +111,7 @@ impl Checker {
                         &mut seen,
                         "duplicate top-level definition",
                         &enum_decl.name,
-                        enum_decl.span,
+                        enum_decl.name_span,
                     );
                 }
                 ItemKind::Trait(trait_decl) => {
@@ -119,7 +119,7 @@ impl Checker {
                         &mut seen,
                         "duplicate top-level definition",
                         &trait_decl.name,
-                        trait_decl.span,
+                        trait_decl.name_span,
                     );
                 }
                 ItemKind::TypeAlias(alias) => {
@@ -127,7 +127,7 @@ impl Checker {
                         &mut seen,
                         "duplicate top-level definition",
                         &alias.name,
-                        alias.span,
+                        alias.name_span,
                     );
                 }
                 ItemKind::ExternBlock(extern_block) => {
@@ -136,7 +136,7 @@ impl Checker {
                             &mut seen,
                             "duplicate top-level definition",
                             &function.name,
-                            function.span,
+                            function.name_span,
                         );
                     }
                 }
@@ -161,7 +161,7 @@ impl Checker {
                 &mut seen,
                 "duplicate generic parameter",
                 &generic.name,
-                generic.span,
+                generic.name_span,
             );
         }
     }
@@ -170,7 +170,12 @@ impl Checker {
         let mut seen = HashMap::<String, Span>::new();
         for param in params {
             if let Param::Regular(param) = param {
-                self.record_named_span(&mut seen, "duplicate parameter", &param.name, param.span);
+                self.record_named_span(
+                    &mut seen,
+                    "duplicate parameter",
+                    &param.name,
+                    param.name_span,
+                );
             }
         }
     }
@@ -182,7 +187,7 @@ impl Checker {
                 &mut seen,
                 &format!("duplicate field in {container}"),
                 &field.name,
-                field.span,
+                field.name_span,
             );
         }
     }
@@ -246,9 +251,7 @@ impl Checker {
             PatternKind::Struct { fields, .. } => {
                 self.check_pattern_fields(fields);
                 for field in fields {
-                    if let Some(pattern) = field.pattern {
-                        self.check_pattern_structure(module, pattern);
-                    }
+                    self.check_pattern_structure(module, field.pattern);
                 }
             }
             PatternKind::Binding(_)
@@ -268,7 +271,7 @@ impl Checker {
                 &mut seen,
                 "duplicate field in struct pattern",
                 &field.name,
-                field.span,
+                field.name_span,
             );
         }
     }
@@ -297,9 +300,7 @@ impl Checker {
             }
             PatternKind::Struct { fields, .. } => {
                 for field in fields {
-                    if let Some(pattern) = field.pattern {
-                        self.collect_pattern_bindings(module, pattern, seen);
-                    }
+                    self.collect_pattern_bindings(module, field.pattern, seen);
                 }
             }
             PatternKind::Path(_)
@@ -364,9 +365,7 @@ impl Checker {
             ExprKind::StructLiteral { fields, .. } => {
                 self.check_struct_literal_fields(fields);
                 for field in fields {
-                    if let Some(value) = field.value {
-                        self.check_expr(module, value);
-                    }
+                    self.check_expr(module, field.value);
                 }
             }
             ExprKind::Binary { left, right, .. } => {
@@ -399,7 +398,7 @@ impl Checker {
                 &mut seen,
                 "duplicate field in struct literal",
                 &field.name,
-                field.span,
+                field.name_span,
             );
         }
     }
@@ -415,7 +414,11 @@ impl Checker {
             Entry::Occupied(entry) => {
                 self.diagnostics.push(
                     Diagnostic::error(format!("{message} `{name}`"))
-                        .with_label(Label::new(*entry.get()).with_message("first seen here"))
+                        .with_label(
+                            Label::new(*entry.get())
+                                .secondary()
+                                .with_message("first seen here"),
+                        )
                         .with_label(Label::new(span).with_message("duplicate here")),
                 );
             }
@@ -428,6 +431,9 @@ impl Checker {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    use ql_diagnostics::render_diagnostics;
     use ql_parser::parse_source;
 
     use crate::check_module;
@@ -517,5 +523,34 @@ fn main() {
         );
 
         assert!(diagnostics.contains(&"duplicate field in struct literal `x`".to_string()));
+    }
+
+    #[test]
+    fn detects_duplicate_shorthand_bindings_in_struct_patterns() {
+        let diagnostics = diagnostics_for(
+            r#"
+fn main() {
+    let Point { x, y: x } = point;
+}
+"#,
+        );
+
+        assert!(diagnostics.contains(&"duplicate binding in pattern `x`".to_string()));
+    }
+
+    #[test]
+    fn rendered_duplicate_diagnostics_anchor_to_duplicate_name_span() {
+        let source = r#"
+fn id[T, T](value: T, value: T) -> T {
+    value
+}
+"#;
+        let ast = parse_source(source).expect("source should parse");
+        let hir = ql_hir::lower_module(&ast);
+        let diagnostics = check_module(&hir);
+        let rendered = render_diagnostics(Path::new("sample.ql"), source, &diagnostics);
+
+        assert!(rendered.contains("error: sample.ql:2:10: duplicate generic parameter `T`"));
+        assert!(rendered.contains("error: sample.ql:2:23: duplicate parameter `value`"));
     }
 }

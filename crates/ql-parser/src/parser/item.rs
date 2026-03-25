@@ -131,7 +131,7 @@ impl Parser {
     }
 
     fn parse_global_decl(&mut self, visibility: Visibility) -> Result<GlobalDecl, ()> {
-        let name = self.expect_ident("expected global name")?;
+        let name = self.expect_ident_token("expected global name")?;
         self.expect(TokenKind::Colon, "expected `:` after global name")?;
         let ty = self.parse_type()?;
         self.expect(TokenKind::Eq, "expected `=` after global type")?;
@@ -140,7 +140,8 @@ impl Parser {
 
         Ok(GlobalDecl {
             visibility,
-            name,
+            name: name.text,
+            name_span: name.span,
             ty,
             value,
         })
@@ -151,7 +152,7 @@ impl Parser {
         visibility: Visibility,
         is_opaque: bool,
     ) -> Result<TypeAliasDecl, ()> {
-        let name = self.expect_ident("expected type alias name")?;
+        let name = self.expect_ident_token("expected type alias name")?;
         let generics = self.parse_generic_params()?;
         self.expect(TokenKind::Eq, "expected `=` in type alias")?;
         let ty = self.parse_type()?;
@@ -160,14 +161,15 @@ impl Parser {
         Ok(TypeAliasDecl {
             visibility,
             is_opaque,
-            name,
+            name: name.text,
+            name_span: name.span,
             generics,
             ty,
         })
     }
 
     fn parse_struct(&mut self, visibility: Visibility, is_data: bool) -> Result<StructDecl, ()> {
-        let name = self.expect_ident("expected struct name")?;
+        let name = self.expect_ident_token("expected struct name")?;
         let generics = self.parse_generic_params()?;
         self.expect(TokenKind::LBrace, "expected `{` after struct name")?;
         let fields = self.parse_field_list(true)?;
@@ -176,19 +178,20 @@ impl Parser {
         Ok(StructDecl {
             visibility,
             is_data,
-            name,
+            name: name.text,
+            name_span: name.span,
             generics,
             fields,
         })
     }
 
     fn parse_enum(&mut self, visibility: Visibility) -> Result<EnumDecl, ()> {
-        let name = self.expect_ident("expected enum name")?;
+        let name = self.expect_ident_token("expected enum name")?;
         let generics = self.parse_generic_params()?;
         self.expect(TokenKind::LBrace, "expected `{` after enum name")?;
         let mut variants = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
-            let variant_name = self.expect_ident("expected enum variant name")?;
+            let variant_name = self.expect_ident_token("expected enum variant name")?;
             let fields = if self.eat(TokenKind::LParen) {
                 let mut types = Vec::new();
                 while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
@@ -208,7 +211,8 @@ impl Parser {
             };
 
             variants.push(EnumVariant {
-                name: variant_name,
+                name: variant_name.text,
+                name_span: variant_name.span,
                 fields,
             });
 
@@ -218,14 +222,15 @@ impl Parser {
         self.expect(TokenKind::RBrace, "expected `}` after enum body")?;
         Ok(EnumDecl {
             visibility,
-            name,
+            name: name.text,
+            name_span: name.span,
             generics,
             variants,
         })
     }
 
     fn parse_trait(&mut self, visibility: Visibility) -> Result<TraitDecl, ()> {
-        let name = self.expect_ident("expected trait name")?;
+        let name = self.expect_ident_token("expected trait name")?;
         let generics = self.parse_generic_params()?;
         self.expect(TokenKind::LBrace, "expected `{` after trait name")?;
         let mut methods = Vec::new();
@@ -251,7 +256,8 @@ impl Parser {
         self.expect(TokenKind::RBrace, "expected `}` after trait body")?;
         Ok(TraitDecl {
             visibility,
-            name,
+            name: name.text,
+            name_span: name.span,
             generics,
             methods,
         })
@@ -388,7 +394,7 @@ impl Parser {
         abi: Option<String>,
         body_mode: FunctionBodyMode,
     ) -> Result<FunctionDecl, ()> {
-        let name = self.expect_ident("expected function name")?;
+        let name = self.expect_ident_token("expected function name")?;
         let generics = self.parse_generic_params()?;
         self.expect(TokenKind::LParen, "expected `(` after function name")?;
         let params = self.parse_params()?;
@@ -417,7 +423,8 @@ impl Parser {
             is_unsafe,
             abi,
             generics,
-            name,
+            name: name.text,
+            name_span: name.span,
             params,
             return_type,
             where_clause,
@@ -444,10 +451,14 @@ impl Parser {
                 };
                 params.push(Param::Receiver(receiver));
             } else {
-                let name = self.expect_ident("expected parameter name")?;
+                let name = self.expect_ident_token("expected parameter name")?;
                 self.expect(TokenKind::Colon, "expected `:` after parameter name")?;
                 let ty = self.parse_type()?;
-                params.push(Param::Regular { name, ty });
+                params.push(Param::Regular {
+                    name: name.text,
+                    name_span: name.span,
+                    ty,
+                });
             }
 
             if !self.eat(TokenKind::Comma) {
@@ -460,7 +471,7 @@ impl Parser {
     fn parse_field_list(&mut self, allow_default: bool) -> Result<Vec<FieldDecl>, ()> {
         let mut fields = Vec::new();
         while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
-            let name = self.expect_ident("expected field name")?;
+            let name = self.expect_ident_token("expected field name")?;
             self.expect(TokenKind::Colon, "expected `:` after field name")?;
             let ty = self.parse_type()?;
             let default = if allow_default && self.eat(TokenKind::Eq) {
@@ -468,7 +479,12 @@ impl Parser {
             } else {
                 None
             };
-            fields.push(FieldDecl { name, ty, default });
+            fields.push(FieldDecl {
+                name: name.text,
+                name_span: name.span,
+                ty,
+                default,
+            });
 
             if !self.eat(TokenKind::Comma) {
                 break;
@@ -484,13 +500,17 @@ impl Parser {
 
         let mut params = Vec::new();
         while !self.at(TokenKind::RBracket) && !self.at(TokenKind::Eof) {
-            let name = self.expect_ident("expected generic parameter name")?;
+            let name = self.expect_ident_token("expected generic parameter name")?;
             let bounds = if self.eat(TokenKind::Colon) {
                 self.parse_bound_list()?
             } else {
                 Vec::new()
             };
-            params.push(GenericParam { name, bounds });
+            params.push(GenericParam {
+                name: name.text,
+                name_span: name.span,
+                bounds,
+            });
             if !self.eat(TokenKind::Comma) {
                 break;
             }

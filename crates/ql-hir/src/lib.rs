@@ -128,6 +128,7 @@ pub struct Function {
     pub abi: Option<String>,
     pub generics: Vec<GenericParam>,
     pub name: String,
+    pub name_span: Span,
     pub params: Vec<Param>,
     pub return_type: Option<TypeId>,
     pub where_clause: Vec<WherePredicate>,
@@ -143,7 +144,7 @@ pub enum Param {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RegularParam {
     pub name: String,
-    pub span: Span,
+    pub name_span: Span,
     pub ty: TypeId,
 }
 
@@ -156,7 +157,7 @@ pub struct ReceiverParam {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GenericParam {
     pub name: String,
-    pub span: Span,
+    pub name_span: Span,
     pub bounds: Vec<Path>,
 }
 
@@ -171,6 +172,7 @@ pub struct Global {
     pub span: Span,
     pub visibility: Visibility,
     pub name: String,
+    pub name_span: Span,
     pub ty: TypeId,
     pub value: ExprId,
 }
@@ -181,6 +183,7 @@ pub struct Struct {
     pub visibility: Visibility,
     pub is_data: bool,
     pub name: String,
+    pub name_span: Span,
     pub generics: Vec<GenericParam>,
     pub fields: Vec<Field>,
 }
@@ -188,7 +191,7 @@ pub struct Struct {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Field {
     pub name: String,
-    pub span: Span,
+    pub name_span: Span,
     pub ty: TypeId,
     pub default: Option<ExprId>,
 }
@@ -198,6 +201,7 @@ pub struct Enum {
     pub span: Span,
     pub visibility: Visibility,
     pub name: String,
+    pub name_span: Span,
     pub generics: Vec<GenericParam>,
     pub variants: Vec<EnumVariant>,
 }
@@ -205,7 +209,7 @@ pub struct Enum {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EnumVariant {
     pub name: String,
-    pub span: Span,
+    pub name_span: Span,
     pub fields: VariantFields,
 }
 
@@ -221,6 +225,7 @@ pub struct Trait {
     pub span: Span,
     pub visibility: Visibility,
     pub name: String,
+    pub name_span: Span,
     pub generics: Vec<GenericParam>,
     pub methods: Vec<Function>,
 }
@@ -248,6 +253,7 @@ pub struct TypeAlias {
     pub visibility: Visibility,
     pub is_opaque: bool,
     pub name: String,
+    pub name_span: Span,
     pub generics: Vec<GenericParam>,
     pub ty: TypeId,
 }
@@ -347,8 +353,8 @@ pub enum PatternKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PatternField {
     pub name: String,
-    pub span: Span,
-    pub pattern: Option<PatternId>,
+    pub name_span: Span,
+    pub pattern: PatternId,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -429,8 +435,8 @@ pub enum CallArg {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructLiteralField {
     pub name: String,
-    pub span: Span,
-    pub value: Option<ExprId>,
+    pub name_span: Span,
+    pub value: ExprId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

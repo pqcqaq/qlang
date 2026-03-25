@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use ql_ast::{ExprKind, ItemKind, Param, StmtKind, TypeExprKind, Visibility};
+use ql_ast::{ExprKind, ItemKind, Param, PatternKind, StmtKind, TypeExprKind, Visibility};
 use ql_parser::parse_source;
 
 fn fixture(path: &str) -> PathBuf {
@@ -256,4 +256,76 @@ fn attaches_spans_to_nested_nodes() {
         &stmt.kind,
         StmtKind::Let { value, .. } if &source[value.span.start..value.span.end] == "1"
     ));
+}
+
+#[test]
+fn captures_precise_identifier_spans_for_semantic_nodes() {
+    let source = r#"
+fn sample[T](value: Int) {
+    let Point { x, y: alias } = point
+    Point { x, y: alias }
+    let closure = (item) => item
+}
+"#;
+    let module = parse_source(source).expect("span fixture should parse");
+    let function = match &module.items[0].kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+
+    assert_eq!(
+        &source[function.name_span.start..function.name_span.end],
+        "sample"
+    );
+    assert_eq!(
+        &source[function.generics[0].name_span.start..function.generics[0].name_span.end],
+        "T"
+    );
+    let Param::Regular {
+        name_span: param_span,
+        ..
+    } = &function.params[0]
+    else {
+        panic!("expected regular parameter");
+    };
+    assert_eq!(&source[param_span.start..param_span.end], "value");
+
+    let body = function.body.as_ref().expect("function should have body");
+    let StmtKind::Let { pattern, .. } = &body.statements[0].kind else {
+        panic!("expected let statement");
+    };
+    let PatternKind::Struct { fields, .. } = &pattern.kind else {
+        panic!("expected struct pattern");
+    };
+    assert_eq!(
+        &source[fields[0].name_span.start..fields[0].name_span.end],
+        "x"
+    );
+    assert_eq!(
+        &source[fields[1].name_span.start..fields[1].name_span.end],
+        "y"
+    );
+
+    let StmtKind::Expr { expr, .. } = &body.statements[1].kind else {
+        panic!("expected expression statement");
+    };
+    let ExprKind::StructLiteral { fields, .. } = &expr.kind else {
+        panic!("expected struct literal");
+    };
+    assert_eq!(
+        &source[fields[0].name_span.start..fields[0].name_span.end],
+        "x"
+    );
+    assert_eq!(
+        &source[fields[1].name_span.start..fields[1].name_span.end],
+        "y"
+    );
+
+    let StmtKind::Let { value, .. } = &body.statements[2].kind else {
+        panic!("expected closure binding");
+    };
+    let ExprKind::Closure { params, .. } = &value.kind else {
+        panic!("expected closure expression");
+    };
+    assert_eq!(&source[params[0].span.start..params[0].span.end], "item");
 }

@@ -57,6 +57,8 @@ source
 - HIR 中的 `item` / `type` / `block` / `stmt` / `pattern` / `expr` / `local` 全部进入独立 arena
 - 从第一天开始引入稳定 ID，而不是后续再为 LSP 和增量分析返工
 - pattern 里的绑定名在 lowering 时就被转成 `LocalId`
+- AST 现在额外保留 declaration name、generic param、regular param、pattern field、struct literal field、closure param 的精确 name span，避免语义诊断继续依赖粗粒度 fallback
+- HIR 会在 lowering 时主动正规化 surface shorthand：`Point { x }` 模式字段会变成真实 binding pattern，`Point { x }` 结构体字面量字段会变成真实 `Name("x")` 表达式
 - HIR 仍然保留 span，供 diagnostics、后续 name resolution 和 IDE 查询复用
 
 这一版 HIR 仍然是“语义前置层”，还不是完整名称解析结果。当前刻意没有在这里引入过重的 query system 或类型约束图，避免在 P2 初期把抽象提前做死。
@@ -97,6 +99,7 @@ source
 
 - 新增 `ql-diagnostics` crate，统一承载 `Diagnostic` / `Label` / renderer
 - `ql check` 已不再只会打印 parser 错误，而是统一输出 parser 与 semantic diagnostics
+- duplicate diagnostics 现在区分 primary / secondary label，header 会稳定锚定在真正的 duplicate 位置，而不是偶然取第一个 label
 - 现阶段先覆盖文本输出；错误码、fix-it 和 JSON 输出留给后续切片
 
 ## LLVM 后端边界
@@ -123,6 +126,7 @@ source
 - parser fixture tests 已稳定
 - HIR lowering tests 已建立
 - semantic duplicate-diagnostics tests 已建立
+- 精确 name span 与 shorthand lowering 回归已建立
 - UI diagnostics snapshot harness 还未开始，这是 P2 后续要补的关键基础设施
 
 这也是目录结构设计要前置考虑的原因。

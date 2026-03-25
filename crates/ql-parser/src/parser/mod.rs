@@ -166,8 +166,12 @@ impl Parser {
     }
 
     fn expect_ident(&mut self, message: &str) -> Result<String, ()> {
+        self.expect_ident_token(message).map(|token| token.text)
+    }
+
+    fn expect_ident_token(&mut self, message: &str) -> Result<Token, ()> {
         if self.at(TokenKind::Ident) {
-            Ok(self.bump().text)
+            Ok(self.bump())
         } else {
             self.error_here(message);
             Err(())
