@@ -15,8 +15,8 @@ source
   -> lexer
   -> parser
   -> AST
+  -> HIR lowering
   -> name resolution
-  -> HIR
   -> type / trait / effect checking
   -> MIR
   -> ownership / borrow / escape analysis
@@ -51,6 +51,16 @@ source
 - 作为 LSP 语义查询的重要基础
 - 对上层工具最友好
 
+截至 2026-03-25，HIR 的第一层地基已经实际落地，而不是停留在文档里：
+
+- 新增 `ql-hir` crate，负责 AST 到 HIR 的 lowering
+- HIR 中的 `item` / `type` / `block` / `stmt` / `pattern` / `expr` / `local` 全部进入独立 arena
+- 从第一天开始引入稳定 ID，而不是后续再为 LSP 和增量分析返工
+- pattern 里的绑定名在 lowering 时就被转成 `LocalId`
+- HIR 仍然保留 span，供 diagnostics、后续 name resolution 和 IDE 查询复用
+
+这一版 HIR 仍然是“语义前置层”，还不是完整名称解析结果。当前刻意没有在这里引入过重的 query system 或类型约束图，避免在 P2 初期把抽象提前做死。
+
 ### MIR
 
 - 明确控制流和所有权动作
@@ -83,6 +93,12 @@ source
 - fix-it 建议
 - 机器可读 JSON 输出
 
+当前实现已经完成第一层抽离：
+
+- 新增 `ql-diagnostics` crate，统一承载 `Diagnostic` / `Label` / renderer
+- `ql check` 已不再只会打印 parser 错误，而是统一输出 parser 与 semantic diagnostics
+- 现阶段先覆盖文本输出；错误码、fix-it 和 JSON 输出留给后续切片
+
 ## LLVM 后端边界
 
 不要让 LLVM 污染整个编译器架构。建议：
@@ -101,5 +117,12 @@ source
 - codegen golden tests
 - 运行时集成测试
 - FFI 集成测试
+
+当前状态：
+
+- parser fixture tests 已稳定
+- HIR lowering tests 已建立
+- semantic duplicate-diagnostics tests 已建立
+- UI diagnostics snapshot harness 还未开始，这是 P2 后续要补的关键基础设施
 
 这也是目录结构设计要前置考虑的原因。

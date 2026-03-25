@@ -81,13 +81,16 @@ Qlang 仓库结构必须同时服务于四类工作：
 │  ├─ ql-ast                  # 源码导向 AST
 │  ├─ ql-lexer                # 手写 lexer
 │  ├─ ql-parser               # 按 item / expr / pattern / stmt 拆分的 parser
+│  ├─ ql-diagnostics          # 通用 diagnostics 结构与文本渲染
 │  ├─ ql-fmt                  # 基于 AST 的 formatter
+│  ├─ ql-hir                  # AST -> HIR lowering 与稳定 ID arena
+│  ├─ ql-typeck               # Phase 2 初始语义检查
 │  └─ ql-cli                  # `ql check` / `ql fmt`
 └─ fixtures/
    └─ parser                  # parser / formatter 回归输入
 ```
 
-也就是说，当前目录结构不是“设计图纸”，而是已经有一个最小但真实的前端闭环。
+也就是说，当前目录结构不是“设计图纸”，而是已经有一个最小但真实的前端闭环，并且已经开始向语义层扩展。
 
 ## 为什么这样分
 

@@ -1,18 +1,14 @@
 [package]
-name = "ql-cli"
+name = "ql-typeck"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "ql"
-path = "src/main.rs"
-
 [dependencies]
 ql-diagnostics.workspace = true
-ql-fmt.workspace = true
 ql-hir.workspace = true
-ql-parser.workspace = true
 ql-span.workspace = true
-ql-typeck.workspace = true
+
+[dev-dependencies]
+ql-parser.workspace = true

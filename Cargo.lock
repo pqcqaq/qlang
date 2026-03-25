@@ -13,8 +13,18 @@ dependencies = [
 name = "ql-cli"
 version = "0.1.0"
 dependencies = [
+ "ql-diagnostics",
  "ql-fmt",
+ "ql-hir",
  "ql-parser",
+ "ql-span",
+ "ql-typeck",
+]
+
+[[package]]
+name = "ql-diagnostics"
+version = "0.1.0"
+dependencies = [
  "ql-span",
 ]
 
@@ -25,6 +35,15 @@ dependencies = [
  "ql-ast",
  "ql-lexer",
  "ql-parser",
+]
+
+[[package]]
+name = "ql-hir"
+version = "0.1.0"
+dependencies = [
+ "ql-ast",
+ "ql-parser",
+ "ql-span",
 ]
 
 [[package]]
@@ -46,3 +65,13 @@ dependencies = [
 [[package]]
 name = "ql-span"
 version = "0.1.0"
+
+[[package]]
+name = "ql-typeck"
+version = "0.1.0"
+dependencies = [
+ "ql-diagnostics",
+ "ql-hir",
+ "ql-parser",
+ "ql-span",
+]

@@ -1,0 +1,13 @@
+[package]
+name = "ql-hir"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+ql-ast.workspace = true
+ql-span.workspace = true
+
+[dev-dependencies]
+ql-parser.workspace = true

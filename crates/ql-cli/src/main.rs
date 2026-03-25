@@ -3,9 +3,11 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 
+use ql_diagnostics::{Diagnostic, Label, render_diagnostics};
 use ql_fmt::format_source;
+use ql_hir::lower_module;
 use ql_parser::{ParseError, parse_source};
-use ql_span::{locate, slice_for_line};
+use ql_typeck::check_module as check_hir_module;
 
 fn main() -> ExitCode {
     match run() {
@@ -74,13 +76,11 @@ fn check_path(path: &Path) -> Result<(), u8> {
             1
         })?;
 
-        match parse_source(&source) {
-            Ok(_) => {
-                println!("ok: {}", file.display());
-            }
-            Err(errors) => {
+        match analyze_source(&source) {
+            Ok(()) => println!("ok: {}", file.display()),
+            Err(diagnostics) => {
                 has_errors = true;
-                print_errors(&file, &source, &errors);
+                print_diagnostics(&file, &source, &diagnostics);
             }
         }
     }
@@ -107,9 +107,21 @@ fn format_path(path: &Path, write: bool) -> Result<(), u8> {
             Ok(())
         }
         Err(errors) => {
-            print_errors(path, &source, &errors);
+            print_diagnostics(path, &source, &parse_errors_to_diagnostics(errors));
             Err(1)
         }
+    }
+}
+
+fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
+    let ast = parse_source(source).map_err(parse_errors_to_diagnostics)?;
+    let hir = lower_module(&ast);
+    let diagnostics = check_hir_module(&hir);
+
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics)
     }
 }
 
@@ -160,13 +172,7 @@ fn should_skip_directory(root: &Path, path: &Path) -> bool {
     name.starts_with('.')
         || matches!(
             name,
-            "target"
-                | "node_modules"
-                | "dist"
-                | "build"
-                | "coverage"
-                | "fixtures"
-                | "ramdon_tests"
+            "target" | "node_modules" | "dist" | "build" | "coverage" | "fixtures" | "ramdon_tests"
         )
         || is_negative_fixture_path(root, path)
 }
@@ -209,23 +215,15 @@ fn component_name(component: Component<'_>) -> Option<&str> {
     }
 }
 
-fn print_errors(path: &Path, source: &str, errors: &[ParseError]) {
-    for error in errors {
-        let location = locate(source, error.span);
-        eprintln!(
-            "error: {}:{}:{}: {}",
-            path.display(),
-            location.start.line,
-            location.start.column,
-            error.message
-        );
-        if let Some(line) = slice_for_line(source, location.start.line) {
-            eprintln!("  {line}");
-            let indent = " ".repeat(location.start.column.saturating_sub(1));
-            let marker_len = error.span.len().max(1);
-            eprintln!("  {indent}{}", "^".repeat(marker_len.min(8)));
-        }
-    }
+fn parse_errors_to_diagnostics(errors: Vec<ParseError>) -> Vec<Diagnostic> {
+    errors
+        .into_iter()
+        .map(|error| Diagnostic::error(error.message).with_label(Label::new(error.span)))
+        .collect()
+}
+
+fn print_diagnostics(path: &Path, source: &str, diagnostics: &[Diagnostic]) {
+    eprint!("{}", render_diagnostics(path, source, diagnostics));
 }
 
 fn print_usage() {
@@ -242,7 +240,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::collect_ql_files;
+    use super::{analyze_source, collect_ql_files};
 
     struct TestDir {
         path: PathBuf,
@@ -315,5 +313,22 @@ mod tests {
         let files = collect_ql_files(&root).expect("collect explicit fail fixture files");
 
         assert_eq!(relative_paths(&root, files), vec!["bad.ql"]);
+    }
+
+    #[test]
+    fn analyze_source_reports_semantic_errors() {
+        let diagnostics = analyze_source(
+            r#"
+struct User {}
+fn User() {}
+"#,
+        )
+        .expect_err("source should have semantic diagnostics");
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message == "duplicate top-level definition `User`")
+        );
     }
 }

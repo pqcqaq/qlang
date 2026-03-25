@@ -98,11 +98,7 @@
 - `cargo run -p ql-cli -- fmt target/review/one_tuple_type.ql`
 - `npm run build` in `docs/`
 
-Phase 1 已完成，下一切片：
-
-- 建立 HIR 和名称解析
-- 强化 parser recovery 与 diagnostics，为 Phase 2 提供更稳的前端输入
-- 开始为类型检查和后续 LSP 共用语义数据库打底
+Phase 1 已完成。
 
 ## Phase 2: 语义分析与类型检查
 
@@ -124,6 +120,40 @@ Phase 1 已完成，下一切片：
 
 - 中小示例可获得可信的类型错误提示
 - HIR 作为语义单一事实源建立
+
+### 当前状态（2026-03-25）
+
+P2 已完成第一切片，也就是“语义地基”而不是“完整类型系统”：
+
+- 新增 `ql-diagnostics`
+- 新增 `ql-hir`
+- 新增 `ql-typeck`
+- `ql check` 已切到 parser -> HIR lowering -> semantic checks 的新流水线
+- HIR arenas、稳定 ID、local binding lowering 已建立
+- 第一批语义诊断已经稳定回归：
+  - top-level duplicate definition
+  - duplicate generic parameter
+  - duplicate function parameter
+  - duplicate pattern binding
+  - duplicate struct / struct-pattern / struct-literal field
+
+当前验证集新增：
+
+- `cargo fmt`
+- `cargo test`
+- `cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql`
+- `cargo run -p ql-cli -- check fixtures/parser/pass/control_flow.ql`
+- `cargo run -p ql-cli -- check fixtures/parser/pass/phase1_declarations.ql`
+- `npm run build` in `docs/`
+
+### P2 下一切片
+
+在当前切片之后，下一步不应直接跳到 LLVM 或 borrow checking，而应继续把语义层补完整：
+
+1. 名称解析与作用域图
+2. 内建类型、基本类型推断与 callable / tuple / multi-return 约束
+3. UI diagnostics snapshot harness
+4. 语义数据库与后续 LSP 查询边界
 
 ## Phase 3: 所有权与内存语义
 

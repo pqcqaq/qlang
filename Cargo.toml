@@ -5,6 +5,9 @@ members = [
     "crates/ql-lexer",
     "crates/ql-parser",
     "crates/ql-fmt",
+    "crates/ql-diagnostics",
+    "crates/ql-hir",
+    "crates/ql-typeck",
     "crates/ql-cli",
 ]
 resolver = "2"
@@ -22,3 +25,6 @@ ql-ast = { path = "crates/ql-ast" }
 ql-lexer = { path = "crates/ql-lexer" }
 ql-parser = { path = "crates/ql-parser" }
 ql-fmt = { path = "crates/ql-fmt" }
+ql-diagnostics = { path = "crates/ql-diagnostics" }
+ql-hir = { path = "crates/ql-hir" }
+ql-typeck = { path = "crates/ql-typeck" }
