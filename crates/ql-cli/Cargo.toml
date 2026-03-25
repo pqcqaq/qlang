@@ -1,0 +1,15 @@
+[package]
+name = "ql-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ql"
+path = "src/main.rs"
+
+[dependencies]
+ql-fmt.workspace = true
+ql-parser.workspace = true
+ql-span.workspace = true

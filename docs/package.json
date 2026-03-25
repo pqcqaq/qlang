@@ -1,0 +1,15 @@
+{
+  "name": "qlang",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Research and design repository for the Qlang programming language.",
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev . --port 7530",
+    "build": "vitepress build .",
+    "preview": "vitepress preview ."
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  }
+}

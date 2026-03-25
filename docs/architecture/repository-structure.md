@@ -1,0 +1,129 @@
+# 仓库目录结构
+
+## 设计目标
+
+Qlang 仓库结构必须同时服务于四类工作：
+
+1. 语言规范和设计演进
+2. 编译器与工具链实现
+3. 标准库与运行时实现
+4. 示例、测试、基准、文档与生态模板
+
+如果目录从一开始没有分层清楚，后面一定会出现以下问题：
+
+- 规范和实现互相污染
+- LSP、格式化器、编译器共享代码困难
+- 测试资源散落，难以回归
+- 文档和 RFC 无法沉淀
+
+## 推荐结构
+
+```text
+.
+├─ docs/                      # VitePress 文档站，面向设计、路线图、指南
+├─ spec/                      # 语言规范草案与正式规范
+├─ rfcs/                      # 语言与工具链演进提案
+├─ crates/                    # Rust workspace：编译器和工具链源码
+│  ├─ ql-cli
+│  ├─ ql-driver
+│  ├─ ql-lexer
+│  ├─ ql-parser
+│  ├─ ql-ast
+│  ├─ ql-hir
+│  ├─ ql-typeck
+│  ├─ ql-mir
+│  ├─ ql-borrowck
+│  ├─ ql-codegen-llvm
+│  ├─ ql-diagnostics
+│  ├─ ql-incremental
+│  ├─ ql-fmt
+│  ├─ ql-doc
+│  ├─ ql-lsp
+│  └─ ql-test-harness
+├─ runtime/                   # 运行时支持、启动代码、FFI shim
+├─ stdlib/                    # 标准库源码
+│  ├─ core
+│  ├─ alloc
+│  ├─ io
+│  ├─ net
+│  ├─ async
+│  ├─ ffi
+│  └─ test
+├─ examples/                  # 最小示例与最佳实践
+├─ packages/                  # 演示用工作区包、模板项目
+├─ tests/                     # 黑盒与金丝雀测试
+│  ├─ ui
+│  ├─ parser
+│  ├─ typecheck
+│  ├─ compile-pass
+│  ├─ compile-fail
+│  ├─ run-pass
+│  ├─ ffi
+│  ├─ lsp
+│  └─ fmt
+├─ benchmarks/                # 编译器与运行时基准
+├─ fixtures/                  # 测试夹具、头文件、示例输入
+├─ scripts/                   # 自动化脚本、发布、生成器
+├─ .github/workflows/         # CI/CD
+├─ Cargo.toml                 # Rust workspace
+└─ qlang.toml                 # Qlang workspace / package manifest
+```
+
+## 当前已落地结构（2026-03-25）
+
+当前仓库还处在早期前端阶段，已经真正落地的部分是：
+
+```text
+.
+├─ docs/                      # VitePress 文档站
+├─ crates/
+│  ├─ ql-span                 # span 与基础定位
+│  ├─ ql-ast                  # 源码导向 AST
+│  ├─ ql-lexer                # 手写 lexer
+│  ├─ ql-parser               # 按 item / expr / pattern / stmt 拆分的 parser
+│  ├─ ql-fmt                  # 基于 AST 的 formatter
+│  └─ ql-cli                  # `ql check` / `ql fmt`
+└─ fixtures/
+   └─ parser                  # parser / formatter 回归输入
+```
+
+也就是说，当前目录结构不是“设计图纸”，而是已经有一个最小但真实的前端闭环。
+
+## 为什么这样分
+
+### `docs/` 和 `spec/` 分离
+
+- `docs/` 面向导航、说明、路线图和教程
+- `spec/` 面向可审查的语言规范文本
+
+这样能避免“文档写得像规范，规范写得像博客”。
+
+### `rfcs/` 单独存在
+
+RFC 是设计演进机制，不应混在普通文档里。后续每个重大决策，例如错误处理模型、trait object、宏系统、包注册中心，都应走 RFC。
+
+### `crates/` 细分而不是一个大 compiler 目录
+
+这有四个好处：
+
+- 编译依赖清晰
+- 测试粒度清晰
+- LSP、格式化器、文档工具能重用中间层
+- 避免巨大 crate 变成“无法重构的黑箱”
+
+### `tests/` 与 `fixtures/` 分离
+
+测试断言和测试输入需要分层管理。特别是 UI 诊断测试、FFI 测试和 LSP 测试，输入资源会很多，不分开后期会极乱。
+
+## 初期就要预留的目录
+
+即使 P0 不全部实现，也建议尽早预留：
+
+- `rfcs/`
+- `tests/ui`
+- `tests/ffi`
+- `examples/ffi-c`
+- `examples/ffi-rust`
+- `benchmarks/`
+
+这几类目录直接决定项目后续是否有演进机制、质量机制和互操作验证机制。

@@ -1,0 +1,71 @@
+import { defineConfig } from "vitepress";
+
+export default defineConfig({
+  lang: "zh-CN",
+  title: "Qlang",
+  description: "一个面向 LLVM、强调安全、开发体验与多语言互操作的编译型语言预研文档站。",
+  lastUpdated: true,
+  themeConfig: {
+    nav: [
+      { text: "愿景", link: "/vision" },
+      { text: "语言设计", link: "/design/principles" },
+      { text: "架构", link: "/architecture/compiler-pipeline" },
+      { text: "路线图", link: "/roadmap/development-plan" }
+    ],
+    sidebar: [
+      {
+        text: "总览",
+        items: [
+          { text: "首页", link: "/" },
+          { text: "项目愿景", link: "/vision" }
+        ]
+      },
+      {
+        text: "语言设计",
+        items: [
+          { text: "设计原则", link: "/design/principles" },
+          { text: "跨语言借鉴", link: "/design/influences" },
+          { text: "语法草案", link: "/design/syntax" },
+          { text: "类型系统", link: "/design/type-system" },
+          { text: "运行时与内存", link: "/design/runtime-memory" },
+          { text: "并发模型", link: "/design/concurrency" },
+          { text: "互操作设计", link: "/design/interop" }
+        ]
+      },
+      {
+        text: "架构",
+        items: [
+          { text: "编译器流水线", link: "/architecture/compiler-pipeline" },
+          { text: "工具链设计", link: "/architecture/toolchain" },
+          { text: "仓库目录结构", link: "/architecture/repository-structure" }
+        ]
+      },
+      {
+        text: "路线图",
+        items: [
+          { text: "功能清单", link: "/roadmap/feature-list" },
+          { text: "开发计划", link: "/roadmap/development-plan" }
+        ]
+      },
+      {
+        text: "预研沉淀",
+        items: [
+          {
+            text: "2026-03-25 设计稿",
+            link: "/plans/2026-03-25-qlang-design"
+          }
+        ]
+      }
+    ],
+    search: {
+      provider: "local"
+    },
+    outline: {
+      level: [2, 3]
+    },
+    footer: {
+      message: "Qlang research repository",
+      copyright: "Copyright 2026"
+    }
+  }
+});

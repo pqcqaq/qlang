@@ -1,0 +1,11 @@
+[package]
+name = "ql-parser"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+ql-ast.workspace = true
+ql-lexer.workspace = true
+ql-span.workspace = true

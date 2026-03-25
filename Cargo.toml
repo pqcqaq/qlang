@@ -1,0 +1,24 @@
+[workspace]
+members = [
+    "crates/ql-span",
+    "crates/ql-ast",
+    "crates/ql-lexer",
+    "crates/ql-parser",
+    "crates/ql-fmt",
+    "crates/ql-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["OpenAI Codex"]
+license = "MIT"
+repository = ""
+
+[workspace.dependencies]
+ql-span = { path = "crates/ql-span" }
+ql-ast = { path = "crates/ql-ast" }
+ql-lexer = { path = "crates/ql-lexer" }
+ql-parser = { path = "crates/ql-parser" }
+ql-fmt = { path = "crates/ql-fmt" }

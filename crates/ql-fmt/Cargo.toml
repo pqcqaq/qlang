@@ -1,0 +1,10 @@
+[package]
+name = "ql-fmt"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+ql-ast.workspace = true
+ql-parser.workspace = true

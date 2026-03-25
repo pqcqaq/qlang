@@ -1,0 +1,248 @@
+# 开发计划
+
+## 总体原则
+
+开发顺序必须围绕“尽早形成真实闭环”展开。对 Qlang 来说，闭环不是只有一个 parser 能跑，而是至少满足：
+
+1. 能写一个最小程序
+2. 能编译到原生可执行文件
+3. 能跑测试
+4. 能给出像样错误信息
+5. 能在编辑器里工作
+6. 能调用一个 C 函数
+
+## Phase 0: 预研冻结
+
+### 目标
+
+- 固化语言定位
+- 固化仓库结构
+- 固化 P0/P1/P2 边界
+- 明确高风险技术假设
+
+### 交付物
+
+- 本文档站
+- 初版功能清单
+- 初版路线图
+- 初版架构图和 RFC 流程草案
+
+### 出口标准
+
+- 设计原则不再大幅摇摆
+- 后续能按 RFC 继续演进
+
+## Phase 1: 编译器前端最小闭环
+
+### 目标
+
+- 建立 Rust workspace
+- 实现 lexer、parser、AST
+- 支持基础语法和模块系统
+- 冻结 P0 语法基线，包括类型实例化、值实例化、解构绑定、可调用类型与元组返回
+- 跑通 parser snapshot tests
+
+### 交付物
+
+- `ql check` 能解析项目
+- 语法错误有稳定 span
+- `qfmt` 能对最小语法集工作
+
+### 出口标准
+
+- hello world 级程序可被解析和格式化
+- parser 测试体系建立
+
+### 当前切片拆分
+
+为了避免 Phase 1 被做成一个“不断往 parser 里堆规则”的大泥球，前端开发要拆成更小的可验证切片：
+
+1. workspace 与基础前端骨架
+2. 基础声明、类型与表达式
+3. 控制流、模式匹配与 formatter 稳定化
+4. 顶层声明补全与错误恢复增强
+5. 为 HIR lowering 预留更清晰的前端边界
+
+### 当前状态（2026-03-25）
+
+已完成：
+
+- Rust workspace 与基础 crate 拆分
+- `ql-span` / `ql-ast` / `ql-lexer` / `ql-parser` / `ql-fmt` / `ql-cli`
+- package / use / fn / struct / data struct / enum / impl
+- 泛型类型应用、可调用类型、闭包、结构体字面量、基础运算表达式
+- `if` / `match` 表达式
+- `while` / `loop` / `for` / `for await`
+- richer pattern 支持：路径模式、tuple-struct 模式、struct 模式、字面量模式
+- parser 从单文件拆分为 `item` / `expr` / `pattern` / `stmt` 模块
+- parser fixture 与 formatter 稳定性测试覆盖到控制流切片
+
+下一切片：
+
+- 补齐 `const` / `static` / `type` / `extern` / `trait` / `extend` 等顶层语法入口
+- 强化 parser recovery，降低单点报错把整段源码带偏的风险
+- 开始为 Phase 2 的 HIR / 名称解析准备更稳定的 lowering 边界
+
+## Phase 2: 语义分析与类型检查
+
+### 目标
+
+- 引入名称解析和 HIR
+- 支持基础类型、`struct`、`enum`、`match`
+- 支持 `Result` / `Option`
+- 支持一等函数、闭包、元组、多返回值与解构的第一版类型检查
+- 完成第一版类型检查
+
+### 交付物
+
+- `ql check` 能完成类型检查
+- UI diagnostics 测试框架可用
+- LSP 可提供 hover 和 diagnostics
+
+### 出口标准
+
+- 中小示例可获得可信的类型错误提示
+- HIR 作为语义单一事实源建立
+
+## Phase 3: 所有权与内存语义
+
+### 目标
+
+- 建立 MIR
+- 实现移动检查和基础借用推断
+- 引入 drop 语义和 `defer`
+- 明确 `unsafe` 边界
+
+### 交付物
+
+- 值语义和移动规则可工作
+- 基础资源释放模型成立
+- 所有权相关 diagnostics 可解释
+
+### 出口标准
+
+- 常见资源管理场景可编译并运行
+- 无需显式生命周期即可覆盖大多数样例
+
+## Phase 4: LLVM 后端与原生产物
+
+### 目标
+
+- 从 MIR lowering 到 LLVM IR
+- 生成对象文件、静态库、可执行文件
+- 打通链接驱动
+
+### 交付物
+
+- `ql build`
+- debug / release profile
+- 基础 codegen golden tests
+
+### 出口标准
+
+- hello world、简单容器、简单匹配逻辑可运行
+- Windows 和 Linux 至少打通一种 CI
+
+## Phase 5: C FFI 与运行时地基
+
+### 目标
+
+- 支持 `extern "c"` 导入导出
+- 建立 FFI 安全包装模式
+- 标准库 `core`、`alloc`、`io` 打底
+
+### 交付物
+
+- 调用 libc 或自定义 C 库示例
+- `tests/ffi` 成体系
+- `ql ffi` 最小桥接能力
+
+### 出口标准
+
+- Qlang 可以作为真实本地库参与链接
+- FFI 边界报错可定位
+
+## Phase 6: LSP、格式化器与开发体验
+
+### 目标
+
+- 基于统一语义数据库实现 `qlsp`
+- 补全、跳转、引用、rename、semantic tokens
+- `qfmt` 风格冻结
+
+### 交付物
+
+- VS Code 最小扩展
+- LSP 场景回归测试
+- code action 雏形
+
+### 出口标准
+
+- 用编辑器写 Qlang 不再“只能靠编译试错”
+
+## Phase 7: 并发、异步与 Rust 互操作
+
+### 目标
+
+- 支持 `async fn`、`await`、`spawn`
+- 提供 executor 抽象
+- 通过 C ABI 打通 Rust 互操作工作流
+
+### 交付物
+
+- async 标准库雏形
+- `examples/ffi-rust`
+- 并发能力 trait 检查
+
+### 出口标准
+
+- 能写基本网络服务样例
+- Rust 混编路径清晰可复现
+
+## Phase 8: 文档、包管理与工作区增强
+
+### 目标
+
+- `ql doc`
+- lockfile
+- feature flags
+- 模板项目生成
+
+### 交付物
+
+- API 文档生成站点
+- 多包 workspace 示例
+- 项目模板
+
+### 出口标准
+
+- 新用户能从脚手架到文档再到编译运行形成顺畅体验
+
+## Phase 9: 深水区能力
+
+### 目标
+
+- 更完整效果系统
+- actor 标准库
+- 更深的 C++ 互操作
+- 增量编译和性能优化完善
+
+### 交付物
+
+- RFC 驱动的高级特性演进
+- 性能基线与回归体系
+- 更成熟的生态支撑
+
+### 出口标准
+
+- 项目进入“可持续迭代生态期”，而不是只靠主线作者硬推
+
+## 每阶段都必须交付的横向事项
+
+- 文档更新
+- RFC 或 ADR 沉淀
+- 回归测试补全
+- CI 更新
+- 示例代码补全
+
+如果少了这些横向事项，项目会形成“代码前进，工程后退”的假繁荣。
