@@ -9,6 +9,7 @@ Current scope:
 - interop strategy for C, C++, and Rust
 - repository layout, feature inventory, and phased execution plan
 - completed Phase 1 frontend baseline in Rust workspace form
+- landed Phase 2 semantic foundation and diagnostics hardening
 
 Documentation lives in the VitePress subproject under [`docs/`](./docs).
 
@@ -26,7 +27,7 @@ npm install
 npm run dev
 ```
 
-## Phase 1 Frontend
+## Current Status
 
 Current Rust workspace status:
 
@@ -35,6 +36,9 @@ Current Rust workspace status:
 - `crates/ql-lexer`: tokenization
 - `crates/ql-parser`: modular parser for the current Phase 1 slice
 - `crates/ql-fmt`: formatter for the current frontend slice
+- `crates/ql-diagnostics`: shared semantic and parser diagnostics model plus text renderer
+- `crates/ql-hir`: AST -> HIR lowering with stable IDs and semantic normalization
+- `crates/ql-typeck`: current Phase 2 semantic baseline checks
 - `crates/ql-cli`: `ql` CLI with `check` and `fmt`
 
 Current implemented syntax slice:
@@ -50,9 +54,25 @@ Current implemented syntax slice:
 - `while` / `loop` / `for` / `for await`
 - pattern-based bindings and richer match patterns
 
+Current semantic baseline in `ql check`:
+
+- parser diagnostics and semantic diagnostics share one renderer
+- precise identifier spans flow through AST -> HIR -> diagnostics for semantic hotspots
+- shorthand struct pattern and struct literal fields are normalized during HIR lowering
+- duplicate checks currently cover:
+  - top-level definitions
+  - generic parameters
+  - function parameters
+  - enum variants
+  - trait / impl / extend methods
+  - pattern bindings
+  - struct / struct-pattern / struct-literal fields
+  - named call arguments
+
 Quick start:
 
 ```bash
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test
 cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- fmt fixtures/parser/pass/basic.ql
