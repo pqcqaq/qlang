@@ -639,7 +639,7 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
                 }
                 match arg {
                     CallArg::Positional(expr) => format_expr(expr, indent, out),
-                    CallArg::Named { name, value } => {
+                    CallArg::Named { name, value, .. } => {
                         format_ident(name, out);
                         out.push_str(": ");
                         format_expr(value, indent, out);

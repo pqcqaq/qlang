@@ -557,8 +557,13 @@ impl Lowerer {
     fn lower_call_arg(&mut self, arg: &ast::CallArg) -> CallArg {
         match arg {
             ast::CallArg::Positional(expr) => CallArg::Positional(self.lower_expr(expr)),
-            ast::CallArg::Named { name, value } => CallArg::Named {
+            ast::CallArg::Named {
+                name,
+                name_span,
+                value,
+            } => CallArg::Named {
                 name: name.clone(),
+                name_span: *name_span,
                 value: self.lower_expr(value),
             },
         }

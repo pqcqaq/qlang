@@ -2,8 +2,9 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{
-    BlockId, CallArg, ExprId, ExprKind, Field, Function, GenericParam, ItemKind, LocalId, Module,
-    Param, PatternField, PatternId, PatternKind, StmtKind, StructLiteralField, VariantFields,
+    BlockId, CallArg, EnumVariant, ExprId, ExprKind, Field, Function, GenericParam, ItemKind,
+    LocalId, Module, Param, PatternField, PatternId, PatternKind, StmtKind, StructLiteralField,
+    VariantFields,
 };
 use ql_span::Span;
 
@@ -41,6 +42,7 @@ impl Checker {
                 }
                 ItemKind::Enum(enum_decl) => {
                     self.check_generics(&enum_decl.generics);
+                    self.check_variants(&enum_decl.variants);
                     for variant in &enum_decl.variants {
                         if let VariantFields::Struct(fields) = &variant.fields {
                             self.check_named_fields("enum variant", fields);
@@ -49,17 +51,20 @@ impl Checker {
                 }
                 ItemKind::Trait(trait_decl) => {
                     self.check_generics(&trait_decl.generics);
+                    self.check_methods("trait", &trait_decl.methods);
                     for method in &trait_decl.methods {
                         self.check_function(module, method);
                     }
                 }
                 ItemKind::Impl(impl_block) => {
                     self.check_generics(&impl_block.generics);
+                    self.check_methods("impl", &impl_block.methods);
                     for method in &impl_block.methods {
                         self.check_function(module, method);
                     }
                 }
                 ItemKind::Extend(extend_block) => {
+                    self.check_methods("extend block", &extend_block.methods);
                     for method in &extend_block.methods {
                         self.check_function(module, method);
                     }
@@ -188,6 +193,30 @@ impl Checker {
                 &format!("duplicate field in {container}"),
                 &field.name,
                 field.name_span,
+            );
+        }
+    }
+
+    fn check_variants(&mut self, variants: &[EnumVariant]) {
+        let mut seen = HashMap::<String, Span>::new();
+        for variant in variants {
+            self.record_named_span(
+                &mut seen,
+                "duplicate enum variant",
+                &variant.name,
+                variant.name_span,
+            );
+        }
+    }
+
+    fn check_methods(&mut self, container: &str, methods: &[Function]) {
+        let mut seen = HashMap::<String, Span>::new();
+        for method in methods {
+            self.record_named_span(
+                &mut seen,
+                &format!("duplicate method in {container}"),
+                &method.name,
+                method.name_span,
             );
         }
     }
@@ -348,6 +377,7 @@ impl Checker {
             }
             ExprKind::Call { callee, args } => {
                 self.check_expr(module, *callee);
+                self.check_named_call_args(args);
                 for arg in args {
                     match arg {
                         CallArg::Positional(expr) => self.check_expr(module, *expr),
@@ -400,6 +430,23 @@ impl Checker {
                 &field.name,
                 field.name_span,
             );
+        }
+    }
+
+    fn check_named_call_args(&mut self, args: &[CallArg]) {
+        let mut seen = HashMap::<String, Span>::new();
+        for arg in args {
+            if let CallArg::Named {
+                name, name_span, ..
+            } = arg
+            {
+                self.record_named_span(
+                    &mut seen,
+                    "duplicate named call argument",
+                    name,
+                    *name_span,
+                );
+            }
         }
     }
 
@@ -513,6 +560,20 @@ struct Point {
     }
 
     #[test]
+    fn detects_duplicate_enum_variants() {
+        let diagnostics = diagnostics_for(
+            r#"
+enum Result {
+    Ok,
+    Ok,
+}
+"#,
+        );
+
+        assert!(diagnostics.contains(&"duplicate enum variant `Ok`".to_string()));
+    }
+
+    #[test]
     fn detects_duplicate_struct_literal_fields() {
         let diagnostics = diagnostics_for(
             r#"
@@ -526,6 +587,19 @@ fn main() {
     }
 
     #[test]
+    fn detects_duplicate_named_call_arguments() {
+        let diagnostics = diagnostics_for(
+            r#"
+fn main() {
+    run(left: 1, left: 2);
+}
+"#,
+        );
+
+        assert!(diagnostics.contains(&"duplicate named call argument `left`".to_string()));
+    }
+
+    #[test]
     fn detects_duplicate_shorthand_bindings_in_struct_patterns() {
         let diagnostics = diagnostics_for(
             r#"
@@ -536,6 +610,32 @@ fn main() {
         );
 
         assert!(diagnostics.contains(&"duplicate binding in pattern `x`".to_string()));
+    }
+
+    #[test]
+    fn detects_duplicate_methods_in_trait_impl_and_extend_blocks() {
+        let diagnostics = diagnostics_for(
+            r#"
+trait Api {
+    fn open() -> Int
+    fn open() -> Int
+}
+
+impl Service {
+    fn open() -> Int { 1 }
+    fn open() -> Int { 2 }
+}
+
+extend Service {
+    fn ping() -> Int { 1 }
+    fn ping() -> Int { 2 }
+}
+"#,
+        );
+
+        assert!(diagnostics.contains(&"duplicate method in trait `open`".to_string()));
+        assert!(diagnostics.contains(&"duplicate method in impl `open`".to_string()));
+        assert!(diagnostics.contains(&"duplicate method in extend block `ping`".to_string()));
     }
 
     #[test]

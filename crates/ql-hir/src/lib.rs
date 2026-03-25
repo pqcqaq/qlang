@@ -429,7 +429,11 @@ pub struct MatchArm {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CallArg {
     Positional(ExprId),
-    Named { name: String, value: ExprId },
+    Named {
+        name: String,
+        name_span: Span,
+        value: ExprId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -57,7 +57,7 @@ source
 - HIR 中的 `item` / `type` / `block` / `stmt` / `pattern` / `expr` / `local` 全部进入独立 arena
 - 从第一天开始引入稳定 ID，而不是后续再为 LSP 和增量分析返工
 - pattern 里的绑定名在 lowering 时就被转成 `LocalId`
-- AST 现在额外保留 declaration name、generic param、regular param、pattern field、struct literal field、closure param 的精确 name span，避免语义诊断继续依赖粗粒度 fallback
+- AST 现在额外保留 declaration name、generic param、regular param、pattern field、struct literal field、named call arg、closure param 的精确 name span，避免语义诊断继续依赖粗粒度 fallback
 - HIR 会在 lowering 时主动正规化 surface shorthand：`Point { x }` 模式字段会变成真实 binding pattern，`Point { x }` 结构体字面量字段会变成真实 `Name("x")` 表达式
 - HIR 仍然保留 span，供 diagnostics、后续 name resolution 和 IDE 查询复用
 
@@ -100,6 +100,7 @@ source
 - 新增 `ql-diagnostics` crate，统一承载 `Diagnostic` / `Label` / renderer
 - `ql check` 已不再只会打印 parser 错误，而是统一输出 parser 与 semantic diagnostics
 - duplicate diagnostics 现在区分 primary / secondary label，header 会稳定锚定在真正的 duplicate 位置，而不是偶然取第一个 label
+- 当前 duplicate 语义检查已经覆盖 top-level definition、generic parameter、function parameter、enum variant、trait/impl/extend method、pattern binding、struct field、struct-pattern field、struct-literal field、named call arg
 - 现阶段先覆盖文本输出；错误码、fix-it 和 JSON 输出留给后续切片
 
 ## LLVM 后端边界

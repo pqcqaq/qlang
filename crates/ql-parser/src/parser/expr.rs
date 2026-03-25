@@ -331,10 +331,14 @@ impl Parser {
         let mut args = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
             if self.at(TokenKind::Ident) && self.nth_kind(1) == TokenKind::Colon {
-                let name = self.expect_ident("expected named argument label")?;
+                let name = self.expect_ident_token("expected named argument label")?;
                 self.expect(TokenKind::Colon, "expected `:` after named argument label")?;
                 let value = self.parse_expr()?;
-                args.push(CallArg::Named { name, value });
+                args.push(CallArg::Named {
+                    name: name.text,
+                    name_span: name.span,
+                    value,
+                });
             } else {
                 args.push(CallArg::Positional(self.parse_expr()?));
             }

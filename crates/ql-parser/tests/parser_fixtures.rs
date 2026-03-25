@@ -263,7 +263,8 @@ fn captures_precise_identifier_spans_for_semantic_nodes() {
     let source = r#"
 fn sample[T](value: Int) {
     let Point { x, y: alias } = point
-    Point { x, y: alias }
+    Point { x, y: alias };
+    run(left: 1);
     let closure = (item) => item
 }
 "#;
@@ -321,7 +322,18 @@ fn sample[T](value: Int) {
         "y"
     );
 
-    let StmtKind::Let { value, .. } = &body.statements[2].kind else {
+    let StmtKind::Expr { expr, .. } = &body.statements[2].kind else {
+        panic!("expected call statement");
+    };
+    let ExprKind::Call { args, .. } = &expr.kind else {
+        panic!("expected call expression");
+    };
+    let ql_ast::CallArg::Named { name_span, .. } = &args[0] else {
+        panic!("expected named call argument");
+    };
+    assert_eq!(&source[name_span.start..name_span.end], "left");
+
+    let StmtKind::Let { value, .. } = &body.statements[3].kind else {
         panic!("expected closure binding");
     };
     let ExprKind::Closure { params, .. } = &value.kind else {
