@@ -19,6 +19,15 @@ fn codegen_snapshots_match() {
             archiver_style: None,
         },
         PassCase {
+            name: "extern_c_build_llvm_ir",
+            source_relative: "fixtures/codegen/pass/extern_c_build.ql",
+            emit: "llvm-ir",
+            expected_relative: "tests/codegen/pass/extern_c_build.ll",
+            mock_compiler: false,
+            mock_archiver: false,
+            archiver_style: None,
+        },
+        PassCase {
             name: "minimal_build_object",
             source_relative: "fixtures/codegen/pass/minimal_build.ql",
             emit: "obj",
@@ -46,12 +55,20 @@ fn codegen_snapshots_match() {
             archiver_style: Some(current_archiver_style()),
         },
     ];
-    let fail_cases = vec![FailCase {
-        name: "unsupported_closure_build",
-        source_relative: "tests/codegen/fail/unsupported_closure_build.ql",
-        emit: "llvm-ir",
-        expected_stderr_relative: "tests/codegen/fail/unsupported_closure_build.stderr",
-    }];
+    let fail_cases = vec![
+        FailCase {
+            name: "unsupported_closure_build",
+            source_relative: "tests/codegen/fail/unsupported_closure_build.ql",
+            emit: "llvm-ir",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_closure_build.stderr",
+        },
+        FailCase {
+            name: "unsupported_extern_rust_abi_build",
+            source_relative: "tests/codegen/fail/unsupported_extern_rust_abi_build.ql",
+            emit: "llvm-ir",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_extern_rust_abi_build.stderr",
+        },
+    ];
 
     let mut failures = Vec::new();
 

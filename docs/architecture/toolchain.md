@@ -63,6 +63,7 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 当前支持矩阵刻意收窄为：
 
 - 顶层 free function
+- `extern "c"` 顶层声明与 extern block 声明
 - `main` 入口
 - 标量整数 / `Bool` / `Void`
 - direct function call
@@ -72,6 +73,8 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - `.lib` / `.a` 产物依赖 clang-style compiler 与 archive tool
 - codegen 会在 program mode 下把 Qlang 用户入口 lower 成内部符号，并额外生成宿主 `main` wrapper
 - `staticlib` 会走 library mode，因此当前单文件库不要求顶层 `main`
+- direct `extern "c"` 调用现在会 lower 成 LLVM `declare @symbol` + `call @symbol`
+- `extern` callable 现在有共享 callable identity，因此 extern block 调用也能稳定参与参数类型检查与代码生成
 - Windows 上如果使用 `QLANG_CLANG` 覆盖路径，建议指向 `clang.exe` 或 `.cmd` wrapper，而不是裸 `.ps1`
 - 如果使用 `QLANG_AR` 覆盖路径，建议指向 `llvm-ar` / `ar` / `llvm-lib.exe` / `lib.exe` 或对应 `.cmd` wrapper
 - 如果 `QLANG_AR` 指向的 wrapper 文件名本身看不出是 `ar` 风格还是 `lib` 风格，可以额外设置 `QLANG_AR_STYLE=ar|lib`
@@ -82,7 +85,8 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - runtime startup object
 - dynamic library
 - closure / struct / tuple / cleanup lowering
-- extern ABI 与 runtime glue
+- `extern "c"` 导出函数与 richer ABI surface
+- extern ABI 与 runtime glue 的其余部分
 
 这不是功能缺失，而是为了先把 Phase 4 的后端边界做稳，而不是把系统 LLVM、链接器和运行时问题一口气缠死。
 
@@ -173,6 +177,7 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - `cargo test -p ql-cli`
 - `cargo test -p ql-cli --test codegen`
 - `cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir`
+- `cargo run -p ql-cli -- build fixtures/codegen/pass/extern_c_build.ql --emit llvm-ir`
 - 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit obj`
 - 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit exe`
 - 在 clang 与 archiver 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_library.ql --emit staticlib`
@@ -186,6 +191,7 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 它会直接驱动真实 `ql build`，锁定：
 
 - LLVM IR 快照
+- extern C direct-call LLVM IR 快照
 - mock object / executable / static library 产物
 - build 路径上的 unsupported diagnostics
 

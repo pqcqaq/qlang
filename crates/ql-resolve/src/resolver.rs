@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use ql_ast::Path;
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{
-    BlockId, CallArg, EnumVariant, ExprId, ExprKind, Field, Function, GenericParam, Global, ItemId,
-    ItemKind, MatchArm, Module, Param, PatternId, PatternKind, StmtKind, StructLiteralField,
-    TypeId, TypeKind, VariantFields, WherePredicate,
+    BlockId, CallArg, EnumVariant, ExprId, ExprKind, Field, Function, FunctionRef, GenericParam,
+    Global, ItemId, ItemKind, MatchArm, Module, Param, PatternId, PatternKind, StmtKind,
+    StructLiteralField, TypeId, TypeKind, VariantFields, WherePredicate,
 };
 
 use crate::{
@@ -93,7 +93,7 @@ impl<'module> Resolver<'module> {
                     self.bind_value(
                         self.module_scope,
                         function.name.clone(),
-                        ValueResolution::Item(item_id),
+                        ValueResolution::Function(FunctionRef::Item(item_id)),
                     );
                 }
                 ItemKind::Const(global) | ItemKind::Static(global) => {
@@ -142,11 +142,14 @@ impl<'module> Resolver<'module> {
                     );
                 }
                 ItemKind::ExternBlock(extern_block) => {
-                    for function in &extern_block.functions {
+                    for (index, function) in extern_block.functions.iter().enumerate() {
                         self.bind_value(
                             self.module_scope,
                             function.name.clone(),
-                            ValueResolution::Item(item_id),
+                            ValueResolution::Function(FunctionRef::ExternBlockMember {
+                                block: item_id,
+                                index,
+                            }),
                         );
                     }
                 }

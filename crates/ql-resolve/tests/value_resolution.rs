@@ -1,6 +1,6 @@
 mod support;
 
-use ql_hir::{ExprKind, PatternKind, StmtKind};
+use ql_hir::{ExprKind, FunctionRef, PatternKind, StmtKind};
 use ql_resolve::ValueResolution;
 
 use support::{find_function, find_impl_method, find_item_id, path, resolved};
@@ -227,5 +227,43 @@ fn factory() -> Int {
             "collections",
             "HashMap"
         ])))
+    );
+}
+
+#[test]
+fn resolves_extern_block_functions_as_callable_declarations() {
+    let (module, resolution) = resolved(
+        r#"
+extern "c" {
+    fn q_add(left: Int, right: Int) -> Int
+}
+
+fn main() -> Int {
+    return q_add(1, 2)
+}
+"#,
+    );
+
+    let extern_block = module
+        .items
+        .iter()
+        .copied()
+        .find(|&item_id| matches!(module.item(item_id).kind, ql_hir::ItemKind::ExternBlock(_)))
+        .expect("extern block should exist");
+    let main = find_function(&module, "main");
+    let body = module.block(main.body.expect("main should have a body"));
+    let StmtKind::Return(Some(expr)) = &module.stmt(body.statements[0]).kind else {
+        panic!("main body should start with a return statement");
+    };
+    let ExprKind::Call { callee, .. } = &module.expr(*expr).kind else {
+        panic!("main return expression should be a call");
+    };
+
+    assert_eq!(
+        resolution.expr_resolution(*callee),
+        Some(&ValueResolution::Function(FunctionRef::ExternBlockMember {
+            block: extern_block,
+            index: 0,
+        }))
     );
 }

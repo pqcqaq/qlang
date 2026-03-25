@@ -132,3 +132,36 @@ impl Counter {
 
     assert_eq!(analysis.hover_at(nth_offset(source, "value", 2)), None);
 }
+
+#[test]
+fn extern_block_function_queries_follow_callable_declarations() {
+    let source = r#"
+extern "c" {
+    fn q_add(left: Int, right: Int) -> Int
+}
+
+fn main() -> Int {
+    return q_add(1, 2)
+}
+"#;
+
+    let analysis = analyzed(source);
+    let hover = analysis
+        .hover_at(nth_offset(source, "q_add", 2))
+        .expect("extern call should hover");
+
+    assert_eq!(hover.kind, SymbolKind::Function);
+    assert_eq!(
+        hover.detail,
+        "extern \"c\" fn q_add(left: Int, right: Int) -> Int"
+    );
+    assert_eq!(hover.definition_span, Some(nth_span(source, "q_add", 1)));
+    assert_eq!(
+        analysis.definition_at(nth_offset(source, "q_add", 2)),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Function,
+            name: "q_add".to_owned(),
+            span: nth_span(source, "q_add", 1),
+        })
+    );
+}

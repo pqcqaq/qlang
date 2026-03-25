@@ -185,6 +185,26 @@ fn main() -> Int {
 }
 
 #[test]
+fn reports_call_argument_type_mismatches_for_extern_block_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+extern "c" {
+    fn q_add(left: Int, right: Int) -> Int
+}
+
+fn main() -> Int {
+    return q_add(true, 2)
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"call argument has type mismatch: expected `Int`, found `Bool`".to_string())
+    );
+}
+
+#[test]
 fn reports_non_callable_values() {
     let diagnostics = diagnostic_messages(
         r#"

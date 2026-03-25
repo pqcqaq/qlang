@@ -542,6 +542,7 @@ fn render_constant(constant: &crate::Constant) -> String {
         crate::Constant::Bool(value) => value.to_string(),
         crate::Constant::None => "none".to_owned(),
         crate::Constant::Void => "Void".to_owned(),
+        crate::Constant::Function { name, .. } => name.clone(),
         crate::Constant::Item { name, .. } => name.clone(),
         crate::Constant::Import(path) => render_path(path),
         crate::Constant::UnresolvedName(name) => format!("unresolved({name})"),

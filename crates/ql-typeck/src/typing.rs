@@ -288,10 +288,10 @@ impl<'a> Checker<'a> {
                 .cloned()
                 .unwrap_or(Ty::Unknown),
             Some(ValueResolution::SelfValue) => self.self_type.clone().unwrap_or(Ty::Unknown),
+            Some(ValueResolution::Function(function_ref)) => {
+                Ty::from_function_ref(self.module, self.resolution, *function_ref)
+            }
             Some(ValueResolution::Item(item_id)) => match &self.module.item(*item_id).kind {
-                ItemKind::Function(function) => {
-                    Ty::from_function(self.module, self.resolution, function)
-                }
                 ItemKind::Const(global) | ItemKind::Static(global) => {
                     lower_type(self.module, self.resolution, global.ty)
                 }
@@ -437,9 +437,10 @@ impl<'a> Checker<'a> {
     }
 
     fn call_signature(&self, callee: ExprId, callee_ty: &Ty) -> Option<Signature> {
-        if let Some(ValueResolution::Item(item_id)) = self.resolution.expr_resolution(callee)
-            && let ItemKind::Function(function) = &self.module.item(*item_id).kind
+        if let Some(ValueResolution::Function(function_ref)) =
+            self.resolution.expr_resolution(callee)
         {
+            let function = self.module.function(*function_ref);
             return Some(Signature::from_function(
                 self.module,
                 self.resolution,

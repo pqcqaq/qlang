@@ -6,7 +6,7 @@ use std::fmt::Write;
 
 use ql_ast::{BinaryOp, UnaryOp};
 use ql_diagnostics::{Diagnostic, Label};
-use ql_hir::{self as hir, ItemId, ItemKind, Param, PatternKind};
+use ql_hir::{self as hir, FunctionRef, ItemId, ItemKind, Param, PatternKind};
 use ql_mir::{
     self as mir, BodyOwner, Constant, LocalOrigin, Operand, Place, Rvalue, StatementKind,
     TerminatorKind,
@@ -38,13 +38,14 @@ pub fn emit_module(input: CodegenInput<'_>) -> Result<String, CodegenError> {
 
 #[derive(Clone, Debug)]
 struct FunctionSignature {
-    item_id: ItemId,
+    function_ref: FunctionRef,
     name: String,
     llvm_name: String,
     span: Span,
     return_ty: Ty,
     return_llvm_ty: String,
     params: Vec<ParamSignature>,
+    body_style: FunctionBodyStyle,
 }
 
 #[derive(Clone, Debug)]
@@ -60,6 +61,12 @@ struct PreparedFunction {
     local_types: HashMap<mir::LocalId, Ty>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FunctionBodyStyle {
+    Definition,
+    Declaration,
+}
+
 #[derive(Clone, Debug)]
 struct LoweredValue {
     ty: Ty,
@@ -69,7 +76,7 @@ struct LoweredValue {
 
 struct ModuleEmitter<'a> {
     input: CodegenInput<'a>,
-    signatures: HashMap<ItemId, FunctionSignature>,
+    signatures: HashMap<FunctionRef, FunctionSignature>,
 }
 
 impl<'a> ModuleEmitter<'a> {
@@ -90,10 +97,10 @@ impl<'a> ModuleEmitter<'a> {
         };
         let mut diagnostics = Vec::new();
 
-        for item_id in &reachable {
-            match self.build_signature(*item_id, entry == Some(*item_id)) {
+        for function_ref in &reachable {
+            match self.build_signature(*function_ref, entry == Some(*function_ref)) {
                 Ok(signature) => {
-                    self.signatures.insert(*item_id, signature);
+                    self.signatures.insert(*function_ref, signature);
                 }
                 Err(mut errors) => diagnostics.append(&mut errors),
             }
@@ -104,8 +111,15 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         let mut prepared = Vec::new();
-        for item_id in &reachable {
-            match self.prepare_function(*item_id) {
+        for function_ref in &reachable {
+            let Some(signature) = self.signatures.get(function_ref) else {
+                continue;
+            };
+            if signature.body_style != FunctionBodyStyle::Definition {
+                continue;
+            }
+
+            match self.prepare_function(*function_ref) {
                 Ok(function) => prepared.push(function),
                 Err(mut errors) => diagnostics.append(&mut errors),
             }
@@ -115,10 +129,10 @@ impl<'a> ModuleEmitter<'a> {
             return Err(CodegenError::new(diagnostics));
         }
 
-        Ok(self.render_module(&prepared, entry))
+        Ok(self.render_module(&reachable, &prepared, entry))
     }
 
-    fn find_entry_function(&self) -> Result<ItemId, CodegenError> {
+    fn find_entry_function(&self) -> Result<FunctionRef, CodegenError> {
         self.input
             .hir
             .items
@@ -130,6 +144,7 @@ impl<'a> ModuleEmitter<'a> {
                     ItemKind::Function(function) if function.name == "main"
                 )
             })
+            .map(FunctionRef::Item)
             .ok_or_else(|| {
                 CodegenError::new(vec![
                     Diagnostic::error("missing entry function `main`").with_note(
@@ -139,32 +154,52 @@ impl<'a> ModuleEmitter<'a> {
             })
     }
 
-    fn collect_library_functions(&self) -> Vec<ItemId> {
-        let mut items = self
+    fn collect_library_functions(&self) -> Vec<FunctionRef> {
+        let mut functions = self
             .input
             .hir
             .items
             .iter()
             .copied()
-            .filter(|&item_id| matches!(&self.input.hir.item(item_id).kind, ItemKind::Function(_)))
+            .filter_map(|item_id| match &self.input.hir.item(item_id).kind {
+                ItemKind::Function(function) if function.body.is_some() => {
+                    Some(FunctionRef::Item(item_id))
+                }
+                _ => None,
+            })
             .collect::<Vec<_>>();
-        items.sort_by_key(|item_id| item_id.index());
-        items
+        functions.sort_by_key(|function_ref| function_sort_key(*function_ref));
+        functions
     }
 
-    fn collect_reachable_functions(&self, entry: ItemId) -> Vec<ItemId> {
+    fn collect_reachable_functions(&self, entry: FunctionRef) -> Vec<FunctionRef> {
         let mut queue = VecDeque::from([entry]);
         let mut visited = HashSet::new();
         let mut ordered = Vec::new();
 
-        while let Some(item_id) = queue.pop_front() {
-            if !visited.insert(item_id) {
+        while let Some(function_ref) = queue.pop_front() {
+            if !visited.insert(function_ref) {
                 continue;
             }
 
-            ordered.push(item_id);
+            ordered.push(function_ref);
 
-            let Some(body) = self.input.mir.body_for_owner(BodyOwner::Item(item_id)) else {
+            let FunctionBodyStyle::Definition = self
+                .signatures
+                .get(&function_ref)
+                .map(|signature| signature.body_style)
+                .unwrap_or_else(|| {
+                    if self.input.hir.function(function_ref).body.is_some() {
+                        FunctionBodyStyle::Definition
+                    } else {
+                        FunctionBodyStyle::Declaration
+                    }
+                })
+            else {
+                continue;
+            };
+            let owner = self.input.hir.function_owner_item(function_ref);
+            let Some(body) = self.input.mir.body_for_owner(BodyOwner::Item(owner)) else {
                 continue;
             };
 
@@ -179,27 +214,32 @@ impl<'a> ModuleEmitter<'a> {
             }
         }
 
-        ordered.sort_by_key(|item_id| item_id.index());
+        ordered.sort_by_key(|function_ref| function_sort_key(*function_ref));
         ordered
     }
 
-    fn collect_rvalue_callees(&self, value: &Rvalue, queue: &mut VecDeque<ItemId>) {
+    fn collect_rvalue_callees(&self, value: &Rvalue, queue: &mut VecDeque<FunctionRef>) {
         if let Rvalue::Call {
-            callee: Operand::Constant(Constant::Item { item, .. }),
+            callee: Operand::Constant(Constant::Function { function, .. }),
             ..
         } = value
         {
-            queue.push_back(*item);
+            queue.push_back(*function);
         }
     }
 
     fn build_signature(
         &self,
-        item_id: ItemId,
+        function_ref: FunctionRef,
         is_entry: bool,
     ) -> Result<FunctionSignature, Vec<Diagnostic>> {
-        let function = self.lookup_function(item_id)?;
+        let function = self.lookup_function(function_ref)?;
         let mut diagnostics = Vec::new();
+        let body_style = if function.body.is_some() {
+            FunctionBodyStyle::Definition
+        } else {
+            FunctionBodyStyle::Declaration
+        };
 
         if !function.generics.is_empty() {
             diagnostics.push(unsupported(
@@ -213,17 +253,30 @@ impl<'a> ModuleEmitter<'a> {
                 "LLVM IR backend foundation does not support `async fn` yet",
             ));
         }
-        if function.is_unsafe {
+        if function.is_unsafe && body_style == FunctionBodyStyle::Definition {
             diagnostics.push(unsupported(
                 function.span,
                 "LLVM IR backend foundation does not support `unsafe fn` bodies yet",
             ));
         }
-        if function.abi.is_some() {
+        if body_style == FunctionBodyStyle::Definition && function.abi.is_some() {
             diagnostics.push(unsupported(
                 function.span,
                 "LLVM IR backend foundation does not support explicit function ABIs yet",
             ));
+        }
+        if body_style == FunctionBodyStyle::Declaration {
+            match function.abi.as_deref() {
+                Some("c") => {}
+                Some(_) => diagnostics.push(unsupported(
+                    function.span,
+                    "LLVM IR backend foundation only supports `extern \"c\"` declarations yet",
+                )),
+                None => diagnostics.push(
+                    Diagnostic::error(format!("function `{}` has no body to lower", function.name))
+                        .with_label(Label::new(function.span)),
+                ),
+            }
         }
 
         let mut params = Vec::new();
@@ -260,6 +313,14 @@ impl<'a> ModuleEmitter<'a> {
         };
 
         if is_entry {
+            if body_style != FunctionBodyStyle::Definition {
+                diagnostics.push(
+                    Diagnostic::error(
+                        "entry function `main` must have a body in the P4 backend foundation",
+                    )
+                    .with_label(Label::new(function.span)),
+                );
+            }
             if !params.is_empty() {
                 diagnostics.push(Diagnostic::error(
                     "entry function `main` must not take parameters in the P4 backend foundation",
@@ -283,26 +344,39 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         Ok(FunctionSignature {
-            item_id,
+            function_ref,
             name: function.name.clone(),
-            llvm_name: llvm_symbol_name(item_id, &function.name),
+            llvm_name: match body_style {
+                FunctionBodyStyle::Definition => llvm_symbol_name(
+                    self.input.hir.function_owner_item(function_ref),
+                    &function.name,
+                ),
+                FunctionBodyStyle::Declaration => sanitize_symbol(&function.name),
+            },
             span: function.span,
             return_ty,
             return_llvm_ty,
             params,
+            body_style,
         })
     }
 
-    fn prepare_function(&self, item_id: ItemId) -> Result<PreparedFunction, Vec<Diagnostic>> {
+    fn prepare_function(
+        &self,
+        function_ref: FunctionRef,
+    ) -> Result<PreparedFunction, Vec<Diagnostic>> {
         let signature = self
             .signatures
-            .get(&item_id)
+            .get(&function_ref)
             .cloned()
             .expect("signatures should be built before preparation");
+        debug_assert_eq!(signature.body_style, FunctionBodyStyle::Definition);
         let body = self
             .input
             .mir
-            .body_for_owner(BodyOwner::Item(item_id))
+            .body_for_owner(BodyOwner::Item(
+                self.input.hir.function_owner_item(function_ref),
+            ))
             .ok_or_else(|| {
                 vec![
                     Diagnostic::error(format!(
@@ -475,21 +549,21 @@ impl<'a> ModuleEmitter<'a> {
                         self.infer_operand_type(body, &arg.value, local_types, diagnostics, span);
                 }
 
-                let Operand::Constant(Constant::Item { item, .. }) = callee else {
+                let Operand::Constant(Constant::Function { function, .. }) = callee else {
                     diagnostics.push(unsupported(
                         span,
-                        "LLVM IR backend foundation only supports direct top-level function calls",
+                        "LLVM IR backend foundation only supports direct resolved function calls",
                     ));
                     return None;
                 };
 
                 self.signatures
-                    .get(item)
+                    .get(function)
                     .map(|signature| signature.return_ty.clone())
                     .or_else(|| {
                         diagnostics.push(unsupported(
                         span,
-                        "LLVM IR backend foundation could not resolve the direct callee signature",
+                        "LLVM IR backend foundation could not resolve the direct callee declaration",
                     ));
                         None
                     })
@@ -603,8 +677,8 @@ impl<'a> ModuleEmitter<'a> {
                 Constant::Integer(_) => Some(Ty::Builtin(BuiltinType::Int)),
                 Constant::Bool(_) => Some(Ty::Builtin(BuiltinType::Bool)),
                 Constant::Void => Some(void_ty()),
-                Constant::Item { item, .. } => {
-                    self.signatures.get(item).map(|signature| Ty::Callable {
+                Constant::Function { function, .. } => {
+                    self.signatures.get(function).map(|signature| Ty::Callable {
                         params: signature
                             .params
                             .iter()
@@ -612,6 +686,13 @@ impl<'a> ModuleEmitter<'a> {
                             .collect(),
                         ret: Box::new(signature.return_ty.clone()),
                     })
+                }
+                Constant::Item { .. } => {
+                    diagnostics.push(unsupported(
+                        span,
+                        "LLVM IR backend foundation does not support item values here",
+                    ));
+                    None
                 }
                 Constant::String { .. } => {
                     diagnostics.push(unsupported(
@@ -725,19 +806,43 @@ impl<'a> ModuleEmitter<'a> {
         }
     }
 
-    fn lookup_function(&self, item_id: ItemId) -> Result<&hir::Function, Vec<Diagnostic>> {
-        match &self.input.hir.item(item_id).kind {
-            ItemKind::Function(function) => Ok(function),
-            _ => Err(vec![
-                Diagnostic::error(
-                    "LLVM IR backend foundation can only lower top-level free functions",
-                )
-                .with_label(Label::new(self.input.hir.item(item_id).span)),
-            ]),
+    fn lookup_function(
+        &self,
+        function_ref: FunctionRef,
+    ) -> Result<&hir::Function, Vec<Diagnostic>> {
+        match function_ref {
+            FunctionRef::Item(item_id) => match &self.input.hir.item(item_id).kind {
+                ItemKind::Function(function) => Ok(function),
+                _ => Err(vec![
+                    Diagnostic::error(
+                        "LLVM IR backend foundation can only lower free function declarations",
+                    )
+                    .with_label(Label::new(self.input.hir.item(item_id).span)),
+                ]),
+            },
+            FunctionRef::ExternBlockMember { block, index } => {
+                match &self.input.hir.item(block).kind {
+                    ItemKind::ExternBlock(extern_block) => Ok(extern_block
+                        .functions
+                        .get(index)
+                        .expect("extern function index should be valid")),
+                    _ => Err(vec![
+                    Diagnostic::error(
+                        "LLVM IR backend foundation expected an extern block function declaration",
+                    )
+                    .with_label(Label::new(self.input.hir.item(block).span)),
+                ]),
+                }
+            }
         }
     }
 
-    fn render_module(&self, functions: &[PreparedFunction], entry: Option<ItemId>) -> String {
+    fn render_module(
+        &self,
+        reachable: &[FunctionRef],
+        functions: &[PreparedFunction],
+        entry: Option<FunctionRef>,
+    ) -> String {
         let mut output = String::new();
         let _ = writeln!(
             output,
@@ -751,15 +856,27 @@ impl<'a> ModuleEmitter<'a> {
         );
         let _ = writeln!(output, "target triple = \"{}\"", default_target_triple());
 
-        for function in functions {
+        for function_ref in reachable {
             output.push('\n');
-            self.render_function(&mut output, function);
+            if let Some(function) = functions
+                .iter()
+                .find(|function| function.signature.function_ref == *function_ref)
+            {
+                self.render_function(&mut output, function);
+                continue;
+            }
+
+            let signature = self
+                .signatures
+                .get(function_ref)
+                .expect("reachable functions should have signatures");
+            self.render_declaration(&mut output, signature);
         }
 
         if let Some(entry) = entry
             && let Some(entry_function) = functions
                 .iter()
-                .find(|function| function.signature.item_id == entry)
+                .find(|function| function.signature.function_ref == entry)
         {
             output.push('\n');
             self.render_host_entry_wrapper(&mut output, entry_function);
@@ -792,11 +909,29 @@ impl<'a> ModuleEmitter<'a> {
         output.push_str("}\n");
     }
 
+    fn render_declaration(&self, output: &mut String, function: &FunctionSignature) {
+        let params = function
+            .params
+            .iter()
+            .map(|param| param.llvm_ty.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(
+            output,
+            "declare {} @{}({params})",
+            function.return_llvm_ty, function.llvm_name
+        );
+    }
+
     fn render_function(&self, output: &mut String, function: &PreparedFunction) {
         let body = self
             .input
             .mir
-            .body_for_owner(BodyOwner::Item(function.signature.item_id))
+            .body_for_owner(BodyOwner::Item(
+                self.input
+                    .hir
+                    .function_owner_item(function.signature.function_ref),
+            ))
             .expect("prepared function should still have a MIR body");
         let params = function
             .signature
@@ -985,13 +1120,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         match value {
             Rvalue::Use(operand) => Some(self.render_operand(output, operand, span)),
             Rvalue::Call { callee, args } => {
-                let Operand::Constant(Constant::Item { item, .. }) = callee else {
-                    panic!("prepared calls should only contain direct top-level callees");
+                let Operand::Constant(Constant::Function { function, .. }) = callee else {
+                    panic!("prepared calls should only contain direct resolved callees");
                 };
                 let signature = self
                     .emitter
                     .signatures
-                    .get(item)
+                    .get(function)
                     .expect("callee signatures should exist");
                 let rendered_args = args
                     .iter()
@@ -1160,8 +1295,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     llvm_ty: "void".to_owned(),
                     repr: "void".to_owned(),
                 },
+                Constant::Function { .. } => {
+                    panic!(
+                        "prepared non-call operands should not materialize function declarations"
+                    )
+                }
                 Constant::Item { .. } => {
-                    panic!("prepared non-call operands should not materialize function items")
+                    panic!("prepared operands should not materialize unsupported item values")
                 }
                 Constant::String { .. }
                 | Constant::None
@@ -1317,6 +1457,13 @@ fn llvm_symbol_name(item_id: ItemId, name: &str) -> String {
     format!("ql_{}_{}", item_id.index(), sanitize_symbol(name))
 }
 
+fn function_sort_key(function_ref: FunctionRef) -> (usize, usize) {
+    match function_ref {
+        FunctionRef::Item(item_id) => (item_id.index(), 0),
+        FunctionRef::ExternBlockMember { block, index } => (block.index(), index + 1),
+    }
+}
+
 fn llvm_slot_name(body: &mir::MirBody, local_id: mir::LocalId) -> String {
     format!(
         "%l{}_{}",
@@ -1469,6 +1616,42 @@ fn add_two(value: Int) -> Int {
         assert!(rendered.contains("define i64 @ql_0_add_one(i64 %arg0)"));
         assert!(rendered.contains("define i64 @ql_1_add_two(i64 %arg0)"));
         assert!(!rendered.contains("define i32 @main()"));
+    }
+
+    #[test]
+    fn emits_extern_c_declarations_for_direct_calls() {
+        let rendered = emit(
+            r#"
+extern "c" {
+    fn q_add(left: Int, right: Int) -> Int
+}
+
+fn main() -> Int {
+    return q_add(1, 2)
+}
+"#,
+        );
+
+        assert!(rendered.contains("declare i64 @q_add(i64, i64)"));
+        assert!(rendered.contains("define i64 @ql_1_main()"));
+        assert!(rendered.contains("call i64 @q_add(i64 1, i64 2)"));
+    }
+
+    #[test]
+    fn rejects_non_c_extern_declarations() {
+        let messages = emit_error(
+            r#"
+extern "rust" fn q_add(left: Int, right: Int) -> Int
+
+fn main() -> Int {
+    return q_add(1, 2)
+}
+"#,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message == "LLVM IR backend foundation only supports `extern \"c\"` declarations yet"
+        }));
     }
 
     #[test]

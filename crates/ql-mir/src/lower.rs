@@ -917,6 +917,10 @@ impl<'a> BodyBuilder<'a> {
                 .self_local
                 .map(|local| Operand::Place(Place::local(local)))
                 .unwrap_or_else(|| Operand::Constant(Constant::UnresolvedName("self".to_owned()))),
+            Some(ValueResolution::Function(function)) => Operand::Constant(Constant::Function {
+                function: *function,
+                name: self.hir.function(*function).name.clone(),
+            }),
             Some(ValueResolution::Item(item)) => Operand::Constant(Constant::Item {
                 item: *item,
                 name: self.item_name(*item),
@@ -936,6 +940,7 @@ impl<'a> BodyBuilder<'a> {
                 .get(binding.index)
                 .and_then(|local| *local),
             ValueResolution::SelfValue => self.self_local,
+            ValueResolution::Function(_) => None,
             ValueResolution::Item(_) | ValueResolution::Import(_) => None,
         }
     }

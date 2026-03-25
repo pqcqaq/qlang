@@ -5,7 +5,7 @@ mod render;
 use std::collections::HashMap;
 
 use ql_ast::{BinaryOp, Path, UnaryOp};
-use ql_hir::{ExprId, ItemId, PatternId};
+use ql_hir::{ExprId, FunctionRef, ItemId, PatternId};
 use ql_span::Span;
 
 pub use ids::{BasicBlockId, BodyId, CleanupId, ClosureId, LocalId, ScopeId, StatementId};
@@ -317,6 +317,7 @@ pub enum Constant {
     Bool(bool),
     None,
     Void,
+    Function { function: FunctionRef, name: String },
     Item { item: ItemId, name: String },
     Import(Path),
     UnresolvedName(String),

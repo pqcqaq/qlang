@@ -1,6 +1,6 @@
 use std::fmt;
 
-use ql_hir::{Function, ItemId, ItemKind, Module, Param, TypeId, TypeKind};
+use ql_hir::{Function, FunctionRef, ItemId, ItemKind, Module, Param, TypeId, TypeKind};
 use ql_resolve::{BuiltinType, ResolutionMap, TypeResolution};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -169,6 +169,14 @@ impl Ty {
         );
 
         Ty::Callable { params, ret }
+    }
+
+    pub fn from_function_ref(
+        module: &Module,
+        resolution: &ResolutionMap,
+        function_ref: FunctionRef,
+    ) -> Ty {
+        Self::from_function(module, resolution, module.function(function_ref))
     }
 }
 

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use ql_ast::Path;
 use ql_diagnostics::Diagnostic;
-use ql_hir::{BlockId, ExprId, ItemId, LocalId, PatternId, TypeId};
+use ql_hir::{BlockId, ExprId, FunctionRef, ItemId, LocalId, PatternId, TypeId};
 use ql_span::Span;
 
 pub use ids::ScopeId;
@@ -197,6 +197,7 @@ pub enum ValueResolution {
     Local(LocalId),
     Param(ParamBinding),
     SelfValue,
+    Function(FunctionRef),
     Item(ItemId),
     Import(Path),
 }

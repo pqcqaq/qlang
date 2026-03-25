@@ -321,15 +321,20 @@ P4 已经启动，但当前完成的是 “backend foundation” 而不是“完
   - toolchain failure 时保留中间 `.codegen.ll`，link 或 archive failure 时再额外保留 `.codegen.obj/.o` 便于调试
 - 当前支持的 MIR/codegen 子集已经可测试：
   - 顶层 free function
+  - `extern "c"` 顶层声明与 extern block 声明
   - `main` 入口
   - scalar integer / `Bool` / `Void`
   - direct function call
   - arithmetic / compare / branch / return
+- extern C direct-call 路径已经进入真实后端：
+  - resolve / typeck / MIR / codegen 现在共享 callable identity，而不再把 extern block 成员粗暴折叠成宿主 item
+  - direct `extern "c"` 调用现在会 lower 成 LLVM `declare @symbol` + `call @symbol`
+  - extern block direct call 现在也会参与参数个数与参数类型检查
 - 基础 codegen golden harness 已开始落地：
   - `crates/ql-cli/tests/codegen.rs`
   - `tests/codegen/pass/`
   - `tests/codegen/fail/`
-  - 黑盒锁定 `llvm-ir` / `obj` / `exe` / `staticlib` 与 build-time unsupported diagnostics
+  - 黑盒锁定 `llvm-ir` / `obj` / `exe` / `staticlib`、extern C direct-call lowering 与 build-time unsupported diagnostics
 - 当前 unsupported backend features 会返回结构化 diagnostics，而不是静默跳过
 
 当前仍刻意未完成：
@@ -338,7 +343,7 @@ P4 已经启动，但当前完成的是 “backend foundation” 而不是“完
 - 更完整的系统 LLVM / linker family 组合探测
 - runtime startup object / richer ABI glue
 - closure / tuple / struct / cleanup lowering
-- extern ABI 更完整支持
+- `extern "c"` 导出函数与 extern ABI 更完整支持
 - codegen golden snapshot harness 扩容到更多 lowering / toolchain / fail 场景
 
 当前 P4 的核心目标不是“一次性做完整原生平台层”，而是先把 driver/codegen 边界、program/library 入口模型、失败模型和测试面固定住，避免后续为了补链接和运行时而大规模返工。

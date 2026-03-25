@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use ql_ast::{Path, ReceiverKind};
 use ql_hir::{
-    BlockId, ExprId, ExprKind, Function, GenericParam, ItemId, ItemKind, LocalId, MatchArm, Module,
-    Param, PatternId, PatternKind, TypeAlias, TypeId, TypeKind, WherePredicate,
+    BlockId, ExprId, ExprKind, Function, FunctionRef, GenericParam, ItemId, ItemKind, LocalId,
+    MatchArm, Module, Param, PatternId, PatternKind, TypeAlias, TypeId, TypeKind, WherePredicate,
 };
 use ql_resolve::{
     BuiltinType, GenericBinding, ParamBinding, ResolutionMap, ScopeId, TypeResolution,
@@ -106,6 +106,7 @@ struct QueryIndexBuilder<'a> {
     typeck: &'a TypeckResult,
     occurrences: Vec<IndexedSymbol>,
     item_defs: HashMap<ItemId, SymbolData>,
+    function_defs: HashMap<FunctionRef, SymbolData>,
     local_defs: HashMap<LocalId, SymbolData>,
     param_defs: HashMap<ParamBinding, SymbolData>,
     generic_defs: HashMap<GenericBinding, SymbolData>,
@@ -126,6 +127,7 @@ impl<'a> QueryIndexBuilder<'a> {
             typeck,
             occurrences: Vec::new(),
             item_defs: HashMap::new(),
+            function_defs: HashMap::new(),
             local_defs: HashMap::new(),
             param_defs: HashMap::new(),
             generic_defs: HashMap::new(),
@@ -156,7 +158,7 @@ impl<'a> QueryIndexBuilder<'a> {
     fn index_item_definitions(&mut self, item_id: ItemId) {
         match &self.module.item(item_id).kind {
             ItemKind::Function(function) => {
-                self.define_item(
+                let symbol = self.define_item(
                     item_id,
                     SymbolKind::Function,
                     function.name.clone(),
@@ -164,6 +166,8 @@ impl<'a> QueryIndexBuilder<'a> {
                     render_function_signature(self.module, function),
                     None,
                 );
+                self.function_defs
+                    .insert(FunctionRef::Item(item_id), symbol);
 
                 if let Some(scope) = self.resolution.item_scope(item_id) {
                     self.index_function_bindings(function, scope, None);
@@ -259,7 +263,7 @@ impl<'a> QueryIndexBuilder<'a> {
                     self.index_generic_bindings(scope, &trait_decl.generics);
                 }
                 for method in &trait_decl.methods {
-                    self.define_function_site(method);
+                    self.define_function_site(None, method);
                     if let Some(scope) = self.resolution.function_scope(method.span) {
                         self.index_function_bindings(method, scope, Some("Self".to_owned()));
                     }
@@ -273,7 +277,7 @@ impl<'a> QueryIndexBuilder<'a> {
 
                 let receiver_ty = render_type(self.module, impl_block.target);
                 for method in &impl_block.methods {
-                    self.define_function_site(method);
+                    self.define_function_site(None, method);
                     if let Some(scope) = self.resolution.function_scope(method.span) {
                         self.index_function_bindings(method, scope, Some(receiver_ty.clone()));
                     }
@@ -283,7 +287,7 @@ impl<'a> QueryIndexBuilder<'a> {
             ItemKind::Extend(extend_block) => {
                 let receiver_ty = render_type(self.module, extend_block.target);
                 for method in &extend_block.methods {
-                    self.define_function_site(method);
+                    self.define_function_site(None, method);
                     if let Some(scope) = self.resolution.function_scope(method.span) {
                         self.index_function_bindings(method, scope, Some(receiver_ty.clone()));
                     }
@@ -305,8 +309,14 @@ impl<'a> QueryIndexBuilder<'a> {
                 }
             }
             ItemKind::ExternBlock(extern_block) => {
-                for function in &extern_block.functions {
-                    self.define_function_site(function);
+                for (index, function) in extern_block.functions.iter().enumerate() {
+                    self.define_function_site(
+                        Some(FunctionRef::ExternBlockMember {
+                            block: item_id,
+                            index,
+                        }),
+                        function,
+                    );
                     if let Some(scope) = self.resolution.function_scope(function.span) {
                         self.index_function_bindings(function, scope, None);
                     }
@@ -797,7 +807,7 @@ impl<'a> QueryIndexBuilder<'a> {
         span: Span,
         detail: String,
         ty: Option<String>,
-    ) {
+    ) -> SymbolData {
         let symbol = SymbolData {
             kind,
             name,
@@ -806,10 +816,11 @@ impl<'a> QueryIndexBuilder<'a> {
             definition_span: Some(span),
         };
         self.push_occurrence(span, &symbol);
-        self.item_defs.insert(item_id, symbol);
+        self.item_defs.insert(item_id, symbol.clone());
+        symbol
     }
 
-    fn define_function_site(&mut self, function: &Function) {
+    fn define_function_site(&mut self, function_ref: Option<FunctionRef>, function: &Function) {
         let symbol = SymbolData {
             kind: SymbolKind::Function,
             name: function.name.clone(),
@@ -818,6 +829,9 @@ impl<'a> QueryIndexBuilder<'a> {
             definition_span: Some(function.name_span),
         };
         self.push_occurrence(function.name_span, &symbol);
+        if let Some(function_ref) = function_ref {
+            self.function_defs.insert(function_ref, symbol);
+        }
     }
 
     fn define_param(
@@ -896,6 +910,9 @@ impl<'a> QueryIndexBuilder<'a> {
             ValueResolution::Local(local_id) => self.local_defs.get(local_id).cloned(),
             ValueResolution::Param(binding) => self.param_defs.get(binding).cloned(),
             ValueResolution::SelfValue => self.lookup_self(scope),
+            ValueResolution::Function(function_ref) => {
+                self.function_defs.get(function_ref).cloned()
+            }
             ValueResolution::Item(item_id) => self.item_defs.get(item_id).cloned(),
             ValueResolution::Import(path) => Some(SymbolData {
                 kind: SymbolKind::Import,

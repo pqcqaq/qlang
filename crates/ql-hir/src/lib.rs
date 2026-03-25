@@ -7,6 +7,12 @@ use ql_span::Span;
 pub use ids::{BlockId, ExprId, ItemId, LocalId, PatternId, StmtId, TypeId};
 pub use lower::lower_module;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FunctionRef {
+    Item(ItemId),
+    ExternBlockMember { block: ItemId, index: usize },
+}
+
 /// Semantic-ready module lowered out of the surface AST.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Module {
@@ -49,6 +55,30 @@ impl Module {
 
     pub fn local(&self, id: LocalId) -> &Local {
         &self.local_data[id.index()]
+    }
+
+    pub fn function(&self, function_ref: FunctionRef) -> &Function {
+        match function_ref {
+            FunctionRef::Item(item_id) => match &self.item(item_id).kind {
+                ItemKind::Function(function) => function,
+                _ => panic!("HIR function reference must point at a top-level function item"),
+            },
+            FunctionRef::ExternBlockMember { block, index } => match &self.item(block).kind {
+                ItemKind::ExternBlock(extern_block) => extern_block
+                    .functions
+                    .get(index)
+                    .expect("HIR extern function reference index must be valid"),
+                _ => panic!("HIR extern function reference must point at an extern block item"),
+            },
+        }
+    }
+
+    pub const fn function_owner_item(&self, function_ref: FunctionRef) -> ItemId {
+        match function_ref {
+            FunctionRef::Item(item_id) | FunctionRef::ExternBlockMember { block: item_id, .. } => {
+                item_id
+            }
+        }
     }
 
     pub fn locals(&self) -> &[Local] {

@@ -76,7 +76,8 @@ Current semantic baseline in `ql check`:
   - `ql build <file> --emit obj`, `--emit exe`, and `--emit staticlib` now lower through compiler/archive toolchain boundaries into native artifacts
   - emitted LLVM IR now contains an internal Qlang entry plus a host `main` wrapper, so the same IR can back `.ll`, `.obj`, and `.exe`
   - `--emit staticlib` uses library-mode codegen, so single-file libraries no longer require a top-level `main`
-  - current codegen support is intentionally narrow: top-level free functions, scalar integer/bool/void types, direct function calls, arithmetic, simple branching, and return
+  - current codegen support is intentionally narrow: top-level free functions, `extern "c"` declarations, scalar integer/bool/void types, direct function calls, arithmetic, simple branching, and return
+  - direct `extern "c"` declarations now flow through resolve/typeck/MIR/codegen with a shared callable identity, so extern-block calls participate in argument checking and lower to LLVM `declare` + `call`
   - unsupported backend features currently fail with structured diagnostics instead of silent partial lowering
   - native artifact emission currently requires clang on PATH or an explicit `QLANG_CLANG` override
   - static library emission currently requires an archive tool on PATH or an explicit `QLANG_AR` override
@@ -84,7 +85,7 @@ Current semantic baseline in `ql check`:
   - on Windows, `QLANG_AR` should point to an invocable archive binary such as `llvm-lib.exe`, `lib.exe`, or a `.cmd` wrapper
   - when `QLANG_AR` points to a wrapper whose filename does not imply the archive flavor, `QLANG_AR_STYLE=ar|lib` can pin the expected CLI style
   - toolchain failures preserve intermediate `.codegen.ll` and, when linking or archiving fails, intermediate `.codegen.obj` / `.codegen.o` files for debugging
-  - `crates/ql-cli/tests/codegen.rs` now provides black-box codegen snapshots for `llvm-ir`, `obj`, `exe`, `staticlib`, and build-time unsupported diagnostics
+  - `crates/ql-cli/tests/codegen.rs` now provides black-box codegen snapshots for `llvm-ir`, `obj`, `exe`, `staticlib`, `extern "c"` direct-call lowering, and build-time unsupported diagnostics
 - `qlsp` now consumes that shared analysis layer to provide LSP hover, go-to-definition, and live diagnostics for open documents
 - Phase 3 has started with a structural MIR slice:
   - function bodies lower into explicit basic blocks, statements, terminators, locals, scopes, and cleanup actions
@@ -139,7 +140,7 @@ Current intentional gap:
 - Phase 3 ownership is intentionally narrow in this slice: direct-local `move self` consumption and direct-local `move` closure capture are diagnosed today; general call contracts, place-sensitive moves, borrow/escape analysis, and drop elaboration are still future passes on top of the current MIR foundation
 - cleanup-aware ownership is still intentionally partial: nested `defer` runtime modeling and projection-sensitive cleanup effects are future work
 - closure ownership is still intentionally partial: MIR capture facts, stable closure IDs, and conservative may-escape facts exist, but closure environment lowering and full escape graph construction are still future work
-- Phase 4 native artifacts are still intentionally partial: basic executable and static-library emission now exist, but separate linker-family discovery, runtime startup glue, dynamic libraries, and richer ABI support remain follow-up work
+- Phase 4 native artifacts are still intentionally partial: basic executable and static-library emission now exist, and direct `extern "c"` declarations can lower into LLVM/module builds, but separate linker-family discovery, runtime startup glue, dynamic libraries, exported ABIs, and richer ABI support remain follow-up work
 
 Quick start:
 
@@ -148,6 +149,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test
 cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir
+cargo run -p ql-cli -- build fixtures/codegen/pass/extern_c_build.ql --emit llvm-ir
 cargo run -p ql-cli -- fmt fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- mir fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- ownership fixtures/parser/pass/basic.ql

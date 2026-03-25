@@ -608,6 +608,7 @@ impl<'a> BodyAnalyzer<'a> {
             ValueResolution::Local(local) => self.binding_locals.get(local).copied(),
             ValueResolution::Param(binding) => self.param_locals.get(&binding.index).copied(),
             ValueResolution::SelfValue => self.receiver_local,
+            ValueResolution::Function(_) => None,
             ValueResolution::Item(_) | ValueResolution::Import(_) => None,
         }
     }
