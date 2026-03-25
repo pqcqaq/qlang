@@ -125,8 +125,8 @@ source
 当前状态：
 
 - parser fixture tests 已稳定
-- HIR lowering tests 已建立
-- semantic duplicate-diagnostics tests 已建立
+- HIR lowering tests 已拆到 `crates/ql-hir/tests/`，并覆盖 shorthand normalization、closure param span、named call arg span
+- semantic duplicate-diagnostics tests 已拆到 `crates/ql-typeck/tests/`，并按 duplicates / rendering 分组
 - 精确 name span 与 shorthand lowering 回归已建立
 - UI diagnostics snapshot harness 还未开始，这是 P2 后续要补的关键基础设施
 

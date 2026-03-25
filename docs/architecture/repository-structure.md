@@ -92,6 +92,12 @@ Qlang 仓库结构必须同时服务于四类工作：
 
 也就是说，当前目录结构不是“设计图纸”，而是已经有一个最小但真实的前端闭环，并且已经开始向语义层扩展。
 
+当前测试组织也有一条明确约束：
+
+- parser 夹具回归继续放在 `fixtures/` + `crates/ql-parser/tests/`
+- `ql-hir` 与 `ql-typeck` 的细粒度语义回归优先放在各自 crate 的 `tests/` 目录，避免继续把大块测试堆回源码文件尾部
+- 仓库根 `tests/` 保留给后续 CLI 黑盒、UI diagnostics、codegen、FFI 这类跨 crate 测试
+
 ## 为什么这样分
 
 ### `docs/` 和 `spec/` 分离
