@@ -349,7 +349,11 @@ impl Parser {
                 self.eat(TokenKind::Semi);
             }
             self.expect(TokenKind::RBrace, "expected `}` after extern block")?;
-            return Ok(Item::ExternBlock(ExternBlock { abi, functions }));
+            return Ok(Item::ExternBlock(ExternBlock {
+                visibility: inherited_visibility,
+                abi,
+                functions,
+            }));
         }
 
         let visibility = if self.eat(TokenKind::Pub) {
@@ -531,6 +535,15 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<TypeExpr, ()> {
+        if self.eat(TokenKind::Star) {
+            let is_const = self.eat(TokenKind::Const);
+            let inner = self.parse_type()?;
+            return Ok(TypeExpr::Pointer {
+                is_const,
+                inner: Box::new(inner),
+            });
+        }
+
         if self.eat(TokenKind::LParen) {
             let mut inner = Vec::new();
             while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {

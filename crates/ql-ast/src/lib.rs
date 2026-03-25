@@ -184,6 +184,7 @@ pub struct TypeAliasDecl {
 /// Group of imported foreign function signatures under a shared ABI.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExternBlock {
+    pub visibility: Visibility,
     pub abi: String,
     pub functions: Vec<FunctionDecl>,
 }
@@ -191,6 +192,10 @@ pub struct ExternBlock {
 /// Surface type expressions before semantic lowering.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeExpr {
+    Pointer {
+        is_const: bool,
+        inner: Box<TypeExpr>,
+    },
     Named {
         path: Path,
         args: Vec<TypeExpr>,

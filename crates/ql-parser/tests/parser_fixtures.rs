@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use ql_ast::Item;
+use ql_ast::{Item, Param, TypeExpr, Visibility};
 use ql_parser::parse_source;
 
 fn fixture(path: &str) -> PathBuf {
@@ -89,6 +89,39 @@ fn parses_phase1_declarations_fixture() {
             .items
             .iter()
             .any(|item| matches!(item, Item::Function(function) if function.abi.is_some()))
+    );
+
+    let extern_block = module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::ExternBlock(block) => Some(block),
+            _ => None,
+        })
+        .expect("phase1 fixture should contain extern block");
+    assert_eq!(extern_block.visibility, Visibility::Public);
+    assert!(matches!(
+        extern_block.functions.first(),
+        Some(function)
+            if matches!(
+                function.params.first(),
+                Some(Param::Regular {
+                    ty: TypeExpr::Pointer { is_const: true, inner },
+                    ..
+                }) if matches!(
+                    inner.as_ref(),
+                    TypeExpr::Named { path, args } if path.segments.as_slice() == ["U8"] && args.is_empty()
+                )
+            )
+    ));
+
+    assert!(
+        module.items.iter().any(|item| matches!(
+            item,
+            Item::Function(function)
+                if function.name == "keyword_passthrough"
+                    && matches!(function.params.first(), Some(Param::Regular { name, .. }) if name == "type")
+        ))
     );
 }
 

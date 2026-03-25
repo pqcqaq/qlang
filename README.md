@@ -37,6 +37,7 @@ Current implemented syntax slice:
 - fn / trait / impl / extend / extern
 - struct / data struct / enum
 - generics on declarations and type position, `where`, callable types, tuple return
+- escaped identifiers, underscore-prefixed bindings, and raw pointer types in signatures
 - closures with `=>` and `move`
 - `unsafe fn` and `unsafe { ... }`
 - `if` / `match` expressions

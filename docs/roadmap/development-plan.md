@@ -80,6 +80,7 @@
 - parser 从单文件拆分为 `item` / `expr` / `pattern` / `stmt` 模块
 - 函数签名模型已统一，可覆盖 free function、trait method、extern function
 - parser fixture 与 formatter 稳定性测试覆盖到控制流和 Phase 1 声明切片
+- Phase 1 评审缺口已补齐：`*const` 原始指针类型、转义标识符、下划线前缀绑定、`pub extern` block round-trip、非法数字后缀诊断
 
 Phase 1 已完成，下一切片：
 

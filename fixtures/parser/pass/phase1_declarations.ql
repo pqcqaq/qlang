@@ -13,6 +13,10 @@ pub struct Buffer[T] {
     value: T,
 }
 
+pub struct Tagged {
+    `type`: String,
+}
+
 pub enum Result[T, E] {
     Ok(T),
     Err(E),
@@ -52,8 +56,13 @@ where
     return right
 }
 
-extern "c" {
-    fn strlen(ptr: U8) -> USize
+pub fn keyword_passthrough(`type`: String) -> Tagged {
+    let _value = `type`
+    return Tagged { `type`: _value }
+}
+
+pub extern "c" {
+    fn strlen(ptr: *const U8) -> USize
 }
 
 extern "c" pub unsafe fn q_add(left: I32, right: I32) -> I32

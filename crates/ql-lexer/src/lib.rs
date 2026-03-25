@@ -175,17 +175,32 @@ impl<'a> Lexer<'a> {
             }
 
             if ch.is_ascii_digit() {
-                tokens.push(self.lex_number());
+                match self.lex_number() {
+                    Ok(token) => tokens.push(token),
+                    Err(error) => errors.push(error),
+                }
                 continue;
             }
 
             if ch == '_' {
-                self.bump();
-                tokens.push(Token {
-                    kind: TokenKind::Underscore,
-                    text: "_".into(),
-                    span: Span::new(start, self.current_offset()),
-                });
+                if self.peek_next_char().is_some_and(is_ident_continue) {
+                    tokens.push(self.lex_ident_or_keyword());
+                } else {
+                    self.bump();
+                    tokens.push(Token {
+                        kind: TokenKind::Underscore,
+                        text: "_".into(),
+                        span: Span::new(start, self.current_offset()),
+                    });
+                }
+                continue;
+            }
+
+            if ch == '`' {
+                match self.lex_escaped_ident() {
+                    Ok(token) => tokens.push(token),
+                    Err(error) => errors.push(error),
+                }
                 continue;
             }
 
@@ -383,15 +398,96 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn lex_number(&mut self) -> Token {
+    fn lex_escaped_ident(&mut self) -> Result<Token, LexError> {
         let start = self.current_offset();
         self.bump();
-        self.consume_while(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-        Token {
-            kind: TokenKind::Int,
-            text: self.source[start..self.current_offset()].to_string(),
-            span: Span::new(start, self.current_offset()),
+
+        let ident_start = self.current_offset();
+        if !self.peek_char().is_some_and(is_ident_start) {
+            return Err(LexError {
+                message: "escaped identifier must start with a valid identifier character".into(),
+                span: Span::new(start, self.current_offset()),
+            });
         }
+
+        self.bump();
+        self.consume_while(is_ident_continue);
+        let ident_end = self.current_offset();
+
+        if self.peek_char() != Some('`') {
+            self.consume_until(|ch| ch == '`' || ch.is_whitespace());
+            if self.peek_char() == Some('`') {
+                self.bump();
+            }
+            return Err(LexError {
+                message: "unterminated escaped identifier".into(),
+                span: Span::new(start, self.current_offset()),
+            });
+        }
+
+        self.bump();
+        Ok(Token {
+            kind: TokenKind::Ident,
+            text: self.source[ident_start..ident_end].to_string(),
+            span: Span::new(start, self.current_offset()),
+        })
+    }
+
+    fn lex_number(&mut self) -> Result<Token, LexError> {
+        let start = self.current_offset();
+        self.bump();
+
+        if self.source.as_bytes()[start] == b'0' {
+            match self.peek_char() {
+                Some('x') | Some('X') => {
+                    self.bump();
+                    if !self.consume_number_digits(|ch| ch.is_ascii_hexdigit()) {
+                        return Err(LexError {
+                            message: "expected hexadecimal digits after `0x`".into(),
+                            span: Span::new(start, self.current_offset()),
+                        });
+                    }
+                }
+                Some('b') | Some('B') => {
+                    self.bump();
+                    if !self.consume_number_digits(|ch| matches!(ch, '0' | '1')) {
+                        return Err(LexError {
+                            message: "expected binary digits after `0b`".into(),
+                            span: Span::new(start, self.current_offset()),
+                        });
+                    }
+                }
+                Some('o') | Some('O') => {
+                    self.bump();
+                    if !self.consume_number_digits(|ch| matches!(ch, '0'..='7')) {
+                        return Err(LexError {
+                            message: "expected octal digits after `0o`".into(),
+                            span: Span::new(start, self.current_offset()),
+                        });
+                    }
+                }
+                _ => {
+                    self.consume_number_digits(|ch| ch.is_ascii_digit());
+                }
+            }
+        } else {
+            self.consume_number_digits(|ch| ch.is_ascii_digit());
+        }
+
+        let literal_end = self.current_offset();
+        if self.peek_char().is_some_and(is_ident_start) {
+            self.consume_while(is_ident_continue);
+            return Err(LexError {
+                message: "invalid numeric literal suffix".into(),
+                span: Span::new(start, self.current_offset()),
+            });
+        }
+
+        Ok(Token {
+            kind: TokenKind::Int,
+            text: self.source[start..literal_end].to_string(),
+            span: Span::new(start, literal_end),
+        })
     }
 
     fn lex_ident_or_keyword(&mut self) -> Token {
@@ -478,6 +574,21 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn consume_number_digits(&mut self, predicate: impl Fn(char) -> bool) -> bool {
+        let mut consumed_digit = false;
+        while let Some((_, ch)) = self.peek() {
+            if predicate(ch) {
+                consumed_digit = true;
+                self.bump();
+            } else if ch == '_' {
+                self.bump();
+            } else {
+                break;
+            }
+        }
+        consumed_digit
+    }
+
     fn bump(&mut self) -> Option<(usize, char)> {
         let next = self.chars.get(self.idx).copied();
         self.idx += usize::from(next.is_some());
@@ -509,4 +620,52 @@ fn is_ident_start(ch: char) -> bool {
 
 fn is_ident_continue(ch: char) -> bool {
     ch == '_' || ch.is_alphanumeric()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TokenKind, lex};
+
+    fn token_kinds(source: &str) -> Vec<TokenKind> {
+        let (tokens, errors) = lex(source);
+        assert!(errors.is_empty(), "unexpected lex errors: {errors:?}");
+        tokens.into_iter().map(|token| token.kind).collect()
+    }
+
+    #[test]
+    fn lexes_underscore_prefixed_identifiers() {
+        let (tokens, errors) = lex("let _value = 1");
+
+        assert!(errors.is_empty(), "unexpected lex errors: {errors:?}");
+        assert_eq!(tokens[1].kind, TokenKind::Ident);
+        assert_eq!(tokens[1].text, "_value");
+    }
+
+    #[test]
+    fn lexes_escaped_identifiers_as_plain_idents() {
+        let (tokens, errors) = lex("let `type` = 1");
+
+        assert!(errors.is_empty(), "unexpected lex errors: {errors:?}");
+        assert_eq!(tokens[1].kind, TokenKind::Ident);
+        assert_eq!(tokens[1].text, "type");
+    }
+
+    #[test]
+    fn rejects_numeric_literals_with_identifier_suffixes() {
+        let (tokens, errors) = lex("let value = 1abc");
+
+        assert_eq!(
+            token_kinds("let _ = 0xff"),
+            vec![
+                TokenKind::Let,
+                TokenKind::Underscore,
+                TokenKind::Eq,
+                TokenKind::Int,
+                TokenKind::Eof
+            ]
+        );
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].message, "invalid numeric literal suffix");
+        assert_eq!(tokens.last().map(|token| token.kind), Some(TokenKind::Eof));
+    }
 }
