@@ -14,6 +14,12 @@ Documentation lives in the VitePress subproject under [`docs/`](./docs).
 
 ## Docs
 
+Online docs:
+
+- https://qlang.zust.online/
+
+Local development:
+
 ```bash
 cd docs
 npm install
