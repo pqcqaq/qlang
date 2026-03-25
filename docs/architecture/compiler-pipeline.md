@@ -79,6 +79,30 @@ source
 - 当前 diagnostics 采取保守策略，只落地绝对可靠的一条语义错误：method receiver 作用域外非法使用 `self`
 - 对 unresolved global / unresolved type 的系统性报错刻意延后，直到 import / module / prelude 语义稳定，否则会把现有 fixture 误判成失败
 
+### Type Checking
+
+- 在 `ql-resolve` 之后消费 scope graph 和 name resolution 结果
+- 先做 first-pass typing，而不是一开始就做完整 Hindley-Milner / trait solver / effect system
+- 通过 `unknown` 作为受控退化点，避免在未建模模块语义、成员解析和索引协议前制造大面积假阳性
+
+截至 2026-03-25，`ql-typeck` 已经从 duplicate checker 演进为第一版真正的类型检查层：
+
+- duplicate-oriented diagnostics 继续保留
+- 新增 return-value 类型检查
+- 新增 `if` / `while` / match guard 的 `Bool` 条件检查
+- 新增 callable 调用的 arity / argument type checking
+- 新增 top-level `const` / `static` 值引用的声明类型传播
+- 新增 tuple-based multi-return destructuring 的第一层约束
+- 新增 direct closure against expected callable type 的 first-pass checking
+- 新增 struct literal 的 field / missing-field 检查
+
+当前依然保守的边界：
+
+- 未解析成员调用、索引协议、import prelude 细节时，表达式类型会主动退化为 `unknown`
+- unresolved global / unresolved type diagnostics 仍然延后
+- 完整 trait solving、泛型实参推断、effect checking 和 flow-sensitive narrowing 还未开始
+- 默认参数仍停留在语言设计稿，没有进入当前 AST / HIR / type checker 的实现边界
+
 ### MIR
 
 - 明确控制流和所有权动作
@@ -117,6 +141,7 @@ source
 - `ql check` 已不再只会打印 parser 错误，而是统一输出 parser 与 semantic diagnostics
 - duplicate diagnostics 现在区分 primary / secondary label，header 会稳定锚定在真正的 duplicate 位置，而不是偶然取第一个 label
 - 当前 duplicate 语义检查已经覆盖 top-level definition、generic parameter、function parameter、enum variant、trait/impl/extend method、pattern binding、struct field、struct-pattern field、struct-literal field、named call arg
+- 当前调用参数结构检查还会拒绝“命名参数开始之后又出现位置参数”的调用形式，和语法设计文档保持一致
 - 现阶段先覆盖文本输出；错误码、fix-it 和 JSON 输出留给后续切片
 
 ## LLVM 后端边界
@@ -143,7 +168,7 @@ source
 - parser fixture tests 已稳定
 - HIR lowering tests 已拆到 `crates/ql-hir/tests/`，并覆盖 shorthand normalization、closure param span、named call arg span
 - name resolution tests 已拆到 `crates/ql-resolve/tests/`，并按 value / type / scopes / rendering 分组
-- semantic duplicate-diagnostics tests 已拆到 `crates/ql-typeck/tests/`，并按 duplicates / rendering 分组
+- semantic tests 已拆到 `crates/ql-typeck/tests/`，并按 duplicates / typing / rendering 分组
 - 精确 name span 与 shorthand lowering 回归已建立
 - UI diagnostics snapshot harness 还未开始，这是 P2 后续要补的关键基础设施
 

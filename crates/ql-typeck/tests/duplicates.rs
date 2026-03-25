@@ -160,6 +160,26 @@ fn main() {
 }
 
 #[test]
+fn detects_positional_arguments_after_named_arguments() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn run(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+fn main() -> Int {
+    return run(left: 1, 2)
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"positional argument cannot appear after named arguments".to_string())
+    );
+}
+
+#[test]
 fn detects_duplicate_methods_in_trait_impl_and_extend_blocks() {
     let diagnostics = diagnostic_messages(
         r#"

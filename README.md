@@ -64,6 +64,14 @@ Current semantic baseline in `ql check`:
 - scope graph construction now covers module, callable, block, closure, match-arm, and for-loop scopes
 - best-effort resolution now covers locals, params, generics, imports, builtin types, struct literal roots, and pattern path roots
 - conservative resolution diagnostics currently add `self` misuse detection without eagerly rejecting unresolved globals or types
+- first-pass typing now covers:
+  - return-value checking
+  - bool conditions in `if` / `while` / match guards
+  - callable argument arity and argument-type checking
+  - tuple-based multi-return destructuring
+  - direct closure checking against expected callable types
+  - struct literal field checking and missing-field validation
+  - positional-after-named call ordering diagnostics
 - duplicate checks currently cover:
   - top-level definitions
   - generic parameters
@@ -73,6 +81,10 @@ Current semantic baseline in `ql check`:
   - pattern bindings
   - struct / struct-pattern / struct-literal fields
   - named call arguments
+
+Current intentional gap:
+
+- default parameters are part of the language design docs, but they are not lowered into AST/HIR or checked yet
 
 Quick start:
 

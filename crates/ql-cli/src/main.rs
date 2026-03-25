@@ -117,8 +117,9 @@ fn format_path(path: &Path, write: bool) -> Result<(), u8> {
 fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
     let ast = parse_source(source).map_err(parse_errors_to_diagnostics)?;
     let hir = lower_module(&ast);
-    let mut diagnostics = resolve_hir_module(&hir).diagnostics;
-    diagnostics.extend(check_hir_module(&hir));
+    let resolution = resolve_hir_module(&hir);
+    let mut diagnostics = resolution.diagnostics.clone();
+    diagnostics.extend(check_hir_module(&hir, &resolution));
 
     if diagnostics.is_empty() {
         Ok(())
@@ -347,6 +348,22 @@ fn main() -> Int {
 
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message == "invalid use of `self` outside a method receiver scope"
+        }));
+    }
+
+    #[test]
+    fn analyze_source_reports_type_errors() {
+        let diagnostics = analyze_source(
+            r#"
+fn main() -> Int {
+    return "oops"
+}
+"#,
+        )
+        .expect_err("source should have type diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "return value has type mismatch: expected `Int`, found `String`"
         }));
     }
 }

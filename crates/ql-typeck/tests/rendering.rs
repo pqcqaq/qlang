@@ -26,3 +26,35 @@ fn main() {
 
     assert!(rendered.contains("error: sample.ql:3:18: duplicate named call argument `left`"));
 }
+
+#[test]
+fn rendered_positional_after_named_arguments_anchor_to_offending_argument() {
+    let source = r#"
+fn run(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+fn main() -> Int {
+    return run(left: 1, 2)
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(rendered.contains(
+        "error: sample.ql:7:25: positional argument cannot appear after named arguments"
+    ));
+}
+
+#[test]
+fn rendered_return_type_mismatches_anchor_to_return_expression() {
+    let source = r#"
+fn main() -> Int {
+    return "oops"
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(rendered.contains(
+        "error: sample.ql:3:5: return value has type mismatch: expected `Int`, found `String`"
+    ));
+}

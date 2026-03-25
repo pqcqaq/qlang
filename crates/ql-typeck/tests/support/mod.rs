@@ -8,7 +8,8 @@ use ql_parser::parse_source;
 pub fn diagnostics(source: &str) -> Vec<Diagnostic> {
     let ast = parse_source(source).expect("source should parse");
     let hir = ql_hir::lower_module(&ast);
-    ql_typeck::check_module(&hir)
+    let resolution = ql_resolve::resolve_module(&hir);
+    ql_typeck::check_module(&hir, &resolution)
 }
 
 pub fn diagnostic_messages(source: &str) -> Vec<String> {

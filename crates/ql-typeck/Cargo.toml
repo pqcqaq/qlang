@@ -6,8 +6,10 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+ql-ast.workspace = true
 ql-diagnostics.workspace = true
 ql-hir.workspace = true
+ql-resolve.workspace = true
 ql-span.workspace = true
 
 [dev-dependencies]
