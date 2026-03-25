@@ -53,6 +53,14 @@ export default defineConfig({
           {
             text: "2026-03-25 设计稿",
             link: "/plans/2026-03-25-qlang-design"
+          },
+          {
+            text: "2026-03-26 P3.1 MIR 设计",
+            link: "/plans/2026-03-26-phase3-mir-foundation"
+          },
+          {
+            text: "2026-03-26 P3.2 Ownership 设计",
+            link: "/plans/2026-03-26-phase3-ownership-facts"
           }
         ]
       }

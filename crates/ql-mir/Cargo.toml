@@ -1,5 +1,5 @@
 [package]
-name = "ql-analysis"
+name = "ql-mir"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -7,11 +7,9 @@ license.workspace = true
 
 [dependencies]
 ql-ast.workspace = true
-ql-diagnostics.workspace = true
 ql-hir.workspace = true
-ql-borrowck.workspace = true
-ql-mir.workspace = true
-ql-parser.workspace = true
 ql-resolve.workspace = true
 ql-span.workspace = true
-ql-typeck.workspace = true
+
+[dev-dependencies]
+ql-parser.workspace = true

@@ -137,6 +137,31 @@ source
 - 适合 borrow、escape、drop、effect lowering
 - 适合后续优化和代码生成准备
 
+当前已经真正落地的 P3.1 切片是：
+
+- 新增 `ql-mir` crate，承接 HIR -> MIR lowering
+- MIR body 已包含：
+  - stable body / block / statement / local / scope / cleanup IDs
+  - basic block + terminator 结构
+  - local / temp / return slot / lexical scope
+  - `defer` 注册与显式 cleanup 执行步骤
+- `if` / block tail / `while` / `loop` / `break` / `continue` 已 lower 到显式 CFG
+- `match` 与 `for` / `for await` 暂时保持为“结构化高层 terminator”，而不是现在就硬编码成低层状态机
+- `ql-analysis` 已把 MIR 纳入统一分析快照，`ql mir` 可以直接渲染当前 MIR 文本
+
+当前已经继续落地的 P3.2 切片是：
+
+- 新增 `ql-borrowck` crate，明确作为 MIR 之上的独立 ownership facts 分析层
+- 当前 analysis 只跟踪 MIR local 的 moved-vs-usable 状态，不假装已经实现完整 borrow checker
+- block entry / exit 状态、read / write / consume 事件以及 merge 规则已经固定成可测试输出
+- 当前只有一种用户可见消费语义会触发诊断：
+  - direct local receiver
+  - 唯一匹配的 method candidate
+  - receiver 为 `move self`
+- `ql-analysis` 已把这层结果纳入统一分析快照，`ql ownership` 可以直接渲染当前 ownership facts
+
+这意味着 P3 的下一步应继续建立在这层 MIR + ownership facts 之上做更一般的 call contract、borrow / escape 分析和 drop elaboration，而不是重新回头改 HIR。
+
 这种分层能避免“一套 AST 硬扛一切”导致的后期崩塌。
 
 ## 查询系统

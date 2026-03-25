@@ -391,8 +391,10 @@ name = "ql-analysis"
 version = "0.1.0"
 dependencies = [
  "ql-ast",
+ "ql-borrowck",
  "ql-diagnostics",
  "ql-hir",
+ "ql-mir",
  "ql-parser",
  "ql-resolve",
  "ql-span",
@@ -404,6 +406,20 @@ name = "ql-ast"
 version = "0.1.0"
 dependencies = [
  "ql-span",
+]
+
+[[package]]
+name = "ql-borrowck"
+version = "0.1.0"
+dependencies = [
+ "ql-ast",
+ "ql-diagnostics",
+ "ql-hir",
+ "ql-mir",
+ "ql-parser",
+ "ql-resolve",
+ "ql-span",
+ "ql-typeck",
 ]
 
 [[package]]
@@ -457,6 +473,17 @@ dependencies = [
  "ql-span",
  "tokio",
  "tower-lsp",
+]
+
+[[package]]
+name = "ql-mir"
+version = "0.1.0"
+dependencies = [
+ "ql-ast",
+ "ql-hir",
+ "ql-parser",
+ "ql-resolve",
+ "ql-span",
 ]
 
 [[package]]

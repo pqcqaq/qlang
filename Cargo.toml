@@ -9,6 +9,8 @@ members = [
     "crates/ql-analysis",
     "crates/ql-lsp",
     "crates/ql-hir",
+    "crates/ql-mir",
+    "crates/ql-borrowck",
     "crates/ql-resolve",
     "crates/ql-typeck",
     "crates/ql-cli",
@@ -32,5 +34,7 @@ ql-diagnostics = { path = "crates/ql-diagnostics" }
 ql-analysis = { path = "crates/ql-analysis" }
 ql-lsp = { path = "crates/ql-lsp" }
 ql-hir = { path = "crates/ql-hir" }
+ql-mir = { path = "crates/ql-mir" }
+ql-borrowck = { path = "crates/ql-borrowck" }
 ql-resolve = { path = "crates/ql-resolve" }
 ql-typeck = { path = "crates/ql-typeck" }

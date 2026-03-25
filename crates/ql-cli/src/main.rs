@@ -47,6 +47,22 @@ fn run() -> Result<(), u8> {
 
             format_path(Path::new(&path), write)
         }
+        "mir" => {
+            let Some(path) = args.next() else {
+                eprintln!("error: `ql mir` expects a file path");
+                return Err(1);
+            };
+
+            render_mir_path(Path::new(&path))
+        }
+        "ownership" => {
+            let Some(path) = args.next() else {
+                eprintln!("error: `ql ownership` expects a file path");
+                return Err(1);
+            };
+
+            render_ownership_path(Path::new(&path))
+        }
         _ => {
             eprintln!("error: unknown command `{command}`");
             print_usage();
@@ -106,6 +122,52 @@ fn format_path(path: &Path, write: bool) -> Result<(), u8> {
         }
         Err(errors) => {
             print_diagnostics(path, &source, &parse_errors_to_diagnostics(errors));
+            Err(1)
+        }
+    }
+}
+
+fn render_mir_path(path: &Path) -> Result<(), u8> {
+    let source = fs::read_to_string(path).map_err(|error| {
+        eprintln!("error: failed to read `{}`: {error}", path.display());
+        1
+    })?;
+
+    match analyze_semantics(&source) {
+        Ok(analysis) => {
+            print!("{}", analysis.render_mir());
+            if analysis.has_errors() {
+                print_diagnostics(path, &source, analysis.diagnostics());
+                Err(1)
+            } else {
+                Ok(())
+            }
+        }
+        Err(diagnostics) => {
+            print_diagnostics(path, &source, &diagnostics);
+            Err(1)
+        }
+    }
+}
+
+fn render_ownership_path(path: &Path) -> Result<(), u8> {
+    let source = fs::read_to_string(path).map_err(|error| {
+        eprintln!("error: failed to read `{}`: {error}", path.display());
+        1
+    })?;
+
+    match analyze_semantics(&source) {
+        Ok(analysis) => {
+            print!("{}", analysis.render_borrowck());
+            if analysis.has_errors() {
+                print_diagnostics(path, &source, analysis.diagnostics());
+                Err(1)
+            } else {
+                Ok(())
+            }
+        }
+        Err(diagnostics) => {
+            print_diagnostics(path, &source, &diagnostics);
             Err(1)
         }
     }
@@ -219,6 +281,8 @@ fn print_usage() {
     eprintln!("usage:");
     eprintln!("  ql check <file-or-dir>");
     eprintln!("  ql fmt <file> [--write]");
+    eprintln!("  ql mir <file>");
+    eprintln!("  ql ownership <file>");
 }
 
 #[cfg(test)]
@@ -228,7 +292,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{analyze_source, collect_ql_files};
+    use super::{analyze_source, collect_ql_files, render_mir_path, render_ownership_path};
 
     struct TestDir {
         path: PathBuf,
@@ -350,5 +414,52 @@ fn main() -> Int {
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message == "return value has type mismatch: expected `Int`, found `String`"
         }));
+    }
+
+    #[test]
+    fn render_mir_path_succeeds_for_valid_sources() {
+        let dir = TestDir::new("ql-cli-mir");
+        dir.write(
+            "sample.ql",
+            r#"
+fn main() -> Int {
+    let value = 1
+    return value
+}
+"#,
+        );
+
+        assert!(render_mir_path(&dir.path().join("sample.ql")).is_ok());
+    }
+
+    #[test]
+    fn render_ownership_path_surfaces_ownership_reports() {
+        let dir = TestDir::new("ql-cli-ownership");
+        dir.write(
+            "sample.ql",
+            r#"
+struct User {
+    name: String,
+}
+
+impl User {
+    fn into_json(move self) -> String {
+        return self.name
+    }
+}
+
+fn main() -> String {
+    let user = User { name: "ql" }
+    user.into_json()
+    return user.name
+}
+"#,
+        );
+
+        let result = render_ownership_path(&dir.path().join("sample.ql"));
+        assert!(
+            result.is_err(),
+            "ownership diagnostics should fail the command"
+        );
     }
 }

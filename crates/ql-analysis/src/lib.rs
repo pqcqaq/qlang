@@ -2,8 +2,12 @@ mod query;
 
 use std::path::Path;
 
+use ql_borrowck::{
+    BorrowckResult, analyze_module as analyze_borrowck, render_result as render_borrowck_result,
+};
 use ql_diagnostics::{Diagnostic, Label, render_diagnostics};
 use ql_hir::{ExprId, LocalId, PatternId, lower_module};
+use ql_mir::{MirModule, lower_module as lower_mir, render_module as render_mir_module};
 use ql_parser::{ParseError, parse_source};
 use ql_resolve::{ResolutionMap, resolve_module};
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
@@ -15,8 +19,10 @@ pub use query::{DefinitionTarget, HoverInfo, SymbolKind};
 pub struct Analysis {
     ast: ql_ast::Module,
     hir: ql_hir::Module,
+    mir: MirModule,
     resolution: ResolutionMap,
     typeck: TypeckResult,
+    borrowck: BorrowckResult,
     index: QueryIndex,
     diagnostics: Vec<Diagnostic>,
 }
@@ -30,12 +36,20 @@ impl Analysis {
         &self.hir
     }
 
+    pub fn mir(&self) -> &MirModule {
+        &self.mir
+    }
+
     pub fn resolution(&self) -> &ResolutionMap {
         &self.resolution
     }
 
     pub fn typeck(&self) -> &TypeckResult {
         &self.typeck
+    }
+
+    pub fn borrowck(&self) -> &BorrowckResult {
+        &self.borrowck
     }
 
     pub fn diagnostics(&self) -> &[Diagnostic] {
@@ -80,6 +94,14 @@ impl Analysis {
     pub fn render_diagnostics(&self, path: &Path, source: &str) -> String {
         render_diagnostics(path, source, self.diagnostics())
     }
+
+    pub fn render_mir(&self) -> String {
+        render_mir_module(&self.mir, &self.hir)
+    }
+
+    pub fn render_borrowck(&self) -> String {
+        render_borrowck_result(&self.borrowck, &self.mir)
+    }
 }
 
 /// Analyze one source string. Parse failures are returned as diagnostics directly.
@@ -88,16 +110,21 @@ pub fn analyze_source(source: &str) -> Result<Analysis, Vec<Diagnostic>> {
     let ast = parse_source(source).map_err(parse_errors_to_diagnostics)?;
     let hir = lower_module(&ast);
     let resolution = resolve_module(&hir);
+    let mir = lower_mir(&hir, &resolution);
     let typeck = analyze_types(&hir, &resolution);
+    let borrowck = analyze_borrowck(&hir, &resolution, &typeck, &mir);
     let index = QueryIndex::build(source, &hir, &resolution, &typeck);
     let mut diagnostics = resolution.diagnostics.clone();
     diagnostics.extend(typeck.diagnostics().iter().cloned());
+    diagnostics.extend(borrowck.diagnostics().iter().cloned());
 
     Ok(Analysis {
         ast,
         hir,
+        mir,
         resolution,
         typeck,
+        borrowck,
         index,
         diagnostics,
     })
@@ -215,5 +242,82 @@ fn main() -> Int {
         assert!(analysis.diagnostics().iter().any(|diagnostic| {
             diagnostic.message == "invalid use of `self` outside a method receiver scope"
         }));
+    }
+
+    #[test]
+    fn exposes_rendered_mir_for_debugging() {
+        let analysis = analyze_source(
+            r#"
+fn main() -> Int {
+    let value = 1
+    return value
+}
+"#,
+        )
+        .expect("source should analyze");
+
+        let rendered = analysis.render_mir();
+        assert!(rendered.contains("body 0 main"));
+        assert!(rendered.contains("bind_pattern value <-"));
+        assert!(rendered.contains("return"));
+    }
+
+    #[test]
+    fn exposes_rendered_ownership_for_debugging() {
+        let analysis = analyze_source(
+            r#"
+struct User {
+    name: String,
+}
+
+impl User {
+    fn into_json(move self) -> String {
+        return self.name
+    }
+}
+
+fn main() -> String {
+    let user = User { name: "ql" }
+    user.into_json();
+    return user.name
+}
+"#,
+        )
+        .expect("borrowck diagnostics should still yield an analysis snapshot");
+
+        let rendered = analysis.render_borrowck();
+        assert!(rendered.contains("ownership main"));
+        assert!(rendered.contains("consume(move self into_json)"));
+    }
+
+    #[test]
+    fn includes_borrowck_diagnostics_in_the_combined_output() {
+        let analysis = analyze_source(
+            r#"
+struct User {
+    name: String,
+}
+
+impl User {
+    fn into_json(move self) -> String {
+        return self.name
+    }
+}
+
+fn main() -> String {
+    let user = User { name: "ql" }
+    user.into_json()
+    return user.name
+}
+"#,
+        )
+        .expect("borrowck diagnostics should still yield an analysis snapshot");
+
+        assert!(
+            analysis
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| { diagnostic.message == "local `user` was used after move" })
+        );
     }
 }
