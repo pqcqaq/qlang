@@ -13,6 +13,8 @@ members = [
     "crates/ql-borrowck",
     "crates/ql-resolve",
     "crates/ql-typeck",
+    "crates/ql-driver",
+    "crates/ql-codegen-llvm",
     "crates/ql-cli",
 ]
 resolver = "2"
@@ -38,3 +40,5 @@ ql-mir = { path = "crates/ql-mir" }
 ql-borrowck = { path = "crates/ql-borrowck" }
 ql-resolve = { path = "crates/ql-resolve" }
 ql-typeck = { path = "crates/ql-typeck" }
+ql-driver = { path = "crates/ql-driver" }
+ql-codegen-llvm = { path = "crates/ql-codegen-llvm" }

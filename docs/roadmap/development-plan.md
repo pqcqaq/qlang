@@ -302,6 +302,42 @@ P3 不应一次性推进，而应拆成：
 - debug / release profile
 - 基础 codegen golden tests
 
+### 当前进度（2026-03-26）
+
+P4 已经启动，但当前完成的是 “backend foundation” 而不是“完整原生产物”：
+
+- 新增 `ql-driver`
+- 新增 `ql-codegen-llvm`
+- `ql build` 已经接入统一 build 路径
+- 当前默认可输出文本 LLVM IR：`target/ql/<profile>/<stem>.ll`
+- 当前已经补上 native artifact foundation：
+  - `ql build --emit obj`
+  - `ql build --emit exe`
+  - `ql build --emit staticlib`
+  - clang-style toolchain discovery
+  - compiler / archiver toolchain boundary 已拆开
+  - 用户态 `main` 现在会在 program mode 下 lower 成内部 Qlang entry，并额外生成宿主 `main` wrapper
+  - `staticlib` 现在走 library mode，因此单文件库构建不再要求顶层 `main`
+  - toolchain failure 时保留中间 `.codegen.ll`，link 或 archive failure 时再额外保留 `.codegen.obj/.o` 便于调试
+- 当前支持的 MIR/codegen 子集已经可测试：
+  - 顶层 free function
+  - `main` 入口
+  - scalar integer / `Bool` / `Void`
+  - direct function call
+  - arithmetic / compare / branch / return
+- 当前 unsupported backend features 会返回结构化 diagnostics，而不是静默跳过
+
+当前仍刻意未完成：
+
+- dylib
+- 更完整的系统 LLVM / linker family 组合探测
+- runtime startup object / richer ABI glue
+- closure / tuple / struct / cleanup lowering
+- extern ABI 更完整支持
+- codegen golden snapshot harness 扩容
+
+当前 P4 的核心目标不是“一次性做完整原生平台层”，而是先把 driver/codegen 边界、program/library 入口模型、失败模型和测试面固定住，避免后续为了补链接和运行时而大规模返工。
+
 ### 出口标准
 
 - hello world、简单容器、简单匹配逻辑可运行

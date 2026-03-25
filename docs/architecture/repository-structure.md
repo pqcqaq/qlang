@@ -90,10 +90,13 @@ Qlang 仓库结构必须同时服务于四类工作：
 │  ├─ ql-borrowck             # Phase 3 ownership facts 与显式消费诊断
 │  ├─ ql-resolve              # 作用域图与保守名称解析
 │  ├─ ql-typeck               # Phase 2 初始语义检查
+│  ├─ ql-driver               # Phase 4 build orchestration 边界
+│  ├─ ql-codegen-llvm         # Phase 4 文本 LLVM IR 后端地基
 │  ├─ ql-lsp                  # 最小 qlsp：hover / definition / diagnostics
-│  └─ ql-cli                  # `ql check` / `ql fmt` / `ql mir` / `ql ownership`
+│  └─ ql-cli                  # `ql check` / `ql build` / `ql fmt` / `ql mir` / `ql ownership`
 └─ fixtures/
-   └─ parser                  # parser / formatter 回归输入
+   ├─ parser                  # parser / formatter 回归输入
+   └─ codegen                 # Phase 4 backend / artifact 夹具
 ```
 
 也就是说，当前目录结构不是“设计图纸”，而是已经有一个最小但真实的前端闭环，并且已经开始向语义层扩展。
@@ -104,6 +107,8 @@ Qlang 仓库结构必须同时服务于四类工作：
 - `ql-hir`、`ql-resolve` 与 `ql-typeck` 的细粒度语义回归优先放在各自 crate 的 `tests/` 目录，避免继续把大块测试堆回源码文件尾部
 - `ql-mir` 的结构与 cleanup / CFG 回归也应留在 `crates/ql-mir/tests/`，避免把中间表示 snapshot 混回 CLI 黑盒层
 - `ql-borrowck` 的 moved-state / consume-event / merge 回归应留在 `crates/ql-borrowck/tests/`，锁定 ownership slice 的边界而不是把语义噪声塞进 CLI 黑盒
+- `ql-codegen-llvm` 的 IR 结构与 unsupported diagnostics 优先留在 crate 自己的测试里，避免 P4 一开始就把 backend 回归全部堆进黑盒 CLI 层
+- `ql-driver` 的输出路径和产物落盘测试也应留在 crate-local tests，避免把 build orchestration 和参数解析耦死
 - 仓库根 `tests/` 保留给后续 CLI 黑盒、UI diagnostics、codegen、FFI 这类跨 crate 测试
 
 ## 为什么这样分

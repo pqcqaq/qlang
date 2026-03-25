@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 use ql_analysis::{analyze_source as analyze_semantics, parse_errors_to_diagnostics};
 use ql_diagnostics::{Diagnostic, render_diagnostics};
+use ql_driver::{BuildEmit, BuildError, BuildOptions, BuildProfile, build_file};
 use ql_fmt::format_source;
 
 fn main() -> ExitCode {
@@ -62,6 +63,57 @@ fn run() -> Result<(), u8> {
             };
 
             render_ownership_path(Path::new(&path))
+        }
+        "build" => {
+            let Some(path) = args.next() else {
+                eprintln!("error: `ql build` expects a file path");
+                return Err(1);
+            };
+
+            let mut options = BuildOptions::default();
+            let remaining = args.collect::<Vec<_>>();
+            let mut index = 0;
+
+            while index < remaining.len() {
+                match remaining[index].as_str() {
+                    "--emit" => {
+                        index += 1;
+                        let Some(value) = remaining.get(index) else {
+                            eprintln!("error: `ql build --emit` expects a value");
+                            return Err(1);
+                        };
+                        match value.as_str() {
+                            "llvm-ir" => options.emit = BuildEmit::LlvmIr,
+                            "obj" => options.emit = BuildEmit::Object,
+                            "exe" => options.emit = BuildEmit::Executable,
+                            "staticlib" => options.emit = BuildEmit::StaticLibrary,
+                            other => {
+                                eprintln!("error: unsupported build emit target `{other}`");
+                                return Err(1);
+                            }
+                        }
+                    }
+                    "--release" => {
+                        options.profile = BuildProfile::Release;
+                    }
+                    "-o" | "--output" => {
+                        index += 1;
+                        let Some(value) = remaining.get(index) else {
+                            eprintln!("error: `ql build --output` expects a file path");
+                            return Err(1);
+                        };
+                        options.output = Some(PathBuf::from(value));
+                    }
+                    other => {
+                        eprintln!("error: unknown `ql build` option `{other}`");
+                        return Err(1);
+                    }
+                }
+
+                index += 1;
+            }
+
+            build_path(Path::new(&path), &options)
         }
         _ => {
             eprintln!("error: unknown command `{command}`");
@@ -168,6 +220,48 @@ fn render_ownership_path(path: &Path) -> Result<(), u8> {
         }
         Err(diagnostics) => {
             print_diagnostics(path, &source, &diagnostics);
+            Err(1)
+        }
+    }
+}
+
+fn build_path(path: &Path, options: &BuildOptions) -> Result<(), u8> {
+    match build_file(path, options) {
+        Ok(artifact) => {
+            println!(
+                "wrote {}: {}",
+                artifact.emit.as_str(),
+                artifact.path.display()
+            );
+            Ok(())
+        }
+        Err(BuildError::InvalidInput(message)) => {
+            eprintln!("error: {message}");
+            Err(1)
+        }
+        Err(BuildError::Io { path, error }) => {
+            eprintln!("error: failed to access `{}`: {error}", path.display());
+            Err(1)
+        }
+        Err(BuildError::Toolchain {
+            error,
+            preserved_artifacts,
+        }) => {
+            eprintln!("error: {error}");
+            for path in preserved_artifacts {
+                eprintln!(
+                    "note: preserved intermediate artifact at `{}`",
+                    path.display()
+                );
+            }
+            Err(1)
+        }
+        Err(BuildError::Diagnostics {
+            path,
+            source,
+            diagnostics,
+        }) => {
+            print_diagnostics(&path, &source, &diagnostics);
             Err(1)
         }
     }
@@ -280,6 +374,7 @@ fn print_usage() {
     eprintln!("Qlang CLI");
     eprintln!("usage:");
     eprintln!("  ql check <file-or-dir>");
+    eprintln!("  ql build <file> [--emit llvm-ir|obj|exe|staticlib] [--release] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
     eprintln!("  ql mir <file>");
     eprintln!("  ql ownership <file>");
@@ -292,7 +387,14 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{analyze_source, collect_ql_files, render_mir_path, render_ownership_path};
+    use ql_driver::{
+        ArchiverFlavor, ArchiverInvocation, BuildEmit, BuildOptions, BuildProfile,
+        ProgramInvocation, ToolchainOptions,
+    };
+
+    use super::{
+        analyze_source, build_path, collect_ql_files, render_mir_path, render_ownership_path,
+    };
 
     struct TestDir {
         path: PathBuf,
@@ -313,12 +415,13 @@ mod tests {
             &self.path
         }
 
-        fn write(&self, relative: &str, contents: &str) {
+        fn write(&self, relative: &str, contents: &str) -> PathBuf {
             let path = self.path.join(relative);
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).expect("create test parent directory");
             }
-            fs::write(path, contents).expect("write test file");
+            fs::write(&path, contents).expect("write test file");
+            path
         }
     }
 
@@ -461,5 +564,234 @@ fn main() -> String {
             result.is_err(),
             "ownership diagnostics should fail the command"
         );
+    }
+
+    #[test]
+    fn build_path_emits_llvm_ir_for_supported_source() {
+        let dir = TestDir::new("ql-cli-build");
+        dir.write(
+            "sample.ql",
+            r#"
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+
+fn main() -> Int {
+    return add_one(41)
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/sample.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            toolchain: ToolchainOptions::default(),
+        };
+
+        assert!(build_path(&dir.path().join("sample.ql"), &options).is_ok());
+
+        let rendered = fs::read_to_string(output).expect("read emitted LLVM IR");
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("define i64 @ql_1_main()"));
+    }
+
+    #[test]
+    fn build_path_emits_object_for_supported_source() {
+        let dir = TestDir::new("ql-cli-build-obj");
+        dir.write(
+            "sample.ql",
+            r#"
+fn main() -> Int {
+    return 1
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/sample.obj"
+        } else {
+            "artifacts/sample.o"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        assert!(build_path(&dir.path().join("sample.ql"), &options).is_ok());
+
+        let rendered = fs::read_to_string(output).expect("read emitted object placeholder");
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
+    fn build_path_emits_executable_for_supported_source() {
+        let dir = TestDir::new("ql-cli-build-exe");
+        dir.write(
+            "sample.ql",
+            r#"
+fn main() -> Int {
+    return 1
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/sample.exe"
+        } else {
+            "artifacts/sample"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        assert!(build_path(&dir.path().join("sample.ql"), &options).is_ok());
+
+        let rendered = fs::read_to_string(output).expect("read emitted executable placeholder");
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_path_emits_static_library_for_supported_source() {
+        let dir = TestDir::new("ql-cli-build-staticlib");
+        dir.write(
+            "math.ql",
+            r#"
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/math.lib"
+        } else {
+            "artifacts/libmath.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        assert!(build_path(&dir.path().join("math.ql"), &options).is_ok());
+
+        let rendered = fs::read_to_string(output).expect("read emitted static library placeholder");
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    fn mock_success_invocation(dir: &TestDir) -> ProgramInvocation {
+        if cfg!(windows) {
+            let script = dir.write(
+                "mock-clang-success.ps1",
+                r#"
+$out = $null
+$isCompile = $false
+for ($i = 0; $i -lt $args.Count; $i++) {
+    if ($args[$i] -eq '-c') {
+        $isCompile = $true
+    }
+    if ($args[$i] -eq '-o') {
+        $out = $args[$i + 1]
+    }
+}
+if ($null -eq $out) {
+    Write-Error "missing -o"
+    exit 1
+}
+if ($isCompile) {
+    Set-Content -Path $out -NoNewline -Value "mock-object"
+} else {
+    Set-Content -Path $out -NoNewline -Value "mock-executable"
+}
+"#,
+            );
+            ProgramInvocation::new("powershell.exe").with_args_prefix(vec![
+                "-ExecutionPolicy".to_owned(),
+                "Bypass".to_owned(),
+                "-File".to_owned(),
+                script.display().to_string(),
+            ])
+        } else {
+            let script = dir.write(
+                "mock-clang-success.sh",
+                r#"out=""
+is_compile=0
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-c" ]; then
+    is_compile=1
+    shift
+    continue
+  fi
+  if [ "$1" = "-o" ]; then
+    out="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+if [ "$is_compile" -eq 1 ]; then
+  printf 'mock-object' > "$out"
+else
+  printf 'mock-executable' > "$out"
+fi
+"#,
+            );
+            ProgramInvocation::new("/bin/sh").with_args_prefix(vec![script.display().to_string()])
+        }
+    }
+
+    fn mock_success_archiver_invocation(dir: &TestDir) -> ArchiverInvocation {
+        if cfg!(windows) {
+            let script = dir.write(
+                "mock-archiver-success.ps1",
+                r#"
+$out = $null
+for ($i = 0; $i -lt $args.Count; $i++) {
+    if ($args[$i] -like '/OUT:*') {
+        $out = $args[$i].Substring(5)
+    }
+}
+if ($null -eq $out) {
+    Write-Error "missing /OUT"
+    exit 1
+}
+Set-Content -Path $out -NoNewline -Value "mock-staticlib"
+"#,
+            );
+            ArchiverInvocation {
+                program: ProgramInvocation::new("powershell.exe").with_args_prefix(vec![
+                    "-ExecutionPolicy".to_owned(),
+                    "Bypass".to_owned(),
+                    "-File".to_owned(),
+                    script.display().to_string(),
+                ]),
+                flavor: ArchiverFlavor::Lib,
+            }
+        } else {
+            let script = dir.write(
+                "mock-archiver-success.sh",
+                r#"out="$2"
+printf 'mock-staticlib' > "$out"
+"#,
+            );
+            ArchiverInvocation {
+                program: ProgramInvocation::new("/bin/sh")
+                    .with_args_prefix(vec![script.display().to_string()]),
+                flavor: ArchiverFlavor::Ar,
+            }
+        }
     }
 }

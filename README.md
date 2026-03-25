@@ -44,7 +44,9 @@ Current Rust workspace status:
 - `crates/ql-borrowck`: Phase 3 ownership facts and explicit `move self` consumption diagnostics
 - `crates/ql-resolve`: Phase 2 scope graph and conservative name resolution
 - `crates/ql-typeck`: current Phase 2 semantic baseline checks
-- `crates/ql-cli`: `ql` CLI with `check`, `fmt`, `mir`, and `ownership`
+- `crates/ql-driver`: Phase 4 build orchestration boundary for source loading, analysis handoff, and artifact output
+- `crates/ql-codegen-llvm`: Phase 4 textual LLVM IR backend foundation over a narrow MIR subset
+- `crates/ql-cli`: `ql` CLI with `check`, `build`, `fmt`, `mir`, and `ownership`
 
 Current implemented syntax slice:
 
@@ -67,6 +69,21 @@ Current semantic baseline in `ql check`:
 - `ql-analysis` now also lowers structural MIR after resolution so later ownership and codegen passes share one stable mid-level snapshot
 - `ql-analysis` now also runs the first ownership-facts pass and exposes rendered ownership state for CLI and future IDE tooling
 - `ql-analysis` now also exposes minimal position-based semantic queries for symbol lookup, hover, and go-to-definition style tooling
+- Phase 4 has now started with a backend foundation slice:
+  - `ql-driver` keeps build orchestration out of `ql-cli`
+  - `ql-codegen-llvm` lowers a controlled MIR subset into textual LLVM IR, with explicit program-mode and library-mode entry behavior
+  - `ql build <file>` now writes `.ll` output, defaulting to `target/ql/<profile>/<stem>.ll`
+  - `ql build <file> --emit obj`, `--emit exe`, and `--emit staticlib` now lower through compiler/archive toolchain boundaries into native artifacts
+  - emitted LLVM IR now contains an internal Qlang entry plus a host `main` wrapper, so the same IR can back `.ll`, `.obj`, and `.exe`
+  - `--emit staticlib` uses library-mode codegen, so single-file libraries no longer require a top-level `main`
+  - current codegen support is intentionally narrow: top-level free functions, scalar integer/bool/void types, direct function calls, arithmetic, simple branching, and return
+  - unsupported backend features currently fail with structured diagnostics instead of silent partial lowering
+  - native artifact emission currently requires clang on PATH or an explicit `QLANG_CLANG` override
+  - static library emission currently requires an archive tool on PATH or an explicit `QLANG_AR` override
+  - on Windows, `QLANG_CLANG` should point to an invocable binary or `.cmd` wrapper rather than a raw `.ps1` script path
+  - on Windows, `QLANG_AR` should point to an invocable archive binary such as `llvm-lib.exe`, `lib.exe`, or a `.cmd` wrapper
+  - when `QLANG_AR` points to a wrapper whose filename does not imply the archive flavor, `QLANG_AR_STYLE=ar|lib` can pin the expected CLI style
+  - toolchain failures preserve intermediate `.codegen.ll` and, when linking or archiving fails, intermediate `.codegen.obj` / `.codegen.o` files for debugging
 - `qlsp` now consumes that shared analysis layer to provide LSP hover, go-to-definition, and live diagnostics for open documents
 - Phase 3 has started with a structural MIR slice:
   - function bodies lower into explicit basic blocks, statements, terminators, locals, scopes, and cleanup actions
@@ -121,6 +138,7 @@ Current intentional gap:
 - Phase 3 ownership is intentionally narrow in this slice: direct-local `move self` consumption and direct-local `move` closure capture are diagnosed today; general call contracts, place-sensitive moves, borrow/escape analysis, and drop elaboration are still future passes on top of the current MIR foundation
 - cleanup-aware ownership is still intentionally partial: nested `defer` runtime modeling and projection-sensitive cleanup effects are future work
 - closure ownership is still intentionally partial: MIR capture facts, stable closure IDs, and conservative may-escape facts exist, but closure environment lowering and full escape graph construction are still future work
+- Phase 4 native artifacts are still intentionally partial: basic executable and static-library emission now exist, but separate linker-family discovery, runtime startup glue, dynamic libraries, and richer ABI support remain follow-up work
 
 Quick start:
 
@@ -128,10 +146,19 @@ Quick start:
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test
 cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql
+cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir
 cargo run -p ql-cli -- fmt fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- mir fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- ownership fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- check fixtures/parser/pass/control_flow.ql
 cargo run -p ql-cli -- check fixtures/parser/pass/phase1_declarations.ql
 cargo run -p ql-lsp --bin qlsp
+```
+
+When clang is available:
+
+```bash
+cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit obj
+cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit exe
+cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_library.ql --emit staticlib
 ```

@@ -1,0 +1,18 @@
+[package]
+name = "ql-codegen-llvm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+ql-ast.workspace = true
+ql-diagnostics.workspace = true
+ql-hir.workspace = true
+ql-mir.workspace = true
+ql-resolve.workspace = true
+ql-span.workspace = true
+ql-typeck.workspace = true
+
+[dev-dependencies]
+ql-analysis.workspace = true

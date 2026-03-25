@@ -428,8 +428,23 @@ version = "0.1.0"
 dependencies = [
  "ql-analysis",
  "ql-diagnostics",
+ "ql-driver",
  "ql-fmt",
  "ql-parser",
+]
+
+[[package]]
+name = "ql-codegen-llvm"
+version = "0.1.0"
+dependencies = [
+ "ql-analysis",
+ "ql-ast",
+ "ql-diagnostics",
+ "ql-hir",
+ "ql-mir",
+ "ql-resolve",
+ "ql-span",
+ "ql-typeck",
 ]
 
 [[package]]
@@ -437,6 +452,15 @@ name = "ql-diagnostics"
 version = "0.1.0"
 dependencies = [
  "ql-span",
+]
+
+[[package]]
+name = "ql-driver"
+version = "0.1.0"
+dependencies = [
+ "ql-analysis",
+ "ql-codegen-llvm",
+ "ql-diagnostics",
 ]
 
 [[package]]

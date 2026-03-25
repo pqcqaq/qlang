@@ -1,17 +1,11 @@
 [package]
-name = "ql-cli"
+name = "ql-driver"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "ql"
-path = "src/main.rs"
-
 [dependencies]
 ql-analysis.workspace = true
+ql-codegen-llvm.workspace = true
 ql-diagnostics.workspace = true
-ql-driver.workspace = true
-ql-fmt.workspace = true
-ql-parser.workspace = true

@@ -1,0 +1,7 @@
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+
+fn add_two(value: Int) -> Int {
+    return add_one(add_one(value))
+}

@@ -214,6 +214,16 @@ source
 - LLVM 只在 codegen 层出现
 - 为未来可能的解释器、WASM 或自定义后端保留空间
 
+截至 2026-03-26，这条边界已经开始进入真实实现，而不再只停留在原则层：
+
+- 新增 `ql-driver`，负责 build 请求、分析调用和产物输出
+- 新增 `ql-codegen-llvm`，只消费 `HIR` / `resolve` / `typeck` / `MIR`
+- 当前 `ql build` 已经能把受控 MIR 子集 lower 成文本 LLVM IR，并继续经 compiler/archive toolchain 产出 `.obj` / `.o`、基础 `.exe` 与 `.lib` / `.a`
+- `ql-codegen-llvm` 现在区分 program mode 与 library mode：前者会把用户态 `main` lower 成内部符号并补宿主 wrapper，后者则直接导出 free function 集合
+- 当前仍然故意不把独立 linker family discovery、runtime startup object、dynamic library 和更完整平台差异一次性揉进同一刀实现里
+
+也就是说，P4 先固定“后端放在哪一层、如何失败、如何测试、如何贯通 artifact pipeline”，再继续补更完整的链接与运行时能力。
+
 ## 测试策略
 
 编译器项目不能只靠单元测试。必须同时具备：
