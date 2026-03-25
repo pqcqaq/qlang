@@ -73,6 +73,10 @@ export default defineConfig({
           {
             text: "2026-03-26 P3.3c MIR Closure Captures",
             link: "/plans/2026-03-26-phase3-explicit-closure-captures"
+          },
+          {
+            text: "2026-03-26 P3.3d Closure Escape Facts",
+            link: "/plans/2026-03-26-phase3-closure-escape-facts"
           }
         ]
       }

@@ -249,6 +249,10 @@ P3 已经完成前两个切片，但当前仍然只宣称“ownership foundation
   - 普通 closure capture 现在会被视为一次真实 local 读取
   - `ql ownership` 能展示 `consume(move closure capture)` 事件
   - closure capture facts 现在已经 materialize 到 MIR，borrowck 不再需要在这条路径上重新遍历 HIR 收集 capture
+- closure escape groundwork 已进入当前切片：
+  - MIR closure 现在有稳定 identity
+  - `ql ownership` 现在会渲染第一版 conservative may-escape facts
+  - 当前 escape kind 只覆盖 `return` / `call-arg` / `call-callee` / `captured-by-cl*`
 - `ql-analysis` 已聚合 borrowck diagnostics，并提供 ownership dump 渲染
 - `ql ownership <file>` 已可直接输出当前 ownership facts
 
@@ -256,7 +260,7 @@ P3 已经完成前两个切片，但当前仍然只宣称“ownership foundation
 
 - 通用 call consume contract
 - place-sensitive move analysis
-- borrow / escape analysis
+- path-sensitive borrow / escape analysis
 - cleanup closure capture / nested defer runtime modeling
 - 完整 closure environment / escape graph
 - drop elaboration

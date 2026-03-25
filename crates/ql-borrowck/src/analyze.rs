@@ -1,18 +1,19 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use ql_ast::{BinaryOp, ReceiverKind};
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{self as hir, Function, ItemKind, Param};
 use ql_mir::{
-    BasicBlockId, BodyOwner, CleanupId, CleanupKind, Constant, LocalId as MirLocalId, LocalOrigin,
-    MirBody, MirModule, Operand, Place, ProjectionElem, Rvalue, StatementKind, TerminatorKind,
+    BasicBlockId, BodyOwner, CleanupId, CleanupKind, ClosureId, Constant, LocalId as MirLocalId,
+    LocalOrigin, MirBody, MirModule, Operand, Place, ProjectionElem, Rvalue, StatementKind,
+    TerminatorKind,
 };
 use ql_resolve::{ResolutionMap, ValueResolution};
 use ql_typeck::{Ty, TypeckResult, lower_type};
 
 use crate::{
-    BlockFacts, BodyFacts, BorrowckResult, LocalEvent, LocalEventKind, LocalState, MoveCertainty,
-    MoveInfo, MoveOrigin, MoveReason,
+    BlockFacts, BodyFacts, BorrowckResult, ClosureEscape, ClosureEscapeKind, ClosureFacts,
+    LocalEvent, LocalEventKind, LocalState, MoveCertainty, MoveInfo, MoveOrigin, MoveReason,
 };
 
 pub fn analyze_module(
@@ -147,12 +148,15 @@ impl<'a> BodyAnalyzer<'a> {
             let _ = block;
         }
 
+        let closures = self.analyze_closure_facts();
+
         (
             BodyFacts {
                 owner: self.body.owner,
                 name: self.body.name.clone(),
                 blocks,
                 events: reporter.events,
+                closures,
             },
             reporter.diagnostics,
         )
@@ -284,10 +288,14 @@ impl<'a> BodyAnalyzer<'a> {
                     self.read_operand(states, &field.value, span, reporter.as_deref_mut());
                 }
             }
-            Rvalue::Closure {
-                is_move, captures, ..
-            } => {
-                self.apply_closure_capture_effects(states, *is_move, captures, reporter);
+            Rvalue::Closure { closure } => {
+                let closure_decl = self.body.closure(*closure);
+                self.apply_closure_capture_effects(
+                    states,
+                    closure_decl.is_move,
+                    &closure_decl.captures,
+                    reporter,
+                );
             }
             Rvalue::OpaqueExpr(_) => {}
         }
@@ -611,6 +619,267 @@ impl<'a> BodyAnalyzer<'a> {
                 .expr_resolution(expr_id)
                 .and_then(|resolution| self.local_for_resolution(resolution)),
             _ => None,
+        }
+    }
+
+    fn analyze_closure_facts(&self) -> Vec<ClosureFacts> {
+        let local_count = self.body.locals().len();
+        let empty_state = vec![BTreeSet::new(); local_count];
+        let mut entry_states = vec![None; self.body.blocks().len()];
+        let mut exit_states = vec![None; self.body.blocks().len()];
+        entry_states[self.body.entry.index()] = Some(empty_state);
+
+        let mut worklist = VecDeque::from([self.body.entry]);
+        while let Some(block_id) = worklist.pop_front() {
+            let entry_state = entry_states[block_id.index()]
+                .clone()
+                .expect("scheduled blocks should have an entry state");
+            let exit_state = self.transfer_closure_block(block_id, entry_state, None);
+            let changed_exit = exit_states[block_id.index()]
+                .as_ref()
+                .is_none_or(|previous| previous != &exit_state);
+            if changed_exit {
+                exit_states[block_id.index()] = Some(exit_state.clone());
+            }
+
+            for successor in successors(&self.body.block(block_id).terminator.kind) {
+                let (merged, changed) = merge_closure_state_vec(
+                    entry_states[successor.index()].as_deref(),
+                    &exit_state,
+                );
+                if changed {
+                    entry_states[successor.index()] = Some(merged);
+                    worklist.push_back(successor);
+                }
+            }
+        }
+
+        let mut reporter = ClosureEscapeReporter::default();
+        for (index, block_id) in self.body.block_ids().enumerate() {
+            let entry = entry_states[index]
+                .clone()
+                .unwrap_or_else(|| vec![BTreeSet::new(); local_count]);
+            let exit = self.transfer_closure_block(block_id, entry, Some(&mut reporter));
+            let expected = exit_states[index]
+                .clone()
+                .unwrap_or_else(|| vec![BTreeSet::new(); local_count]);
+            debug_assert_eq!(
+                exit, expected,
+                "closure escape block transfer should be stable"
+            );
+        }
+
+        reporter.finish(self.body)
+    }
+
+    fn transfer_closure_block(
+        &self,
+        block_id: BasicBlockId,
+        mut states: Vec<BTreeSet<ClosureId>>,
+        mut reporter: Option<&mut ClosureEscapeReporter>,
+    ) -> Vec<BTreeSet<ClosureId>> {
+        let block = self.body.block(block_id);
+
+        for statement_id in &block.statements {
+            let statement = self.body.statement(*statement_id);
+            self.apply_closure_statement(
+                &mut states,
+                statement.span,
+                &statement.kind,
+                reporter.as_deref_mut(),
+            );
+        }
+
+        self.apply_closure_terminator(
+            &mut states,
+            block.terminator.span,
+            &block.terminator.kind,
+            reporter,
+        );
+
+        states
+    }
+
+    fn apply_closure_statement(
+        &self,
+        states: &mut [BTreeSet<ClosureId>],
+        span: ql_span::Span,
+        statement: &StatementKind,
+        reporter: Option<&mut ClosureEscapeReporter>,
+    ) {
+        match statement {
+            StatementKind::Assign { place, value } => {
+                let mut reporter = reporter;
+                let tracked =
+                    self.closure_ids_in_rvalue(states, value, span, reporter.as_deref_mut());
+                if place.projections.is_empty() {
+                    states[place.base.index()] = tracked.clone();
+                    if place.base == self.body.return_local {
+                        self.record_closure_escapes(
+                            &tracked,
+                            span,
+                            ClosureEscapeKind::Return,
+                            reporter,
+                        );
+                    }
+                }
+            }
+            StatementKind::BindPattern {
+                pattern, source, ..
+            } => {
+                let tracked = self.closure_ids_in_operand(states, source);
+                for local in self.binding_pattern_mir_locals(*pattern) {
+                    states[local.index()] = tracked.clone();
+                }
+            }
+            StatementKind::Eval { value } => {
+                let _ = self.closure_ids_in_rvalue(states, value, span, reporter);
+            }
+            StatementKind::StorageLive { local } | StatementKind::StorageDead { local } => {
+                states[local.index()].clear();
+            }
+            StatementKind::RegisterCleanup { .. } | StatementKind::RunCleanup { .. } => {}
+        }
+    }
+
+    fn apply_closure_terminator(
+        &self,
+        _states: &mut [BTreeSet<ClosureId>],
+        _span: ql_span::Span,
+        _terminator: &TerminatorKind,
+        _reporter: Option<&mut ClosureEscapeReporter>,
+    ) {
+    }
+
+    fn closure_ids_in_rvalue(
+        &self,
+        states: &[BTreeSet<ClosureId>],
+        value: &Rvalue,
+        span: ql_span::Span,
+        mut reporter: Option<&mut ClosureEscapeReporter>,
+    ) -> BTreeSet<ClosureId> {
+        match value {
+            Rvalue::Use(operand) => self.closure_ids_in_operand(states, operand),
+            Rvalue::Tuple(items) | Rvalue::Array(items) => items
+                .iter()
+                .flat_map(|item| self.closure_ids_in_operand(states, item))
+                .collect(),
+            Rvalue::Call { callee, args } => {
+                let callee_ids = self.closure_ids_in_operand(states, callee);
+                self.record_closure_escapes(
+                    &callee_ids,
+                    span,
+                    ClosureEscapeKind::CallCallee,
+                    reporter.as_deref_mut(),
+                );
+                for arg in args {
+                    let arg_ids = self.closure_ids_in_operand(states, &arg.value);
+                    self.record_closure_escapes(
+                        &arg_ids,
+                        span,
+                        ClosureEscapeKind::CallArgument,
+                        reporter.as_deref_mut(),
+                    );
+                }
+                BTreeSet::new()
+            }
+            Rvalue::Binary { left, right, .. } => self
+                .closure_ids_in_operand(states, left)
+                .into_iter()
+                .chain(self.closure_ids_in_operand(states, right))
+                .collect(),
+            Rvalue::Unary { operand, .. } | Rvalue::Question(operand) => {
+                self.closure_ids_in_operand(states, operand)
+            }
+            Rvalue::AggregateStruct { fields, .. } => fields
+                .iter()
+                .flat_map(|field| self.closure_ids_in_operand(states, &field.value))
+                .collect(),
+            Rvalue::Closure { closure } => {
+                let decl = self.body.closure(*closure);
+                for capture in &decl.captures {
+                    let captured_ids = states[capture.local.index()].clone();
+                    self.record_closure_escapes(
+                        &captured_ids,
+                        capture.span,
+                        ClosureEscapeKind::CapturedByClosure { outer: *closure },
+                        reporter.as_deref_mut(),
+                    );
+                }
+                BTreeSet::from([*closure])
+            }
+            Rvalue::OpaqueExpr(_) => BTreeSet::new(),
+        }
+    }
+
+    fn closure_ids_in_operand(
+        &self,
+        states: &[BTreeSet<ClosureId>],
+        operand: &Operand,
+    ) -> BTreeSet<ClosureId> {
+        match operand {
+            Operand::Place(place) if place.projections.is_empty() => {
+                states[place.base.index()].clone()
+            }
+            Operand::Place(_) | Operand::Constant(_) => BTreeSet::new(),
+        }
+    }
+
+    fn record_closure_escapes(
+        &self,
+        closures: &BTreeSet<ClosureId>,
+        span: ql_span::Span,
+        kind: ClosureEscapeKind,
+        reporter: Option<&mut ClosureEscapeReporter>,
+    ) {
+        let Some(reporter) = reporter else {
+            return;
+        };
+
+        for &closure in closures {
+            reporter.record(
+                closure,
+                ClosureEscape {
+                    span,
+                    kind: kind.clone(),
+                },
+            );
+        }
+    }
+
+    fn binding_pattern_mir_locals(&self, pattern_id: hir::PatternId) -> Vec<MirLocalId> {
+        let mut locals = Vec::new();
+        self.collect_binding_pattern_mir_locals(pattern_id, &mut locals);
+        locals
+    }
+
+    fn collect_binding_pattern_mir_locals(
+        &self,
+        pattern_id: hir::PatternId,
+        locals: &mut Vec<MirLocalId>,
+    ) {
+        match &self.hir.pattern(pattern_id).kind {
+            hir::PatternKind::Binding(local_id) => {
+                if let Some(local) = self.binding_locals.get(local_id).copied() {
+                    locals.push(local);
+                }
+            }
+            hir::PatternKind::Tuple(items) | hir::PatternKind::TupleStruct { items, .. } => {
+                for item in items {
+                    self.collect_binding_pattern_mir_locals(*item, locals);
+                }
+            }
+            hir::PatternKind::Struct { fields, .. } => {
+                for field in fields {
+                    self.collect_binding_pattern_mir_locals(field.pattern, locals);
+                }
+            }
+            hir::PatternKind::Path(_)
+            | hir::PatternKind::Integer(_)
+            | hir::PatternKind::String(_)
+            | hir::PatternKind::Bool(_)
+            | hir::PatternKind::NoneLiteral
+            | hir::PatternKind::Wildcard => {}
         }
     }
 
@@ -1074,6 +1343,40 @@ struct Reporter {
     emitted: HashSet<DiagnosticKey>,
 }
 
+#[derive(Default)]
+struct ClosureEscapeReporter {
+    escapes: HashMap<ClosureId, Vec<ClosureEscape>>,
+    emitted: HashSet<(ClosureId, ClosureEscape)>,
+}
+
+impl ClosureEscapeReporter {
+    fn record(&mut self, closure: ClosureId, escape: ClosureEscape) {
+        if !self.emitted.insert((closure, escape.clone())) {
+            return;
+        }
+        self.escapes.entry(closure).or_default().push(escape);
+    }
+
+    fn finish(mut self, body: &MirBody) -> Vec<ClosureFacts> {
+        for escapes in self.escapes.values_mut() {
+            escapes.sort_by_key(|escape| {
+                (
+                    escape.span.start,
+                    escape.span.end,
+                    render_closure_escape_sort_key(&escape.kind),
+                )
+            });
+        }
+
+        body.closure_ids()
+            .map(|closure| ClosureFacts {
+                closure,
+                escapes: self.escapes.remove(&closure).unwrap_or_default(),
+            })
+            .collect()
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CleanupEval {
     states: Vec<LocalState>,
@@ -1172,6 +1475,24 @@ struct DiagnosticKey {
     use_span: ql_span::Span,
     certainty: MoveCertainty,
     origin_spans: Vec<ql_span::Span>,
+}
+
+fn merge_closure_state_vec(
+    existing: Option<&[BTreeSet<ClosureId>]>,
+    incoming: &[BTreeSet<ClosureId>],
+) -> (Vec<BTreeSet<ClosureId>>, bool) {
+    match existing {
+        None => (incoming.to_vec(), true),
+        Some(existing) => {
+            let merged = existing
+                .iter()
+                .zip(incoming)
+                .map(|(existing, incoming)| existing.union(incoming).copied().collect())
+                .collect::<Vec<BTreeSet<ClosureId>>>();
+            let changed = merged != existing;
+            (merged, changed)
+        }
+    }
 }
 
 fn merge_state_vec(
@@ -1277,6 +1598,17 @@ fn render_move_origin(origin: &MoveOrigin) -> String {
             format!("consumed here by `move self` method `{method_name}`")
         }
         MoveReason::MoveClosureCapture => "captured here by `move` closure".to_owned(),
+    }
+}
+
+fn render_closure_escape_sort_key(kind: &ClosureEscapeKind) -> String {
+    match kind {
+        ClosureEscapeKind::Return => "return".to_owned(),
+        ClosureEscapeKind::CallArgument => "call-arg".to_owned(),
+        ClosureEscapeKind::CallCallee => "call-callee".to_owned(),
+        ClosureEscapeKind::CapturedByClosure { outer } => {
+            format!("captured-by-cl{}", outer.index())
+        }
     }
 }
 

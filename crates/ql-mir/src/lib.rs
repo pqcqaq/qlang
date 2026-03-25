@@ -8,7 +8,7 @@ use ql_ast::{BinaryOp, Path, UnaryOp};
 use ql_hir::{ExprId, ItemId, PatternId};
 use ql_span::Span;
 
-pub use ids::{BasicBlockId, BodyId, CleanupId, LocalId, ScopeId, StatementId};
+pub use ids::{BasicBlockId, BodyId, CleanupId, ClosureId, LocalId, ScopeId, StatementId};
 pub use lower::lower_module;
 pub use render::render_module;
 
@@ -66,6 +66,7 @@ pub struct MirBody {
     statement_data: Vec<Statement>,
     scope_data: Vec<MirScope>,
     cleanup_data: Vec<CleanupAction>,
+    closure_data: Vec<ClosureDecl>,
 }
 
 impl MirBody {
@@ -117,6 +118,18 @@ impl MirBody {
         &self.cleanup_data
     }
 
+    pub fn closure(&self, id: ClosureId) -> &ClosureDecl {
+        &self.closure_data[id.index()]
+    }
+
+    pub fn closures(&self) -> &[ClosureDecl] {
+        &self.closure_data
+    }
+
+    pub fn closure_ids(&self) -> impl Iterator<Item = ClosureId> + '_ {
+        (0..self.closure_data.len()).map(ClosureId::from_index)
+    }
+
     pub(crate) fn alloc_local(&mut self, local: LocalDecl) -> LocalId {
         let id = LocalId::from_index(self.local_data.len());
         self.local_data.push(local);
@@ -152,6 +165,12 @@ impl MirBody {
     pub(crate) fn alloc_cleanup(&mut self, cleanup: CleanupAction) -> CleanupId {
         let id = CleanupId::from_index(self.cleanup_data.len());
         self.cleanup_data.push(cleanup);
+        id
+    }
+
+    pub(crate) fn alloc_closure(&mut self, closure: ClosureDecl) -> ClosureId {
+        let id = ClosureId::from_index(self.closure_data.len());
+        self.closure_data.push(closure);
         id
     }
 }
@@ -326,10 +345,7 @@ pub enum Rvalue {
         fields: Vec<AggregateField>,
     },
     Closure {
-        is_move: bool,
-        params: Vec<String>,
-        captures: Vec<ClosureCapture>,
-        body: ExprId,
+        closure: ClosureId,
     },
     Question(Operand),
     OpaqueExpr(ExprId),
@@ -351,6 +367,15 @@ pub struct AggregateField {
 pub struct ClosureCapture {
     pub local: LocalId,
     pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClosureDecl {
+    pub span: Span,
+    pub is_move: bool,
+    pub params: Vec<String>,
+    pub captures: Vec<ClosureCapture>,
+    pub body: ExprId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

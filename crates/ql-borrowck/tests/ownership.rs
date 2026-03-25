@@ -448,3 +448,32 @@ fn main() -> Int {
 
     assert!(rendered.contains("consume(move closure capture)"));
 }
+
+#[test]
+fn renders_closure_escape_facts_for_debugging() {
+    let rendered = render_output(
+        r#"
+fn apply(f: () -> Int) -> Int {
+    return f()
+}
+
+fn make_adder(delta: Int) -> (Int) -> Int {
+    let add = move (x) => x + delta
+    return add
+}
+
+fn main() -> Int {
+    let base = 1
+    let first = move () => base
+    let wrapped = () => first
+    return apply(first)
+}
+"#,
+    );
+
+    assert!(rendered.contains("closures:"));
+    assert!(rendered.contains("escapes=[return@"));
+    assert!(rendered.contains("call-arg@"));
+    assert!(rendered.contains("captured-by-cl"));
+    assert!(rendered.contains("escapes=[local-only]"));
+}

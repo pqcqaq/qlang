@@ -2,7 +2,7 @@ mod analyze;
 mod render;
 
 use ql_diagnostics::Diagnostic;
-use ql_mir::{BodyOwner, LocalId};
+use ql_mir::{BodyOwner, ClosureId, LocalId};
 use ql_span::Span;
 
 pub use analyze::analyze_module;
@@ -38,6 +38,7 @@ pub struct BodyFacts {
     pub name: String,
     pub blocks: Vec<BlockFacts>,
     pub events: Vec<LocalEvent>,
+    pub closures: Vec<ClosureFacts>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +53,26 @@ pub struct LocalEvent {
     pub span: Span,
     pub local: LocalId,
     pub kind: LocalEventKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClosureFacts {
+    pub closure: ClosureId,
+    pub escapes: Vec<ClosureEscape>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ClosureEscape {
+    pub span: Span,
+    pub kind: ClosureEscapeKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ClosureEscapeKind {
+    Return,
+    CallArgument,
+    CallCallee,
+    CapturedByClosure { outer: ClosureId },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

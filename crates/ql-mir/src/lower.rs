@@ -9,9 +9,9 @@ use ql_resolve::{ResolutionMap, ValueResolution};
 
 use crate::{
     AggregateField, BasicBlock, BasicBlockId, BodyOwner, CallArgument, CleanupAction, CleanupKind,
-    ClosureCapture, Constant, LocalDecl, LocalId, LocalKind, LocalOrigin, MatchArmTarget, MirBody,
-    MirModule, MirScope, Operand, Place, ProjectionElem, Rvalue, ScopeId, ScopeKind, Statement,
-    StatementKind, Terminator, TerminatorKind,
+    ClosureCapture, ClosureDecl, Constant, LocalDecl, LocalId, LocalKind, LocalOrigin,
+    MatchArmTarget, MirBody, MirModule, MirScope, Operand, Place, ProjectionElem, Rvalue, ScopeId,
+    ScopeKind, Statement, StatementKind, Terminator, TerminatorKind,
 };
 
 pub fn lower_module(hir: &hir::Module, resolution: &ResolutionMap) -> MirModule {
@@ -142,6 +142,7 @@ impl<'a> BodyBuilder<'a> {
                 statement_data: Vec::new(),
                 scope_data: Vec::new(),
                 cleanup_data: Vec::new(),
+                closure_data: Vec::new(),
             },
             local_map: HashMap::new(),
             param_locals: vec![None; function.params.len()],
@@ -632,17 +633,14 @@ impl<'a> BodyBuilder<'a> {
                     .iter()
                     .map(|local_id| self.hir.local(*local_id).name.clone())
                     .collect();
-                self.materialize_rvalue(
-                    current,
-                    scope,
-                    expr.span,
-                    Rvalue::Closure {
-                        is_move: *is_move,
-                        params,
-                        captures,
-                        body: *body,
-                    },
-                )
+                let closure = self.body.alloc_closure(ClosureDecl {
+                    span: expr.span,
+                    is_move: *is_move,
+                    params,
+                    captures,
+                    body: *body,
+                });
+                self.materialize_rvalue(current, scope, expr.span, Rvalue::Closure { closure })
             }
             ExprKind::Question(inner) => {
                 let (current, operand) = self.lower_expr_to_operand(*inner, current, scope);

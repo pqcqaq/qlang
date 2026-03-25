@@ -308,6 +308,28 @@ fn main() -> String {
     }
 
     #[test]
+    fn rendered_ownership_exposes_closure_escape_facts() {
+        let analysis = analyze_source(
+            r#"
+fn apply(f: () -> Int) -> Int {
+    return f()
+}
+
+fn main() -> Int {
+    let value = 1
+    let closure = move () => value
+    return apply(closure)
+}
+"#,
+        )
+        .expect("source should analyze");
+
+        let rendered = analysis.render_borrowck();
+        assert!(rendered.contains("closures:"));
+        assert!(rendered.contains("call-arg@"));
+    }
+
+    #[test]
     fn includes_borrowck_diagnostics_in_the_combined_output() {
         let analysis = analyze_source(
             r#"

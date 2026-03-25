@@ -82,7 +82,8 @@ Current semantic baseline in `ql check`:
   - `move` closures now consume current-body direct-local captures when the closure value is created
   - non-move closures now treat captured locals as real reads in the ownership pass
   - closure capture facts are now materialized directly in MIR, so ownership/debugging no longer need to re-derive them from HIR on the hot path
-  - `ql ownership <file>` now renders block entry/exit ownership states plus read/write/consume events
+  - MIR closures now carry stable identities, so later escape/drop work has a real anchor instead of ad hoc statement matching
+  - `ql ownership <file>` now renders block entry/exit ownership states, read/write/consume events, and first-pass closure may-escape facts
 - precise identifier spans flow through AST -> HIR -> diagnostics for semantic hotspots
 - receiver parameter spans now stay precise through AST -> HIR, which keeps diagnostics and semantic queries anchored to `self` instead of whole function spans
 - shorthand struct pattern and struct literal fields are normalized during HIR lowering
@@ -119,7 +120,7 @@ Current intentional gap:
 - `qlsp` is intentionally minimal in P2: hover / definition / diagnostics are live, but references / completion / rename / semantic tokens are still future work
 - Phase 3 ownership is intentionally narrow in this slice: direct-local `move self` consumption and direct-local `move` closure capture are diagnosed today; general call contracts, place-sensitive moves, borrow/escape analysis, and drop elaboration are still future passes on top of the current MIR foundation
 - cleanup-aware ownership is still intentionally partial: nested `defer` runtime modeling and projection-sensitive cleanup effects are future work
-- closure ownership is still intentionally partial: MIR capture facts exist, but closure environment lowering and full escape graph construction are still future work
+- closure ownership is still intentionally partial: MIR capture facts, stable closure IDs, and conservative may-escape facts exist, but closure environment lowering and full escape graph construction are still future work
 
 Quick start:
 

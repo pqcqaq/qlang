@@ -114,3 +114,21 @@ fn main() -> Int {
     assert!(rendered.contains("[captures: value@"));
     assert!(!rendered.contains("[captures: extra@"));
 }
+
+#[test]
+fn assigns_stable_closure_ids_in_mir_output() {
+    let rendered = render(
+        r#"
+fn main() -> Int {
+    let base = 1
+    let add = move (x) => x + base
+    return add(2)
+}
+"#,
+    );
+
+    assert!(rendered.contains("closures:"));
+    assert!(rendered.contains("cl0 move [captures: base@"));
+    assert!(rendered.contains("assign l"));
+    assert!(rendered.contains("= closure cl0 move [captures: base@"));
+}

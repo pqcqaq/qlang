@@ -87,6 +87,20 @@ fn render_body(output: &mut String, mir: &MirModule, hir: &hir::Module, body_id:
         );
     }
 
+    output.push_str("  closures:\n");
+    for closure_id in body.closure_ids() {
+        let closure = body.closure(closure_id);
+        let _ = writeln!(
+            output,
+            "    cl{} {}{}({}) => {}",
+            closure_id.index(),
+            if closure.is_move { "move " } else { "" },
+            render_closure_captures(body, &closure.captures),
+            closure.params.join(", "),
+            render_expr(hir, closure.body)
+        );
+    }
+
     output.push_str("  blocks:\n");
     for (index, block) in body.blocks().iter().enumerate() {
         let _ = writeln!(output, "    bb{index}:");
@@ -277,18 +291,17 @@ fn render_rvalue(hir: &hir::Module, body: &crate::MirBody, value: &Rvalue) -> St
                 render_fields(body, fields)
             )
         }
-        Rvalue::Closure {
-            is_move,
-            params,
-            captures,
-            body: closure_body,
-        } => format!(
-            "{}{}({}) => {}",
-            if *is_move { "move " } else { "" },
-            render_closure_captures(body, captures),
-            params.join(", "),
-            render_expr(hir, *closure_body)
-        ),
+        Rvalue::Closure { closure } => {
+            let closure_decl = body.closure(*closure);
+            format!(
+                "closure cl{} {}{}({}) => {}",
+                closure.index(),
+                if closure_decl.is_move { "move " } else { "" },
+                render_closure_captures(body, &closure_decl.captures),
+                closure_decl.params.join(", "),
+                render_expr(hir, closure_decl.body)
+            )
+        }
         Rvalue::Question(operand) => format!("{}?", render_operand(body, operand)),
         Rvalue::OpaqueExpr(expr) => format!("<opaque {}>", render_expr(hir, *expr)),
     }

@@ -1,6 +1,6 @@
 macro_rules! define_id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(u32);
 
         impl $name {
@@ -21,3 +21,4 @@ define_id!(StatementId);
 define_id!(LocalId);
 define_id!(ScopeId);
 define_id!(CleanupId);
+define_id!(ClosureId);
