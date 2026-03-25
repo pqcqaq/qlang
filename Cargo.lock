@@ -17,6 +17,7 @@ dependencies = [
  "ql-fmt",
  "ql-hir",
  "ql-parser",
+ "ql-resolve",
  "ql-span",
  "ql-typeck",
 ]
@@ -59,6 +60,17 @@ version = "0.1.0"
 dependencies = [
  "ql-ast",
  "ql-lexer",
+ "ql-span",
+]
+
+[[package]]
+name = "ql-resolve"
+version = "0.1.0"
+dependencies = [
+ "ql-ast",
+ "ql-diagnostics",
+ "ql-hir",
+ "ql-parser",
  "ql-span",
 ]
 

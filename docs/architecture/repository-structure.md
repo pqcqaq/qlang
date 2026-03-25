@@ -30,6 +30,7 @@ Qlang 仓库结构必须同时服务于四类工作：
 │  ├─ ql-parser
 │  ├─ ql-ast
 │  ├─ ql-hir
+│  ├─ ql-resolve
 │  ├─ ql-typeck
 │  ├─ ql-mir
 │  ├─ ql-borrowck
@@ -84,6 +85,7 @@ Qlang 仓库结构必须同时服务于四类工作：
 │  ├─ ql-diagnostics          # 通用 diagnostics 结构与文本渲染
 │  ├─ ql-fmt                  # 基于 AST 的 formatter
 │  ├─ ql-hir                  # AST -> HIR lowering 与稳定 ID arena
+│  ├─ ql-resolve              # 作用域图与保守名称解析
 │  ├─ ql-typeck               # Phase 2 初始语义检查
 │  └─ ql-cli                  # `ql check` / `ql fmt`
 └─ fixtures/
@@ -95,7 +97,7 @@ Qlang 仓库结构必须同时服务于四类工作：
 当前测试组织也有一条明确约束：
 
 - parser 夹具回归继续放在 `fixtures/` + `crates/ql-parser/tests/`
-- `ql-hir` 与 `ql-typeck` 的细粒度语义回归优先放在各自 crate 的 `tests/` 目录，避免继续把大块测试堆回源码文件尾部
+- `ql-hir`、`ql-resolve` 与 `ql-typeck` 的细粒度语义回归优先放在各自 crate 的 `tests/` 目录，避免继续把大块测试堆回源码文件尾部
 - 仓库根 `tests/` 保留给后续 CLI 黑盒、UI diagnostics、codegen、FFI 这类跨 crate 测试
 
 ## 为什么这样分

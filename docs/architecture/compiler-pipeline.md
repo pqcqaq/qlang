@@ -47,7 +47,7 @@ source
 
 ### HIR
 
-- 解析名称、作用域和类型引用
+- 提供语义导向、可稳定引用的中间前端表示
 - 作为 LSP 语义查询的重要基础
 - 对上层工具最友好
 
@@ -59,9 +59,25 @@ source
 - pattern 里的绑定名在 lowering 时就被转成 `LocalId`
 - AST 现在额外保留 declaration name、generic param、regular param、pattern field、struct literal field、named call arg、closure param 的精确 name span，避免语义诊断继续依赖粗粒度 fallback
 - HIR 会在 lowering 时主动正规化 surface shorthand：`Point { x }` 模式字段会变成真实 binding pattern，`Point { x }` 结构体字面量字段会变成真实 `Name("x")` 表达式
-- HIR 仍然保留 span，供 diagnostics、后续 name resolution 和 IDE 查询复用
+- HIR 仍然保留 span，供 diagnostics、name resolution 和 IDE 查询复用
 
-这一版 HIR 仍然是“语义前置层”，还不是完整名称解析结果。当前刻意没有在这里引入过重的 query system 或类型约束图，避免在 P2 初期把抽象提前做死。
+这一版 HIR 仍然是“语义前置层”，不会把名称解析、约束求解和查询系统硬塞进同一层，避免在 P2 初期把抽象提前做死。
+
+### Name Resolution
+
+- 在 HIR 之上单独建层，而不是把作用域和名称查找散落进 type checker
+- 负责构造 lexical scope graph
+- 负责建立值命名空间和类型命名空间的第一层引用关系
+- 作为未来类型约束、LSP 查询和 go-to-definition 的共用基础
+
+截至 2026-03-25，名称解析的第一层实现也已经实际落地：
+
+- 新增 `ql-resolve` crate
+- `ql check` 流水线现在是 parser -> HIR lowering -> resolve -> semantic checks
+- scope graph 已覆盖 module、callable、block、closure、match arm、for-loop binding scope
+- 当前已支持 best-effort 解析：local binding、regular param、receiver `self`、generic param、top-level item、import alias、builtin type、struct literal root、pattern path root
+- 当前 diagnostics 采取保守策略，只落地绝对可靠的一条语义错误：method receiver 作用域外非法使用 `self`
+- 对 unresolved global / unresolved type 的系统性报错刻意延后，直到 import / module / prelude 语义稳定，否则会把现有 fixture 误判成失败
 
 ### MIR
 
@@ -126,6 +142,7 @@ source
 
 - parser fixture tests 已稳定
 - HIR lowering tests 已拆到 `crates/ql-hir/tests/`，并覆盖 shorthand normalization、closure param span、named call arg span
+- name resolution tests 已拆到 `crates/ql-resolve/tests/`，并按 value / type / scopes / rendering 分组
 - semantic duplicate-diagnostics tests 已拆到 `crates/ql-typeck/tests/`，并按 duplicates / rendering 分组
 - 精确 name span 与 shorthand lowering 回归已建立
 - UI diagnostics snapshot harness 还未开始，这是 P2 后续要补的关键基础设施

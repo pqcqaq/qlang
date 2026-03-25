@@ -9,7 +9,7 @@ Current scope:
 - interop strategy for C, C++, and Rust
 - repository layout, feature inventory, and phased execution plan
 - completed Phase 1 frontend baseline in Rust workspace form
-- landed Phase 2 semantic foundation and diagnostics hardening
+- landed Phase 2 semantic foundation, name resolution, and diagnostics hardening
 
 Documentation lives in the VitePress subproject under [`docs/`](./docs).
 
@@ -38,6 +38,7 @@ Current Rust workspace status:
 - `crates/ql-fmt`: formatter for the current frontend slice
 - `crates/ql-diagnostics`: shared semantic and parser diagnostics model plus text renderer
 - `crates/ql-hir`: AST -> HIR lowering with stable IDs and semantic normalization
+- `crates/ql-resolve`: Phase 2 scope graph and conservative name resolution
 - `crates/ql-typeck`: current Phase 2 semantic baseline checks
 - `crates/ql-cli`: `ql` CLI with `check` and `fmt`
 
@@ -56,9 +57,13 @@ Current implemented syntax slice:
 
 Current semantic baseline in `ql check`:
 
+- parser -> HIR lowering -> resolve -> semantic checks share one CLI pipeline
 - parser diagnostics and semantic diagnostics share one renderer
 - precise identifier spans flow through AST -> HIR -> diagnostics for semantic hotspots
 - shorthand struct pattern and struct literal fields are normalized during HIR lowering
+- scope graph construction now covers module, callable, block, closure, match-arm, and for-loop scopes
+- best-effort resolution now covers locals, params, generics, imports, builtin types, struct literal roots, and pattern path roots
+- conservative resolution diagnostics currently add `self` misuse detection without eagerly rejecting unresolved globals or types
 - duplicate checks currently cover:
   - top-level definitions
   - generic parameters

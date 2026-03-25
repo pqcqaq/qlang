@@ -7,6 +7,7 @@ use ql_diagnostics::{Diagnostic, Label, render_diagnostics};
 use ql_fmt::format_source;
 use ql_hir::lower_module;
 use ql_parser::{ParseError, parse_source};
+use ql_resolve::resolve_module as resolve_hir_module;
 use ql_typeck::check_module as check_hir_module;
 
 fn main() -> ExitCode {
@@ -116,7 +117,8 @@ fn format_path(path: &Path, write: bool) -> Result<(), u8> {
 fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
     let ast = parse_source(source).map_err(parse_errors_to_diagnostics)?;
     let hir = lower_module(&ast);
-    let diagnostics = check_hir_module(&hir);
+    let mut diagnostics = resolve_hir_module(&hir).diagnostics;
+    diagnostics.extend(check_hir_module(&hir));
 
     if diagnostics.is_empty() {
         Ok(())
@@ -330,5 +332,21 @@ fn User() {}
                 .iter()
                 .any(|diagnostic| diagnostic.message == "duplicate top-level definition `User`")
         );
+    }
+
+    #[test]
+    fn analyze_source_reports_resolution_errors() {
+        let diagnostics = analyze_source(
+            r#"
+fn main() -> Int {
+    self
+}
+"#,
+        )
+        .expect_err("source should have resolver diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "invalid use of `self` outside a method receiver scope"
+        }));
     }
 }
