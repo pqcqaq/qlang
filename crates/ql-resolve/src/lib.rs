@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use ql_ast::Path;
 use ql_diagnostics::Diagnostic;
 use ql_hir::{BlockId, ExprId, ItemId, LocalId, PatternId, TypeId};
+use ql_span::Span;
 
 pub use ids::ScopeId;
 pub use resolver::resolve_module;
@@ -23,6 +24,8 @@ pub struct ResolutionMap {
     expr_scopes: HashMap<ExprId, ScopeId>,
     pattern_scopes: HashMap<PatternId, ScopeId>,
     type_scopes: HashMap<TypeId, ScopeId>,
+    item_scopes: HashMap<ItemId, ScopeId>,
+    function_scopes: HashMap<Span, ScopeId>,
 }
 
 impl ResolutionMap {
@@ -64,6 +67,16 @@ impl ResolutionMap {
 
     pub fn type_scope(&self, type_id: TypeId) -> Option<ScopeId> {
         self.type_scopes.get(&type_id).copied()
+    }
+
+    /// Return the item-local scope allocated while resolving one top-level item.
+    pub fn item_scope(&self, item_id: ItemId) -> Option<ScopeId> {
+        self.item_scopes.get(&item_id).copied()
+    }
+
+    /// Return the function-local scope allocated while resolving one function or method body/signature.
+    pub fn function_scope(&self, span: Span) -> Option<ScopeId> {
+        self.function_scopes.get(&span).copied()
     }
 }
 

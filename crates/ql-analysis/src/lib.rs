@@ -1,3 +1,5 @@
+mod query;
+
 use std::path::Path;
 
 use ql_diagnostics::{Diagnostic, Label, render_diagnostics};
@@ -5,6 +7,8 @@ use ql_hir::{ExprId, LocalId, PatternId, lower_module};
 use ql_parser::{ParseError, parse_source};
 use ql_resolve::{ResolutionMap, resolve_module};
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
+use query::QueryIndex;
+pub use query::{DefinitionTarget, HoverInfo, SymbolKind};
 
 /// Parsed-and-lowered semantic analysis snapshot shared by CLI and future LSP work.
 #[derive(Clone, Debug)]
@@ -13,6 +17,7 @@ pub struct Analysis {
     hir: ql_hir::Module,
     resolution: ResolutionMap,
     typeck: TypeckResult,
+    index: QueryIndex,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -53,6 +58,25 @@ impl Analysis {
         self.typeck.local_ty(local_id)
     }
 
+    /// Return the smallest indexed semantic symbol that covers `offset`.
+    ///
+    /// This currently stays conservative on purpose:
+    /// - expression queries only resolve root bindings, not full member chains
+    /// - imports and builtin types can hover but have no source definition span
+    pub fn symbol_at(&self, offset: usize) -> Option<HoverInfo> {
+        self.index.symbol_at(offset)
+    }
+
+    /// Return hover-ready semantic data for the symbol covering `offset`.
+    pub fn hover_at(&self, offset: usize) -> Option<HoverInfo> {
+        self.symbol_at(offset)
+    }
+
+    /// Return the definition site for the symbol covering `offset`, when the target lives in source.
+    pub fn definition_at(&self, offset: usize) -> Option<DefinitionTarget> {
+        self.index.definition_at(offset)
+    }
+
     pub fn render_diagnostics(&self, path: &Path, source: &str) -> String {
         render_diagnostics(path, source, self.diagnostics())
     }
@@ -65,6 +89,7 @@ pub fn analyze_source(source: &str) -> Result<Analysis, Vec<Diagnostic>> {
     let hir = lower_module(&ast);
     let resolution = resolve_module(&hir);
     let typeck = analyze_types(&hir, &resolution);
+    let index = QueryIndex::build(source, &hir, &resolution, &typeck);
     let mut diagnostics = resolution.diagnostics.clone();
     diagnostics.extend(typeck.diagnostics().iter().cloned());
 
@@ -73,6 +98,7 @@ pub fn analyze_source(source: &str) -> Result<Analysis, Vec<Diagnostic>> {
         hir,
         resolution,
         typeck,
+        index,
         diagnostics,
     })
 }

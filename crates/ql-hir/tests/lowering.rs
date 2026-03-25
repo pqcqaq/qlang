@@ -191,3 +191,24 @@ fn main() {
         "next"
     );
 }
+
+#[test]
+fn lower_module_preserves_receiver_parameter_spans() {
+    let source = r#"
+impl Counter {
+    fn read(var self) -> Int {}
+}
+"#;
+    let ast = parse_source(source).expect("source should parse");
+    let hir = lower_module(&ast);
+    let impl_block = match &hir.item(hir.items[0]).kind {
+        ItemKind::Impl(impl_block) => impl_block,
+        other => panic!("expected impl item, got {other:?}"),
+    };
+    let method = &impl_block.methods[0];
+    let ql_hir::Param::Receiver(receiver) = &method.params[0] else {
+        panic!("expected receiver parameter");
+    };
+
+    assert_eq!(&source[receiver.span.start..receiver.span.end], "var self");
+}

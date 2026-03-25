@@ -94,7 +94,10 @@ pub enum Param {
         name_span: Span,
         ty: TypeExpr,
     },
-    Receiver(ReceiverKind),
+    Receiver {
+        kind: ReceiverKind,
+        span: Span,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

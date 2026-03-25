@@ -281,7 +281,7 @@ fn format_function(function: &FunctionDecl, indent: usize, show_abi: bool, out: 
                 out.push_str(": ");
                 format_type(ty, out);
             }
-            Param::Receiver(kind) => match kind {
+            Param::Receiver { kind, .. } => match kind {
                 ReceiverKind::ReadOnly => out.push_str("self"),
                 ReceiverKind::Mutable => out.push_str("var self"),
                 ReceiverKind::Move => out.push_str("move self"),

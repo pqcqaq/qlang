@@ -3,7 +3,7 @@ mod support;
 use ql_hir::{ExprKind, StmtKind};
 use ql_resolve::ScopeKind;
 
-use support::{find_function, resolved};
+use support::{find_function, find_impl_method, find_item_id, resolved};
 
 #[test]
 fn for_loops_insert_a_binding_scope_between_parent_and_body_block() {
@@ -93,5 +93,55 @@ fn classify(command: Command) -> Int {
     assert_eq!(
         resolution.scopes.scope(pattern_scope).parent,
         Some(parent_scope)
+    );
+}
+
+#[test]
+fn records_item_and_function_scopes_for_query_layers() {
+    let (module, resolution) = resolved(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+fn make() -> Counter {
+    Counter { value: 1 }
+}
+
+impl Counter {
+    fn read(self) -> Int {
+        self.value
+    }
+}
+"#,
+    );
+
+    let counter_item = find_item_id(&module, "Counter");
+    let make_item = find_item_id(&module, "make");
+    let make_function = find_function(&module, "make");
+    let make_body = make_function.body.expect("function should have a body");
+    let make_body_scope = resolution
+        .block_scope(make_body)
+        .expect("function body should have a scope");
+    let make_scope = resolution
+        .item_scope(make_item)
+        .expect("function item should record its scope");
+    let method = find_impl_method(&module, "read");
+
+    assert_eq!(
+        resolution.function_scope(make_function.span),
+        Some(make_scope)
+    );
+    assert_eq!(
+        resolution.scopes.scope(make_body_scope).parent,
+        Some(make_scope)
+    );
+    assert!(
+        resolution.item_scope(counter_item).is_some(),
+        "top-level named items should record their item scope"
+    );
+    assert!(
+        resolution.function_scope(method.span).is_some(),
+        "methods should record a dedicated function scope even without an ItemId"
     );
 }

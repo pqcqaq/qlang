@@ -83,7 +83,7 @@ impl Lowerer {
             params: function
                 .params
                 .iter()
-                .map(|param| self.lower_param(param, span))
+                .map(|param| self.lower_param(param))
                 .collect(),
             return_type: function
                 .return_type
@@ -94,7 +94,7 @@ impl Lowerer {
         }
     }
 
-    fn lower_param(&mut self, param: &ast::Param, fallback_span: Span) -> Param {
+    fn lower_param(&mut self, param: &ast::Param) -> Param {
         match param {
             ast::Param::Regular {
                 name,
@@ -105,9 +105,9 @@ impl Lowerer {
                 name_span: *name_span,
                 ty: self.lower_type_expr(ty),
             }),
-            ast::Param::Receiver(kind) => Param::Receiver(ReceiverParam {
+            ast::Param::Receiver { kind, span } => Param::Receiver(ReceiverParam {
                 kind: *kind,
-                span: fallback_span,
+                span: *span,
             }),
         }
     }

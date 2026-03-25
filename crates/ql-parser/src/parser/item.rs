@@ -439,6 +439,7 @@ impl Parser {
                 || (self.at(TokenKind::Var) && self.nth_kind(1) == TokenKind::SelfKw)
                 || (self.at(TokenKind::MoveKw) && self.nth_kind(1) == TokenKind::SelfKw)
             {
+                let start = self.current_start();
                 let receiver = if self.eat(TokenKind::Var) {
                     self.expect(TokenKind::SelfKw, "expected `self` after `var`")?;
                     ReceiverKind::Mutable
@@ -449,7 +450,10 @@ impl Parser {
                     self.expect(TokenKind::SelfKw, "expected `self`")?;
                     ReceiverKind::ReadOnly
                 };
-                params.push(Param::Receiver(receiver));
+                params.push(Param::Receiver {
+                    kind: receiver,
+                    span: self.span_from(start),
+                });
             } else {
                 let name = self.expect_ident_token("expected parameter name")?;
                 self.expect(TokenKind::Colon, "expected `:` after parameter name")?;

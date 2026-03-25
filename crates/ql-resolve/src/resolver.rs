@@ -158,19 +158,23 @@ impl<'module> Resolver<'module> {
     fn resolve_item(&mut self, item_id: ItemId, parent_scope: ScopeId) {
         match &self.module.item(item_id).kind {
             ItemKind::Function(function) => {
-                self.resolve_function(function, parent_scope);
+                let scope = self.resolve_function(function, parent_scope);
+                self.resolution.item_scopes.insert(item_id, scope);
             }
             ItemKind::Const(global) | ItemKind::Static(global) => {
                 let scope = self.alloc_scope(ScopeKind::Item, Some(parent_scope));
+                self.resolution.item_scopes.insert(item_id, scope);
                 self.resolve_global(global, scope);
             }
             ItemKind::Struct(struct_decl) => {
                 let scope = self.alloc_scope(ScopeKind::Item, Some(parent_scope));
+                self.resolution.item_scopes.insert(item_id, scope);
                 self.bind_generics(scope, &struct_decl.generics);
                 self.resolve_fields(&struct_decl.fields, scope);
             }
             ItemKind::Enum(enum_decl) => {
                 let scope = self.alloc_scope(ScopeKind::Item, Some(parent_scope));
+                self.resolution.item_scopes.insert(item_id, scope);
                 self.bind_generics(scope, &enum_decl.generics);
                 for variant in &enum_decl.variants {
                     self.resolve_variant(variant, scope);
@@ -178,6 +182,7 @@ impl<'module> Resolver<'module> {
             }
             ItemKind::Trait(trait_decl) => {
                 let scope = self.alloc_scope(ScopeKind::Item, Some(parent_scope));
+                self.resolution.item_scopes.insert(item_id, scope);
                 self.bind_generics(scope, &trait_decl.generics);
                 for method in &trait_decl.methods {
                     self.resolve_function(method, scope);
@@ -185,6 +190,7 @@ impl<'module> Resolver<'module> {
             }
             ItemKind::Impl(impl_block) => {
                 let scope = self.alloc_scope(ScopeKind::Item, Some(parent_scope));
+                self.resolution.item_scopes.insert(item_id, scope);
                 self.bind_generics(scope, &impl_block.generics);
                 if let Some(trait_ty) = impl_block.trait_ty {
                     self.resolve_type(trait_ty, scope);
@@ -197,6 +203,7 @@ impl<'module> Resolver<'module> {
             }
             ItemKind::Extend(extend_block) => {
                 let scope = self.alloc_scope(ScopeKind::Item, Some(parent_scope));
+                self.resolution.item_scopes.insert(item_id, scope);
                 self.resolve_type(extend_block.target, scope);
                 for method in &extend_block.methods {
                     self.resolve_function(method, scope);
@@ -204,11 +211,13 @@ impl<'module> Resolver<'module> {
             }
             ItemKind::TypeAlias(alias) => {
                 let scope = self.alloc_scope(ScopeKind::Item, Some(parent_scope));
+                self.resolution.item_scopes.insert(item_id, scope);
                 self.bind_generics(scope, &alias.generics);
                 self.resolve_type(alias.ty, scope);
             }
             ItemKind::ExternBlock(extern_block) => {
                 let scope = self.alloc_scope(ScopeKind::Item, Some(parent_scope));
+                self.resolution.item_scopes.insert(item_id, scope);
                 for function in &extern_block.functions {
                     self.resolve_function(function, scope);
                 }
@@ -244,8 +253,9 @@ impl<'module> Resolver<'module> {
         }
     }
 
-    fn resolve_function(&mut self, function: &Function, parent_scope: ScopeId) {
+    fn resolve_function(&mut self, function: &Function, parent_scope: ScopeId) -> ScopeId {
         let scope = self.alloc_scope(ScopeKind::Item, Some(parent_scope));
+        self.resolution.function_scopes.insert(function.span, scope);
         self.bind_generics(scope, &function.generics);
         self.bind_params(scope, &function.params);
 
@@ -264,6 +274,8 @@ impl<'module> Resolver<'module> {
         if let Some(body) = function.body {
             self.resolve_block(body, scope);
         }
+
+        scope
     }
 
     fn resolve_where_clause(&mut self, predicates: &[WherePredicate], scope: ScopeId) {

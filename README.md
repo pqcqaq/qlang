@@ -61,10 +61,13 @@ Current semantic baseline in `ql check`:
 - parser -> HIR lowering -> resolve -> semantic checks share one CLI pipeline
 - parser diagnostics and semantic diagnostics share one renderer
 - `ql-analysis` now centralizes parse -> HIR -> resolve -> typeck orchestration
+- `ql-analysis` now also exposes minimal position-based semantic queries for symbol lookup, hover, and go-to-definition style tooling
 - precise identifier spans flow through AST -> HIR -> diagnostics for semantic hotspots
+- receiver parameter spans now stay precise through AST -> HIR, which keeps diagnostics and semantic queries anchored to `self` instead of whole function spans
 - shorthand struct pattern and struct literal fields are normalized during HIR lowering
 - scope graph construction now covers module, callable, block, closure, match-arm, and for-loop scopes
 - best-effort resolution now covers locals, params, generics, imports, builtin types, struct literal roots, and pattern path roots
+- resolver now records item/function scopes so semantic queries can map bindings back to declaration sites without re-walking resolution order
 - conservative resolution diagnostics currently add `self` misuse detection without eagerly rejecting unresolved globals or types
 - first-pass typing now covers:
   - return-value checking
@@ -91,7 +94,7 @@ Current intentional gap:
 
 - default parameters are part of the language design docs, but they are not lowered into AST/HIR or checked yet
 - import / module / prelude unresolved-name strictness is still intentionally deferred
-- future LSP work still needs richer symbol/hover queries beyond the current `expr` / `pattern` / `local` type surfaces
+- semantic queries are still intentionally conservative: they resolve root bindings and source-backed declarations, but not full member, variant, or module-path semantics yet
 
 Quick start:
 

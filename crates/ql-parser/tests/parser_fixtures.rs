@@ -341,3 +341,27 @@ fn sample[T](value: Int) {
     };
     assert_eq!(&source[params[0].span.start..params[0].span.end], "item");
 }
+
+#[test]
+fn captures_precise_receiver_parameter_spans() {
+    let source = r#"
+impl Counter {
+    fn read(var self) -> Int {}
+}
+"#;
+    let module = parse_source(source).expect("receiver fixture should parse");
+    let impl_block = match &module.items[0].kind {
+        ItemKind::Impl(impl_block) => impl_block,
+        other => panic!("expected impl item, got {other:?}"),
+    };
+    let function = &impl_block.methods[0];
+    let Param::Receiver {
+        span: receiver_span,
+        ..
+    } = &function.params[0]
+    else {
+        panic!("expected receiver parameter");
+    };
+
+    assert_eq!(&source[receiver_span.start..receiver_span.end], "var self");
+}

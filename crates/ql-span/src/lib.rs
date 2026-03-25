@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -17,6 +17,10 @@ impl Span {
 
     pub const fn is_empty(self) -> bool {
         self.start >= self.end
+    }
+
+    pub const fn contains(self, offset: usize) -> bool {
+        self.start <= offset && offset < self.end
     }
 }
 
