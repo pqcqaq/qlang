@@ -61,6 +61,10 @@ export default defineConfig({
           {
             text: "2026-03-26 P3.2 Ownership 设计",
             link: "/plans/2026-03-26-phase3-ownership-facts"
+          },
+          {
+            text: "2026-03-26 P3.3 Cleanup Ownership",
+            link: "/plans/2026-03-26-phase3-cleanup-aware-ownership"
           }
         ]
       }

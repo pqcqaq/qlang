@@ -159,6 +159,10 @@ source
   - 唯一匹配的 method candidate
   - receiver 为 `move self`
 - `ql-analysis` 已把这层结果纳入统一分析快照，`ql ownership` 可以直接渲染当前 ownership facts
+- 当前已经继续推进的 P3.3 子切片是 cleanup-aware ownership：
+  - `RunCleanup` 会真实驱动 deferred expr 的 local read / consume / root-write
+  - deferred cleanup 的 LIFO 运行顺序现在会影响 ownership diagnostics
+  - `move self` 的消费时机已经调整为参数求值之后，避免把错误调用顺序固化进分析层
 
 这意味着 P3 的下一步应继续建立在这层 MIR + ownership facts 之上做更一般的 call contract、borrow / escape 分析和 drop elaboration，而不是重新回头改 HIR。
 

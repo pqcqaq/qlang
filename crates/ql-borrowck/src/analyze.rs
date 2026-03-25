@@ -1,13 +1,13 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use ql_ast::ReceiverKind;
+use ql_ast::{BinaryOp, ReceiverKind};
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{self as hir, Function, ItemKind, Param};
 use ql_mir::{
-    BasicBlockId, BodyOwner, Constant, LocalId as MirLocalId, LocalOrigin, MirBody, MirModule,
-    Operand, Place, ProjectionElem, Rvalue, StatementKind, TerminatorKind,
+    BasicBlockId, BodyOwner, CleanupId, CleanupKind, Constant, LocalId as MirLocalId, LocalOrigin,
+    MirBody, MirModule, Operand, Place, ProjectionElem, Rvalue, StatementKind, TerminatorKind,
 };
-use ql_resolve::ResolutionMap;
+use ql_resolve::{ResolutionMap, ValueResolution};
 use ql_typeck::{Ty, TypeckResult, lower_type};
 
 use crate::{
@@ -47,6 +47,9 @@ struct BodyAnalyzer<'a> {
     body: &'a MirBody,
     function: &'a Function,
     receiver_ty: Option<Ty>,
+    binding_locals: HashMap<hir::LocalId, MirLocalId>,
+    param_locals: HashMap<usize, MirLocalId>,
+    receiver_local: Option<MirLocalId>,
 }
 
 impl<'a> BodyAnalyzer<'a> {
@@ -58,6 +61,25 @@ impl<'a> BodyAnalyzer<'a> {
         function: &'a Function,
     ) -> Self {
         let receiver_ty = receiver_target_ty(hir, resolution, body.owner);
+        let mut binding_locals = HashMap::new();
+        let mut param_locals = HashMap::new();
+        let mut receiver_local = None;
+
+        for local_id in body.local_ids() {
+            let local = body.local(local_id);
+            match &local.origin {
+                LocalOrigin::Binding(hir_local) => {
+                    binding_locals.insert(*hir_local, local_id);
+                }
+                LocalOrigin::Param { index } => {
+                    param_locals.insert(*index, local_id);
+                }
+                LocalOrigin::Receiver => {
+                    receiver_local = Some(local_id);
+                }
+                LocalOrigin::ReturnSlot | LocalOrigin::Temp { .. } => {}
+            }
+        }
 
         Self {
             hir,
@@ -66,6 +88,9 @@ impl<'a> BodyAnalyzer<'a> {
             body,
             function,
             receiver_ty,
+            binding_locals,
+            param_locals,
+            receiver_local,
         }
     }
 
@@ -173,13 +198,7 @@ impl<'a> BodyAnalyzer<'a> {
                 let mut reporter = reporter;
                 self.apply_rvalue(states, value, span, reporter.as_deref_mut());
                 if place.projections.is_empty() {
-                    self.record_event(
-                        reporter.as_deref_mut(),
-                        span,
-                        place.base,
-                        LocalEventKind::Write,
-                    );
-                    states[place.base.index()] = LocalState::Available;
+                    self.write_local(states, place.base, span, reporter.as_deref_mut());
                 } else {
                     self.read_place(states, place, span, reporter);
                 }
@@ -190,7 +209,10 @@ impl<'a> BodyAnalyzer<'a> {
             StatementKind::Eval { value } => self.apply_rvalue(states, value, span, reporter),
             StatementKind::StorageLive { local } => states[local.index()] = LocalState::Available,
             StatementKind::StorageDead { local } => states[local.index()] = LocalState::Unavailable,
-            StatementKind::RegisterCleanup { .. } | StatementKind::RunCleanup { .. } => {}
+            StatementKind::RegisterCleanup { .. } => {}
+            StatementKind::RunCleanup { cleanup } => {
+                self.apply_cleanup(states, *cleanup, reporter);
+            }
         }
     }
 
@@ -232,11 +254,20 @@ impl<'a> BodyAnalyzer<'a> {
             }
             Rvalue::Call { callee, args } => {
                 let mut reporter = reporter;
-                if !self.consume_move_receiver(states, callee, span, reporter.as_deref_mut()) {
+                let pending_consume = self.classify_move_receiver_operand(
+                    states,
+                    callee,
+                    span,
+                    reporter.as_deref_mut(),
+                );
+                if pending_consume.is_none() {
                     self.read_operand(states, callee, span, reporter.as_deref_mut());
                 }
                 for arg in args {
                     self.read_operand(states, &arg.value, span, reporter.as_deref_mut());
+                }
+                if let Some((local, reason)) = pending_consume {
+                    self.apply_consume(states, local, span, reason, reporter);
                 }
             }
             Rvalue::Binary { left, right, .. } => {
@@ -288,12 +319,11 @@ impl<'a> BodyAnalyzer<'a> {
         reporter: Option<&mut Reporter>,
     ) {
         let mut reporter = reporter;
-        self.check_moved_use(states, place.base, span, reporter.as_deref_mut());
-        self.record_event(
-            reporter.as_deref_mut(),
-            span,
+        self.read_local(
+            states,
             place.base,
-            LocalEventKind::Read,
+            UseSite::normal(span),
+            reporter.as_deref_mut(),
         );
 
         for projection in &place.projections {
@@ -303,52 +333,89 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
-    fn consume_move_receiver(
+    fn classify_move_receiver_operand(
         &self,
-        states: &mut [LocalState],
+        states: &[LocalState],
         callee: &Operand,
         span: ql_span::Span,
         reporter: Option<&mut Reporter>,
-    ) -> bool {
+    ) -> Option<(MirLocalId, MoveReason)> {
         let Operand::Place(place) = callee else {
-            return false;
+            return None;
         };
         // P3.2 intentionally only models direct-local receivers. Projection-sensitive
         // consumption needs a later place-aware analysis instead of ad hoc rules here.
         let Some(ProjectionElem::Field(method_name)) = place.projections.last() else {
-            return false;
+            return None;
         };
         if place.projections.len() != 1 {
-            return false;
+            return None;
         }
 
-        let Some(receiver_ty) = self.local_ty(place.base) else {
-            return false;
-        };
-        let Some(reason) = self.unique_move_receiver_reason(&receiver_ty, method_name) else {
-            return false;
-        };
+        let receiver_ty = self.local_ty(place.base)?;
+        let reason = self.unique_move_receiver_reason(&receiver_ty, method_name)?;
 
-        let mut reporter = reporter;
-        self.check_moved_use(states, place.base, span, reporter.as_deref_mut());
+        self.check_moved_use(states, place.base, UseSite::normal(span), reporter);
+
+        Some((place.base, reason))
+    }
+
+    fn apply_consume(
+        &self,
+        states: &mut [LocalState],
+        local: MirLocalId,
+        span: ql_span::Span,
+        reason: MoveReason,
+        reporter: Option<&mut Reporter>,
+    ) {
         self.record_event(
             reporter,
             span,
-            place.base,
+            local,
             LocalEventKind::Consume(reason.clone()),
         );
-        states[place.base.index()] = LocalState::Moved(MoveInfo {
-            certainty: MoveCertainty::Definite,
-            origins: vec![MoveOrigin { span, reason }],
-        });
-        true
+        let origin = MoveOrigin { span, reason };
+        let next = match &states[local.index()] {
+            LocalState::Moved(existing) => LocalState::Moved(MoveInfo {
+                certainty: MoveCertainty::Definite,
+                origins: merge_origins(&existing.origins, std::slice::from_ref(&origin)),
+            }),
+            LocalState::Unavailable | LocalState::Available => LocalState::Moved(MoveInfo {
+                certainty: MoveCertainty::Definite,
+                origins: vec![origin],
+            }),
+        };
+        states[local.index()] = next;
+    }
+
+    fn read_local(
+        &self,
+        states: &[LocalState],
+        local: MirLocalId,
+        use_site: UseSite,
+        reporter: Option<&mut Reporter>,
+    ) {
+        let mut reporter = reporter;
+        self.check_moved_use(states, local, use_site, reporter.as_deref_mut());
+        self.record_event(reporter, use_site.span, local, LocalEventKind::Read);
+    }
+
+    fn write_local(
+        &self,
+        states: &mut [LocalState],
+        local: MirLocalId,
+        span: ql_span::Span,
+        reporter: Option<&mut Reporter>,
+    ) {
+        self.record_event(reporter, span, local, LocalEventKind::Write);
+        states[local.index()] = LocalState::Available;
     }
 
     fn check_moved_use(
         &self,
         states: &[LocalState],
         local: MirLocalId,
-        span: ql_span::Span,
+        use_site: UseSite,
         reporter: Option<&mut Reporter>,
     ) {
         let Some(reporter) = reporter else {
@@ -364,7 +431,7 @@ impl<'a> BodyAnalyzer<'a> {
         let name = &self.body.local(local).name;
         let key = DiagnosticKey {
             local,
-            use_span: span,
+            use_span: use_site.span,
             certainty: info.certainty,
             origin_spans: info.origins.iter().map(|origin| origin.span).collect(),
         };
@@ -380,7 +447,7 @@ impl<'a> BodyAnalyzer<'a> {
                 "local `{name}` may have been moved on another control-flow path"
             )),
         }
-        .with_label(Label::new(span).with_message("use here"));
+        .with_label(Label::new(use_site.span).with_message(use_site.label));
 
         for origin in &info.origins {
             diagnostic = diagnostic.with_label(
@@ -394,6 +461,9 @@ impl<'a> BodyAnalyzer<'a> {
             diagnostic = diagnostic.with_note(
                 "this local is only known to be moved on some incoming paths in the current checker",
             );
+        }
+        if let Some(note) = use_site.note {
+            diagnostic = diagnostic.with_note(note);
         }
 
         reporter.diagnostics.push(diagnostic);
@@ -485,6 +555,464 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
+    fn local_for_resolution(&self, resolution: &ValueResolution) -> Option<MirLocalId> {
+        match resolution {
+            ValueResolution::Local(local) => self.binding_locals.get(local).copied(),
+            ValueResolution::Param(binding) => self.param_locals.get(&binding.index).copied(),
+            ValueResolution::SelfValue => self.receiver_local,
+            ValueResolution::Item(_) | ValueResolution::Import(_) => None,
+        }
+    }
+
+    fn direct_local_for_expr(&self, expr_id: hir::ExprId) -> Option<MirLocalId> {
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::Name(_) => self
+                .resolution
+                .expr_resolution(expr_id)
+                .and_then(|resolution| self.local_for_resolution(resolution)),
+            _ => None,
+        }
+    }
+
+    fn classify_move_receiver_expr(
+        &self,
+        states: &[LocalState],
+        callee: hir::ExprId,
+        span: ql_span::Span,
+        reporter: Option<&mut Reporter>,
+        use_site: UseSite,
+    ) -> Option<(MirLocalId, MoveReason)> {
+        let hir::ExprKind::Member { object, field } = &self.hir.expr(callee).kind else {
+            return None;
+        };
+        let local = self.direct_local_for_expr(*object)?;
+        let receiver_ty = self.local_ty(local)?;
+        let reason = self.unique_move_receiver_reason(&receiver_ty, field)?;
+
+        self.check_moved_use(states, local, use_site.with_span(span), reporter);
+        Some((local, reason))
+    }
+
+    fn apply_cleanup(
+        &self,
+        states: &mut [LocalState],
+        cleanup: CleanupId,
+        reporter: Option<&mut Reporter>,
+    ) {
+        match &self.body.cleanup(cleanup).kind {
+            CleanupKind::Defer { expr } => {
+                let result = self.eval_cleanup_expr(
+                    states.to_vec(),
+                    *expr,
+                    reporter,
+                    UseSite::deferred(self.hir.expr(*expr).span),
+                );
+                states.clone_from_slice(&result.states);
+            }
+        }
+    }
+
+    fn eval_cleanup_expr(
+        &self,
+        states: Vec<LocalState>,
+        expr_id: hir::ExprId,
+        reporter: Option<&mut Reporter>,
+        use_site: UseSite,
+    ) -> CleanupEval {
+        let expr = self.hir.expr(expr_id);
+        match &expr.kind {
+            hir::ExprKind::Name(_) => {
+                if let Some(local) = self.direct_local_for_expr(expr_id) {
+                    self.read_local(&states, local, use_site.with_span(expr.span), reporter);
+                }
+                CleanupEval::cont(states)
+            }
+            hir::ExprKind::Integer(_)
+            | hir::ExprKind::String { .. }
+            | hir::ExprKind::Bool(_)
+            | hir::ExprKind::NoneLiteral
+            | hir::ExprKind::Closure { .. } => CleanupEval::cont(states),
+            hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => {
+                self.eval_cleanup_exprs(states, items, reporter, use_site)
+            }
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+                self.eval_cleanup_block(states, *block, reporter, use_site)
+            }
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let mut reporter = reporter;
+                let condition_eval = self.eval_cleanup_expr(
+                    states,
+                    *condition,
+                    reporter.as_deref_mut(),
+                    use_site.with_span(self.hir.expr(*condition).span),
+                );
+                if !condition_eval.continues {
+                    return condition_eval;
+                }
+
+                let then_eval = self.eval_cleanup_block(
+                    condition_eval.states.clone(),
+                    *then_branch,
+                    reporter.as_deref_mut(),
+                    use_site,
+                );
+                let else_eval = if let Some(else_expr) = else_branch {
+                    self.eval_cleanup_expr(
+                        condition_eval.states,
+                        *else_expr,
+                        reporter,
+                        use_site.with_span(self.hir.expr(*else_expr).span),
+                    )
+                } else {
+                    CleanupEval::cont(condition_eval.states)
+                };
+                merge_cleanup_branches(then_eval, else_eval)
+            }
+            hir::ExprKind::Match { value, arms } => {
+                let mut reporter = reporter;
+                let scrutinee_eval = self.eval_cleanup_expr(
+                    states,
+                    *value,
+                    reporter.as_deref_mut(),
+                    use_site.with_span(self.hir.expr(*value).span),
+                );
+                if !scrutinee_eval.continues {
+                    return scrutinee_eval;
+                }
+
+                let mut arm_results = Vec::with_capacity(arms.len());
+                for arm in arms {
+                    let mut arm_eval = CleanupEval::cont(scrutinee_eval.states.clone());
+                    if let Some(guard) = arm.guard {
+                        arm_eval = self.eval_cleanup_expr(
+                            arm_eval.states,
+                            guard,
+                            reporter.as_deref_mut(),
+                            use_site.with_span(self.hir.expr(guard).span),
+                        );
+                    }
+                    if arm_eval.continues {
+                        arm_eval = self.eval_cleanup_expr(
+                            arm_eval.states,
+                            arm.body,
+                            reporter.as_deref_mut(),
+                            use_site.with_span(self.hir.expr(arm.body).span),
+                        );
+                    }
+                    arm_results.push(arm_eval);
+                }
+
+                merge_cleanup_branch_set(scrutinee_eval.states, arm_results)
+            }
+            hir::ExprKind::Call { callee, args } => {
+                let mut reporter = reporter;
+                let mut states = states;
+                let pending_consume = self.classify_move_receiver_expr(
+                    &states,
+                    *callee,
+                    expr.span,
+                    reporter.as_deref_mut(),
+                    use_site,
+                );
+                if pending_consume.is_none() {
+                    let callee_eval = self.eval_cleanup_expr(
+                        states,
+                        *callee,
+                        reporter.as_deref_mut(),
+                        use_site.with_span(self.hir.expr(*callee).span),
+                    );
+                    if !callee_eval.continues {
+                        return callee_eval;
+                    }
+                    states = callee_eval.states;
+                }
+                for arg in args {
+                    let value = match arg {
+                        hir::CallArg::Positional(value) => *value,
+                        hir::CallArg::Named { value, .. } => *value,
+                    };
+                    let arg_eval = self.eval_cleanup_expr(
+                        states,
+                        value,
+                        reporter.as_deref_mut(),
+                        use_site.with_span(self.hir.expr(value).span),
+                    );
+                    if !arg_eval.continues {
+                        return arg_eval;
+                    }
+                    states = arg_eval.states;
+                }
+                if let Some((local, reason)) = pending_consume {
+                    self.apply_consume(&mut states, local, expr.span, reason, reporter);
+                }
+                CleanupEval::cont(states)
+            }
+            hir::ExprKind::Member { object, .. } => self.eval_cleanup_expr(
+                states,
+                *object,
+                reporter,
+                use_site.with_span(self.hir.expr(*object).span),
+            ),
+            hir::ExprKind::Bracket { target, items } => {
+                let mut reporter = reporter;
+                let target_eval = self.eval_cleanup_expr(
+                    states,
+                    *target,
+                    reporter.as_deref_mut(),
+                    use_site.with_span(self.hir.expr(*target).span),
+                );
+                if !target_eval.continues {
+                    return target_eval;
+                }
+                self.eval_cleanup_exprs(target_eval.states, items, reporter, use_site)
+            }
+            hir::ExprKind::StructLiteral { fields, .. } => self.eval_cleanup_exprs(
+                states,
+                &fields.iter().map(|field| field.value).collect::<Vec<_>>(),
+                reporter,
+                use_site,
+            ),
+            hir::ExprKind::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => {
+                let mut reporter = reporter;
+                let target_eval = self.eval_cleanup_assign_target(
+                    states,
+                    *left,
+                    reporter.as_deref_mut(),
+                    use_site,
+                );
+                if !target_eval.continues {
+                    return CleanupEval::stop(target_eval.states);
+                }
+
+                let mut states = target_eval.states;
+                let value_eval = self.eval_cleanup_expr(
+                    states,
+                    *right,
+                    reporter.as_deref_mut(),
+                    use_site.with_span(self.hir.expr(*right).span),
+                );
+                if !value_eval.continues {
+                    return value_eval;
+                }
+                states = value_eval.states;
+                if let Some(local) = target_eval.root_local {
+                    self.write_local(&mut states, local, expr.span, reporter);
+                }
+                CleanupEval::cont(states)
+            }
+            hir::ExprKind::Binary { left, right, .. } => {
+                let mut reporter = reporter;
+                let left_eval = self.eval_cleanup_expr(
+                    states,
+                    *left,
+                    reporter.as_deref_mut(),
+                    use_site.with_span(self.hir.expr(*left).span),
+                );
+                if !left_eval.continues {
+                    return left_eval;
+                }
+                self.eval_cleanup_expr(
+                    left_eval.states,
+                    *right,
+                    reporter,
+                    use_site.with_span(self.hir.expr(*right).span),
+                )
+            }
+            hir::ExprKind::Unary { expr: inner, .. } | hir::ExprKind::Question(inner) => self
+                .eval_cleanup_expr(
+                    states,
+                    *inner,
+                    reporter,
+                    use_site.with_span(self.hir.expr(*inner).span),
+                ),
+        }
+    }
+
+    fn eval_cleanup_exprs(
+        &self,
+        mut states: Vec<LocalState>,
+        exprs: &[hir::ExprId],
+        mut reporter: Option<&mut Reporter>,
+        use_site: UseSite,
+    ) -> CleanupEval {
+        for expr in exprs {
+            let eval = self.eval_cleanup_expr(
+                states,
+                *expr,
+                reporter.as_deref_mut(),
+                use_site.with_span(self.hir.expr(*expr).span),
+            );
+            if !eval.continues {
+                return eval;
+            }
+            states = eval.states;
+        }
+        CleanupEval::cont(states)
+    }
+
+    fn eval_cleanup_block(
+        &self,
+        mut states: Vec<LocalState>,
+        block_id: hir::BlockId,
+        mut reporter: Option<&mut Reporter>,
+        use_site: UseSite,
+    ) -> CleanupEval {
+        let block = self.hir.block(block_id);
+        for stmt_id in &block.statements {
+            let eval = self.eval_cleanup_stmt(states, *stmt_id, reporter.as_deref_mut(), use_site);
+            if !eval.continues {
+                return eval;
+            }
+            states = eval.states;
+        }
+
+        if let Some(tail) = block.tail {
+            self.eval_cleanup_expr(
+                states,
+                tail,
+                reporter,
+                use_site.with_span(self.hir.expr(tail).span),
+            )
+        } else {
+            CleanupEval::cont(states)
+        }
+    }
+
+    fn eval_cleanup_stmt(
+        &self,
+        states: Vec<LocalState>,
+        stmt_id: hir::StmtId,
+        mut reporter: Option<&mut Reporter>,
+        use_site: UseSite,
+    ) -> CleanupEval {
+        let stmt = self.hir.stmt(stmt_id);
+        match &stmt.kind {
+            hir::StmtKind::Let { value, .. } => self.eval_cleanup_expr(
+                states,
+                *value,
+                reporter,
+                use_site.with_span(self.hir.expr(*value).span),
+            ),
+            hir::StmtKind::Return(Some(expr)) => {
+                let eval = self.eval_cleanup_expr(
+                    states,
+                    *expr,
+                    reporter,
+                    use_site.with_span(self.hir.expr(*expr).span),
+                );
+                CleanupEval::stop(eval.states)
+            }
+            hir::StmtKind::Return(None) | hir::StmtKind::Break | hir::StmtKind::Continue => {
+                CleanupEval::stop(states)
+            }
+            // Nested `defer` inside a deferred cleanup needs dedicated runtime modeling later.
+            hir::StmtKind::Defer(_) => CleanupEval::cont(states),
+            hir::StmtKind::While { condition, body } => {
+                let condition_eval = self.eval_cleanup_expr(
+                    states,
+                    *condition,
+                    reporter.as_deref_mut(),
+                    use_site.with_span(self.hir.expr(*condition).span),
+                );
+                if !condition_eval.continues {
+                    return condition_eval;
+                }
+                let body_eval = self.eval_cleanup_block(
+                    condition_eval.states.clone(),
+                    *body,
+                    reporter,
+                    use_site,
+                );
+                CleanupEval::cont(
+                    merge_state_vec(Some(&condition_eval.states), &body_eval.states).0,
+                )
+            }
+            hir::StmtKind::Loop { body } => {
+                self.eval_cleanup_block(states, *body, reporter, use_site)
+            }
+            hir::StmtKind::For { iterable, body, .. } => {
+                let iterable_eval = self.eval_cleanup_expr(
+                    states,
+                    *iterable,
+                    reporter.as_deref_mut(),
+                    use_site.with_span(self.hir.expr(*iterable).span),
+                );
+                if !iterable_eval.continues {
+                    return iterable_eval;
+                }
+                let body_eval = self.eval_cleanup_block(
+                    iterable_eval.states.clone(),
+                    *body,
+                    reporter,
+                    use_site,
+                );
+                CleanupEval::cont(merge_state_vec(Some(&iterable_eval.states), &body_eval.states).0)
+            }
+            hir::StmtKind::Expr { expr, .. } => self.eval_cleanup_expr(
+                states,
+                *expr,
+                reporter,
+                use_site.with_span(self.hir.expr(*expr).span),
+            ),
+        }
+    }
+
+    fn eval_cleanup_assign_target(
+        &self,
+        states: Vec<LocalState>,
+        expr_id: hir::ExprId,
+        reporter: Option<&mut Reporter>,
+        use_site: UseSite,
+    ) -> CleanupAssignTarget {
+        let expr = self.hir.expr(expr_id);
+        match &expr.kind {
+            hir::ExprKind::Name(_) => {
+                CleanupAssignTarget::cont(states, self.direct_local_for_expr(expr_id))
+            }
+            hir::ExprKind::Member { object, .. } => {
+                let eval = self.eval_cleanup_expr(
+                    states,
+                    *object,
+                    reporter,
+                    use_site.with_span(self.hir.expr(*object).span),
+                );
+                CleanupAssignTarget::from_eval(eval, None)
+            }
+            hir::ExprKind::Bracket { target, items } => {
+                let mut reporter = reporter;
+                let target_eval = self.eval_cleanup_expr(
+                    states,
+                    *target,
+                    reporter.as_deref_mut(),
+                    use_site.with_span(self.hir.expr(*target).span),
+                );
+                if !target_eval.continues {
+                    return CleanupAssignTarget::from_eval(target_eval, None);
+                }
+                let items_eval =
+                    self.eval_cleanup_exprs(target_eval.states, items, reporter, use_site);
+                CleanupAssignTarget::from_eval(items_eval, None)
+            }
+            _ => {
+                let eval = self.eval_cleanup_expr(
+                    states,
+                    expr_id,
+                    reporter,
+                    use_site.with_span(expr.span),
+                );
+                CleanupAssignTarget::from_eval(eval, None)
+            }
+        }
+    }
+
     fn record_event(
         &self,
         reporter: Option<&mut Reporter>,
@@ -504,6 +1032,82 @@ struct Reporter {
     events: Vec<LocalEvent>,
     diagnostics: Vec<Diagnostic>,
     emitted: HashSet<DiagnosticKey>,
+}
+
+#[derive(Clone, Debug)]
+struct CleanupEval {
+    states: Vec<LocalState>,
+    continues: bool,
+}
+
+impl CleanupEval {
+    fn cont(states: Vec<LocalState>) -> Self {
+        Self {
+            states,
+            continues: true,
+        }
+    }
+
+    fn stop(states: Vec<LocalState>) -> Self {
+        Self {
+            states,
+            continues: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CleanupAssignTarget {
+    states: Vec<LocalState>,
+    continues: bool,
+    root_local: Option<MirLocalId>,
+}
+
+impl CleanupAssignTarget {
+    fn cont(states: Vec<LocalState>, root_local: Option<MirLocalId>) -> Self {
+        Self {
+            states,
+            continues: true,
+            root_local,
+        }
+    }
+
+    fn from_eval(eval: CleanupEval, root_local: Option<MirLocalId>) -> Self {
+        Self {
+            states: eval.states,
+            continues: eval.continues,
+            root_local,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct UseSite {
+    span: ql_span::Span,
+    label: &'static str,
+    note: Option<&'static str>,
+}
+
+impl UseSite {
+    fn normal(span: ql_span::Span) -> Self {
+        Self {
+            span,
+            label: "use here",
+            note: None,
+        }
+    }
+
+    fn deferred(span: ql_span::Span) -> Self {
+        Self {
+            span,
+            label: "used here when deferred cleanup runs",
+            note: Some("deferred cleanup executes on scope exit in LIFO order"),
+        }
+    }
+
+    fn with_span(self, span: ql_span::Span) -> Self {
+        Self { span, ..self }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -529,6 +1133,47 @@ fn merge_state_vec(
             let changed = merged != existing;
             (merged, changed)
         }
+    }
+}
+
+fn merge_cleanup_branches(left: CleanupEval, right: CleanupEval) -> CleanupEval {
+    match (left.continues, right.continues) {
+        (true, true) => CleanupEval::cont(merge_state_vec(Some(&left.states), &right.states).0),
+        (true, false) => CleanupEval::cont(left.states),
+        (false, true) => CleanupEval::cont(right.states),
+        (false, false) => CleanupEval::stop(merge_state_vec(Some(&left.states), &right.states).0),
+    }
+}
+
+fn merge_cleanup_branch_set(
+    base_states: Vec<LocalState>,
+    results: Vec<CleanupEval>,
+) -> CleanupEval {
+    let mut continuing: Option<Vec<LocalState>> = None;
+    let mut terminated: Option<Vec<LocalState>> = None;
+
+    if results.is_empty() {
+        return CleanupEval::cont(base_states);
+    }
+
+    for result in results {
+        if result.continues {
+            continuing = Some(match continuing {
+                Some(existing) => merge_state_vec(Some(&existing), &result.states).0,
+                None => result.states,
+            });
+        } else {
+            terminated = Some(match terminated {
+                Some(existing) => merge_state_vec(Some(&existing), &result.states).0,
+                None => result.states,
+            });
+        }
+    }
+
+    match (continuing, terminated) {
+        (Some(states), _) => CleanupEval::cont(states),
+        (None, Some(states)) => CleanupEval::stop(states),
+        (None, None) => CleanupEval::cont(base_states),
     }
 }
 

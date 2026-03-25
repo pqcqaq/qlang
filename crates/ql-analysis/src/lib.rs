@@ -320,4 +320,36 @@ fn main() -> String {
                 .any(|diagnostic| { diagnostic.message == "local `user` was used after move" })
         );
     }
+
+    #[test]
+    fn includes_deferred_cleanup_borrowck_diagnostics_in_the_combined_output() {
+        let analysis = analyze_source(
+            r#"
+struct User {
+    name: String,
+}
+
+impl User {
+    fn into_json(move self) -> String {
+        return self.name
+    }
+}
+
+fn main() -> String {
+    let user = User { name: "ql" }
+    defer user.name
+    defer user.into_json()
+    return ""
+}
+"#,
+        )
+        .expect("deferred cleanup diagnostics should still yield an analysis snapshot");
+
+        assert!(
+            analysis
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| { diagnostic.message == "local `user` was used after move" })
+        );
+    }
 }

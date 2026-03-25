@@ -239,6 +239,11 @@ P3 已经完成前两个切片，但当前仍然只宣称“ownership foundation
 - 第一类用户可见 ownership diagnostics 已落地：
   - direct local receiver 调用唯一匹配的 `move self` method 后，再次使用该 local 会报错
   - 分支合流后会给出 `may have been moved` 级诊断
+- cleanup-aware ownership 已进入下一切片：
+  - `RunCleanup` 现在会真实参与 ownership analysis
+  - deferred cleanup 会按 LIFO 执行顺序产生 read / consume / root-write effects
+  - cleanup 中的 root local reassignment 可以为后续 cleanup 重新建立 `Available`
+  - `move self` 调用现在在参数求值之后才真正消费 receiver
 - `ql-analysis` 已聚合 borrowck diagnostics，并提供 ownership dump 渲染
 - `ql ownership <file>` 已可直接输出当前 ownership facts
 
@@ -247,6 +252,7 @@ P3 已经完成前两个切片，但当前仍然只宣称“ownership foundation
 - 通用 call consume contract
 - place-sensitive move analysis
 - borrow / escape analysis
+- cleanup closure capture / nested defer runtime modeling
 - drop elaboration
 - `match` / `for` 的更低层 elaboration
 - 完整 ownership diagnostics 体系
@@ -257,7 +263,7 @@ P3 不应一次性推进，而应拆成：
 
 1. P3.1 MIR foundation
 2. P3.2 ownership facts 与显式 `move self` 诊断
-3. P3.3 borrow / escape analysis
+3. P3.3 cleanup-aware ownership 与 borrow / escape analysis
 4. P3.4 ownership diagnostics 与 drop elaboration
 5. P3.5 codegen-ready MIR simplification
 

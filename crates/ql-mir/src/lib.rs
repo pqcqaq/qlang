@@ -77,6 +77,10 @@ impl MirBody {
         &self.local_data
     }
 
+    pub fn local_ids(&self) -> impl Iterator<Item = LocalId> + '_ {
+        (0..self.local_data.len()).map(LocalId::from_index)
+    }
+
     pub fn block(&self, id: BasicBlockId) -> &BasicBlock {
         &self.block_data[id.index()]
     }

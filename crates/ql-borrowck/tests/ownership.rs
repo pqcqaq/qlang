@@ -20,6 +20,16 @@ fn diagnostic_messages(source: &str) -> Vec<String> {
         .collect()
 }
 
+fn render_output(source: &str) -> String {
+    let ast = parse_source(source).expect("source should parse");
+    let hir = lower_hir(&ast);
+    let resolution = resolve_module(&hir);
+    let typeck = analyze_types(&hir, &resolution);
+    let mir = lower_mir(&hir, &resolution);
+    let borrowck = analyze_borrowck(&hir, &resolution, &typeck, &mir);
+    render_result(&borrowck, &mir)
+}
+
 #[test]
 fn reports_use_after_move_from_move_self_method() {
     let diagnostics = diagnostic_messages(
@@ -111,6 +121,33 @@ fn main() -> String {
 }
 
 #[test]
+fn move_receivers_consume_after_argument_evaluation() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct User {
+    name: String,
+}
+
+impl User {
+    fn rename(move self, to: String) -> User {
+        return User { name: to }
+    }
+}
+
+fn main() -> User {
+    let user = User { name: "ql" }
+    return user.rename(user.name)
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn readonly_and_mutable_receivers_do_not_count_as_move() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -178,8 +215,101 @@ fn main() -> String {
 }
 
 #[test]
+fn reports_deferred_cleanup_use_after_prior_cleanup_move() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct User {
+    name: String,
+}
+
+impl User {
+    fn into_json(move self) -> String {
+        return self.name
+    }
+}
+
+fn main() -> String {
+    let user = User { name: "ql" }
+    defer user.name
+    defer user.into_json()
+    return ""
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `user` was used after move".to_string()));
+}
+
+#[test]
+fn reports_maybe_moved_from_conditional_cleanup() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct User {
+    name: String,
+}
+
+impl User {
+    fn into_json(move self) -> String {
+        return self.name
+    }
+}
+
+fn main(flag: Bool) -> String {
+    let user = User { name: "ql" }
+    defer user.name
+    defer if flag { user.into_json() } else { "" }
+    return ""
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"local `user` may have been moved on another control-flow path".to_string())
+    );
+}
+
+#[test]
+fn deferred_root_write_reinitializes_for_later_cleanup_reads() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct User {
+    name: String,
+}
+
+impl User {
+    fn into_json(move self) -> String {
+        return self.name
+    }
+}
+
+fn fresh_user() -> User {
+    return User { name: "new" }
+}
+
+fn main() -> String {
+    let user = User { name: "old" }
+    defer user.name
+    defer {
+        user = fresh_user();
+        ""
+    }
+    defer user.into_json()
+    return ""
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn renders_block_state_facts_for_debugging() {
-    let source = r#"
+    let rendered = render_output(
+        r#"
 struct User {
     name: String,
 }
@@ -195,16 +325,37 @@ fn main() -> String {
     user.into_json()
     return user.name
 }
-"#;
-    let ast = parse_source(source).expect("source should parse");
-    let hir = lower_hir(&ast);
-    let resolution = resolve_module(&hir);
-    let typeck = analyze_types(&hir, &resolution);
-    let mir = lower_mir(&hir, &resolution);
-    let borrowck = analyze_borrowck(&hir, &resolution, &typeck, &mir);
-    let rendered = render_result(&borrowck, &mir);
+"#,
+    );
 
     assert!(rendered.contains("ownership main"));
     assert!(rendered.contains("bb0 in=["));
     assert!(rendered.contains("consume(move self into_json)"));
+}
+
+#[test]
+fn renders_cleanup_effects_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct User {
+    name: String,
+}
+
+impl User {
+    fn into_json(move self) -> String {
+        return self.name
+    }
+}
+
+fn main() -> String {
+    let user = User { name: "ql" }
+    defer user.name
+    defer user.into_json()
+    return ""
+}
+"#,
+    );
+
+    assert!(rendered.contains("consume(move self into_json)"));
+    assert!(rendered.contains("read @"));
 }
