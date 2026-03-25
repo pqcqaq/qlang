@@ -1,3 +1,5 @@
+use ql_span::Span;
+
 /// Parsed source file after syntactic analysis.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
@@ -44,7 +46,19 @@ pub enum Visibility {
 
 /// Top-level declarations supported by the current front-end slice.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Item {
+pub struct Item {
+    pub span: Span,
+    pub kind: ItemKind,
+}
+
+impl Item {
+    pub const fn new(span: Span, kind: ItemKind) -> Self {
+        Self { span, kind }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ItemKind {
     Function(FunctionDecl),
     Const(GlobalDecl),
     Static(GlobalDecl),
@@ -191,7 +205,19 @@ pub struct ExternBlock {
 
 /// Surface type expressions before semantic lowering.
 #[derive(Clone, Debug, PartialEq)]
-pub enum TypeExpr {
+pub struct TypeExpr {
+    pub span: Span,
+    pub kind: TypeExprKind,
+}
+
+impl TypeExpr {
+    pub const fn new(span: Span, kind: TypeExprKind) -> Self {
+        Self { span, kind }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeExprKind {
     Pointer {
         is_const: bool,
         inner: Box<TypeExpr>,
@@ -210,13 +236,26 @@ pub enum TypeExpr {
 /// A lexical block with ordered statements and an optional tail expression.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Block {
+    pub span: Span,
     pub statements: Vec<Stmt>,
     pub tail: Option<Box<Expr>>,
 }
 
 /// Statement forms that appear inside blocks.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Stmt {
+pub struct Stmt {
+    pub span: Span,
+    pub kind: StmtKind,
+}
+
+impl Stmt {
+    pub const fn new(span: Span, kind: StmtKind) -> Self {
+        Self { span, kind }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum StmtKind {
     Let {
         mutable: bool,
         pattern: Pattern,
@@ -247,7 +286,19 @@ pub enum Stmt {
 
 /// Patterns used by bindings and match arms in the current parser slice.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Pattern {
+pub struct Pattern {
+    pub span: Span,
+    pub kind: PatternKind,
+}
+
+impl Pattern {
+    pub const fn new(span: Span, kind: PatternKind) -> Self {
+        Self { span, kind }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PatternKind {
     Name(String),
     Tuple(Vec<Pattern>),
     Path(Path),
@@ -275,7 +326,19 @@ pub struct PatternField {
 
 /// Expression nodes preserved by the AST before HIR lowering.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Expr {
+pub struct Expr {
+    pub span: Span,
+    pub kind: ExprKind,
+}
+
+impl Expr {
+    pub const fn new(span: Span, kind: ExprKind) -> Self {
+        Self { span, kind }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ExprKind {
     Name(String),
     Integer(String),
     String {

@@ -1,7 +1,7 @@
 use ql_ast::{
     EnumDecl, EnumVariant, ExtendBlock, ExternBlock, FieldDecl, FunctionDecl, GenericParam,
-    GlobalDecl, ImplBlock, Item, Param, ReceiverKind, StructDecl, TraitDecl, TypeAliasDecl,
-    TypeExpr, VariantFields, Visibility, WherePredicate,
+    GlobalDecl, ImplBlock, Item, ItemKind, Param, ReceiverKind, StructDecl, TraitDecl,
+    TypeAliasDecl, TypeExpr, TypeExprKind, VariantFields, Visibility, WherePredicate,
 };
 use ql_lexer::TokenKind;
 
@@ -16,6 +16,7 @@ enum FunctionBodyMode {
 
 impl Parser {
     pub(super) fn parse_item(&mut self) -> Option<Item> {
+        let start = self.current_start();
         let visibility = if self.eat(TokenKind::Pub) {
             Visibility::Public
         } else {
@@ -24,7 +25,7 @@ impl Parser {
 
         let (is_async, is_unsafe) = self.parse_item_modifiers();
 
-        match self.current().kind {
+        let kind = match self.current().kind {
             TokenKind::Fn => {
                 self.bump();
                 self.parse_function_decl(
@@ -35,21 +36,23 @@ impl Parser {
                     FunctionBodyMode::Required,
                 )
                 .ok()
-                .map(Item::Function)
+                .map(ItemKind::Function)
             }
             TokenKind::Const => {
                 self.bump();
-                self.parse_global_decl(visibility).ok().map(Item::Const)
+                self.parse_global_decl(visibility).ok().map(ItemKind::Const)
             }
             TokenKind::Static => {
                 self.bump();
-                self.parse_global_decl(visibility).ok().map(Item::Static)
+                self.parse_global_decl(visibility)
+                    .ok()
+                    .map(ItemKind::Static)
             }
             TokenKind::Type => {
                 self.bump();
                 self.parse_type_alias(visibility, false)
                     .ok()
-                    .map(Item::TypeAlias)
+                    .map(ItemKind::TypeAlias)
             }
             TokenKind::Opaque => {
                 self.bump();
@@ -57,39 +60,41 @@ impl Parser {
                     .ok()?;
                 self.parse_type_alias(visibility, true)
                     .ok()
-                    .map(Item::TypeAlias)
+                    .map(ItemKind::TypeAlias)
             }
             TokenKind::Data => {
                 self.bump();
                 self.expect(TokenKind::Struct, "expected `struct` after `data`")
                     .ok()?;
-                self.parse_struct(visibility, true).ok().map(Item::Struct)
+                self.parse_struct(visibility, true)
+                    .ok()
+                    .map(ItemKind::Struct)
             }
             TokenKind::Struct => {
                 self.bump();
-                self.parse_struct(visibility, false).ok().map(Item::Struct)
+                self.parse_struct(visibility, false)
+                    .ok()
+                    .map(ItemKind::Struct)
             }
             TokenKind::Enum => {
                 self.bump();
-                self.parse_enum(visibility).ok().map(Item::Enum)
+                self.parse_enum(visibility).ok().map(ItemKind::Enum)
             }
             TokenKind::Trait => {
                 self.bump();
-                self.parse_trait(visibility).ok().map(Item::Trait)
+                self.parse_trait(visibility).ok().map(ItemKind::Trait)
             }
             TokenKind::Impl => {
                 self.bump();
-                self.parse_impl().ok().map(Item::Impl)
+                self.parse_impl().ok().map(ItemKind::Impl)
             }
             TokenKind::Extend => {
                 self.bump();
-                self.parse_extend().ok().map(Item::Extend)
+                self.parse_extend().ok().map(ItemKind::Extend)
             }
             TokenKind::Extern => {
                 self.bump();
-                self.parse_extern_item(visibility, is_async, is_unsafe)
-                    .ok()
-                    .map(|item| item)
+                self.parse_extern_item(visibility, is_async, is_unsafe).ok()
             }
             _ => {
                 if is_async || is_unsafe {
@@ -99,7 +104,9 @@ impl Parser {
                 }
                 None
             }
-        }
+        }?;
+
+        Some(Item::new(self.span_from(start), kind))
     }
 
     fn parse_item_modifiers(&mut self) -> (bool, bool) {
@@ -322,7 +329,7 @@ impl Parser {
         inherited_visibility: Visibility,
         is_async: bool,
         is_unsafe: bool,
-    ) -> Result<Item, ()> {
+    ) -> Result<ItemKind, ()> {
         if is_async {
             self.error_here("`extern` items cannot be `async`");
             return Err(());
@@ -349,7 +356,7 @@ impl Parser {
                 self.eat(TokenKind::Semi);
             }
             self.expect(TokenKind::RBrace, "expected `}` after extern block")?;
-            return Ok(Item::ExternBlock(ExternBlock {
+            return Ok(ItemKind::ExternBlock(ExternBlock {
                 visibility: inherited_visibility,
                 abi,
                 functions,
@@ -370,7 +377,7 @@ impl Parser {
             Some(abi),
             FunctionBodyMode::Forbidden,
         )?;
-        Ok(Item::Function(function))
+        Ok(ItemKind::Function(function))
     }
 
     fn parse_function_decl(
@@ -535,20 +542,27 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<TypeExpr, ()> {
+        let start = self.current_start();
         if self.eat(TokenKind::Star) {
             let is_const = self.eat(TokenKind::Const);
             let inner = self.parse_type()?;
-            return Ok(TypeExpr::Pointer {
-                is_const,
-                inner: Box::new(inner),
-            });
+            return Ok(TypeExpr::new(
+                self.span_from(start),
+                TypeExprKind::Pointer {
+                    is_const,
+                    inner: Box::new(inner),
+                },
+            ));
         }
 
         if self.eat(TokenKind::LParen) {
             let mut inner = Vec::new();
+            let mut saw_comma = false;
             while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
                 inner.push(self.parse_type()?);
-                if !self.eat(TokenKind::Comma) {
+                if self.eat(TokenKind::Comma) {
+                    saw_comma = true;
+                } else {
                     break;
                 }
             }
@@ -556,16 +570,23 @@ impl Parser {
 
             if self.eat(TokenKind::Arrow) {
                 let ret = self.parse_type()?;
-                return Ok(TypeExpr::Callable {
-                    params: inner,
-                    ret: Box::new(ret),
-                });
+                return Ok(TypeExpr::new(
+                    self.span_from(start),
+                    TypeExprKind::Callable {
+                        params: inner,
+                        ret: Box::new(ret),
+                    },
+                ));
             }
 
-            if inner.len() == 1 {
+            if inner.len() == 1 && !saw_comma {
                 return Ok(inner.into_iter().next().unwrap());
             }
-            return Ok(TypeExpr::Tuple(inner));
+
+            return Ok(TypeExpr::new(
+                self.span_from(start),
+                TypeExprKind::Tuple(inner),
+            ));
         }
 
         let path = self.parse_path()?;
@@ -583,6 +604,9 @@ impl Parser {
             Vec::new()
         };
 
-        Ok(TypeExpr::Named { path, args })
+        Ok(TypeExpr::new(
+            self.span_from(start),
+            TypeExprKind::Named { path, args },
+        ))
     }
 }

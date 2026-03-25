@@ -1,30 +1,43 @@
-use ql_ast::{Pattern, PatternField};
+use ql_ast::{Pattern, PatternField, PatternKind};
 use ql_lexer::TokenKind;
 
 use super::{Parser, is_binding_name};
 
 impl Parser {
     pub(super) fn parse_pattern(&mut self) -> Result<Pattern, ()> {
+        let start = self.current_start();
         match self.current().kind {
-            TokenKind::Int => return Ok(Pattern::Integer(self.bump().text)),
-            TokenKind::String => return Ok(Pattern::String(self.bump().text)),
+            TokenKind::Int => {
+                let token = self.bump();
+                return Ok(Pattern::new(token.span, PatternKind::Integer(token.text)));
+            }
+            TokenKind::String => {
+                let token = self.bump();
+                return Ok(Pattern::new(token.span, PatternKind::String(token.text)));
+            }
             TokenKind::TrueKw => {
                 self.bump();
-                return Ok(Pattern::Bool(true));
+                return Ok(Pattern::new(self.span_from(start), PatternKind::Bool(true)));
             }
             TokenKind::FalseKw => {
                 self.bump();
-                return Ok(Pattern::Bool(false));
+                return Ok(Pattern::new(
+                    self.span_from(start),
+                    PatternKind::Bool(false),
+                ));
             }
             TokenKind::NoneKw => {
                 self.bump();
-                return Ok(Pattern::NoneLiteral);
+                return Ok(Pattern::new(
+                    self.span_from(start),
+                    PatternKind::NoneLiteral,
+                ));
             }
             _ => {}
         }
 
         if self.eat(TokenKind::Underscore) {
-            return Ok(Pattern::Wildcard);
+            return Ok(Pattern::new(self.span_from(start), PatternKind::Wildcard));
         }
 
         if self.eat(TokenKind::LParen) {
@@ -36,7 +49,10 @@ impl Parser {
                 }
             }
             self.expect(TokenKind::RParen, "expected `)` after tuple pattern")?;
-            return Ok(Pattern::Tuple(patterns));
+            return Ok(Pattern::new(
+                self.span_from(start),
+                PatternKind::Tuple(patterns),
+            ));
         }
 
         let path = self.parse_path()?;
@@ -49,7 +65,10 @@ impl Parser {
                 }
             }
             self.expect(TokenKind::RParen, "expected `)` after tuple-struct pattern")?;
-            return Ok(Pattern::TupleStruct { path, items });
+            return Ok(Pattern::new(
+                self.span_from(start),
+                PatternKind::TupleStruct { path, items },
+            ));
         }
 
         if self.eat(TokenKind::LBrace) {
@@ -73,17 +92,23 @@ impl Parser {
                 }
             }
             self.expect(TokenKind::RBrace, "expected `}` after struct pattern")?;
-            return Ok(Pattern::Struct {
-                path,
-                fields,
-                has_rest,
-            });
+            return Ok(Pattern::new(
+                self.span_from(start),
+                PatternKind::Struct {
+                    path,
+                    fields,
+                    has_rest,
+                },
+            ));
         }
 
         if path.segments.len() == 1 && is_binding_name(&path.segments[0]) {
-            return Ok(Pattern::Name(path.segments.into_iter().next().unwrap()));
+            return Ok(Pattern::new(
+                self.span_from(start),
+                PatternKind::Name(path.segments.into_iter().next().unwrap()),
+            ));
         }
 
-        Ok(Pattern::Path(path))
+        Ok(Pattern::new(self.span_from(start), PatternKind::Path(path)))
     }
 }

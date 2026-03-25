@@ -3,8 +3,9 @@ mod item;
 mod pattern;
 mod stmt;
 
-use ql_ast::{Expr, Module, PackageDecl, Path, UseDecl, UseItem};
+use ql_ast::{Expr, ExprKind, Module, PackageDecl, Path, UseDecl, UseItem};
 use ql_lexer::{Token, TokenKind, lex};
+use ql_span::Span;
 
 use crate::ParseError;
 
@@ -211,12 +212,27 @@ impl Parser {
         }
         token
     }
+
+    fn current_start(&self) -> usize {
+        self.current().span.start
+    }
+
+    fn previous_end(&self) -> usize {
+        self.tokens
+            .get(self.idx.saturating_sub(1))
+            .map(|token| token.span.end)
+            .unwrap_or_else(|| self.current().span.start)
+    }
+
+    fn span_from(&self, start: usize) -> Span {
+        Span::new(start, self.previous_end())
+    }
 }
 
 fn expr_to_path(expr: &Expr) -> Option<Path> {
-    match expr {
-        Expr::Name(name) => Some(Path::new(vec![name.clone()])),
-        Expr::Member { object, field } => {
+    match &expr.kind {
+        ExprKind::Name(name) => Some(Path::new(vec![name.clone()])),
+        ExprKind::Member { object, field } => {
             let mut path = expr_to_path(object)?;
             path.segments.push(field.clone());
             Some(path)

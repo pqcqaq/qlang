@@ -32,6 +32,8 @@ source
 - 保留接近源码的结构
 - 方便格式化器和语法级诊断
 - 不承载复杂语义
+- `item` / `type` / `stmt` / `pattern` / `expr` 节点都应直接携带 span，避免后续 diagnostics 与 LSP 反向逼迫 AST 重构
+- 控制流头部表达式与普通表达式要允许有不同解析约束，例如 `if` / `while` / `for` / `match` 头部不能被结构体字面量歧义污染
 
 当前前端实现已经按职责拆开 parser 入口：
 

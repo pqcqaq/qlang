@@ -1,10 +1,28 @@
-use ql_ast::{BinaryOp, CallArg, Expr, MatchArm, StructLiteralField};
+use ql_ast::{BinaryOp, CallArg, Expr, ExprKind, MatchArm, StructLiteralField};
 use ql_lexer::TokenKind;
+use ql_span::Span;
 
 use super::{Parser, expr_to_path};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StructLiteralMode {
+    Allow,
+    Disallow,
+}
+
 impl Parser {
     pub(super) fn parse_expr(&mut self) -> Result<Expr, ()> {
+        self.parse_expr_with_struct_literals(StructLiteralMode::Allow)
+    }
+
+    pub(super) fn parse_head_expr(&mut self) -> Result<Expr, ()> {
+        self.parse_expr_with_struct_literals(StructLiteralMode::Disallow)
+    }
+
+    fn parse_expr_with_struct_literals(
+        &mut self,
+        struct_literal_mode: StructLiteralMode,
+    ) -> Result<Expr, ()> {
         if self.at(TokenKind::If) {
             return self.parse_if_expr();
         }
@@ -13,18 +31,20 @@ impl Parser {
             return self.parse_match_expr();
         }
 
-        self.parse_binary_expr(0)
+        self.parse_binary_expr(0, struct_literal_mode)
     }
 
     fn parse_if_expr(&mut self) -> Result<Expr, ()> {
+        let start = self.current_start();
         self.expect(TokenKind::If, "expected `if`")?;
-        let condition = self.parse_expr()?;
+        let condition = self.parse_head_expr()?;
         let then_branch = self.parse_block()?;
         let else_branch = if self.eat(TokenKind::Else) {
             if self.at(TokenKind::If) {
                 Some(Box::new(self.parse_if_expr()?))
             } else if self.at(TokenKind::LBrace) {
-                Some(Box::new(Expr::Block(self.parse_block()?)))
+                let block = self.parse_block()?;
+                Some(Box::new(Expr::new(block.span, ExprKind::Block(block))))
             } else {
                 self.error_here("expected `if` or block after `else`");
                 return Err(());
@@ -33,16 +53,20 @@ impl Parser {
             None
         };
 
-        Ok(Expr::If {
-            condition: Box::new(condition),
-            then_branch,
-            else_branch,
-        })
+        Ok(Expr::new(
+            self.span_from(start),
+            ExprKind::If {
+                condition: Box::new(condition),
+                then_branch,
+                else_branch,
+            },
+        ))
     }
 
     fn parse_match_expr(&mut self) -> Result<Expr, ()> {
+        let start = self.current_start();
         self.expect(TokenKind::Match, "expected `match`")?;
-        let value = self.parse_expr()?;
+        let value = self.parse_head_expr()?;
         self.expect(TokenKind::LBrace, "expected `{` after match value")?;
         let mut arms = Vec::new();
 
@@ -55,7 +79,8 @@ impl Parser {
             };
             self.expect(TokenKind::FatArrow, "expected `=>` in match arm")?;
             let body = if self.at(TokenKind::LBrace) {
-                Expr::Block(self.parse_block()?)
+                let block = self.parse_block()?;
+                Expr::new(block.span, ExprKind::Block(block))
             } else {
                 self.parse_expr()?
             };
@@ -68,14 +93,21 @@ impl Parser {
         }
 
         self.expect(TokenKind::RBrace, "expected `}` after match arms")?;
-        Ok(Expr::Match {
-            value: Box::new(value),
-            arms,
-        })
+        Ok(Expr::new(
+            self.span_from(start),
+            ExprKind::Match {
+                value: Box::new(value),
+                arms,
+            },
+        ))
     }
 
-    fn parse_binary_expr(&mut self, min_prec: u8) -> Result<Expr, ()> {
-        let mut left = self.parse_prefix_expr()?;
+    fn parse_binary_expr(
+        &mut self,
+        min_prec: u8,
+        struct_literal_mode: StructLiteralMode,
+    ) -> Result<Expr, ()> {
+        let mut left = self.parse_prefix_expr(struct_literal_mode)?;
 
         loop {
             let (op, prec, right_assoc) = match self.current().kind {
@@ -100,57 +132,78 @@ impl Parser {
 
             self.bump();
             let next_min_prec = if right_assoc { prec } else { prec + 1 };
-            let right = self.parse_binary_expr(next_min_prec)?;
-            left = Expr::Binary {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
-            };
+            let start = left.span.start;
+            let right = self.parse_binary_expr(next_min_prec, struct_literal_mode)?;
+            left = Expr::new(
+                Span::new(start, right.span.end),
+                ExprKind::Binary {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
+                },
+            );
         }
 
         Ok(left)
     }
 
-    fn parse_prefix_expr(&mut self) -> Result<Expr, ()> {
+    fn parse_prefix_expr(&mut self, struct_literal_mode: StructLiteralMode) -> Result<Expr, ()> {
         if self.at(TokenKind::MoveKw) && self.is_closure_start(self.idx) {
             return self.parse_closure();
         }
 
         match self.current().kind {
             TokenKind::Unsafe => {
+                let start = self.current_start();
                 self.bump();
-                Ok(Expr::Unsafe(self.parse_block()?))
+                Ok(Expr::new(
+                    self.span_from(start),
+                    ExprKind::Unsafe(self.parse_block()?),
+                ))
             }
             TokenKind::Await => {
+                let start = self.current_start();
                 self.bump();
-                let expr = self.parse_prefix_expr()?;
-                Ok(Expr::Unary {
-                    op: ql_ast::UnaryOp::Await,
-                    expr: Box::new(expr),
-                })
+                let expr = self.parse_prefix_expr(struct_literal_mode)?;
+                Ok(Expr::new(
+                    self.span_from(start),
+                    ExprKind::Unary {
+                        op: ql_ast::UnaryOp::Await,
+                        expr: Box::new(expr),
+                    },
+                ))
             }
             TokenKind::Spawn => {
+                let start = self.current_start();
                 self.bump();
-                let expr = self.parse_prefix_expr()?;
-                Ok(Expr::Unary {
-                    op: ql_ast::UnaryOp::Spawn,
-                    expr: Box::new(expr),
-                })
+                let expr = self.parse_prefix_expr(struct_literal_mode)?;
+                Ok(Expr::new(
+                    self.span_from(start),
+                    ExprKind::Unary {
+                        op: ql_ast::UnaryOp::Spawn,
+                        expr: Box::new(expr),
+                    },
+                ))
             }
             TokenKind::Minus => {
+                let start = self.current_start();
                 self.bump();
-                let expr = self.parse_prefix_expr()?;
-                Ok(Expr::Unary {
-                    op: ql_ast::UnaryOp::Neg,
-                    expr: Box::new(expr),
-                })
+                let expr = self.parse_prefix_expr(struct_literal_mode)?;
+                Ok(Expr::new(
+                    self.span_from(start),
+                    ExprKind::Unary {
+                        op: ql_ast::UnaryOp::Neg,
+                        expr: Box::new(expr),
+                    },
+                ))
             }
             TokenKind::LParen if self.is_closure_start(self.idx) => self.parse_closure(),
-            _ => self.parse_postfix_expr(),
+            _ => self.parse_postfix_expr(struct_literal_mode),
         }
     }
 
     fn parse_closure(&mut self) -> Result<Expr, ()> {
+        let start = self.current_start();
         let is_move = self.eat(TokenKind::MoveKw);
         self.expect(
             TokenKind::LParen,
@@ -169,43 +222,56 @@ impl Parser {
             "expected `=>` after closure parameters",
         )?;
         let body = if self.at(TokenKind::LBrace) {
-            Expr::Block(self.parse_block()?)
+            let block = self.parse_block()?;
+            Expr::new(block.span, ExprKind::Block(block))
         } else {
             self.parse_expr()?
         };
-        Ok(Expr::Closure {
-            is_move,
-            params,
-            body: Box::new(body),
-        })
+        Ok(Expr::new(
+            self.span_from(start),
+            ExprKind::Closure {
+                is_move,
+                params,
+                body: Box::new(body),
+            },
+        ))
     }
 
-    fn parse_postfix_expr(&mut self) -> Result<Expr, ()> {
+    fn parse_postfix_expr(&mut self, struct_literal_mode: StructLiteralMode) -> Result<Expr, ()> {
         let mut expr = self.parse_primary_expr()?;
 
         loop {
             if self.at(TokenKind::LParen) {
+                let start = expr.span.start;
                 self.bump();
                 let args = self.parse_call_args()?;
                 self.expect(TokenKind::RParen, "expected `)` after call arguments")?;
-                expr = Expr::Call {
-                    callee: Box::new(expr),
-                    args,
-                };
+                expr = Expr::new(
+                    Span::new(start, self.previous_end()),
+                    ExprKind::Call {
+                        callee: Box::new(expr),
+                        args,
+                    },
+                );
                 continue;
             }
 
             if self.at(TokenKind::Dot) && self.nth_kind(1) == TokenKind::Ident {
+                let start = expr.span.start;
                 self.bump();
                 let field = self.expect_ident("expected member name after `.`")?;
-                expr = Expr::Member {
-                    object: Box::new(expr),
-                    field,
-                };
+                expr = Expr::new(
+                    Span::new(start, self.previous_end()),
+                    ExprKind::Member {
+                        object: Box::new(expr),
+                        field,
+                    },
+                );
                 continue;
             }
 
             if self.at(TokenKind::LBracket) {
+                let start = expr.span.start;
                 self.bump();
                 let mut items = Vec::new();
                 while !self.at(TokenKind::RBracket) && !self.at(TokenKind::Eof) {
@@ -215,25 +281,39 @@ impl Parser {
                     }
                 }
                 self.expect(TokenKind::RBracket, "expected `]` after bracket expression")?;
-                expr = Expr::Bracket {
-                    target: Box::new(expr),
-                    items,
-                };
+                expr = Expr::new(
+                    Span::new(start, self.previous_end()),
+                    ExprKind::Bracket {
+                        target: Box::new(expr),
+                        items,
+                    },
+                );
                 continue;
             }
 
             if self.at(TokenKind::Question) {
+                let start = expr.span.start;
                 self.bump();
-                expr = Expr::Question(Box::new(expr));
+                expr = Expr::new(
+                    Span::new(start, self.previous_end()),
+                    ExprKind::Question(Box::new(expr)),
+                );
                 continue;
             }
 
-            if self.at(TokenKind::LBrace) && self.looks_like_struct_literal() {
+            if struct_literal_mode == StructLiteralMode::Allow
+                && self.at(TokenKind::LBrace)
+                && self.looks_like_struct_literal()
+            {
                 if let Some(path) = expr_to_path(&expr) {
+                    let start = expr.span.start;
                     self.bump();
                     let fields = self.parse_struct_literal_fields()?;
                     self.expect(TokenKind::RBrace, "expected `}` after struct literal")?;
-                    expr = Expr::StructLiteral { path, fields };
+                    expr = Expr::new(
+                        Span::new(start, self.previous_end()),
+                        ExprKind::StructLiteral { path, fields },
+                    );
                     continue;
                 }
             }
@@ -281,37 +361,56 @@ impl Parser {
     }
 
     fn parse_primary_expr(&mut self) -> Result<Expr, ()> {
+        let start = self.current_start();
         match self.current().kind {
             TokenKind::Ident => {
-                let name = self.bump().text;
-                Ok(Expr::Name(name))
+                let token = self.bump();
+                Ok(Expr::new(token.span, ExprKind::Name(token.text)))
             }
             TokenKind::SelfKw => {
-                let name = self.bump().text;
-                Ok(Expr::Name(name))
+                let token = self.bump();
+                Ok(Expr::new(token.span, ExprKind::Name(token.text)))
             }
-            TokenKind::Int => Ok(Expr::Integer(self.bump().text)),
-            TokenKind::String => Ok(Expr::String {
-                value: self.bump().text,
-                is_format: false,
-            }),
-            TokenKind::FormatString => Ok(Expr::String {
-                value: self.bump().text,
-                is_format: true,
-            }),
+            TokenKind::Int => {
+                let token = self.bump();
+                Ok(Expr::new(token.span, ExprKind::Integer(token.text)))
+            }
+            TokenKind::String => {
+                let token = self.bump();
+                Ok(Expr::new(
+                    token.span,
+                    ExprKind::String {
+                        value: token.text,
+                        is_format: false,
+                    },
+                ))
+            }
+            TokenKind::FormatString => {
+                let token = self.bump();
+                Ok(Expr::new(
+                    token.span,
+                    ExprKind::String {
+                        value: token.text,
+                        is_format: true,
+                    },
+                ))
+            }
             TokenKind::TrueKw => {
-                self.bump();
-                Ok(Expr::Bool(true))
+                let token = self.bump();
+                Ok(Expr::new(token.span, ExprKind::Bool(true)))
             }
             TokenKind::FalseKw => {
-                self.bump();
-                Ok(Expr::Bool(false))
+                let token = self.bump();
+                Ok(Expr::new(token.span, ExprKind::Bool(false)))
             }
             TokenKind::NoneKw => {
-                self.bump();
-                Ok(Expr::NoneLiteral)
+                let token = self.bump();
+                Ok(Expr::new(token.span, ExprKind::NoneLiteral))
             }
-            TokenKind::LBrace => Ok(Expr::Block(self.parse_block()?)),
+            TokenKind::LBrace => {
+                let block = self.parse_block()?;
+                Ok(Expr::new(block.span, ExprKind::Block(block)))
+            }
             TokenKind::LBracket => {
                 self.bump();
                 let mut items = Vec::new();
@@ -322,13 +421,16 @@ impl Parser {
                     }
                 }
                 self.expect(TokenKind::RBracket, "expected `]` after array literal")?;
-                Ok(Expr::Array(items))
+                Ok(Expr::new(self.span_from(start), ExprKind::Array(items)))
             }
             TokenKind::LParen => {
                 self.bump();
                 if self.at(TokenKind::RParen) {
                     self.bump();
-                    return Ok(Expr::Tuple(Vec::new()));
+                    return Ok(Expr::new(
+                        self.span_from(start),
+                        ExprKind::Tuple(Vec::new()),
+                    ));
                 }
 
                 let first = self.parse_expr()?;
@@ -341,7 +443,7 @@ impl Parser {
                         }
                     }
                     self.expect(TokenKind::RParen, "expected `)` after tuple literal")?;
-                    Ok(Expr::Tuple(items))
+                    Ok(Expr::new(self.span_from(start), ExprKind::Tuple(items)))
                 } else {
                     self.expect(TokenKind::RParen, "expected `)` after expression")?;
                     Ok(first)

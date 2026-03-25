@@ -94,6 +94,10 @@ pub enum TokenKind {
     Underscore,
 }
 
+pub fn is_keyword(text: &str) -> bool {
+    keyword_kind(text).is_some()
+}
+
 /// Lex a source file into tokens and recoverable lexical errors.
 pub fn lex(source: &str) -> (Vec<Token>, Vec<LexError>) {
     let mut lexer = Lexer::new(source);
@@ -495,50 +499,7 @@ impl<'a> Lexer<'a> {
         self.bump();
         self.consume_while(is_ident_continue);
         let text = &self.source[start..self.current_offset()];
-        let kind = match text {
-            "package" => TokenKind::Package,
-            "use" => TokenKind::Use,
-            "pub" => TokenKind::Pub,
-            "const" => TokenKind::Const,
-            "static" => TokenKind::Static,
-            "let" => TokenKind::Let,
-            "var" => TokenKind::Var,
-            "fn" => TokenKind::Fn,
-            "async" => TokenKind::Async,
-            "await" => TokenKind::Await,
-            "spawn" => TokenKind::Spawn,
-            "defer" => TokenKind::Defer,
-            "return" => TokenKind::Return,
-            "break" => TokenKind::Break,
-            "continue" => TokenKind::Continue,
-            "if" => TokenKind::If,
-            "else" => TokenKind::Else,
-            "match" => TokenKind::Match,
-            "for" => TokenKind::For,
-            "while" => TokenKind::While,
-            "loop" => TokenKind::Loop,
-            "in" => TokenKind::In,
-            "where" => TokenKind::Where,
-            "struct" => TokenKind::Struct,
-            "data" => TokenKind::Data,
-            "enum" => TokenKind::Enum,
-            "trait" => TokenKind::Trait,
-            "impl" => TokenKind::Impl,
-            "extend" => TokenKind::Extend,
-            "type" => TokenKind::Type,
-            "opaque" => TokenKind::Opaque,
-            "extern" => TokenKind::Extern,
-            "unsafe" => TokenKind::Unsafe,
-            "is" => TokenKind::Is,
-            "as" => TokenKind::As,
-            "satisfies" => TokenKind::Satisfies,
-            "none" => TokenKind::NoneKw,
-            "true" => TokenKind::TrueKw,
-            "false" => TokenKind::FalseKw,
-            "self" => TokenKind::SelfKw,
-            "move" => TokenKind::MoveKw,
-            _ => TokenKind::Ident,
-        };
+        let kind = keyword_kind(text).unwrap_or(TokenKind::Ident);
         Token {
             kind,
             text: text.to_string(),
@@ -620,6 +581,53 @@ fn is_ident_start(ch: char) -> bool {
 
 fn is_ident_continue(ch: char) -> bool {
     ch == '_' || ch.is_alphanumeric()
+}
+
+fn keyword_kind(text: &str) -> Option<TokenKind> {
+    Some(match text {
+        "package" => TokenKind::Package,
+        "use" => TokenKind::Use,
+        "pub" => TokenKind::Pub,
+        "const" => TokenKind::Const,
+        "static" => TokenKind::Static,
+        "let" => TokenKind::Let,
+        "var" => TokenKind::Var,
+        "fn" => TokenKind::Fn,
+        "async" => TokenKind::Async,
+        "await" => TokenKind::Await,
+        "spawn" => TokenKind::Spawn,
+        "defer" => TokenKind::Defer,
+        "return" => TokenKind::Return,
+        "break" => TokenKind::Break,
+        "continue" => TokenKind::Continue,
+        "if" => TokenKind::If,
+        "else" => TokenKind::Else,
+        "match" => TokenKind::Match,
+        "for" => TokenKind::For,
+        "while" => TokenKind::While,
+        "loop" => TokenKind::Loop,
+        "in" => TokenKind::In,
+        "where" => TokenKind::Where,
+        "struct" => TokenKind::Struct,
+        "data" => TokenKind::Data,
+        "enum" => TokenKind::Enum,
+        "trait" => TokenKind::Trait,
+        "impl" => TokenKind::Impl,
+        "extend" => TokenKind::Extend,
+        "type" => TokenKind::Type,
+        "opaque" => TokenKind::Opaque,
+        "extern" => TokenKind::Extern,
+        "unsafe" => TokenKind::Unsafe,
+        "is" => TokenKind::Is,
+        "as" => TokenKind::As,
+        "satisfies" => TokenKind::Satisfies,
+        "none" => TokenKind::NoneKw,
+        "true" => TokenKind::TrueKw,
+        "false" => TokenKind::FalseKw,
+        "self" => TokenKind::SelfKw,
+        "move" => TokenKind::MoveKw,
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

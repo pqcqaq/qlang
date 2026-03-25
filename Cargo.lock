@@ -23,6 +23,7 @@ name = "ql-fmt"
 version = "0.1.0"
 dependencies = [
  "ql-ast",
+ "ql-lexer",
  "ql-parser",
 ]
 

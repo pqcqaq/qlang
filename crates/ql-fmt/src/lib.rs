@@ -1,9 +1,10 @@
 use ql_ast::{
-    BinaryOp, Block, CallArg, EnumDecl, Expr, ExtendBlock, ExternBlock, FunctionDecl, GenericParam,
-    GlobalDecl, ImplBlock, Item, MatchArm, Module, Param, Path, Pattern, PatternField,
-    ReceiverKind, Stmt, StructDecl, StructLiteralField, TraitDecl, TypeAliasDecl, TypeExpr,
-    VariantFields, Visibility, WherePredicate,
+    BinaryOp, Block, CallArg, EnumDecl, Expr, ExprKind, ExtendBlock, ExternBlock, FunctionDecl,
+    GenericParam, GlobalDecl, ImplBlock, Item, ItemKind, MatchArm, Module, Param, Path, Pattern,
+    PatternField, PatternKind, ReceiverKind, Stmt, StmtKind, StructDecl, StructLiteralField,
+    TraitDecl, TypeAliasDecl, TypeExpr, TypeExprKind, VariantFields, Visibility, WherePredicate,
 };
+use ql_lexer::is_keyword as lexer_is_keyword;
 use ql_parser::{ParseError, parse_source};
 
 pub fn format_source(source: &str) -> Result<String, Vec<ParseError>> {
@@ -70,17 +71,17 @@ pub fn format_module(module: &Module) -> String {
 }
 
 fn format_item(item: &Item, indent: usize, out: &mut String) {
-    match item {
-        Item::Function(function) => format_function(function, indent, true, out),
-        Item::Const(global) => format_global("const", global, indent, out),
-        Item::Static(global) => format_global("static", global, indent, out),
-        Item::Struct(struct_decl) => format_struct(struct_decl, indent, out),
-        Item::Enum(enum_decl) => format_enum(enum_decl, indent, out),
-        Item::Trait(trait_decl) => format_trait(trait_decl, indent, out),
-        Item::Impl(impl_block) => format_impl(impl_block, indent, out),
-        Item::Extend(extend_block) => format_extend(extend_block, indent, out),
-        Item::TypeAlias(type_alias) => format_type_alias(type_alias, indent, out),
-        Item::ExternBlock(extern_block) => format_extern_block(extern_block, indent, out),
+    match &item.kind {
+        ItemKind::Function(function) => format_function(function, indent, true, out),
+        ItemKind::Const(global) => format_global("const", global, indent, out),
+        ItemKind::Static(global) => format_global("static", global, indent, out),
+        ItemKind::Struct(struct_decl) => format_struct(struct_decl, indent, out),
+        ItemKind::Enum(enum_decl) => format_enum(enum_decl, indent, out),
+        ItemKind::Trait(trait_decl) => format_trait(trait_decl, indent, out),
+        ItemKind::Impl(impl_block) => format_impl(impl_block, indent, out),
+        ItemKind::Extend(extend_block) => format_extend(extend_block, indent, out),
+        ItemKind::TypeAlias(type_alias) => format_type_alias(type_alias, indent, out),
+        ItemKind::ExternBlock(extern_block) => format_extern_block(extern_block, indent, out),
     }
 }
 
@@ -362,15 +363,15 @@ fn format_visibility(visibility: &Visibility, out: &mut String) {
 }
 
 fn format_type(ty: &TypeExpr, out: &mut String) {
-    match ty {
-        TypeExpr::Pointer { is_const, inner } => {
+    match &ty.kind {
+        TypeExprKind::Pointer { is_const, inner } => {
             out.push('*');
             if *is_const {
                 out.push_str("const ");
             }
             format_type(inner, out);
         }
-        TypeExpr::Named { path, args } => {
+        TypeExprKind::Named { path, args } => {
             format_path(path, out);
             if !args.is_empty() {
                 out.push('[');
@@ -383,7 +384,7 @@ fn format_type(ty: &TypeExpr, out: &mut String) {
                 out.push(']');
             }
         }
-        TypeExpr::Tuple(items) => {
+        TypeExprKind::Tuple(items) => {
             out.push('(');
             for (idx, item) in items.iter().enumerate() {
                 if idx > 0 {
@@ -391,9 +392,12 @@ fn format_type(ty: &TypeExpr, out: &mut String) {
                 }
                 format_type(item, out);
             }
+            if items.len() == 1 {
+                out.push(',');
+            }
             out.push(')');
         }
-        TypeExpr::Callable { params, ret } => {
+        TypeExprKind::Callable { params, ret } => {
             out.push('(');
             for (idx, param) in params.iter().enumerate() {
                 if idx > 0 {
@@ -424,8 +428,8 @@ fn format_block(block: &Block, indent: usize, out: &mut String) {
 
 fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
     write_indent(indent, out);
-    match stmt {
-        Stmt::Let {
+    match &stmt.kind {
+        StmtKind::Let {
             mutable,
             pattern,
             value,
@@ -435,30 +439,30 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push_str(" = ");
             format_expr(value, indent, out);
         }
-        Stmt::Return(value) => {
+        StmtKind::Return(value) => {
             out.push_str("return");
             if let Some(value) = value {
                 out.push(' ');
                 format_expr(value, indent, out);
             }
         }
-        Stmt::Defer(expr) => {
+        StmtKind::Defer(expr) => {
             out.push_str("defer ");
             format_expr(expr, indent, out);
         }
-        Stmt::Break => out.push_str("break"),
-        Stmt::Continue => out.push_str("continue"),
-        Stmt::While { condition, body } => {
+        StmtKind::Break => out.push_str("break"),
+        StmtKind::Continue => out.push_str("continue"),
+        StmtKind::While { condition, body } => {
             out.push_str("while ");
             format_expr(condition, indent, out);
             out.push(' ');
             format_block(body, indent, out);
         }
-        Stmt::Loop { body } => {
+        StmtKind::Loop { body } => {
             out.push_str("loop ");
             format_block(body, indent, out);
         }
-        Stmt::For {
+        StmtKind::For {
             is_await,
             pattern,
             iterable,
@@ -474,7 +478,7 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push(' ');
             format_block(body, indent, out);
         }
-        Stmt::Expr { expr, terminated } => {
+        StmtKind::Expr { expr, terminated } => {
             format_expr(expr, indent, out);
             if *terminated {
                 out.push(';');
@@ -484,9 +488,9 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
 }
 
 fn format_pattern(pattern: &Pattern, out: &mut String) {
-    match pattern {
-        Pattern::Name(name) => format_ident(name, out),
-        Pattern::Tuple(items) => {
+    match &pattern.kind {
+        PatternKind::Name(name) => format_ident(name, out),
+        PatternKind::Tuple(items) => {
             out.push('(');
             for (idx, item) in items.iter().enumerate() {
                 if idx > 0 {
@@ -496,8 +500,8 @@ fn format_pattern(pattern: &Pattern, out: &mut String) {
             }
             out.push(')');
         }
-        Pattern::Path(path) => format_path(path, out),
-        Pattern::TupleStruct { path, items } => {
+        PatternKind::Path(path) => format_path(path, out),
+        PatternKind::TupleStruct { path, items } => {
             format_path(path, out);
             out.push('(');
             for (idx, item) in items.iter().enumerate() {
@@ -508,20 +512,20 @@ fn format_pattern(pattern: &Pattern, out: &mut String) {
             }
             out.push(')');
         }
-        Pattern::Struct {
+        PatternKind::Struct {
             path,
             fields,
             has_rest,
         } => format_struct_pattern(path, fields, *has_rest, out),
-        Pattern::Integer(value) => out.push_str(value),
-        Pattern::String(value) => {
+        PatternKind::Integer(value) => out.push_str(value),
+        PatternKind::String(value) => {
             out.push('"');
             out.push_str(value);
             out.push('"');
         }
-        Pattern::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
-        Pattern::NoneLiteral => out.push_str("none"),
-        Pattern::Wildcard => out.push('_'),
+        PatternKind::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+        PatternKind::NoneLiteral => out.push_str("none"),
+        PatternKind::Wildcard => out.push('_'),
     }
 }
 
@@ -548,10 +552,16 @@ fn format_struct_pattern(path: &Path, fields: &[PatternField], has_rest: bool, o
 }
 
 fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
-    match expr {
-        Expr::Name(name) => format_ident(name, out),
-        Expr::Integer(value) => out.push_str(value),
-        Expr::String { value, is_format } => {
+    match &expr.kind {
+        ExprKind::Name(name) => {
+            if name == "self" {
+                out.push_str("self");
+            } else {
+                format_ident(name, out);
+            }
+        }
+        ExprKind::Integer(value) => out.push_str(value),
+        ExprKind::String { value, is_format } => {
             if *is_format {
                 out.push('f');
             }
@@ -559,9 +569,9 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             out.push_str(value);
             out.push('"');
         }
-        Expr::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
-        Expr::NoneLiteral => out.push_str("none"),
-        Expr::Tuple(items) => {
+        ExprKind::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+        ExprKind::NoneLiteral => out.push_str("none"),
+        ExprKind::Tuple(items) => {
             out.push('(');
             for (idx, item) in items.iter().enumerate() {
                 if idx > 0 {
@@ -569,9 +579,12 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
                 }
                 format_expr(item, indent, out);
             }
+            if items.len() == 1 {
+                out.push(',');
+            }
             out.push(')');
         }
-        Expr::Array(items) => {
+        ExprKind::Array(items) => {
             out.push('[');
             for (idx, item) in items.iter().enumerate() {
                 if idx > 0 {
@@ -581,12 +594,12 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             }
             out.push(']');
         }
-        Expr::Block(block) => format_block(block, indent, out),
-        Expr::Unsafe(block) => {
+        ExprKind::Block(block) => format_block(block, indent, out),
+        ExprKind::Unsafe(block) => {
             out.push_str("unsafe ");
             format_block(block, indent, out);
         }
-        Expr::If {
+        ExprKind::If {
             condition,
             then_branch,
             else_branch,
@@ -600,8 +613,8 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
                 format_expr(else_branch, indent, out);
             }
         }
-        Expr::Match { value, arms } => format_match_expr(value, arms, indent, out),
-        Expr::Closure {
+        ExprKind::Match { value, arms } => format_match_expr(value, arms, indent, out),
+        ExprKind::Closure {
             is_move,
             params,
             body,
@@ -619,7 +632,7 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             out.push_str(") => ");
             format_expr(body, indent, out);
         }
-        Expr::Call { callee, args } => {
+        ExprKind::Call { callee, args } => {
             format_expr(callee, indent, out);
             out.push('(');
             for (idx, arg) in args.iter().enumerate() {
@@ -637,12 +650,12 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             }
             out.push(')');
         }
-        Expr::Member { object, field } => {
+        ExprKind::Member { object, field } => {
             format_expr(object, indent, out);
             out.push('.');
             format_ident(field, out);
         }
-        Expr::Bracket { target, items } => {
+        ExprKind::Bracket { target, items } => {
             format_expr(target, indent, out);
             out.push('[');
             for (idx, item) in items.iter().enumerate() {
@@ -653,7 +666,7 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             }
             out.push(']');
         }
-        Expr::StructLiteral { path, fields } => {
+        ExprKind::StructLiteral { path, fields } => {
             format_path(path, out);
             out.push_str(" { ");
             for (idx, field) in fields.iter().enumerate() {
@@ -664,7 +677,7 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             }
             out.push_str(" }");
         }
-        Expr::Binary { left, op, right } => {
+        ExprKind::Binary { left, op, right } => {
             format_expr(left, indent, out);
             out.push(' ');
             out.push_str(match op {
@@ -684,7 +697,7 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             out.push(' ');
             format_expr(right, indent, out);
         }
-        Expr::Unary { op, expr } => {
+        ExprKind::Unary { op, expr } => {
             out.push_str(match op {
                 ql_ast::UnaryOp::Neg => "-",
                 ql_ast::UnaryOp::Await => "await ",
@@ -692,7 +705,7 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             });
             format_expr(expr, indent, out);
         }
-        Expr::Question(expr) => {
+        ExprKind::Question(expr) => {
             format_expr(expr, indent, out);
             out.push('?');
         }
@@ -746,56 +759,10 @@ fn format_ident(name: &str, out: &mut String) {
 }
 
 fn needs_identifier_escape(name: &str) -> bool {
-    is_keyword(name)
+    lexer_is_keyword(name)
         || name.is_empty()
         || !name.chars().next().is_some_and(is_ident_start)
         || !name.chars().all(is_ident_continue)
-}
-
-fn is_keyword(name: &str) -> bool {
-    matches!(
-        name,
-        "package"
-            | "use"
-            | "pub"
-            | "const"
-            | "static"
-            | "let"
-            | "var"
-            | "fn"
-            | "async"
-            | "await"
-            | "spawn"
-            | "defer"
-            | "return"
-            | "break"
-            | "continue"
-            | "if"
-            | "else"
-            | "match"
-            | "for"
-            | "while"
-            | "loop"
-            | "in"
-            | "where"
-            | "struct"
-            | "data"
-            | "enum"
-            | "trait"
-            | "impl"
-            | "extend"
-            | "type"
-            | "opaque"
-            | "extern"
-            | "unsafe"
-            | "is"
-            | "as"
-            | "satisfies"
-            | "none"
-            | "true"
-            | "false"
-            | "move"
-    )
 }
 
 fn is_ident_start(ch: char) -> bool {
@@ -875,5 +842,23 @@ fn keyword_passthrough(`type`: String) -> String {
 
         assert!(formatted.contains("fn keyword_passthrough(`type`: String) -> String"));
         assert!(formatted.contains("let _value = `type`"));
+    }
+
+    #[test]
+    fn formatter_preserves_single_element_tuples() {
+        let formatted = format_source(
+            r#"
+fn tupled(value: (Int,)) -> (Int,) {
+    let single = (value,)
+    return single
+}
+"#,
+        )
+        .expect("format tuple forms");
+        let reformatted = format_source(&formatted).expect("format tuple forms again");
+
+        assert_eq!(formatted, reformatted);
+        assert!(formatted.contains("fn tupled(value: (Int,)) -> (Int,)"));
+        assert!(formatted.contains("let single = (value,)"));
     }
 }

@@ -81,6 +81,7 @@
 - 函数签名模型已统一，可覆盖 free function、trait method、extern function
 - parser fixture 与 formatter 稳定性测试覆盖到控制流和 Phase 1 声明切片
 - Phase 1 评审缺口已补齐：`*const` 原始指针类型、转义标识符、下划线前缀绑定、`pub extern` block round-trip、非法数字后缀诊断
+- 前端基础抽象已加固：AST 节点级 span、控制流头部表达式歧义隔离、单元素 tuple 类型/表达式 round-trip、`ql check` 目录扫描过滤 fixture 与工具输出目录
 
 Phase 1 已完成，下一切片：
 
