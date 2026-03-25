@@ -124,7 +124,7 @@ fn render_diagnostic(output: &mut String, path: &Path, source: &str, diagnostic:
                 output.push_str(&format!("  {line}\n"));
 
                 let indent = " ".repeat(location.start.column.saturating_sub(1));
-                let marker = "^".repeat(label.span.len().max(1).min(8));
+                let marker = "^".repeat(label.span.len().clamp(1, 8));
                 output.push_str("  ");
                 output.push_str(&indent);
                 output.push_str(&marker);
@@ -162,5 +162,14 @@ mod tests {
         assert!(rendered.contains("error: sample.ql:1:5: duplicate binding"));
         assert!(rendered.contains("^ duplicate here"));
         assert!(rendered.contains("note: rename one side of the pattern"));
+    }
+
+    #[test]
+    fn render_diagnostics_preserves_notes_without_labels() {
+        let diagnostic = Diagnostic::warning("semantic warning").with_note("details survive");
+        let rendered = render_diagnostics(Path::new("sample.ql"), "fn main() {}\n", &[diagnostic]);
+
+        assert!(rendered.contains("warning: sample.ql:1:1: semantic warning"));
+        assert!(rendered.contains("note: details survive"));
     }
 }

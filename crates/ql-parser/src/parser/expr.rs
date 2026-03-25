@@ -304,18 +304,17 @@ impl Parser {
             if struct_literal_mode == StructLiteralMode::Allow
                 && self.at(TokenKind::LBrace)
                 && self.looks_like_struct_literal()
+                && let Some(path) = expr_to_path(&expr)
             {
-                if let Some(path) = expr_to_path(&expr) {
-                    let start = expr.span.start;
-                    self.bump();
-                    let fields = self.parse_struct_literal_fields()?;
-                    self.expect(TokenKind::RBrace, "expected `}` after struct literal")?;
-                    expr = Expr::new(
-                        Span::new(start, self.previous_end()),
-                        ExprKind::StructLiteral { path, fields },
-                    );
-                    continue;
-                }
+                let start = expr.span.start;
+                self.bump();
+                let fields = self.parse_struct_literal_fields()?;
+                self.expect(TokenKind::RBrace, "expected `}` after struct literal")?;
+                expr = Expr::new(
+                    Span::new(start, self.previous_end()),
+                    ExprKind::StructLiteral { path, fields },
+                );
+                continue;
             }
 
             break;

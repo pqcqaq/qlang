@@ -253,14 +253,12 @@ fn format_extern_block(extern_block: &ExternBlock, indent: usize, out: &mut Stri
 
 fn format_function(function: &FunctionDecl, indent: usize, show_abi: bool, out: &mut String) {
     write_indent(indent, out);
-    if show_abi {
-        if let Some(abi) = &function.abi {
-            out.push_str("extern ");
-            out.push('"');
-            out.push_str(abi);
-            out.push('"');
-            out.push(' ');
-        }
+    if show_abi && let Some(abi) = &function.abi {
+        out.push_str("extern ");
+        out.push('"');
+        out.push_str(abi);
+        out.push('"');
+        out.push(' ');
     }
     format_visibility(&function.visibility, out);
     if function.is_unsafe {
