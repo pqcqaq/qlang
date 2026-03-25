@@ -94,6 +94,9 @@ Qlang 仓库结构必须同时服务于四类工作：
 │  ├─ ql-codegen-llvm         # Phase 4 文本 LLVM IR 后端地基
 │  ├─ ql-lsp                  # 最小 qlsp：hover / definition / diagnostics
 │  └─ ql-cli                  # `ql check` / `ql build` / `ql fmt` / `ql mir` / `ql ownership`
+├─ tests/
+│  ├─ ui                      # CLI 黑盒 diagnostics 快照
+│  └─ codegen                 # Phase 4 codegen / artifact 黑盒快照
 └─ fixtures/
    ├─ parser                  # parser / formatter 回归输入
    └─ codegen                 # Phase 4 backend / artifact 夹具

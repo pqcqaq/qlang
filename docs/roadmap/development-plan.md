@@ -325,6 +325,11 @@ P4 已经启动，但当前完成的是 “backend foundation” 而不是“完
   - scalar integer / `Bool` / `Void`
   - direct function call
   - arithmetic / compare / branch / return
+- 基础 codegen golden harness 已开始落地：
+  - `crates/ql-cli/tests/codegen.rs`
+  - `tests/codegen/pass/`
+  - `tests/codegen/fail/`
+  - 黑盒锁定 `llvm-ir` / `obj` / `exe` / `staticlib` 与 build-time unsupported diagnostics
 - 当前 unsupported backend features 会返回结构化 diagnostics，而不是静默跳过
 
 当前仍刻意未完成：
@@ -334,7 +339,7 @@ P4 已经启动，但当前完成的是 “backend foundation” 而不是“完
 - runtime startup object / richer ABI glue
 - closure / tuple / struct / cleanup lowering
 - extern ABI 更完整支持
-- codegen golden snapshot harness 扩容
+- codegen golden snapshot harness 扩容到更多 lowering / toolchain / fail 场景
 
 当前 P4 的核心目标不是“一次性做完整原生平台层”，而是先把 driver/codegen 边界、program/library 入口模型、失败模型和测试面固定住，避免后续为了补链接和运行时而大规模返工。
 

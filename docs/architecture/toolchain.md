@@ -171,10 +171,23 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - `cargo test -p ql-codegen-llvm`
 - `cargo test -p ql-driver`
 - `cargo test -p ql-cli`
+- `cargo test -p ql-cli --test codegen`
 - `cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir`
 - 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit obj`
 - 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit exe`
 - 在 clang 与 archiver 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_library.ql --emit staticlib`
+
+当前新增的黑盒 codegen harness 位于：
+
+- `crates/ql-cli/tests/codegen.rs`
+- `tests/codegen/pass/`
+- `tests/codegen/fail/`
+
+它会直接驱动真实 `ql build`，锁定：
+
+- LLVM IR 快照
+- mock object / executable / static library 产物
+- build 路径上的 unsupported diagnostics
 
 ### `qlsp`
 

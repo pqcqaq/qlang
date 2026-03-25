@@ -1,0 +1,10 @@
+error: tests/codegen/fail/unsupported_closure_build.ql:2:19: LLVM IR backend foundation does not support closure values yet
+      let capture = () => 1
+                    ^^^^^^^
+error: tests/codegen/fail/unsupported_closure_build.ql:2:9: could not resolve LLVM type for local `_t0`
+      let capture = () => 1
+          ^^^^^^^
+error: tests/codegen/fail/unsupported_closure_build.ql:2:19: could not infer LLVM type for MIR local `_t0`
+      let capture = () => 1
+                    ^^^^^^^
+  note: this usually means the current MIR shape is not part of the P4 backend foundation support matrix

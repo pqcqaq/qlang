@@ -84,6 +84,7 @@ Current semantic baseline in `ql check`:
   - on Windows, `QLANG_AR` should point to an invocable archive binary such as `llvm-lib.exe`, `lib.exe`, or a `.cmd` wrapper
   - when `QLANG_AR` points to a wrapper whose filename does not imply the archive flavor, `QLANG_AR_STYLE=ar|lib` can pin the expected CLI style
   - toolchain failures preserve intermediate `.codegen.ll` and, when linking or archiving fails, intermediate `.codegen.obj` / `.codegen.o` files for debugging
+  - `crates/ql-cli/tests/codegen.rs` now provides black-box codegen snapshots for `llvm-ir`, `obj`, `exe`, `staticlib`, and build-time unsupported diagnostics
 - `qlsp` now consumes that shared analysis layer to provide LSP hover, go-to-definition, and live diagnostics for open documents
 - Phase 3 has started with a structural MIR slice:
   - function bodies lower into explicit basic blocks, statements, terminators, locals, scopes, and cleanup actions
