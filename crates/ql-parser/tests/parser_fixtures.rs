@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use ql_ast::Item;
 use ql_parser::parse_source;
 
 fn fixture(path: &str) -> PathBuf {
@@ -32,6 +33,66 @@ fn parses_control_flow_fixture() {
 }
 
 #[test]
+fn parses_phase1_declarations_fixture() {
+    let source =
+        fs::read_to_string(fixture("pass/phase1_declarations.ql")).expect("read pass fixture");
+    let module = parse_source(&source).expect("phase1 declarations fixture should parse");
+
+    assert_eq!(
+        module.package.unwrap().path.segments,
+        vec!["demo", "phase1"]
+    );
+    assert!(
+        module
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::Const(_)))
+    );
+    assert!(
+        module
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::Static(_)))
+    );
+    assert!(
+        module
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::TypeAlias(alias) if alias.is_opaque))
+    );
+    assert!(
+        module
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::Trait(_)))
+    );
+    assert!(
+        module
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::Impl(_)))
+    );
+    assert!(
+        module
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::Extend(_)))
+    );
+    assert!(
+        module
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::ExternBlock(_)))
+    );
+    assert!(
+        module
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::Function(function) if function.abi.is_some()))
+    );
+}
+
+#[test]
 fn reports_fail_fixture() {
     let source = fs::read_to_string(fixture("fail/missing_name.ql")).expect("read fail fixture");
     let errors = parse_source(&source).expect_err("fail fixture should not parse");
@@ -53,5 +114,17 @@ fn reports_bad_match_fixture() {
         errors
             .iter()
             .any(|error| error.message.contains("expected `=>` in match arm"))
+    );
+}
+
+#[test]
+fn reports_bad_extern_fixture() {
+    let source = fs::read_to_string(fixture("fail/bad_extern.ql")).expect("read fail fixture");
+    let errors = parse_source(&source).expect_err("bad extern fixture should not parse");
+
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("expected `fn` in extern block"))
     );
 }

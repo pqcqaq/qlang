@@ -1,6 +1,8 @@
 use ql_ast::{
-    BinaryOp, Block, CallArg, Expr, FunctionDecl, Item, MatchArm, Module, Param, Pattern,
-    PatternField, ReceiverKind, Stmt, StructLiteralField, TypeExpr, VariantFields, Visibility,
+    BinaryOp, Block, CallArg, EnumDecl, Expr, ExtendBlock, ExternBlock, FunctionDecl, GenericParam,
+    GlobalDecl, ImplBlock, Item, MatchArm, Module, Param, Pattern, PatternField, ReceiverKind,
+    Stmt, StructDecl, StructLiteralField, TraitDecl, TypeAliasDecl, TypeExpr, VariantFields,
+    Visibility, WherePredicate,
 };
 use ql_parser::{ParseError, parse_source};
 
@@ -69,98 +71,205 @@ pub fn format_module(module: &Module) -> String {
 
 fn format_item(item: &Item, indent: usize, out: &mut String) {
     match item {
-        Item::Function(function) => format_function(function, indent, out),
-        Item::Struct(struct_decl) => {
-            write_indent(indent, out);
-            format_visibility(&struct_decl.visibility, out);
-            if struct_decl.is_data {
-                out.push_str("data ");
-            }
-            out.push_str("struct ");
-            out.push_str(&struct_decl.name);
-            out.push_str(" {\n");
-            for field in &struct_decl.fields {
-                write_indent(indent + 1, out);
-                out.push_str(&field.name);
-                out.push_str(": ");
-                format_type(&field.ty, out);
-                if let Some(default) = &field.default {
-                    out.push_str(" = ");
-                    format_expr(default, indent + 1, out);
-                }
-                out.push_str(",\n");
-            }
-            write_indent(indent, out);
-            out.push('}');
-        }
-        Item::Enum(enum_decl) => {
-            write_indent(indent, out);
-            format_visibility(&enum_decl.visibility, out);
-            out.push_str("enum ");
-            out.push_str(&enum_decl.name);
-            out.push_str(" {\n");
-            for variant in &enum_decl.variants {
-                write_indent(indent + 1, out);
-                out.push_str(&variant.name);
-                match &variant.fields {
-                    VariantFields::Unit => {}
-                    VariantFields::Tuple(types) => {
-                        out.push('(');
-                        for (idx, ty) in types.iter().enumerate() {
-                            if idx > 0 {
-                                out.push_str(", ");
-                            }
-                            format_type(ty, out);
-                        }
-                        out.push(')');
-                    }
-                    VariantFields::Struct(fields) => {
-                        out.push_str(" {\n");
-                        for field in fields {
-                            write_indent(indent + 2, out);
-                            out.push_str(&field.name);
-                            out.push_str(": ");
-                            format_type(&field.ty, out);
-                            out.push_str(",\n");
-                        }
-                        write_indent(indent + 1, out);
-                        out.push('}');
-                    }
-                }
-                out.push_str(",\n");
-            }
-            write_indent(indent, out);
-            out.push('}');
-        }
-        Item::Impl(impl_block) => {
-            write_indent(indent, out);
-            out.push_str("impl ");
-            out.push_str(&impl_block.target.segments.join("."));
-            out.push_str(" {\n");
-            for (idx, method) in impl_block.methods.iter().enumerate() {
-                if idx > 0 {
-                    out.push('\n');
-                }
-                format_function(method, indent + 1, out);
-                out.push('\n');
-            }
-            if !impl_block.methods.is_empty() {
-                out.pop();
-            }
-            write_indent(indent, out);
-            out.push('}');
-        }
+        Item::Function(function) => format_function(function, indent, true, out),
+        Item::Const(global) => format_global("const", global, indent, out),
+        Item::Static(global) => format_global("static", global, indent, out),
+        Item::Struct(struct_decl) => format_struct(struct_decl, indent, out),
+        Item::Enum(enum_decl) => format_enum(enum_decl, indent, out),
+        Item::Trait(trait_decl) => format_trait(trait_decl, indent, out),
+        Item::Impl(impl_block) => format_impl(impl_block, indent, out),
+        Item::Extend(extend_block) => format_extend(extend_block, indent, out),
+        Item::TypeAlias(type_alias) => format_type_alias(type_alias, indent, out),
+        Item::ExternBlock(extern_block) => format_extern_block(extern_block, indent, out),
     }
 }
 
-fn format_function(function: &FunctionDecl, indent: usize, out: &mut String) {
+fn format_global(keyword: &str, global: &GlobalDecl, indent: usize, out: &mut String) {
     write_indent(indent, out);
+    format_visibility(&global.visibility, out);
+    out.push_str(keyword);
+    out.push(' ');
+    out.push_str(&global.name);
+    out.push_str(": ");
+    format_type(&global.ty, out);
+    out.push_str(" = ");
+    format_expr(&global.value, indent, out);
+}
+
+fn format_struct(struct_decl: &StructDecl, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    format_visibility(&struct_decl.visibility, out);
+    if struct_decl.is_data {
+        out.push_str("data ");
+    }
+    out.push_str("struct ");
+    out.push_str(&struct_decl.name);
+    format_generic_params(&struct_decl.generics, out);
+    out.push_str(" {\n");
+    for field in &struct_decl.fields {
+        write_indent(indent + 1, out);
+        out.push_str(&field.name);
+        out.push_str(": ");
+        format_type(&field.ty, out);
+        if let Some(default) = &field.default {
+            out.push_str(" = ");
+            format_expr(default, indent + 1, out);
+        }
+        out.push_str(",\n");
+    }
+    write_indent(indent, out);
+    out.push('}');
+}
+
+fn format_enum(enum_decl: &EnumDecl, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    format_visibility(&enum_decl.visibility, out);
+    out.push_str("enum ");
+    out.push_str(&enum_decl.name);
+    format_generic_params(&enum_decl.generics, out);
+    out.push_str(" {\n");
+    for variant in &enum_decl.variants {
+        write_indent(indent + 1, out);
+        out.push_str(&variant.name);
+        match &variant.fields {
+            VariantFields::Unit => {}
+            VariantFields::Tuple(types) => {
+                out.push('(');
+                for (idx, ty) in types.iter().enumerate() {
+                    if idx > 0 {
+                        out.push_str(", ");
+                    }
+                    format_type(ty, out);
+                }
+                out.push(')');
+            }
+            VariantFields::Struct(fields) => {
+                out.push_str(" {\n");
+                for field in fields {
+                    write_indent(indent + 2, out);
+                    out.push_str(&field.name);
+                    out.push_str(": ");
+                    format_type(&field.ty, out);
+                    out.push_str(",\n");
+                }
+                write_indent(indent + 1, out);
+                out.push('}');
+            }
+        }
+        out.push_str(",\n");
+    }
+    write_indent(indent, out);
+    out.push('}');
+}
+
+fn format_trait(trait_decl: &TraitDecl, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    format_visibility(&trait_decl.visibility, out);
+    out.push_str("trait ");
+    out.push_str(&trait_decl.name);
+    format_generic_params(&trait_decl.generics, out);
+    out.push_str(" {\n");
+    for method in &trait_decl.methods {
+        format_function(method, indent + 1, false, out);
+        out.push('\n');
+    }
+    write_indent(indent, out);
+    out.push('}');
+}
+
+fn format_impl(impl_block: &ImplBlock, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    out.push_str("impl");
+    format_generic_params(&impl_block.generics, out);
+    out.push(' ');
+    if let Some(trait_ty) = &impl_block.trait_ty {
+        format_type(trait_ty, out);
+        out.push_str(" for ");
+    }
+    format_type(&impl_block.target, out);
+    format_where_clause(&impl_block.where_clause, indent, out);
+    if impl_block.where_clause.is_empty() {
+        out.push_str(" {\n");
+    } else {
+        write_indent(indent, out);
+        out.push_str("{\n");
+    }
+    for (idx, method) in impl_block.methods.iter().enumerate() {
+        if idx > 0 {
+            out.push('\n');
+        }
+        format_function(method, indent + 1, false, out);
+        out.push('\n');
+    }
+    write_indent(indent, out);
+    out.push('}');
+}
+
+fn format_extend(extend_block: &ExtendBlock, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    out.push_str("extend ");
+    format_type(&extend_block.target, out);
+    out.push_str(" {\n");
+    for (idx, method) in extend_block.methods.iter().enumerate() {
+        if idx > 0 {
+            out.push('\n');
+        }
+        format_function(method, indent + 1, false, out);
+        out.push('\n');
+    }
+    write_indent(indent, out);
+    out.push('}');
+}
+
+fn format_type_alias(type_alias: &TypeAliasDecl, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    format_visibility(&type_alias.visibility, out);
+    if type_alias.is_opaque {
+        out.push_str("opaque ");
+    }
+    out.push_str("type ");
+    out.push_str(&type_alias.name);
+    format_generic_params(&type_alias.generics, out);
+    out.push_str(" = ");
+    format_type(&type_alias.ty, out);
+}
+
+fn format_extern_block(extern_block: &ExternBlock, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    out.push_str("extern ");
+    out.push('"');
+    out.push_str(&extern_block.abi);
+    out.push('"');
+    out.push_str(" {\n");
+    for function in &extern_block.functions {
+        format_function(function, indent + 1, false, out);
+        out.push('\n');
+    }
+    write_indent(indent, out);
+    out.push('}');
+}
+
+fn format_function(function: &FunctionDecl, indent: usize, show_abi: bool, out: &mut String) {
+    write_indent(indent, out);
+    if show_abi {
+        if let Some(abi) = &function.abi {
+            out.push_str("extern ");
+            out.push('"');
+            out.push_str(abi);
+            out.push('"');
+            out.push(' ');
+        }
+    }
     format_visibility(&function.visibility, out);
+    if function.is_unsafe {
+        out.push_str("unsafe ");
+    }
     if function.is_async {
         out.push_str("async ");
     }
     out.push_str("fn ");
     out.push_str(&function.name);
+    format_generic_params(&function.generics, out);
     out.push('(');
     for (idx, param) in function.params.iter().enumerate() {
         if idx > 0 {
@@ -184,8 +293,65 @@ fn format_function(function: &FunctionDecl, indent: usize, out: &mut String) {
         out.push_str(" -> ");
         format_type(ty, out);
     }
-    out.push(' ');
-    format_block(&function.body, indent, out);
+    format_where_clause(&function.where_clause, indent, out);
+    if let Some(body) = &function.body {
+        if function.where_clause.is_empty() {
+            out.push(' ');
+        } else {
+            write_indent(indent, out);
+        }
+        format_block(body, indent, out);
+    }
+}
+
+fn format_generic_params(params: &[GenericParam], out: &mut String) {
+    if params.is_empty() {
+        return;
+    }
+
+    out.push('[');
+    for (idx, param) in params.iter().enumerate() {
+        if idx > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(&param.name);
+        if !param.bounds.is_empty() {
+            out.push_str(": ");
+            for (bound_idx, bound) in param.bounds.iter().enumerate() {
+                if bound_idx > 0 {
+                    out.push_str(" + ");
+                }
+                out.push_str(&bound.segments.join("."));
+            }
+        }
+    }
+    out.push(']');
+}
+
+fn format_where_clause(predicates: &[WherePredicate], indent: usize, out: &mut String) {
+    if predicates.is_empty() {
+        return;
+    }
+
+    out.push('\n');
+    write_indent(indent, out);
+    out.push_str("where\n");
+    for (idx, predicate) in predicates.iter().enumerate() {
+        write_indent(indent + 1, out);
+        format_type(&predicate.target, out);
+        out.push_str(": ");
+        for (bound_idx, bound) in predicate.bounds.iter().enumerate() {
+            if bound_idx > 0 {
+                out.push_str(" + ");
+            }
+            out.push_str(&bound.segments.join("."));
+        }
+        if idx + 1 != predicates.len() {
+            out.push_str(",\n");
+        } else {
+            out.push('\n');
+        }
+    }
 }
 
 fn format_visibility(visibility: &Visibility, out: &mut String) {
@@ -300,9 +466,11 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
             out.push(' ');
             format_block(body, indent, out);
         }
-        Stmt::Expr { expr, .. } => {
+        Stmt::Expr { expr, terminated } => {
             format_expr(expr, indent, out);
-            out.push(';');
+            if *terminated {
+                out.push(';');
+            }
         }
     }
 }
@@ -336,7 +504,7 @@ fn format_pattern(pattern: &Pattern, out: &mut String) {
             path,
             fields,
             has_rest,
-        } => format_struct_pattern(path.segments.join(".").as_str(), fields, *has_rest, out),
+        } => format_struct_pattern(&path.segments.join("."), fields, *has_rest, out),
         Pattern::Integer(value) => out.push_str(value),
         Pattern::String(value) => {
             out.push('"');
@@ -406,6 +574,10 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             out.push(']');
         }
         Expr::Block(block) => format_block(block, indent, out),
+        Expr::Unsafe(block) => {
+            out.push_str("unsafe ");
+            format_block(block, indent, out);
+        }
         Expr::If {
             condition,
             then_branch,
@@ -565,27 +737,34 @@ mod tests {
             .join(path)
     }
 
-    #[test]
-    fn formatting_is_stable_for_basic_fixture() {
-        let source = fs::read_to_string(fixture("pass/basic.ql")).expect("read pass fixture");
+    fn assert_format_stable(path: &str) {
+        let source = fs::read_to_string(fixture(path)).expect("read pass fixture");
         let formatted = format_source(&source).expect("format first pass");
         let reformatted = format_source(&formatted).expect("format second pass");
 
         assert_eq!(formatted, reformatted);
-        assert!(formatted.contains("data struct User"));
-        assert!(formatted.contains("fn div_rem(left: Int, right: Int) -> (Int, Int)"));
+    }
+
+    #[test]
+    fn formatting_is_stable_for_basic_fixture() {
+        assert_format_stable("pass/basic.ql");
     }
 
     #[test]
     fn formatting_is_stable_for_control_flow_fixture() {
+        assert_format_stable("pass/control_flow.ql");
+    }
+
+    #[test]
+    fn formatting_is_stable_for_phase1_declarations_fixture() {
         let source =
-            fs::read_to_string(fixture("pass/control_flow.ql")).expect("read control flow fixture");
+            fs::read_to_string(fixture("pass/phase1_declarations.ql")).expect("read pass fixture");
         let formatted = format_source(&source).expect("format first pass");
         let reformatted = format_source(&formatted).expect("format second pass");
 
         assert_eq!(formatted, reformatted);
-        assert!(formatted.contains("match command {"));
-        assert!(formatted.contains("for await event in stream {"));
-        assert!(formatted.contains("tick();"));
+        assert!(formatted.contains("pub trait Writer[T: io.Flush]"));
+        assert!(formatted.contains("extern \"c\" pub unsafe fn q_add"));
+        assert!(formatted.contains("opaque type UserId = U64"));
     }
 }

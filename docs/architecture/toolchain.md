@@ -49,13 +49,14 @@ LSP 服务端，复用编译器 HIR 与查询系统，支持：
 
 当前阶段 `qfmt` 已覆盖的语法切片包括：
 
-- 基础声明：`fn`、`struct`、`data struct`、`enum`、`impl`
-- 类型表达式：named type、tuple、callable type
-- 表达式：调用、成员访问、结构体字面量、闭包、`if`、`match`
+- 基础声明：`const`、`static`、`type`、`opaque type`
+- 可调用声明：`fn`、`trait` method、`impl`、`extend`、`extern`
+- 类型表达式：named type、tuple、callable type、声明泛型、`where`
+- 表达式：调用、成员访问、结构体字面量、闭包、`unsafe`、`if`、`match`
 - 控制流：`while`、`loop`、`for`、`for await`
 - 模式：tuple、path、tuple-struct、struct、字面量、`_`
 
-下一步重点不是扩展格式选项，而是继续跟随 parser 前端切片，把剩余顶层声明补齐并保持稳定输出。
+Phase 1 结束后，`qfmt` 的下一步重点不是增加风格选项，而是跟随后续 HIR / diagnostics 演进，保持语法扩展时的稳定输出与可维护实现。
 
 ### `qdoc`
 

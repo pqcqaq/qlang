@@ -117,6 +117,10 @@ impl Parser {
         }
 
         match self.current().kind {
+            TokenKind::Unsafe => {
+                self.bump();
+                Ok(Expr::Unsafe(self.parse_block()?))
+            }
             TokenKind::Await => {
                 self.bump();
                 let expr = self.parse_prefix_expr()?;

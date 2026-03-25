@@ -135,11 +135,19 @@ impl Parser {
                 self.current().kind,
                 TokenKind::Pub
                     | TokenKind::Async
+                    | TokenKind::Unsafe
                     | TokenKind::Fn
+                    | TokenKind::Const
+                    | TokenKind::Static
+                    | TokenKind::Type
+                    | TokenKind::Opaque
                     | TokenKind::Struct
                     | TokenKind::Data
                     | TokenKind::Enum
+                    | TokenKind::Trait
                     | TokenKind::Impl
+                    | TokenKind::Extend
+                    | TokenKind::Extern
             ) {
                 break;
             }

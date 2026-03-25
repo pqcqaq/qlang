@@ -40,7 +40,7 @@
 - 实现 lexer、parser、AST
 - 支持基础语法和模块系统
 - 冻结 P0 语法基线，包括类型实例化、值实例化、解构绑定、可调用类型与元组返回
-- 跑通 parser snapshot tests
+- 跑通 parser 回归测试
 
 ### 交付物
 
@@ -51,7 +51,7 @@
 ### 出口标准
 
 - hello world 级程序可被解析和格式化
-- parser 测试体系建立
+- parser / formatter 回归测试体系建立
 
 ### 当前切片拆分
 
@@ -69,19 +69,23 @@
 
 - Rust workspace 与基础 crate 拆分
 - `ql-span` / `ql-ast` / `ql-lexer` / `ql-parser` / `ql-fmt` / `ql-cli`
-- package / use / fn / struct / data struct / enum / impl
-- 泛型类型应用、可调用类型、闭包、结构体字面量、基础运算表达式
+- package / use / const / static / type / opaque type / fn / trait / impl / extend / extern
+- struct / data struct / enum
+- 泛型参数、`where`、泛型类型应用、可调用类型
+- 闭包、结构体字面量、基础运算表达式
+- `unsafe fn` 和 `unsafe { ... }`
 - `if` / `match` 表达式
 - `while` / `loop` / `for` / `for await`
 - richer pattern 支持：路径模式、tuple-struct 模式、struct 模式、字面量模式
 - parser 从单文件拆分为 `item` / `expr` / `pattern` / `stmt` 模块
-- parser fixture 与 formatter 稳定性测试覆盖到控制流切片
+- 函数签名模型已统一，可覆盖 free function、trait method、extern function
+- parser fixture 与 formatter 稳定性测试覆盖到控制流和 Phase 1 声明切片
 
-下一切片：
+Phase 1 已完成，下一切片：
 
-- 补齐 `const` / `static` / `type` / `extern` / `trait` / `extend` 等顶层语法入口
-- 强化 parser recovery，降低单点报错把整段源码带偏的风险
-- 开始为 Phase 2 的 HIR / 名称解析准备更稳定的 lowering 边界
+- 建立 HIR 和名称解析
+- 强化 parser recovery 与 diagnostics，为 Phase 2 提供更稳的前端输入
+- 开始为类型检查和后续 LSP 共用语义数据库打底
 
 ## Phase 2: 语义分析与类型检查
 

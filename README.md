@@ -8,7 +8,7 @@ Current scope:
 - compiler and toolchain architecture
 - interop strategy for C, C++, and Rust
 - repository layout, feature inventory, and phased execution plan
-- early Rust workspace bootstrap for Phase 1 frontend development
+- completed Phase 1 frontend baseline in Rust workspace form
 
 Documentation lives in the VitePress subproject under [`docs/`](./docs).
 
@@ -20,7 +20,7 @@ npm install
 npm run dev
 ```
 
-## Frontend Bootstrap
+## Phase 1 Frontend
 
 Current Rust workspace status:
 
@@ -33,9 +33,12 @@ Current Rust workspace status:
 
 Current implemented syntax slice:
 
-- package / use / fn / struct / data struct / enum / impl
-- generics in type position, callable types, tuple return
+- package / use / const / static / type / opaque type
+- fn / trait / impl / extend / extern
+- struct / data struct / enum
+- generics on declarations and type position, `where`, callable types, tuple return
 - closures with `=>` and `move`
+- `unsafe fn` and `unsafe { ... }`
 - `if` / `match` expressions
 - `while` / `loop` / `for` / `for await`
 - pattern-based bindings and richer match patterns
@@ -47,4 +50,5 @@ cargo test
 cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- fmt fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- check fixtures/parser/pass/control_flow.ql
+cargo run -p ql-cli -- check fixtures/parser/pass/phase1_declarations.ql
 ```

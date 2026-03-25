@@ -145,6 +145,7 @@ impl Parser {
                 | TokenKind::LBrace
                 | TokenKind::LBracket
                 | TokenKind::LParen
+                | TokenKind::Unsafe
                 | TokenKind::MoveKw
                 | TokenKind::Await
                 | TokenKind::Spawn

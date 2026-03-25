@@ -46,20 +46,30 @@ pub enum Visibility {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
     Function(FunctionDecl),
+    Const(GlobalDecl),
+    Static(GlobalDecl),
     Struct(StructDecl),
     Enum(EnumDecl),
+    Trait(TraitDecl),
     Impl(ImplBlock),
+    Extend(ExtendBlock),
+    TypeAlias(TypeAliasDecl),
+    ExternBlock(ExternBlock),
 }
 
-/// Function signature plus body as preserved by the parser.
+/// Reusable function signature model shared by free functions, trait items, and FFI declarations.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionDecl {
     pub visibility: Visibility,
     pub is_async: bool,
+    pub is_unsafe: bool,
+    pub abi: Option<String>,
+    pub generics: Vec<GenericParam>,
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: Option<TypeExpr>,
-    pub body: Block,
+    pub where_clause: Vec<WherePredicate>,
+    pub body: Option<Block>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -75,11 +85,35 @@ pub enum ReceiverKind {
     Move,
 }
 
+/// Reusable generic parameter syntax from declaration sites.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenericParam {
+    pub name: String,
+    pub bounds: Vec<Path>,
+}
+
+/// A `where` clause predicate attached to a declaration signature.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WherePredicate {
+    pub target: TypeExpr,
+    pub bounds: Vec<Path>,
+}
+
+/// Shared top-level representation for `const` and `static` declarations.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GlobalDecl {
+    pub visibility: Visibility,
+    pub name: String,
+    pub ty: TypeExpr,
+    pub value: Expr,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructDecl {
     pub visibility: Visibility,
     pub is_data: bool,
     pub name: String,
+    pub generics: Vec<GenericParam>,
     pub fields: Vec<FieldDecl>,
 }
 
@@ -94,6 +128,7 @@ pub struct FieldDecl {
 pub struct EnumDecl {
     pub visibility: Visibility,
     pub name: String,
+    pub generics: Vec<GenericParam>,
     pub variants: Vec<EnumVariant>,
 }
 
@@ -110,10 +145,47 @@ pub enum VariantFields {
     Struct(Vec<FieldDecl>),
 }
 
+/// Trait declaration surface as parsed before semantic lowering.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TraitDecl {
+    pub visibility: Visibility,
+    pub name: String,
+    pub generics: Vec<GenericParam>,
+    pub methods: Vec<FunctionDecl>,
+}
+
+/// Inherent or trait implementation block.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImplBlock {
-    pub target: Path,
+    pub generics: Vec<GenericParam>,
+    pub trait_ty: Option<TypeExpr>,
+    pub target: TypeExpr,
+    pub where_clause: Vec<WherePredicate>,
     pub methods: Vec<FunctionDecl>,
+}
+
+/// Extension method block for attaching methods outside the nominal type definition.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExtendBlock {
+    pub target: TypeExpr,
+    pub methods: Vec<FunctionDecl>,
+}
+
+/// Named alias or opaque alias declaration.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TypeAliasDecl {
+    pub visibility: Visibility,
+    pub is_opaque: bool,
+    pub name: String,
+    pub generics: Vec<GenericParam>,
+    pub ty: TypeExpr,
+}
+
+/// Group of imported foreign function signatures under a shared ABI.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExternBlock {
+    pub abi: String,
+    pub functions: Vec<FunctionDecl>,
 }
 
 /// Surface type expressions before semantic lowering.
@@ -210,6 +282,7 @@ pub enum Expr {
     Tuple(Vec<Expr>),
     Array(Vec<Expr>),
     Block(Block),
+    Unsafe(Block),
     If {
         condition: Box<Expr>,
         then_branch: Block,

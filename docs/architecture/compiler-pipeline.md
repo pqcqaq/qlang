@@ -39,6 +39,7 @@ source
 - `expr` 负责表达式和 postfix 规则
 - `pattern` 负责绑定与 `match` 模式
 - `stmt` 负责 block 和控制流语句
+- 函数签名抽象可同时服务普通函数、trait item 和 extern item
 
 这个边界要继续保持，避免未来把 parser 重新写回一个巨型文件。
 
@@ -92,7 +93,7 @@ source
 
 编译器项目不能只靠单元测试。必须同时具备：
 
-- parser snapshot tests
+- parser fixture / snapshot tests
 - typecheck tests
 - UI diagnostics tests
 - codegen golden tests
