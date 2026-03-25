@@ -10,17 +10,32 @@ use ql_resolve::{ParamBinding, ResolutionMap, TypeResolution, ValueResolution};
 
 use crate::types::{Ty, item_display_name, lower_type, void_ty};
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TypingResult {
+    pub diagnostics: Vec<Diagnostic>,
+    pub expr_types: HashMap<ExprId, Ty>,
+    pub pattern_types: HashMap<PatternId, Ty>,
+    pub local_types: HashMap<LocalId, Ty>,
+}
+
 /// Run the first-pass typing checks over lowered HIR plus name-resolution data.
-pub fn check_module(module: &Module, resolution: &ResolutionMap) -> Vec<Diagnostic> {
+pub(crate) fn analyze_module(module: &Module, resolution: &ResolutionMap) -> TypingResult {
     let mut checker = Checker::new(module, resolution);
     checker.check_module();
-    checker.diagnostics
+    TypingResult {
+        diagnostics: checker.diagnostics,
+        expr_types: checker.expr_types,
+        pattern_types: checker.pattern_types,
+        local_types: checker.local_types,
+    }
 }
 
 struct Checker<'a> {
     module: &'a Module,
     resolution: &'a ResolutionMap,
     diagnostics: Vec<Diagnostic>,
+    expr_types: HashMap<ExprId, Ty>,
+    pattern_types: HashMap<PatternId, Ty>,
     local_types: HashMap<LocalId, Ty>,
     param_types: HashMap<ParamBinding, Ty>,
     self_type: Option<Ty>,
@@ -33,6 +48,8 @@ impl<'a> Checker<'a> {
             module,
             resolution,
             diagnostics: Vec::new(),
+            expr_types: HashMap::new(),
+            pattern_types: HashMap::new(),
             local_types: HashMap::new(),
             param_types: HashMap::new(),
             self_type: None,
@@ -199,7 +216,7 @@ impl<'a> Checker<'a> {
 
     fn check_expr(&mut self, expr_id: ExprId, expected: Option<&Ty>) -> Ty {
         let expr = self.module.expr(expr_id);
-        match &expr.kind {
+        let ty = match &expr.kind {
             ExprKind::Name(_) => self.type_of_name(expr_id),
             ExprKind::Integer(_) => Ty::Builtin(ql_resolve::BuiltinType::Int),
             ExprKind::String { .. } => Ty::Builtin(ql_resolve::BuiltinType::String),
@@ -253,7 +270,9 @@ impl<'a> Checker<'a> {
                 self.check_expr(*expr, None);
                 Ty::Unknown
             }
-        }
+        };
+        self.expr_types.insert(expr_id, ty.clone());
+        ty
     }
 
     fn type_of_name(&self, expr_id: ExprId) -> Ty {
@@ -684,6 +703,7 @@ impl<'a> Checker<'a> {
     }
 
     fn bind_pattern(&mut self, pattern_id: PatternId, expected: &Ty) {
+        self.pattern_types.insert(pattern_id, expected.clone());
         let pattern = self.module.pattern(pattern_id);
         match &pattern.kind {
             PatternKind::Binding(local_id) => {

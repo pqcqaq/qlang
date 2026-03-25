@@ -3,6 +3,18 @@
 version = 4
 
 [[package]]
+name = "ql-analysis"
+version = "0.1.0"
+dependencies = [
+ "ql-ast",
+ "ql-diagnostics",
+ "ql-hir",
+ "ql-parser",
+ "ql-resolve",
+ "ql-typeck",
+]
+
+[[package]]
 name = "ql-ast"
 version = "0.1.0"
 dependencies = [
@@ -13,13 +25,10 @@ dependencies = [
 name = "ql-cli"
 version = "0.1.0"
 dependencies = [
+ "ql-analysis",
  "ql-diagnostics",
  "ql-fmt",
- "ql-hir",
  "ql-parser",
- "ql-resolve",
- "ql-span",
- "ql-typeck",
 ]
 
 [[package]]

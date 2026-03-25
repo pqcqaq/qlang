@@ -106,6 +106,19 @@ source
 - 完整 trait solving、泛型实参推断、effect checking 和 flow-sensitive narrowing 还未开始
 - 默认参数仍停留在语言设计稿，没有进入当前 AST / HIR / type checker 的实现边界
 
+### Analysis Boundary
+
+- 新增 `ql-analysis` crate，作为 parse / HIR / resolve / typeck 的统一分析入口
+- `ql-analysis::analyze_source` 在 parse 成功后始终返回可查询的 `Analysis`
+- 当前 `Analysis` 已暴露：
+  - AST / HIR snapshot
+  - `ResolutionMap`
+  - `TypeckResult`
+  - 聚合后的 diagnostics
+  - `expr` / `pattern` / `local` 的第一层类型查询
+- 这层边界先服务 CLI，并为后续 LSP 的 hover / semantic lookup 预留稳定入口
+- 当前还没有完整的 symbol query、definition query、member/method query 数据面，这仍是后续 P2 工作
+
 ### MIR
 
 - 明确控制流和所有权动作
@@ -169,6 +182,10 @@ source
 当前状态：
 
 - parser fixture tests 已稳定
+- `ql-analysis` unit tests 已覆盖：
+  - parse-success + semantic-error analysis snapshots
+  - resolution diagnostics aggregation
+  - `expr` / `local` type queries
 - HIR lowering tests 已拆到 `crates/ql-hir/tests/`，并覆盖 shorthand normalization、closure param span、named call arg span
 - name resolution tests 已拆到 `crates/ql-resolve/tests/`，并按 value / type / scopes / rendering 分组
 - semantic tests 已拆到 `crates/ql-typeck/tests/`，并按 duplicates / typing / rendering 分组

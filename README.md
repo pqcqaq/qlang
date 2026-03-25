@@ -37,6 +37,7 @@ Current Rust workspace status:
 - `crates/ql-parser`: modular parser for the current Phase 1 slice
 - `crates/ql-fmt`: formatter for the current frontend slice
 - `crates/ql-diagnostics`: shared semantic and parser diagnostics model plus text renderer
+- `crates/ql-analysis`: shared parse/HIR/resolve/typeck analysis entry for CLI and future LSP
 - `crates/ql-hir`: AST -> HIR lowering with stable IDs and semantic normalization
 - `crates/ql-resolve`: Phase 2 scope graph and conservative name resolution
 - `crates/ql-typeck`: current Phase 2 semantic baseline checks
@@ -59,6 +60,7 @@ Current semantic baseline in `ql check`:
 
 - parser -> HIR lowering -> resolve -> semantic checks share one CLI pipeline
 - parser diagnostics and semantic diagnostics share one renderer
+- `ql-analysis` now centralizes parse -> HIR -> resolve -> typeck orchestration
 - precise identifier spans flow through AST -> HIR -> diagnostics for semantic hotspots
 - shorthand struct pattern and struct literal fields are normalized during HIR lowering
 - scope graph construction now covers module, callable, block, closure, match-arm, and for-loop scopes
@@ -89,6 +91,7 @@ Current intentional gap:
 
 - default parameters are part of the language design docs, but they are not lowered into AST/HIR or checked yet
 - import / module / prelude unresolved-name strictness is still intentionally deferred
+- future LSP work still needs richer symbol/hover queries beyond the current `expr` / `pattern` / `local` type surfaces
 
 Quick start:
 

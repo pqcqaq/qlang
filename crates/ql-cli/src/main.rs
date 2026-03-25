@@ -3,12 +3,9 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 
-use ql_diagnostics::{Diagnostic, Label, render_diagnostics};
+use ql_analysis::{analyze_source as analyze_semantics, parse_errors_to_diagnostics};
+use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_fmt::format_source;
-use ql_hir::lower_module;
-use ql_parser::{ParseError, parse_source};
-use ql_resolve::resolve_module as resolve_hir_module;
-use ql_typeck::check_module as check_hir_module;
 
 fn main() -> ExitCode {
     match run() {
@@ -115,16 +112,11 @@ fn format_path(path: &Path, write: bool) -> Result<(), u8> {
 }
 
 fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
-    let ast = parse_source(source).map_err(parse_errors_to_diagnostics)?;
-    let hir = lower_module(&ast);
-    let resolution = resolve_hir_module(&hir);
-    let mut diagnostics = resolution.diagnostics.clone();
-    diagnostics.extend(check_hir_module(&hir, &resolution));
-
-    if diagnostics.is_empty() {
-        Ok(())
+    let analysis = analyze_semantics(source)?;
+    if analysis.has_errors() {
+        Err(analysis.diagnostics().to_vec())
     } else {
-        Err(diagnostics)
+        Ok(())
     }
 }
 
@@ -216,13 +208,6 @@ fn component_name(component: Component<'_>) -> Option<&str> {
         Component::Normal(segment) => segment.to_str(),
         _ => None,
     }
-}
-
-fn parse_errors_to_diagnostics(errors: Vec<ParseError>) -> Vec<Diagnostic> {
-    errors
-        .into_iter()
-        .map(|error| Diagnostic::error(error.message).with_label(Label::new(error.span)))
-        .collect()
 }
 
 fn print_diagnostics(path: &Path, source: &str, diagnostics: &[Diagnostic]) {
