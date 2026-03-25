@@ -352,4 +352,30 @@ fn main() -> String {
                 .any(|diagnostic| { diagnostic.message == "local `user` was used after move" })
         );
     }
+
+    #[test]
+    fn includes_move_closure_capture_borrowck_diagnostics_in_the_combined_output() {
+        let analysis = analyze_source(
+            r#"
+fn main() -> Int {
+    let value = 1
+    let capture = move () => value
+    return value
+}
+"#,
+        )
+        .expect("move closure diagnostics should still yield an analysis snapshot");
+
+        assert!(
+            analysis
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| { diagnostic.message == "local `value` was used after move" })
+        );
+        assert!(
+            analysis
+                .render_borrowck()
+                .contains("consume(move closure capture)")
+        );
+    }
 }

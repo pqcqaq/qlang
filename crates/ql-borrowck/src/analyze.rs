@@ -284,7 +284,10 @@ impl<'a> BodyAnalyzer<'a> {
                     self.read_operand(states, &field.value, span, reporter.as_deref_mut());
                 }
             }
-            Rvalue::Closure { .. } | Rvalue::OpaqueExpr(_) => {}
+            Rvalue::Closure { is_move, body, .. } => {
+                self.apply_closure_capture_effects(states, *is_move, *body, reporter);
+            }
+            Rvalue::OpaqueExpr(_) => {}
         }
     }
 
@@ -409,6 +412,42 @@ impl<'a> BodyAnalyzer<'a> {
     ) {
         self.record_event(reporter, span, local, LocalEventKind::Write);
         states[local.index()] = LocalState::Available;
+    }
+
+    fn apply_closure_capture_effects(
+        &self,
+        states: &mut [LocalState],
+        is_move: bool,
+        body: hir::ExprId,
+        reporter: Option<&mut Reporter>,
+    ) {
+        let captures = self.collect_closure_captures(body);
+        let mut reporter = reporter;
+
+        for capture in captures {
+            if is_move {
+                self.check_moved_use(
+                    states,
+                    capture.local,
+                    UseSite::move_closure_capture(capture.span),
+                    reporter.as_deref_mut(),
+                );
+                self.apply_consume(
+                    states,
+                    capture.local,
+                    capture.span,
+                    MoveReason::MoveClosureCapture,
+                    reporter.as_deref_mut(),
+                );
+            } else {
+                self.read_local(
+                    states,
+                    capture.local,
+                    UseSite::closure_capture(capture.span),
+                    reporter.as_deref_mut(),
+                );
+            }
+        }
     }
 
     fn check_moved_use(
@@ -571,6 +610,142 @@ impl<'a> BodyAnalyzer<'a> {
                 .expr_resolution(expr_id)
                 .and_then(|resolution| self.local_for_resolution(resolution)),
             _ => None,
+        }
+    }
+
+    fn collect_closure_captures(&self, expr_id: hir::ExprId) -> Vec<CapturedLocal> {
+        let mut captures = Vec::new();
+        let mut seen = HashSet::new();
+        self.collect_expr_captures(expr_id, &mut captures, &mut seen);
+        captures
+    }
+
+    fn collect_expr_captures(
+        &self,
+        expr_id: hir::ExprId,
+        captures: &mut Vec<CapturedLocal>,
+        seen: &mut HashSet<MirLocalId>,
+    ) {
+        if let Some(local) = self.direct_local_for_expr(expr_id)
+            && seen.insert(local)
+        {
+            captures.push(CapturedLocal {
+                local,
+                span: self.hir.expr(expr_id).span,
+            });
+        }
+
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::Name(_)
+            | hir::ExprKind::Integer(_)
+            | hir::ExprKind::String { .. }
+            | hir::ExprKind::Bool(_)
+            | hir::ExprKind::NoneLiteral => {}
+            hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => {
+                for item in items {
+                    self.collect_expr_captures(*item, captures, seen);
+                }
+            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                self.collect_block_captures(*block_id, captures, seen);
+            }
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_expr_captures(*condition, captures, seen);
+                self.collect_block_captures(*then_branch, captures, seen);
+                if let Some(else_branch) = else_branch {
+                    self.collect_expr_captures(*else_branch, captures, seen);
+                }
+            }
+            hir::ExprKind::Match { value, arms } => {
+                self.collect_expr_captures(*value, captures, seen);
+                for arm in arms {
+                    if let Some(guard) = arm.guard {
+                        self.collect_expr_captures(guard, captures, seen);
+                    }
+                    self.collect_expr_captures(arm.body, captures, seen);
+                }
+            }
+            hir::ExprKind::Closure { body, .. } => {
+                self.collect_expr_captures(*body, captures, seen);
+            }
+            hir::ExprKind::Call { callee, args } => {
+                self.collect_expr_captures(*callee, captures, seen);
+                for arg in args {
+                    match arg {
+                        hir::CallArg::Positional(value) => {
+                            self.collect_expr_captures(*value, captures, seen)
+                        }
+                        hir::CallArg::Named { value, .. } => {
+                            self.collect_expr_captures(*value, captures, seen)
+                        }
+                    }
+                }
+            }
+            hir::ExprKind::Member { object, .. } => {
+                self.collect_expr_captures(*object, captures, seen);
+            }
+            hir::ExprKind::Bracket { target, items } => {
+                self.collect_expr_captures(*target, captures, seen);
+                for item in items {
+                    self.collect_expr_captures(*item, captures, seen);
+                }
+            }
+            hir::ExprKind::StructLiteral { fields, .. } => {
+                for field in fields {
+                    self.collect_expr_captures(field.value, captures, seen);
+                }
+            }
+            hir::ExprKind::Binary { left, right, .. } => {
+                self.collect_expr_captures(*left, captures, seen);
+                self.collect_expr_captures(*right, captures, seen);
+            }
+            hir::ExprKind::Unary { expr, .. } | hir::ExprKind::Question(expr) => {
+                self.collect_expr_captures(*expr, captures, seen);
+            }
+        }
+    }
+
+    fn collect_block_captures(
+        &self,
+        block_id: hir::BlockId,
+        captures: &mut Vec<CapturedLocal>,
+        seen: &mut HashSet<MirLocalId>,
+    ) {
+        let block = self.hir.block(block_id);
+        for stmt_id in &block.statements {
+            self.collect_stmt_captures(*stmt_id, captures, seen);
+        }
+        if let Some(tail) = block.tail {
+            self.collect_expr_captures(tail, captures, seen);
+        }
+    }
+
+    fn collect_stmt_captures(
+        &self,
+        stmt_id: hir::StmtId,
+        captures: &mut Vec<CapturedLocal>,
+        seen: &mut HashSet<MirLocalId>,
+    ) {
+        match &self.hir.stmt(stmt_id).kind {
+            hir::StmtKind::Let { value, .. } => self.collect_expr_captures(*value, captures, seen),
+            hir::StmtKind::Return(Some(expr)) | hir::StmtKind::Defer(expr) => {
+                self.collect_expr_captures(*expr, captures, seen);
+            }
+            hir::StmtKind::Return(None) | hir::StmtKind::Break | hir::StmtKind::Continue => {}
+            hir::StmtKind::While { condition, body } => {
+                self.collect_expr_captures(*condition, captures, seen);
+                self.collect_block_captures(*body, captures, seen);
+            }
+            hir::StmtKind::Loop { body } => self.collect_block_captures(*body, captures, seen),
+            hir::StmtKind::For { iterable, body, .. } => {
+                self.collect_expr_captures(*iterable, captures, seen);
+                self.collect_block_captures(*body, captures, seen);
+            }
+            hir::StmtKind::Expr { expr, .. } => self.collect_expr_captures(*expr, captures, seen),
         }
     }
 
@@ -1027,6 +1202,12 @@ impl<'a> BodyAnalyzer<'a> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CapturedLocal {
+    local: MirLocalId,
+    span: ql_span::Span,
+}
+
 #[derive(Default)]
 struct Reporter {
     events: Vec<LocalEvent>,
@@ -1094,6 +1275,22 @@ impl UseSite {
             span,
             label: "use here",
             note: None,
+        }
+    }
+
+    fn closure_capture(span: ql_span::Span) -> Self {
+        Self {
+            span,
+            label: "captured here by closure",
+            note: None,
+        }
+    }
+
+    fn move_closure_capture(span: ql_span::Span) -> Self {
+        Self {
+            span,
+            label: "captured here by `move` closure",
+            note: Some("move closures consume captured locals when the closure value is created"),
         }
     }
 
@@ -1220,6 +1417,7 @@ fn render_move_origin(origin: &MoveOrigin) -> String {
         MoveReason::MoveSelfMethod { method_name } => {
             format!("consumed here by `move self` method `{method_name}`")
         }
+        MoveReason::MoveClosureCapture => "captured here by `move` closure".to_owned(),
     }
 }
 

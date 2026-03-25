@@ -65,6 +65,10 @@ export default defineConfig({
           {
             text: "2026-03-26 P3.3 Cleanup Ownership",
             link: "/plans/2026-03-26-phase3-cleanup-aware-ownership"
+          },
+          {
+            text: "2026-03-26 P3.3b Move Closure Capture",
+            link: "/plans/2026-03-26-phase3-move-closure-captures"
           }
         ]
       }

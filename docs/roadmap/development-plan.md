@@ -244,6 +244,10 @@ P3 已经完成前两个切片，但当前仍然只宣称“ownership foundation
   - deferred cleanup 会按 LIFO 执行顺序产生 read / consume / root-write effects
   - cleanup 中的 root local reassignment 可以为后续 cleanup 重新建立 `Available`
   - `move self` 调用现在在参数求值之后才真正消费 receiver
+- move closure capture ownership 已进入当前切片：
+  - `move` closure 会在创建时消费当前 body 中被捕获的 direct local
+  - 普通 closure capture 现在会被视为一次真实 local 读取
+  - `ql ownership` 能展示 `consume(move closure capture)` 事件
 - `ql-analysis` 已聚合 borrowck diagnostics，并提供 ownership dump 渲染
 - `ql ownership <file>` 已可直接输出当前 ownership facts
 
@@ -253,6 +257,7 @@ P3 已经完成前两个切片，但当前仍然只宣称“ownership foundation
 - place-sensitive move analysis
 - borrow / escape analysis
 - cleanup closure capture / nested defer runtime modeling
+- 完整 closure environment / escape graph
 - drop elaboration
 - `match` / `for` 的更低层 elaboration
 - 完整 ownership diagnostics 体系

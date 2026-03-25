@@ -79,6 +79,8 @@ Current semantic baseline in `ql check`:
   - deferred cleanup now participates in ownership analysis through `RunCleanup` evaluation
   - deferred cleanup ordering can now surface use-after-move / maybe-moved diagnostics at scope exit
   - `move self` consumption now happens after argument evaluation instead of before it
+  - `move` closures now consume current-body direct-local captures when the closure value is created
+  - non-move closures now treat captured locals as real reads in the ownership pass
   - `ql ownership <file>` now renders block entry/exit ownership states plus read/write/consume events
 - precise identifier spans flow through AST -> HIR -> diagnostics for semantic hotspots
 - receiver parameter spans now stay precise through AST -> HIR, which keeps diagnostics and semantic queries anchored to `self` instead of whole function spans
@@ -114,8 +116,9 @@ Current intentional gap:
 - import / module / prelude unresolved-name strictness is still intentionally deferred
 - semantic queries are still intentionally conservative: they resolve root bindings and source-backed declarations, but not full member, variant, or module-path semantics yet
 - `qlsp` is intentionally minimal in P2: hover / definition / diagnostics are live, but references / completion / rename / semantic tokens are still future work
-- Phase 3 ownership is intentionally narrow in this slice: only direct-local `move self` consumption is diagnosed today; general call contracts, place-sensitive moves, borrow/escape analysis, and drop elaboration are still future passes on top of the current MIR foundation
-- cleanup-aware ownership is still intentionally partial: nested `defer` runtime modeling, closure capture, and projection-sensitive cleanup effects are future work
+- Phase 3 ownership is intentionally narrow in this slice: direct-local `move self` consumption and direct-local `move` closure capture are diagnosed today; general call contracts, place-sensitive moves, borrow/escape analysis, and drop elaboration are still future passes on top of the current MIR foundation
+- cleanup-aware ownership is still intentionally partial: nested `defer` runtime modeling and projection-sensitive cleanup effects are future work
+- closure ownership is still intentionally partial: capture facts exist, but closure environment lowering and full escape graph construction are still future work
 
 Quick start:
 

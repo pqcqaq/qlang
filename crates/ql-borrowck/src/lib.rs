@@ -89,4 +89,5 @@ pub struct MoveOrigin {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MoveReason {
     MoveSelfMethod { method_name: String },
+    MoveClosureCapture,
 }

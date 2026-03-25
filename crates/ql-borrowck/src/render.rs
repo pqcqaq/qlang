@@ -70,6 +70,7 @@ fn render_state(state: &LocalState) -> String {
                 .iter()
                 .map(|origin| match &origin.reason {
                     MoveReason::MoveSelfMethod { method_name } => method_name.clone(),
+                    MoveReason::MoveClosureCapture => "move-closure".to_owned(),
                 })
                 .collect::<Vec<_>>()
                 .join("|");
@@ -86,6 +87,7 @@ fn render_event(kind: &LocalEventKind) -> String {
             MoveReason::MoveSelfMethod { method_name } => {
                 format!("consume(move self {method_name})")
             }
+            MoveReason::MoveClosureCapture => "consume(move closure capture)".to_owned(),
         },
     }
 }

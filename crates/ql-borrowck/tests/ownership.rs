@@ -1,4 +1,5 @@
 use ql_borrowck::{analyze_module as analyze_borrowck, render_result};
+use ql_diagnostics::Diagnostic;
 use ql_hir::lower_module as lower_hir;
 use ql_mir::lower_module as lower_mir;
 use ql_parser::parse_source;
@@ -6,6 +7,13 @@ use ql_resolve::resolve_module;
 use ql_typeck::analyze_module as analyze_types;
 
 fn diagnostic_messages(source: &str) -> Vec<String> {
+    borrowck_diagnostics(source)
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+fn borrowck_diagnostics(source: &str) -> Vec<Diagnostic> {
     let ast = parse_source(source).expect("source should parse");
     let hir = lower_hir(&ast);
     let resolution = resolve_module(&hir);
@@ -13,11 +21,7 @@ fn diagnostic_messages(source: &str) -> Vec<String> {
     let mir = lower_mir(&hir, &resolution);
     let borrowck = analyze_borrowck(&hir, &resolution, &typeck, &mir);
 
-    borrowck
-        .diagnostics()
-        .iter()
-        .map(|diagnostic| diagnostic.message.clone())
-        .collect()
+    borrowck.diagnostics().to_vec()
 }
 
 fn render_output(source: &str) -> String {
@@ -145,6 +149,76 @@ fn main() -> User {
         diagnostics.is_empty(),
         "expected no diagnostics, got {diagnostics:?}"
     );
+}
+
+#[test]
+fn move_closure_captures_consume_direct_locals() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let value = 1
+    let capture = move () => value
+    return value
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `value` was used after move".to_string()));
+}
+
+#[test]
+fn closure_captures_read_moved_direct_locals() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct User {
+    name: String,
+}
+
+impl User {
+    fn into_json(move self) -> String {
+        return self.name
+    }
+}
+
+fn main() -> String {
+    let user = User { name: "ql" }
+    user.into_json();
+    let inspect = () => user.name
+    return ""
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `user` was used after move".to_string()));
+}
+
+#[test]
+fn move_closure_capture_diagnostics_anchor_to_the_captured_name() {
+    let source = r#"
+fn main() -> Int {
+    let value = 1
+    let capture = move () => value
+    return value
+}
+"#;
+    let diagnostics = borrowck_diagnostics(source);
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.message == "local `value` was used after move")
+        .expect("expected move-closure capture diagnostic");
+    let capture_span = diagnostic
+        .labels
+        .iter()
+        .find(|label| label.message.as_deref() == Some("captured here by `move` closure"))
+        .expect("expected move-closure capture label")
+        .span;
+    let expected_start = source
+        .find("move () => value")
+        .expect("closure expression should exist")
+        + "move () => ".len();
+
+    assert_eq!(capture_span.start, expected_start);
+    assert_eq!(capture_span.len(), "value".len());
 }
 
 #[test]
@@ -358,4 +432,19 @@ fn main() -> String {
 
     assert!(rendered.contains("consume(move self into_json)"));
     assert!(rendered.contains("read @"));
+}
+
+#[test]
+fn renders_move_closure_capture_effects_for_debugging() {
+    let rendered = render_output(
+        r#"
+fn main() -> Int {
+    let value = 1
+    let capture = move () => value
+    return value
+}
+"#,
+    );
+
+    assert!(rendered.contains("consume(move closure capture)"));
 }
