@@ -83,6 +83,21 @@
 - Phase 1 评审缺口已补齐：`*const` 原始指针类型、转义标识符、下划线前缀绑定、`pub extern` block round-trip、非法数字后缀诊断
 - 前端基础抽象已加固：AST 节点级 span、控制流头部表达式歧义隔离、单元素 tuple 类型/表达式 round-trip、`ql check` 目录扫描过滤 fixture 与工具输出目录
 
+当前验证集：
+
+- `cargo fmt`
+- `cargo test`
+- `cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql`
+- `cargo run -p ql-cli -- check fixtures/parser/pass/control_flow.ql`
+- `cargo run -p ql-cli -- check fixtures/parser/pass/phase1_declarations.ql`
+- `cargo run -p ql-cli -- check target/review/if_empty_block.ql`
+- `cargo run -p ql-cli -- check target/review/while_empty_block.ql`
+- `cargo run -p ql-cli -- check target/review/match_empty_arms.ql`
+- `cargo run -p ql-cli -- check target/review/one_tuple_type.ql`
+- `cargo run -p ql-cli -- fmt fixtures/parser/pass/phase1_declarations.ql`
+- `cargo run -p ql-cli -- fmt target/review/one_tuple_type.ql`
+- `npm run build` in `docs/`
+
 Phase 1 已完成，下一切片：
 
 - 建立 HIR 和名称解析
