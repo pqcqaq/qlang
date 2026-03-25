@@ -84,9 +84,11 @@ Qlang 仓库结构必须同时服务于四类工作：
 │  ├─ ql-parser               # 按 item / expr / pattern / stmt 拆分的 parser
 │  ├─ ql-diagnostics          # 通用 diagnostics 结构与文本渲染
 │  ├─ ql-fmt                  # 基于 AST 的 formatter
+│  ├─ ql-analysis             # 统一 parse / HIR / resolve / typeck 查询入口
 │  ├─ ql-hir                  # AST -> HIR lowering 与稳定 ID arena
 │  ├─ ql-resolve              # 作用域图与保守名称解析
 │  ├─ ql-typeck               # Phase 2 初始语义检查
+│  ├─ ql-lsp                  # 最小 qlsp：hover / definition / diagnostics
 │  └─ ql-cli                  # `ql check` / `ql fmt`
 └─ fixtures/
    └─ parser                  # parser / formatter 回归输入

@@ -120,8 +120,22 @@ LSP 服务端，复用编译器 HIR 与查询系统，支持：
 当前已经有的地基：
 
 - `ql-analysis` 已提供最小可用的 hover / definition 查询面
-- 这意味着后续 `qlsp` 的第一版不需要重新发明一套“源码位置 -> 语义实体”的逻辑
-- 但这还不是完整 LSP 语义层，member / method / variant / module-path 查询仍需要后续继续补齐
+- `qlsp` 的第一版已经落地在 `crates/ql-lsp`
+- 当前通过 stdio 运行，复用 `ql-analysis`
+- 当前已实现：
+  - `textDocument/didOpen`
+  - `textDocument/didChange`（full sync）
+  - `textDocument/didClose`
+  - `textDocument/hover`
+  - `textDocument/definition`
+  - `textDocument/publishDiagnostics`
+- LSP 协议桥接已单独分层：
+  - 位置 `Position <-> byte offset` 换算
+  - `Span -> Range`
+  - compiler diagnostics -> LSP diagnostics
+  - analysis hover / definition -> LSP response
+- 这意味着 `qlsp` 的第一版不需要重新发明一套“源码位置 -> 语义实体”的逻辑
+- 但这还不是完整 LSP 语义层，member / method / variant / module-path 查询以及 references / completion / rename 仍需要后续继续补齐
 
 ### `qfmt`
 

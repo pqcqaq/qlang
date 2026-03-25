@@ -38,6 +38,7 @@ Current Rust workspace status:
 - `crates/ql-fmt`: formatter for the current frontend slice
 - `crates/ql-diagnostics`: shared semantic and parser diagnostics model plus text renderer
 - `crates/ql-analysis`: shared parse/HIR/resolve/typeck analysis entry for CLI and future LSP
+- `crates/ql-lsp`: minimal `qlsp` server for hover, go-to-definition, and diagnostics over stdio
 - `crates/ql-hir`: AST -> HIR lowering with stable IDs and semantic normalization
 - `crates/ql-resolve`: Phase 2 scope graph and conservative name resolution
 - `crates/ql-typeck`: current Phase 2 semantic baseline checks
@@ -62,6 +63,7 @@ Current semantic baseline in `ql check`:
 - parser diagnostics and semantic diagnostics share one renderer
 - `ql-analysis` now centralizes parse -> HIR -> resolve -> typeck orchestration
 - `ql-analysis` now also exposes minimal position-based semantic queries for symbol lookup, hover, and go-to-definition style tooling
+- `qlsp` now consumes that shared analysis layer to provide LSP hover, go-to-definition, and live diagnostics for open documents
 - precise identifier spans flow through AST -> HIR -> diagnostics for semantic hotspots
 - receiver parameter spans now stay precise through AST -> HIR, which keeps diagnostics and semantic queries anchored to `self` instead of whole function spans
 - shorthand struct pattern and struct literal fields are normalized during HIR lowering
@@ -95,6 +97,7 @@ Current intentional gap:
 - default parameters are part of the language design docs, but they are not lowered into AST/HIR or checked yet
 - import / module / prelude unresolved-name strictness is still intentionally deferred
 - semantic queries are still intentionally conservative: they resolve root bindings and source-backed declarations, but not full member, variant, or module-path semantics yet
+- `qlsp` is intentionally minimal in P2: hover / definition / diagnostics are live, but references / completion / rename / semantic tokens are still future work
 
 Quick start:
 
@@ -105,4 +108,5 @@ cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- fmt fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- check fixtures/parser/pass/control_flow.ql
 cargo run -p ql-cli -- check fixtures/parser/pass/phase1_declarations.ql
+cargo run -p ql-lsp --bin qlsp
 ```
