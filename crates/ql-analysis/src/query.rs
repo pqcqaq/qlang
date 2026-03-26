@@ -37,6 +37,15 @@ pub struct DefinitionTarget {
     pub span: Span,
 }
 
+/// One indexed reference site for a semantic symbol within the current source file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReferenceTarget {
+    pub kind: SymbolKind,
+    pub name: String,
+    pub span: Span,
+    pub is_definition: bool,
+}
+
 /// Minimal semantic hover payload shared by CLI-side tests and future LSP work.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HoverInfo {
@@ -82,21 +91,60 @@ impl QueryIndex {
             })
         })
     }
+
+    pub(crate) fn references_at(&self, offset: usize) -> Option<Vec<ReferenceTarget>> {
+        let key = self.occurrence_at(offset).map(|entry| entry.key.clone())?;
+        let mut references = self
+            .occurrences
+            .iter()
+            .filter(|entry| entry.key == key)
+            .map(|entry| ReferenceTarget {
+                kind: entry.hover.kind,
+                name: entry.hover.name.clone(),
+                span: entry.span,
+                is_definition: entry.hover.definition_span == Some(entry.span),
+            })
+            .collect::<Vec<_>>();
+        references.sort_by_key(|entry| (entry.span.start, entry.span.end));
+        references.dedup_by_key(|entry| entry.span);
+        Some(references)
+    }
+
+    fn occurrence_at(&self, offset: usize) -> Option<&IndexedSymbol> {
+        self.occurrences
+            .iter()
+            .find(|entry| entry.span.contains(offset))
+    }
 }
 
 #[derive(Clone, Debug)]
 struct IndexedSymbol {
     span: Span,
+    key: SymbolKey,
     hover: HoverInfo,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SymbolData {
+    key: SymbolKey,
     kind: SymbolKind,
     name: String,
     detail: String,
     ty: Option<String>,
     definition_span: Option<Span>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum SymbolKey {
+    Item(ItemId),
+    Function(FunctionRef),
+    DefinitionSpan(Span),
+    Local(LocalId),
+    Param(ParamBinding),
+    Generic(GenericBinding),
+    SelfValue(ScopeId),
+    BuiltinType(BuiltinType),
+    Import(String),
 }
 
 struct QueryIndexBuilder<'a> {
@@ -446,6 +494,7 @@ impl<'a> QueryIndexBuilder<'a> {
             }
 
             let symbol = SymbolData {
+                key: SymbolKey::Generic(GenericBinding { scope, index }),
                 kind: SymbolKind::Generic,
                 name: generic.name.clone(),
                 detail: render_generic_detail(generic),
@@ -809,6 +858,7 @@ impl<'a> QueryIndexBuilder<'a> {
         ty: Option<String>,
     ) -> SymbolData {
         let symbol = SymbolData {
+            key: SymbolKey::Item(item_id),
             kind,
             name,
             detail,
@@ -822,6 +872,9 @@ impl<'a> QueryIndexBuilder<'a> {
 
     fn define_function_site(&mut self, function_ref: Option<FunctionRef>, function: &Function) {
         let symbol = SymbolData {
+            key: function_ref
+                .map(SymbolKey::Function)
+                .unwrap_or(SymbolKey::DefinitionSpan(function.name_span)),
             kind: SymbolKind::Function,
             name: function.name.clone(),
             detail: render_function_signature(self.module, function),
@@ -843,6 +896,7 @@ impl<'a> QueryIndexBuilder<'a> {
         ty: Option<String>,
     ) {
         let symbol = SymbolData {
+            key: SymbolKey::Param(binding),
             kind: SymbolKind::Parameter,
             name,
             detail,
@@ -869,6 +923,7 @@ impl<'a> QueryIndexBuilder<'a> {
             None => format!("receiver {}", render_receiver(kind)),
         };
         let symbol = SymbolData {
+            key: SymbolKey::SelfValue(scope),
             kind: SymbolKind::SelfParameter,
             name: "self".to_owned(),
             detail,
@@ -891,6 +946,7 @@ impl<'a> QueryIndexBuilder<'a> {
             None => format!("local {}", local.name),
         };
         let symbol = SymbolData {
+            key: SymbolKey::Local(local_id),
             kind: SymbolKind::Local,
             name: local.name.clone(),
             detail,
@@ -915,6 +971,7 @@ impl<'a> QueryIndexBuilder<'a> {
             }
             ValueResolution::Item(item_id) => self.item_defs.get(item_id).cloned(),
             ValueResolution::Import(path) => Some(SymbolData {
+                key: SymbolKey::Import(render_path(path)),
                 kind: SymbolKind::Import,
                 name: path.segments.last().cloned().unwrap_or_default(),
                 detail: format!("import {}", render_path(path)),
@@ -928,6 +985,7 @@ impl<'a> QueryIndexBuilder<'a> {
         match resolution {
             TypeResolution::Generic(binding) => self.generic_defs.get(binding).cloned(),
             TypeResolution::Builtin(builtin) => Some(SymbolData {
+                key: SymbolKey::BuiltinType(*builtin),
                 kind: SymbolKind::BuiltinType,
                 name: builtin_type_name(*builtin).to_owned(),
                 detail: format!("builtin type {}", builtin_type_name(*builtin)),
@@ -936,6 +994,7 @@ impl<'a> QueryIndexBuilder<'a> {
             }),
             TypeResolution::Item(item_id) => self.item_defs.get(item_id).cloned(),
             TypeResolution::Import(path) => Some(SymbolData {
+                key: SymbolKey::Import(render_path(path)),
                 kind: SymbolKind::Import,
                 name: path.segments.last().cloned().unwrap_or_default(),
                 detail: format!("import {}", render_path(path)),
@@ -963,6 +1022,7 @@ impl<'a> QueryIndexBuilder<'a> {
 
         self.occurrences.push(IndexedSymbol {
             span,
+            key: symbol.key.clone(),
             hover: HoverInfo {
                 span,
                 kind: symbol.kind,

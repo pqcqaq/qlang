@@ -79,6 +79,25 @@ pub fn definition_for_analysis(
     )))
 }
 
+pub fn references_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    let offset = position_to_offset(source, position)?;
+    let references = analysis.references_at(offset)?;
+
+    Some(
+        references
+            .into_iter()
+            .filter(|reference| include_declaration || !reference.is_definition)
+            .map(|reference| Location::new(uri.clone(), span_to_range(source, reference.span)))
+            .collect(),
+    )
+}
+
 fn diagnostic_to_lsp(uri: &Url, source: &str, diagnostic: &CompilerDiagnostic) -> Diagnostic {
     let primary = primary_label(diagnostic.labels.as_slice());
     let range = primary

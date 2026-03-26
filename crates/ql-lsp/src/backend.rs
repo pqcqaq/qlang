@@ -3,12 +3,15 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, MessageType, OneOf, ServerCapabilities,
-    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    InitializeParams, InitializeResult, InitializedParams, Location, MessageType, OneOf,
+    ReferenceParams, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions,
 };
 use tower_lsp::{Client, LanguageServer};
 
-use crate::bridge::{definition_for_analysis, diagnostics_to_lsp, hover_for_analysis};
+use crate::bridge::{
+    definition_for_analysis, diagnostics_to_lsp, hover_for_analysis, references_for_analysis,
+};
 use crate::store::DocumentStore;
 
 #[derive(Debug)]
@@ -55,6 +58,7 @@ impl LanguageServer for Backend {
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                references_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
         })
@@ -123,5 +127,24 @@ impl LanguageServer for Backend {
         };
 
         Ok(definition_for_analysis(&uri, &source, &analysis, position))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+
+        Ok(references_for_analysis(
+            &uri,
+            &source,
+            &analysis,
+            position,
+            params.context.include_declaration,
+        ))
     }
 }

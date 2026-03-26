@@ -12,7 +12,7 @@ use ql_parser::{ParseError, parse_source};
 use ql_resolve::{ResolutionMap, resolve_module};
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
 use query::QueryIndex;
-pub use query::{DefinitionTarget, HoverInfo, SymbolKind};
+pub use query::{DefinitionTarget, HoverInfo, ReferenceTarget, SymbolKind};
 
 /// Parsed-and-lowered semantic analysis snapshot shared by CLI and future LSP work.
 #[derive(Clone, Debug)]
@@ -89,6 +89,11 @@ impl Analysis {
     /// Return the definition site for the symbol covering `offset`, when the target lives in source.
     pub fn definition_at(&self, offset: usize) -> Option<DefinitionTarget> {
         self.index.definition_at(offset)
+    }
+
+    /// Return every indexed occurrence for the symbol covering `offset` within the current file.
+    pub fn references_at(&self, offset: usize) -> Option<Vec<ReferenceTarget>> {
+        self.index.references_at(offset)
     }
 
     pub fn render_diagnostics(&self, path: &Path, source: &str) -> String {

@@ -107,6 +107,10 @@ export default defineConfig({
             link: "/plans/2026-03-26-phase5-imported-host-ffi-harness"
           },
           {
+            text: "2026-03-26 P6 Find References",
+            link: "/plans/2026-03-26-phase6-find-references-query-surface"
+          },
+          {
             text: "2026-03-26 P5 Dynamic Library Emission",
             link: "/plans/2026-03-26-phase5-dynamic-library-emission"
           },

@@ -28,7 +28,7 @@
 | `ql-codegen-llvm` | HIR + MIR + resolution + typeck | 文本 LLVM IR 或 codegen diagnostics | 受控子集 lowering | LLVM 只存在于 backend crate |
 | `ql-driver` | 文件路径 + build/ffi options | `.ll` / `.obj` / `.exe` / `.lib` / `.a` / `.h` | 分析编排 + 工具链调用 + C surface projection + 失败保留中间产物 | CLI 不直接碰底层构建细节 |
 | `ql-cli` | 命令行参数 | 文本输出 / 进程退出码 | 薄分发层 | 不重复实现 analysis/build/ffi logic |
-| `ql-lsp` | 文档文本 + LSP 请求 | diagnostics / hover / definition | 文档缓存 + analysis 重算 + 协议桥接 | 不复制编译器语义 |
+| `ql-lsp` | 文档文本 + LSP 请求 | diagnostics / hover / definition / references | 文档缓存 + analysis 重算 + 协议桥接 | 不复制编译器语义 |
 
 ## 前端基础层
 
@@ -272,14 +272,19 @@
    - 先把 item、function、param、generic、self、local 的定义位置全部登记
 2. `index_uses`
    - 再遍历 type / pattern / expr，把 use-site 映射到前面登记的 symbol data
-3. 把 occurrence 按 `(span.len(), span.start, span.end)` 排序
-4. 查询 `symbol_at(offset)` 时优先命中更窄的 span，避免整个大表达式覆盖住精确名字
+3. 为每个 occurrence 绑定稳定 `SymbolKey`
+   - item / extern function / local / param / generic / receiver `self` 使用真实语义 ID
+   - 暂时没有可解析语义 ID 的 declaration site 退化为 `DefinitionSpan`
+   - import / builtin type 使用可稳定分组的轻量 key
+4. 把 occurrence 按 `(span.len(), span.start, span.end)` 排序
+5. 查询 `symbol_at(offset)` 时优先命中更窄的 span，避免整个大表达式覆盖住精确名字
 
 这个 query index 目前支撑：
 
 - `symbol_at`
 - `hover_at`
 - `definition_at`
+- `references_at`
 
 当前覆盖面：
 
@@ -544,13 +549,18 @@
    - `Position -> byte offset`
    - 调用 `analysis.definition_at(offset)`
    - `Span -> Range` 后返回位置
+6. `references`
+   - `Position -> byte offset`
+   - 调用 `analysis.references_at(offset)`
+   - 根据 `includeDeclaration` 过滤 declaration occurrence
+   - `Span -> Range` 后返回同文件 `Location` 列表
 
 当前桥接层职责明确在 `bridge.rs`：
 
 - `Position <-> byte offset`
 - `Span -> Range`
 - 编译器 diagnostics -> LSP diagnostics
-- compiler hover / definition -> LSP response
+- compiler hover / definition / references -> LSP response
 
 为什么这样设计：
 
@@ -590,7 +600,7 @@
 
 ### 规则 6：CLI 与 LSP 必须复用 `ql-analysis`
 
-- 新增 hover / references / completion / rename 时，应优先扩展 query surface
+- 新增 completion / rename，或继续把 hover / references 从 root-binding 扩到更深 member 语义时，应优先扩展 query surface
 - 不要在 `ql-cli` 或 `ql-lsp` 里各自复制一份语义遍历
 
 ### 规则 7：测试要沿分层布局

@@ -42,6 +42,53 @@ fn id[T](param: T) -> T {
 }
 
 #[test]
+fn reference_queries_follow_parameters_and_locals() {
+    let source = r#"
+fn id[T](param: T) -> T {
+    let local_value = param
+    local_value
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert_eq!(
+        analysis.references_at(nth_offset(source, "param", 2)),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Parameter,
+                name: "param".to_owned(),
+                span: nth_span(source, "param", 1),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Parameter,
+                name: "param".to_owned(),
+                span: nth_span(source, "param", 2),
+                is_definition: false,
+            },
+        ])
+    );
+    assert_eq!(
+        analysis.references_at(nth_offset(source, "local_value", 2)),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Local,
+                name: "local_value".to_owned(),
+                span: nth_span(source, "local_value", 1),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Local,
+                name: "local_value".to_owned(),
+                span: nth_span(source, "local_value", 2),
+                is_definition: false,
+            },
+        ])
+    );
+}
+
+#[test]
 fn hover_queries_report_items_imports_and_builtins() {
     let source = r#"
 use std.collections.HashMap as Map
@@ -92,6 +139,43 @@ fn build(cache: Map[String, Int]) -> Counter {
     assert_eq!(
         function_hover.detail,
         "fn build(cache: Map[String, Int]) -> Counter"
+    );
+}
+
+#[test]
+fn import_reference_queries_group_non_definition_uses() {
+    let source = r#"
+use std.collections.HashMap as Map
+
+fn build(cache: Map[String, Int]) -> Map[String, Int] {
+    return cache
+}
+"#;
+
+    let analysis = analyzed(source);
+    let first_use = source
+        .find("Map[String, Int]")
+        .expect("first import alias use should exist");
+    let second_use = source
+        .rfind("Map[String, Int]")
+        .expect("second import alias use should exist");
+
+    assert_eq!(
+        analysis.references_at(first_use),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Import,
+                name: "HashMap".to_owned(),
+                span: ql_span::Span::new(first_use, first_use + "Map".len()),
+                is_definition: false,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Import,
+                name: "HashMap".to_owned(),
+                span: ql_span::Span::new(second_use, second_use + "Map".len()),
+                is_definition: false,
+            },
+        ])
     );
 }
 
@@ -163,5 +247,22 @@ fn main() -> Int {
             name: "q_add".to_owned(),
             span: nth_span(source, "q_add", 1),
         })
+    );
+    assert_eq!(
+        analysis.references_at(nth_offset(source, "q_add", 2)),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Function,
+                name: "q_add".to_owned(),
+                span: nth_span(source, "q_add", 1),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Function,
+                name: "q_add".to_owned(),
+                span: nth_span(source, "q_add", 2),
+                is_definition: false,
+            },
+        ])
     );
 }

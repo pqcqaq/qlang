@@ -2,10 +2,10 @@ use ql_analysis::analyze_source;
 use ql_diagnostics::{Diagnostic as CompilerDiagnostic, Label};
 use ql_lsp::bridge::{
     definition_for_analysis, diagnostics_to_lsp, hover_for_analysis, position_to_offset,
-    span_to_range,
+    references_for_analysis, span_to_range,
 };
 use ql_span::Span;
-use tower_lsp::lsp_types::{GotoDefinitionResponse, HoverContents, Position, Url};
+use tower_lsp::lsp_types::{GotoDefinitionResponse, HoverContents, Location, Position, Url};
 
 fn nth_span(source: &str, needle: &str, occurrence: usize) -> Span {
     source
@@ -104,5 +104,44 @@ fn id[T](value: T) -> T {
     assert_eq!(
         location.range,
         span_to_range(source, nth_span(source, "value", 1))
+    );
+}
+
+#[test]
+fn references_bridge_respects_include_declaration() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+fn id[T](value: T) -> T {
+    value
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let with_declaration =
+        references_for_analysis(&uri, source, &analysis, Position::new(2, 4), true)
+            .expect("references should exist");
+    let without_declaration =
+        references_for_analysis(&uri, source, &analysis, Position::new(2, 4), false)
+            .expect("references should exist");
+
+    assert_eq!(
+        with_declaration,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(source, nth_span(source, "value", 1))
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(source, nth_span(source, "value", 2))
+            ),
+        ]
+    );
+    assert_eq!(
+        without_declaration,
+        vec![Location::new(
+            uri,
+            span_to_range(source, nth_span(source, "value", 2))
+        )]
     );
 }
