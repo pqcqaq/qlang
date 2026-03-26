@@ -297,6 +297,8 @@
 - receiver `self`
 - enum variant token
 - struct field member token
+- explicit struct literal field label
+- explicit struct pattern field label
 - unique method member token
 - named type root
 - pattern path root
@@ -318,6 +320,7 @@
 - receiver `self`
 - import alias
 - builtin type
+- shorthand struct field token
 - cross-file symbol
 
 ## 中层表示与所有权分析

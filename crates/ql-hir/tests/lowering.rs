@@ -83,8 +83,10 @@ fn main() {
     };
 
     assert_eq!(fields[0].name, "x");
+    assert!(fields[0].is_shorthand);
     assert_eq!(hir.local(x_local).name, "x");
     assert_eq!(fields[1].name, "y");
+    assert!(!fields[1].is_shorthand);
     assert_eq!(hir.local(alias_local).name, "alias");
     assert_eq!(hir.locals().len(), 2);
 }
@@ -113,8 +115,10 @@ fn main() {
 
     assert_eq!(fields.len(), 2);
     assert_eq!(fields[0].name, "x");
+    assert!(fields[0].is_shorthand);
     assert!(matches!(hir.expr(fields[0].value).kind, ExprKind::Name(ref name) if name == "x"));
     assert_eq!(fields[1].name, "y");
+    assert!(!fields[1].is_shorthand);
     assert!(matches!(hir.expr(fields[1].value).kind, ExprKind::Integer(ref value) if value == "2"));
 }
 

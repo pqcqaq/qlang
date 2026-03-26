@@ -123,6 +123,10 @@ export default defineConfig({
             link: "/plans/2026-03-26-phase6-same-file-rename-scaffolding"
           },
           {
+            text: "2026-03-26 P6 Field Label Precision",
+            link: "/plans/2026-03-26-phase6-explicit-field-label-query-precision"
+          },
+          {
             text: "2026-03-26 P5 Dynamic Library Emission",
             link: "/plans/2026-03-26-phase5-dynamic-library-emission"
           },

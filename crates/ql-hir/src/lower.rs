@@ -429,6 +429,7 @@ impl Lowerer {
                             name: field.name.clone(),
                             name_span,
                             pattern: field_pattern,
+                            is_shorthand: field.pattern.is_none(),
                         }
                     })
                     .collect(),
@@ -527,6 +528,7 @@ impl Lowerer {
                             name: field.name.clone(),
                             name_span,
                             value,
+                            is_shorthand: field.value.is_none(),
                         }
                     })
                     .collect(),

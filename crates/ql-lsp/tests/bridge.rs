@@ -142,6 +142,31 @@ fn build() -> Command {
 }
 
 #[test]
+fn hover_bridge_renders_markdown_for_explicit_struct_field_labels() {
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(value: Int) -> Point {
+    return Point { x: value }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let field_position = span_to_range(source, nth_span(source, "x", 2)).start;
+    let hover =
+        hover_for_analysis(source, &analysis, field_position).expect("field hover should exist");
+
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown content");
+    };
+
+    assert!(markup.value.contains("**field** `x`"));
+    assert!(markup.value.contains("field x: Int"));
+    assert!(markup.value.contains("Type: `Int`"));
+}
+
+#[test]
 fn definition_bridge_returns_same_file_locations() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"

@@ -347,6 +347,109 @@ fn main() -> Int {
 }
 
 #[test]
+fn explicit_struct_field_labels_join_field_queries() {
+    let source = r#"
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+fn read(point: Point, value: Int) -> Int {
+    let built = Point { x: value, y: 1 }
+    match point {
+        Point { x: alias, y: 2 } => alias,
+    }
+    return point.x
+}
+"#;
+
+    let analysis = analyzed(source);
+    let literal_field_x = source
+        .find("{ x: value")
+        .map(|offset| offset + 2)
+        .expect("explicit struct literal field should exist");
+    let pattern_field_x = source
+        .find("{ x: alias")
+        .map(|offset| offset + 2)
+        .expect("explicit struct pattern field should exist");
+
+    let hover = analysis
+        .hover_at(literal_field_x)
+        .expect("explicit field label should hover");
+    assert_eq!(hover.kind, SymbolKind::Field);
+    assert_eq!(hover.detail, "field x: Int");
+    assert_eq!(hover.ty.as_deref(), Some("Int"));
+    assert_eq!(hover.definition_span, Some(nth_span(source, "x", 1)));
+
+    assert_eq!(
+        analysis.definition_at(pattern_field_x),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Field,
+            name: "x".to_owned(),
+            span: nth_span(source, "x", 1),
+        })
+    );
+    assert_eq!(
+        analysis.references_at(literal_field_x),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: "x".to_owned(),
+                span: nth_span(source, "x", 1),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: "x".to_owned(),
+                span: nth_span(source, "x", 2),
+                is_definition: false,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: "x".to_owned(),
+                span: nth_span(source, "x", 3),
+                is_definition: false,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: "x".to_owned(),
+                span: nth_span(source, "x", 4),
+                is_definition: false,
+            },
+        ])
+    );
+    assert_eq!(analysis.prepare_rename_at(literal_field_x), None);
+}
+
+#[test]
+fn shorthand_struct_field_tokens_stay_on_local_symbols() {
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(value: Int) -> Int {
+    let x = value
+    let built = Point { x }
+    return x
+}
+"#;
+
+    let analysis = analyzed(source);
+    let shorthand_x = source
+        .find("{ x }")
+        .map(|offset| offset + 2)
+        .expect("shorthand struct literal field should exist");
+    let hover = analysis
+        .hover_at(shorthand_x)
+        .expect("shorthand token should still resolve");
+
+    assert_eq!(hover.kind, SymbolKind::Local);
+    assert_eq!(hover.name, "x");
+    assert_eq!(hover.definition_span, Some(nth_span(source, "x", 2)));
+}
+
+#[test]
 fn variant_queries_follow_declarations_patterns_and_constructors() {
     let source = r#"
 enum Command {

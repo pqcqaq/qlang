@@ -902,7 +902,19 @@ impl<'a> QueryIndexBuilder<'a> {
                         }
                     }
                     PatternKind::Struct { fields, .. } => {
+                        let field_owner = match self.resolution.pattern_resolution(pattern_id) {
+                            Some(ValueResolution::Item(item_id)) => Some(*item_id),
+                            _ => None,
+                        };
                         for field in fields {
+                            if !field.is_shorthand
+                                && let Some(item_id) = field_owner
+                                && let Some(target) =
+                                    self.field_target_for_struct_item(item_id, &field.name)
+                                && let Some(symbol) = self.field_defs.get(&target).cloned()
+                            {
+                                self.push_occurrence(field.name_span, &symbol);
+                            }
                             self.index_pattern_use(field.pattern);
                         }
                     }
@@ -996,6 +1008,10 @@ impl<'a> QueryIndexBuilder<'a> {
                 }
             }
             ExprKind::StructLiteral { path, fields } => {
+                let field_owner = match self.resolution.struct_literal_resolution(expr_id) {
+                    Some(TypeResolution::Item(item_id)) => Some(*item_id),
+                    _ => None,
+                };
                 if let Some(resolution) = self.resolution.struct_literal_resolution(expr_id)
                     && let Some(symbol) = self.symbol_for_type_resolution(resolution)
                 {
@@ -1003,6 +1019,14 @@ impl<'a> QueryIndexBuilder<'a> {
                     self.index_variant_type_path_use(path, resolution);
                 }
                 for field in fields {
+                    if !field.is_shorthand
+                        && let Some(item_id) = field_owner
+                        && let Some(target) =
+                            self.field_target_for_struct_item(item_id, &field.name)
+                        && let Some(symbol) = self.field_defs.get(&target).cloned()
+                    {
+                        self.push_occurrence(field.name_span, &symbol);
+                    }
                     self.index_expr_use(field.value);
                 }
             }
@@ -1247,6 +1271,25 @@ impl<'a> QueryIndexBuilder<'a> {
 
     fn symbol_for_variant_target(&self, target: VariantTarget) -> Option<SymbolData> {
         self.variant_defs.get(&target).cloned()
+    }
+
+    fn field_target_for_struct_item(
+        &self,
+        item_id: ItemId,
+        field_name: &str,
+    ) -> Option<FieldTarget> {
+        let ItemKind::Struct(struct_decl) = &self.module.item(item_id).kind else {
+            return None;
+        };
+        struct_decl
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(_, field)| field.name == field_name)
+            .map(|(field_index, _)| FieldTarget {
+                item_id,
+                field_index,
+            })
     }
 
     fn variant_target_for_enum_item(

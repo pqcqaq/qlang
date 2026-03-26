@@ -385,6 +385,7 @@ pub struct PatternField {
     pub name: String,
     pub name_span: Span,
     pub pattern: PatternId,
+    pub is_shorthand: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -472,6 +473,7 @@ pub struct StructLiteralField {
     pub name: String,
     pub name_span: Span,
     pub value: ExprId,
+    pub is_shorthand: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -77,6 +77,7 @@ Current semantic baseline in `ql check`:
 - `ql-analysis` now also exposes minimal position-based semantic queries for symbol lookup, hover, go-to-definition, same-file find-references, and conservative same-file rename style tooling
 - member-name spans and method declaration spans now stay precise through AST -> HIR, so methods inside the same trait/impl/extend block no longer collapse onto one shared query scope anchor
 - named-path segment spans now also stay precise through parser -> resolver -> query indexing, so enum variant uses in patterns and constructors can anchor to the variant token itself instead of collapsing onto the enum root
+- explicit struct literal and struct pattern field labels now also participate in the shared field query surface; shorthand field tokens intentionally stay bound to the local/binding symbol on that token
 - same-file rename now reuses that shared `QueryIndex`, validates new identifier text against lexer rules, and currently only enables symbol kinds whose reference surface is already considered stable enough to edit safely
 - Phase 4 has now started with a backend foundation slice:
   - `ql-driver` keeps build orchestration out of `ql-cli`
@@ -157,7 +158,7 @@ Current intentional gap:
 - default parameters are part of the language design docs, but they are not lowered into AST/HIR or checked yet
 - import / module / prelude unresolved-name strictness is still intentionally deferred
 - semantic queries are still intentionally conservative: they now cover root bindings plus struct-field / unique method member tokens and enum variant tokens, but not full module-path or ambiguous method semantics yet
-- `qlsp` is intentionally minimal in P2/P6: hover / definition / same-file references / same-file rename / diagnostics are live, but completion, semantic tokens, field-or-method rename, and cross-file rename are still future work
+- `qlsp` is intentionally minimal in P2/P6: hover / definition / same-file references / same-file rename / diagnostics are live, but completion, semantic tokens, method rename, shorthand-field rename, and cross-file rename are still future work
 - Phase 3 ownership is intentionally narrow in this slice: direct-local `move self` consumption and direct-local `move` closure capture are diagnosed today; general call contracts, place-sensitive moves, borrow/escape analysis, and drop elaboration are still future passes on top of the current MIR foundation
 - cleanup-aware ownership is still intentionally partial: nested `defer` runtime modeling and projection-sensitive cleanup effects are future work
 - closure ownership is still intentionally partial: MIR capture facts, stable closure IDs, and conservative may-escape facts exist, but closure environment lowering and full escape graph construction are still future work
