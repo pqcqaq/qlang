@@ -41,6 +41,18 @@ pub fn path(segments: &[&str]) -> AstPath {
     )
 }
 
+pub fn span_of(source: &str, needle: &str) -> ql_span::Span {
+    span_of_nth(source, needle, 1)
+}
+
+pub fn span_of_nth(source: &str, needle: &str, occurrence: usize) -> ql_span::Span {
+    source
+        .match_indices(needle)
+        .nth(occurrence.saturating_sub(1))
+        .map(|(start, matched)| ql_span::Span::new(start, start + matched.len()))
+        .expect("needle occurrence should exist")
+}
+
 pub fn find_item_id(module: &Module, name: &str) -> ItemId {
     module
         .items

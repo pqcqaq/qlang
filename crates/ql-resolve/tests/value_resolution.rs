@@ -204,15 +204,14 @@ fn classify(command: Command) -> Int {
 
 #[test]
 fn resolves_import_aliases_in_expression_position() {
-    let (module, resolution) = resolved(
-        r#"
+    let source = r#"
 use std.collections.HashMap as Map
 
 fn factory() -> Int {
     Map
 }
-"#,
-    );
+"#;
+    let (module, resolution) = resolved(source);
 
     let function = find_function(&module, "factory");
     let body = module.block(function.body.expect("function should have body"));
@@ -220,13 +219,20 @@ fn factory() -> Int {
         .tail
         .expect("function body should have a tail expression");
 
-    assert_eq!(
-        resolution.expr_resolution(tail),
-        Some(&ValueResolution::Import(path(&[
-            "std",
-            "collections",
-            "HashMap"
-        ])))
+    let alias_span = source
+        .find("as Map")
+        .map(|offset| ql_span::Span::new(offset + 3, offset + 6))
+        .expect("import alias definition should exist");
+
+    assert!(
+        matches!(
+            resolution.expr_resolution(tail),
+            Some(ValueResolution::Import(binding))
+                if binding.path == path(&["std", "collections", "HashMap"])
+                    && binding.local_name == "Map"
+                    && binding.definition_span == alias_span
+        ),
+        "expression position should resolve to the source-backed import alias binding"
     );
 }
 

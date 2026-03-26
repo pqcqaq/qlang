@@ -3,7 +3,7 @@ mod resolver;
 
 use std::collections::HashMap;
 
-use ql_ast::Path;
+use ql_ast::{Path, UseDecl, UseItem};
 use ql_diagnostics::Diagnostic;
 use ql_hir::{BlockId, ExprId, FunctionRef, ItemId, LocalId, PatternId, TypeId};
 use ql_span::Span;
@@ -155,6 +155,44 @@ pub struct NamedTypeBinding {
     pub resolution: TypeResolution,
 }
 
+/// One source-backed import binding exposed through the resolver.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ImportBinding {
+    pub path: Path,
+    pub local_name: String,
+    pub definition_span: Span,
+}
+
+impl ImportBinding {
+    pub fn direct(use_decl: &UseDecl) -> Self {
+        let local_name = use_decl
+            .alias
+            .clone()
+            .unwrap_or_else(|| use_decl.prefix.segments.last().cloned().unwrap_or_default());
+        let definition_span = use_decl
+            .alias_span
+            .unwrap_or_else(|| use_decl.prefix.last_segment_span().unwrap_or_default());
+
+        Self {
+            path: use_decl.prefix.clone(),
+            local_name,
+            definition_span,
+        }
+    }
+
+    pub fn grouped(prefix: &Path, item: &UseItem) -> Self {
+        let mut path = prefix.clone();
+        path.segments.push(item.name.clone());
+        path.segment_spans.push(item.name_span);
+
+        Self {
+            path,
+            local_name: item.alias.clone().unwrap_or_else(|| item.name.clone()),
+            definition_span: item.alias_span.unwrap_or(item.name_span),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ParamBinding {
     pub scope: ScopeId,
@@ -199,7 +237,7 @@ pub enum ValueResolution {
     SelfValue,
     Function(FunctionRef),
     Item(ItemId),
-    Import(Path),
+    Import(ImportBinding),
 }
 
 /// Type-namespace bindings produced by the current best-effort resolver.
@@ -208,5 +246,5 @@ pub enum TypeResolution {
     Generic(GenericBinding),
     Builtin(BuiltinType),
     Item(ItemId),
-    Import(Path),
+    Import(ImportBinding),
 }

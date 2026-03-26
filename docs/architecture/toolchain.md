@@ -222,8 +222,11 @@ build-side sidecar 默认输出路径：
   - `symbol_at(offset)`
   - `hover_at(offset)`
   - `definition_at(offset)`
+  - `references_at(offset)`
+  - `prepare_rename_at(offset)`
+  - `rename_at(offset, new_name)`
 - 这组 API 当前已经能回答 item / local / param / generic / receiver `self` / named type root / pattern root / struct literal root 的基础语义查询
-- import alias 与 builtin type 现在也能返回 hover 级信息，但因为它们没有本地源码定义点，所以不会伪造 definition span
+- import alias 现在会作为 source-backed binding 进入同一份 query index，因此可以返回真实 definition span，并参与同文件 references / rename；builtin type 仍只返回 hover 级信息
 
 这一层现在还有两个明确的架构保证：
 
@@ -359,7 +362,7 @@ LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
   - compiler diagnostics -> LSP diagnostics
   - analysis hover / definition / references / rename -> LSP response
 - 这意味着 `qlsp` 的第一版不需要重新发明一套“源码位置 -> 语义实体”的逻辑
-- 当前 same-file rename 也明确只开放保守符号集：function / const / static / struct / enum / variant / trait / type alias / local / parameter / generic
+- 当前 same-file rename 也明确只开放保守符号集：function / const / static / struct / enum / variant / trait / type alias / local / parameter / generic / import
 - 显式字段标签虽然已经能 hover / definition / references 到 struct field，但 shorthand `Point { x }` token 仍故意保守，不会提前开放 field rename
 - 但这还不是完整 LSP 语义层：当前精度只覆盖 struct field、显式字段标签、唯一 method candidate、enum variant token；module-path、ambiguous method、completion、field-or-method rename 和 cross-file rename 仍需要后续继续补齐
 

@@ -20,6 +20,13 @@ fn nth_span(source: &str, needle: &str, occurrence: usize) -> Span {
         .expect("needle occurrence should exist")
 }
 
+fn alias_span(source: &str, alias: &str) -> Span {
+    source
+        .find(&format!("as {alias}"))
+        .map(|offset| Span::new(offset + 3, offset + 3 + alias.len()))
+        .expect("import alias definition should exist")
+}
+
 #[test]
 fn position_to_offset_handles_utf16_columns() {
     let source = "😀value\n";
@@ -294,4 +301,56 @@ fn id(value: Int) -> Int {
         rename_for_analysis(&uri, source, &analysis, Position::new(2, 11), "match"),
         Err(ql_analysis::RenameError::Keyword("match".to_owned()))
     );
+}
+
+#[test]
+fn rename_bridge_supports_import_aliases() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use std.collections.HashMap as Map
+
+fn build(cache: Map[String, Int]) -> Map[String, Int] {
+    return cache
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let first_use_start = source
+        .find("Map[String, Int]")
+        .expect("first import alias use should exist");
+    let second_use_start = source
+        .rfind("Map[String, Int]")
+        .expect("second import alias use should exist");
+    let first_use_span = Span::new(first_use_start, first_use_start + "Map".len());
+    let second_use_span = Span::new(second_use_start, second_use_start + "Map".len());
+    let import_use = span_to_range(source, first_use_span).start;
+
+    let prepare = prepare_rename_for_analysis(source, &analysis, import_use)
+        .expect("import alias prepare rename should exist");
+    let PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } = prepare else {
+        panic!("expected range plus placeholder");
+    };
+    assert_eq!(range, span_to_range(source, first_use_span));
+    assert_eq!(placeholder, "Map");
+
+    let edit = rename_for_analysis(&uri, source, &analysis, import_use, "CacheMap")
+        .expect("rename should validate")
+        .expect("rename should produce edits");
+
+    let mut expected_changes = HashMap::new();
+    expected_changes.insert(
+        uri,
+        vec![
+            TextEdit::new(
+                span_to_range(source, alias_span(source, "Map")),
+                "CacheMap".to_owned(),
+            ),
+            TextEdit::new(span_to_range(source, first_use_span), "CacheMap".to_owned()),
+            TextEdit::new(
+                span_to_range(source, second_use_span),
+                "CacheMap".to_owned(),
+            ),
+        ],
+    );
+
+    assert_eq!(edit, WorkspaceEdit::new(expected_changes));
 }

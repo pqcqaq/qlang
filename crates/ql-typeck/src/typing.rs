@@ -634,8 +634,8 @@ impl<'a> Checker<'a> {
                 name: item_display_name(self.module, *item_id),
                 args: Vec::new(),
             },
-            Some(TypeResolution::Import(import_path)) => Ty::Import {
-                path: import_path.segments.join("."),
+            Some(TypeResolution::Import(import_binding)) => Ty::Import {
+                path: import_binding.path.segments.join("."),
                 args: Vec::new(),
             },
             Some(TypeResolution::Builtin(builtin)) => Ty::Builtin(*builtin),

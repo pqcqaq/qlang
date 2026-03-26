@@ -185,7 +185,7 @@
 
 1. 创建 module scope。
 2. `seed_builtins` 把内建类型放入类型命名空间。
-3. `seed_imports` 先把 import alias 放进 lookup 表。
+3. `seed_imports` 先把 import alias 构造成 source-backed `ImportBinding`，再放进值/类型 lookup 表。
 4. `seed_top_level_items` 先登记顶层 item。
 5. 再按 module item 顺序递归进入 `resolve_item`。
 6. 对函数、block、closure、match arm、for-loop 等创建子 scope。
@@ -199,7 +199,7 @@
 - receiver `self`
 - generic parameter
 - top-level item
-- import alias
+- import alias（携带本地名称、导入路径与定义 span 的 `ImportBinding`）
 - builtin type
 - struct literal root
 - pattern path root
@@ -275,7 +275,8 @@
 3. 为每个 occurrence 绑定稳定 `SymbolKey`
    - item / extern function / variant / field / method / local / param / generic / receiver `self` 使用真实语义 ID
    - 暂时没有可解析语义 ID 的 declaration site 退化为 `DefinitionSpan`
-   - import / builtin type 使用可稳定分组的轻量 key
+   - import alias 使用 source-backed `ImportBinding`
+   - builtin type 使用可稳定分组的轻量 key
 4. 把 occurrence 按 `(span.len(), span.start, span.end)` 排序
 5. 查询 `symbol_at(offset)` 时优先命中更窄的 span，避免整个大表达式覆盖住精确名字
 
@@ -303,7 +304,7 @@
 - named type root
 - pattern path root
 - struct literal root
-- import / builtin type 的 hover 级信息
+- import alias 的 source-backed hover / definition / references / rename，以及 builtin type 的 hover 级信息
 
 当前 rename 算法也直接建立在这套 occurrence 分组之上：
 
@@ -318,7 +319,6 @@
 - field
 - method
 - receiver `self`
-- import alias
 - builtin type
 - shorthand struct field token
 - cross-file symbol

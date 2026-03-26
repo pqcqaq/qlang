@@ -78,7 +78,8 @@ Current semantic baseline in `ql check`:
 - member-name spans and method declaration spans now stay precise through AST -> HIR, so methods inside the same trait/impl/extend block no longer collapse onto one shared query scope anchor
 - named-path segment spans now also stay precise through parser -> resolver -> query indexing, so enum variant uses in patterns and constructors can anchor to the variant token itself instead of collapsing onto the enum root
 - explicit struct literal and struct pattern field labels now also participate in the shared field query surface; shorthand field tokens intentionally stay bound to the local/binding symbol on that token
-- same-file rename now reuses that shared `QueryIndex`, validates new identifier text against lexer rules, and currently only enables symbol kinds whose reference surface is already considered stable enough to edit safely
+- import aliases now resolve as source-backed bindings with precise declaration spans, so hover / definition / same-file references / same-file rename all reuse the same semantic identity instead of a string-only pseudo symbol
+- same-file rename now reuses that shared `QueryIndex`, validates new identifier text against lexer rules, and currently only enables symbol kinds whose reference surface is already considered stable enough to edit safely, including source-backed import aliases
 - Phase 4 has now started with a backend foundation slice:
   - `ql-driver` keeps build orchestration out of `ql-cli`
   - `ql-codegen-llvm` lowers a controlled MIR subset into textual LLVM IR, with explicit program-mode and library-mode entry behavior

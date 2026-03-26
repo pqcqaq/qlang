@@ -69,15 +69,14 @@ fn id[T](value: T) -> T {
 
 #[test]
 fn resolves_import_aliases_in_type_positions() {
-    let (module, resolution) = resolved(
-        r#"
+    let source = r#"
 use std.collections.HashMap as Map
 
 fn build(cache: Map[String, Int]) -> Map[String, Int] {
     cache
 }
-"#,
-    );
+"#;
+    let (module, resolution) = resolved(source);
 
     let function = find_function(&module, "build");
     let Param::Regular(param) = &function.params[0] else {
@@ -87,21 +86,30 @@ fn build(cache: Map[String, Int]) -> Map[String, Int] {
         .return_type
         .expect("function should declare a return type");
 
-    assert_eq!(
-        resolution.type_resolution(param.ty),
-        Some(&TypeResolution::Import(path(&[
-            "std",
-            "collections",
-            "HashMap"
-        ])))
+    let alias_span = source
+        .find("as Map")
+        .map(|offset| ql_span::Span::new(offset + 3, offset + 6))
+        .expect("import alias definition should exist");
+
+    assert!(
+        matches!(
+            resolution.type_resolution(param.ty),
+            Some(TypeResolution::Import(binding))
+                if binding.path == path(&["std", "collections", "HashMap"])
+                    && binding.local_name == "Map"
+                    && binding.definition_span == alias_span
+        ),
+        "parameter type should resolve to the source-backed import alias binding"
     );
-    assert_eq!(
-        resolution.type_resolution(return_type),
-        Some(&TypeResolution::Import(path(&[
-            "std",
-            "collections",
-            "HashMap"
-        ])))
+    assert!(
+        matches!(
+            resolution.type_resolution(return_type),
+            Some(TypeResolution::Import(binding))
+                if binding.path == path(&["std", "collections", "HashMap"])
+                    && binding.local_name == "Map"
+                    && binding.definition_span == alias_span
+        ),
+        "return type should resolve to the same source-backed import alias binding"
     );
 }
 

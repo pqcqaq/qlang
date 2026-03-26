@@ -1,3 +1,5 @@
+use std::hash::{Hash, Hasher};
+
 use ql_span::Span;
 
 /// Parsed source file after syntactic analysis.
@@ -18,12 +20,15 @@ pub struct UseDecl {
     pub prefix: Path,
     pub group: Option<Vec<UseItem>>,
     pub alias: Option<String>,
+    pub alias_span: Option<Span>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UseItem {
     pub name: String,
+    pub name_span: Span,
     pub alias: Option<String>,
+    pub alias_span: Option<Span>,
 }
 
 /// Qualified package or type path using `.` separators.
@@ -75,6 +80,12 @@ impl PartialEq for Path {
 }
 
 impl Eq for Path {}
+
+impl Hash for Path {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.segments.hash(state);
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Visibility {

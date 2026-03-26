@@ -91,13 +91,18 @@ impl Parser {
             self.expect(TokenKind::LBrace, "expected `{` after `.` in grouped use")?;
             let mut items = Vec::new();
             while !self.at(TokenKind::RBrace) && !self.at(TokenKind::Eof) {
-                let name = self.expect_ident("expected imported symbol name")?;
+                let name = self.expect_ident_token("expected imported symbol name")?;
                 let alias = if self.eat(TokenKind::As) {
-                    Some(self.expect_ident("expected alias name after `as`")?)
+                    Some(self.expect_ident_token("expected alias name after `as`")?)
                 } else {
                     None
                 };
-                items.push(UseItem { name, alias });
+                items.push(UseItem {
+                    name: name.text,
+                    name_span: name.span,
+                    alias: alias.as_ref().map(|token| token.text.clone()),
+                    alias_span: alias.as_ref().map(|token| token.span),
+                });
                 if !self.eat(TokenKind::Comma) {
                     break;
                 }
@@ -109,7 +114,7 @@ impl Parser {
         };
 
         let alias = if self.eat(TokenKind::As) {
-            Some(self.expect_ident("expected alias name after `as`")?)
+            Some(self.expect_ident_token("expected alias name after `as`")?)
         } else {
             None
         };
@@ -117,7 +122,8 @@ impl Parser {
         Ok(UseDecl {
             prefix,
             group,
-            alias,
+            alias: alias.as_ref().map(|token| token.text.clone()),
+            alias_span: alias.as_ref().map(|token| token.span),
         })
     }
 
@@ -167,10 +173,6 @@ impl Parser {
             self.error_here(message);
             Err(())
         }
-    }
-
-    fn expect_ident(&mut self, message: &str) -> Result<String, ()> {
-        self.expect_ident_token(message).map(|token| token.text)
     }
 
     fn expect_ident_token(&mut self, message: &str) -> Result<Token, ()> {

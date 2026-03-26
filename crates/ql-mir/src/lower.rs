@@ -925,8 +925,8 @@ impl<'a> BodyBuilder<'a> {
                 item: *item,
                 name: self.item_name(*item),
             }),
-            Some(ValueResolution::Import(path)) => {
-                Operand::Constant(Constant::Import(path.clone()))
+            Some(ValueResolution::Import(binding)) => {
+                Operand::Constant(Constant::Import(binding.path.clone()))
             }
             None => Operand::Constant(Constant::UnresolvedName(name.to_owned())),
         }

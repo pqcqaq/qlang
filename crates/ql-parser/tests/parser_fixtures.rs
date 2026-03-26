@@ -446,3 +446,58 @@ fn sample() {
         "Retry"
     );
 }
+
+#[test]
+fn captures_precise_import_name_and_alias_spans() {
+    let source = r#"
+use std.collections.HashMap as Map
+use std.io.{Reader, Writer as StreamWriter}
+"#;
+    let module = parse_source(source).expect("import fixture should parse");
+
+    let direct = &module.uses[0];
+    assert_eq!(direct.alias.as_deref(), Some("Map"));
+    assert_eq!(
+        &source[direct.alias_span.expect("direct import alias span").start
+            ..direct.alias_span.expect("direct import alias span").end],
+        "Map"
+    );
+    assert_eq!(
+        &source[direct
+            .prefix
+            .last_segment_span()
+            .expect("direct import tail span")
+            .start
+            ..direct
+                .prefix
+                .last_segment_span()
+                .expect("direct import tail span")
+                .end],
+        "HashMap"
+    );
+
+    let grouped = module.uses[1]
+        .group
+        .as_ref()
+        .expect("grouped import should have members");
+    assert_eq!(
+        &source[grouped[0].name_span.start..grouped[0].name_span.end],
+        "Reader"
+    );
+    assert_eq!(
+        &source[grouped[1].name_span.start..grouped[1].name_span.end],
+        "Writer"
+    );
+    assert_eq!(grouped[1].alias.as_deref(), Some("StreamWriter"));
+    assert_eq!(
+        &source[grouped[1]
+            .alias_span
+            .expect("grouped import alias span")
+            .start
+            ..grouped[1]
+                .alias_span
+                .expect("grouped import alias span")
+                .end],
+        "StreamWriter"
+    );
+}

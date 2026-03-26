@@ -242,8 +242,8 @@ pub fn lower_type(module: &Module, resolution: &ResolutionMap, type_id: TypeId) 
                     name: item_display_name(module, *item_id),
                     args,
                 },
-                Some(TypeResolution::Import(import_path)) => Ty::Import {
-                    path: import_path.segments.join("."),
+                Some(TypeResolution::Import(import_binding)) => Ty::Import {
+                    path: import_binding.path.segments.join("."),
                     args,
                 },
                 None => Ty::Named {

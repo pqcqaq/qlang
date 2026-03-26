@@ -1,8 +1,16 @@
 mod support;
 
 use ql_analysis::SymbolKind;
+use ql_span::Span;
 
 use support::{analyzed, nth_offset, nth_span};
+
+fn alias_span(source: &str, alias: &str) -> Span {
+    source
+        .find(&format!("as {alias}"))
+        .map(|offset| Span::new(offset + 3, offset + 3 + alias.len()))
+        .expect("import alias definition should exist")
+}
 
 #[test]
 fn definition_queries_follow_generics_parameters_and_locals() {
@@ -113,7 +121,8 @@ fn build(cache: Map[String, Int]) -> Counter {
         .expect("import alias should hover");
     assert_eq!(map_hover.kind, SymbolKind::Import);
     assert_eq!(map_hover.detail, "import std.collections.HashMap");
-    assert_eq!(map_hover.definition_span, None);
+    assert_eq!(map_hover.name, "Map");
+    assert_eq!(map_hover.definition_span, Some(alias_span(source, "Map")));
 
     let string_hover = analysis
         .hover_at(nth_offset(source, "String", 1))
@@ -165,13 +174,19 @@ fn build(cache: Map[String, Int]) -> Map[String, Int] {
         Some(vec![
             ql_analysis::ReferenceTarget {
                 kind: SymbolKind::Import,
-                name: "HashMap".to_owned(),
+                name: "Map".to_owned(),
+                span: alias_span(source, "Map"),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Import,
+                name: "Map".to_owned(),
                 span: ql_span::Span::new(first_use, first_use + "Map".len()),
                 is_definition: false,
             },
             ql_analysis::ReferenceTarget {
                 kind: SymbolKind::Import,
-                name: "HashMap".to_owned(),
+                name: "Map".to_owned(),
                 span: ql_span::Span::new(second_use, second_use + "Map".len()),
                 is_definition: false,
             },
@@ -746,12 +761,37 @@ impl Counter {
         .expect("method use should exist");
     let self_use = source.find("self.value").expect("self use should exist");
 
-    assert_eq!(analysis.prepare_rename_at(import_use), None);
+    assert_eq!(
+        analysis.prepare_rename_at(import_use),
+        Some(ql_analysis::RenameTarget {
+            kind: SymbolKind::Import,
+            name: "Map".to_owned(),
+            span: Span::new(import_use, import_use + "Map".len()),
+        })
+    );
     assert_eq!(analysis.prepare_rename_at(builtin_use), None);
     assert_eq!(analysis.prepare_rename_at(field_use), None);
     assert_eq!(analysis.prepare_rename_at(method_use), None);
     assert_eq!(analysis.prepare_rename_at(self_use), None);
 
+    assert_eq!(
+        analysis.rename_at(import_use, "CacheMap"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Import,
+            old_name: "Map".to_owned(),
+            new_name: "CacheMap".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: alias_span(source, "Map"),
+                    replacement: "CacheMap".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: Span::new(import_use, import_use + "Map".len()),
+                    replacement: "CacheMap".to_owned(),
+                },
+            ],
+        }))
+    );
     assert_eq!(analysis.rename_at(field_use, "renamed"), Ok(None));
     assert_eq!(analysis.rename_at(method_use, "renamed"), Ok(None));
 }

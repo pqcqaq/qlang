@@ -9,8 +9,8 @@ use ql_hir::{
 };
 
 use crate::{
-    BuiltinType, GenericBinding, NamedTypeBinding, NamedValueBinding, ParamBinding, ResolutionMap,
-    Scope, ScopeGraph, ScopeId, ScopeKind, TypeResolution, ValueResolution,
+    BuiltinType, GenericBinding, ImportBinding, NamedTypeBinding, NamedValueBinding, ParamBinding,
+    ResolutionMap, Scope, ScopeGraph, ScopeId, ScopeKind, TypeResolution, ValueResolution,
 };
 
 pub fn resolve_module(module: &Module) -> ResolutionMap {
@@ -72,16 +72,13 @@ impl<'module> Resolver<'module> {
         for use_decl in &self.module.uses {
             if let Some(group) = &use_decl.group {
                 for item in group {
-                    let mut path = use_decl.prefix.clone();
-                    path.segments.push(item.name.clone());
-                    let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                    self.bind_import(self.module_scope, local_name, path);
+                    self.bind_import(
+                        self.module_scope,
+                        ImportBinding::grouped(&use_decl.prefix, item),
+                    );
                 }
             } else {
-                let local_name = use_decl.alias.clone().unwrap_or_else(|| {
-                    use_decl.prefix.segments.last().cloned().unwrap_or_default()
-                });
-                self.bind_import(self.module_scope, local_name, use_decl.prefix.clone());
+                self.bind_import(self.module_scope, ImportBinding::direct(use_decl));
             }
         }
     }
@@ -618,9 +615,17 @@ impl<'module> Resolver<'module> {
         scope_id
     }
 
-    fn bind_import(&mut self, scope: ScopeId, name: String, path: Path) {
-        self.bind_value(scope, name.clone(), ValueResolution::Import(path.clone()));
-        self.bind_type(scope, name, TypeResolution::Import(path));
+    fn bind_import(&mut self, scope: ScopeId, binding: ImportBinding) {
+        self.bind_value(
+            scope,
+            binding.local_name.clone(),
+            ValueResolution::Import(binding.clone()),
+        );
+        self.bind_type(
+            scope,
+            binding.local_name.clone(),
+            TypeResolution::Import(binding),
+        );
     }
 
     fn bind_value(&mut self, scope: ScopeId, name: String, resolution: ValueResolution) {

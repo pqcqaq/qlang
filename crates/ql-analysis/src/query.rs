@@ -8,8 +8,8 @@ use ql_hir::{
 };
 use ql_lexer::{is_keyword, is_valid_identifier};
 use ql_resolve::{
-    BuiltinType, GenericBinding, ParamBinding, ResolutionMap, ScopeId, TypeResolution,
-    ValueResolution,
+    BuiltinType, GenericBinding, ImportBinding, ParamBinding, ResolutionMap, ScopeId,
+    TypeResolution, ValueResolution,
 };
 use ql_span::Span;
 use ql_typeck::{FieldTarget, MemberTarget, MethodTarget, TypeckResult};
@@ -49,6 +49,7 @@ impl SymbolKind {
                 | Self::Local
                 | Self::Parameter
                 | Self::Generic
+                | Self::Import
         )
     }
 }
@@ -272,7 +273,7 @@ enum SymbolKey {
     Generic(GenericBinding),
     SelfValue(ScopeId),
     BuiltinType(BuiltinType),
-    Import(String),
+    Import(ImportBinding),
 }
 
 struct QueryIndexBuilder<'a> {
@@ -290,6 +291,7 @@ struct QueryIndexBuilder<'a> {
     param_defs: HashMap<ParamBinding, SymbolData>,
     generic_defs: HashMap<GenericBinding, SymbolData>,
     self_defs: HashMap<ScopeId, SymbolData>,
+    import_defs: HashMap<ImportBinding, SymbolData>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -320,6 +322,7 @@ impl<'a> QueryIndexBuilder<'a> {
             param_defs: HashMap::new(),
             generic_defs: HashMap::new(),
             self_defs: HashMap::new(),
+            import_defs: HashMap::new(),
         }
     }
 
@@ -332,6 +335,7 @@ impl<'a> QueryIndexBuilder<'a> {
     }
 
     fn index_definitions(&mut self) {
+        self.index_import_definitions();
         for &item_id in &self.module.items {
             self.index_item_definitions(item_id);
         }
@@ -340,6 +344,18 @@ impl<'a> QueryIndexBuilder<'a> {
     fn index_uses(&mut self) {
         for &item_id in &self.module.items {
             self.index_item_uses(item_id);
+        }
+    }
+
+    fn index_import_definitions(&mut self) {
+        for use_decl in &self.module.uses {
+            if let Some(group) = &use_decl.group {
+                for item in group {
+                    self.define_import(ImportBinding::grouped(&use_decl.prefix, item));
+                }
+            } else {
+                self.define_import(ImportBinding::direct(use_decl));
+            }
         }
     }
 
@@ -1215,6 +1231,16 @@ impl<'a> QueryIndexBuilder<'a> {
         self.local_defs.insert(local_id, symbol);
     }
 
+    fn define_import(&mut self, binding: ImportBinding) {
+        if self.import_defs.contains_key(&binding) {
+            return;
+        }
+
+        let symbol = Self::import_symbol(&binding);
+        self.push_occurrence(binding.definition_span, &symbol);
+        self.import_defs.insert(binding, symbol);
+    }
+
     fn symbol_for_value_resolution(
         &self,
         resolution: &ValueResolution,
@@ -1228,14 +1254,7 @@ impl<'a> QueryIndexBuilder<'a> {
                 self.function_defs.get(function_ref).cloned()
             }
             ValueResolution::Item(item_id) => self.item_defs.get(item_id).cloned(),
-            ValueResolution::Import(path) => Some(SymbolData {
-                key: SymbolKey::Import(render_path(path)),
-                kind: SymbolKind::Import,
-                name: path.segments.last().cloned().unwrap_or_default(),
-                detail: format!("import {}", render_path(path)),
-                ty: None,
-                definition_span: None,
-            }),
+            ValueResolution::Import(binding) => self.import_defs.get(binding).cloned(),
         }
     }
 
@@ -1251,14 +1270,18 @@ impl<'a> QueryIndexBuilder<'a> {
                 definition_span: None,
             }),
             TypeResolution::Item(item_id) => self.item_defs.get(item_id).cloned(),
-            TypeResolution::Import(path) => Some(SymbolData {
-                key: SymbolKey::Import(render_path(path)),
-                kind: SymbolKind::Import,
-                name: path.segments.last().cloned().unwrap_or_default(),
-                detail: format!("import {}", render_path(path)),
-                ty: None,
-                definition_span: None,
-            }),
+            TypeResolution::Import(binding) => self.import_defs.get(binding).cloned(),
+        }
+    }
+
+    fn import_symbol(binding: &ImportBinding) -> SymbolData {
+        SymbolData {
+            key: SymbolKey::Import(binding.clone()),
+            kind: SymbolKind::Import,
+            name: binding.local_name.clone(),
+            detail: format!("import {}", render_path(&binding.path)),
+            ty: None,
+            definition_span: Some(binding.definition_span),
         }
     }
 

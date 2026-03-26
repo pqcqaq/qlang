@@ -131,16 +131,17 @@ source
   - struct field member token
   - unique impl / extend method member token
   - named type root、pattern path root、struct literal root
-  - import / builtin type 的 hover 与同文件 reference 级信息
+  - import alias 的 source-backed hover / definition / 同文件 reference / 同文件 rename，以及 builtin type 的 hover 级信息
 - `ql-resolve` 现在额外保留 item scope 和 function scope，`ql-analysis` 不再需要靠“重放 resolver 遍历顺序”去回推参数和泛型的声明位置
 - receiver parameter 的精确 span 也已从 AST 打通到 HIR，查询和 diagnostics 会锚定 `self` / `var self` / `move self` 本身，而不是整个函数 span
 - function / method declaration span 现在也保持精确，trait / impl / extend 里的多个方法会各自拥有独立 function scope，而不是共享整个块的 span
 - named path 现在也会保留 segment span，因此 `Command.Config` / `Command.Retry(...)` 这类 variant use 可以锚定到尾段 token，而不是退回整个 path 或 enum root
 - 显式 struct literal / struct pattern 字段标签现在也会进入 field query surface；但 shorthand `Point { x }` 这类双义 token 仍故意保守，让该 token 继续落在 local/binding 语义上
-- same-file rename 现在也复用这套 query index，并且会先复用 lexer 的 identifier 规则校验新名字；裸关键字会被拒绝，确实要用关键字时必须显式写成转义标识符
+- import alias 现在也会先在 resolver 中固化成 source-backed `ImportBinding`，再被 query index 作为真实符号索引定义点与引用点
+- same-file rename 现在也复用这套 query index，并且会先复用 lexer 的 identifier 规则校验新名字；裸关键字会被拒绝，确实要用关键字时必须显式写成转义标识符；当前 import alias 也已经进入这组可安全 rename 的符号集
 - 这层边界先服务 CLI，并为后续 LSP 的 hover / definition / references / rename 打稳定地基
 - 现在 `ql-lsp` 已经成为这层边界的第一个真实消费者，而不只是“未来会用到”
-- 当前 rename 也仍刻意保守：目前只开放 function / const / static / struct / enum / variant / trait / type alias / local / parameter / generic 的同文件重命名；field / method / receiver / import / builtin type、shorthand field token 以及 cross-file rename 仍需更完整查询面后再开放
+- 当前 rename 也仍刻意保守：目前只开放 function / const / static / struct / enum / variant / trait / type alias / local / parameter / generic / import 的同文件重命名；field / method / receiver / builtin type、shorthand field token 以及 cross-file rename 仍需更完整查询面后再开放
 - 当前仍刻意不宣称完整 member / module-path 查询：目前只覆盖 struct field、唯一 method candidate、enum variant token；ambiguous method、module-path deeper semantics 以及更广义的 payload/member-like query 仍需后续补齐
 
 ### MIR
