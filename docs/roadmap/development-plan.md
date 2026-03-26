@@ -1,5 +1,7 @@
 # 开发计划
 
+如果你想先看当前 P1-P4 的实际完成情况，而不是完整路线图，请先阅读：[P1-P4 阶段总览](/roadmap/phase-progress)。
+
 ## 总体原则
 
 开发顺序必须围绕“尽早形成真实闭环”展开。对 Qlang 来说，闭环不是只有一个 parser 能跑，而是至少满足：
@@ -321,20 +323,25 @@ P4 已经启动，但当前完成的是 “backend foundation” 而不是“完
   - toolchain failure 时保留中间 `.codegen.ll`，link 或 archive failure 时再额外保留 `.codegen.obj/.o` 便于调试
 - 当前支持的 MIR/codegen 子集已经可测试：
   - 顶层 free function
-  - `extern "c"` 顶层声明与 extern block 声明
+  - `extern "c"` 顶层声明、extern block 声明与顶层函数定义
   - `main` 入口
   - scalar integer / `Bool` / `Void`
   - direct function call
   - arithmetic / compare / branch / return
 - extern C direct-call 路径已经进入真实后端：
   - resolve / typeck / MIR / codegen 现在共享 callable identity，而不再把 extern block 成员粗暴折叠成宿主 item
-  - direct `extern "c"` 调用现在会 lower 成 LLVM `declare @symbol` + `call @symbol`
-  - extern block direct call 现在也会参与参数个数与参数类型检查
+  - direct `extern "c"` 调用现在会在 program mode 和 library mode 下 lower 成 LLVM `declare @symbol` + `call @symbol`
+  - extern block direct call 与 top-level extern declaration call 现在都会参与参数个数与参数类型检查
+- top-level `extern "c"` function definition export 路径已经进入真实后端：
+  - parser / formatter 现在允许顶层 `extern "c"` 函数定义保留 body，而不是只允许 declaration
+  - 顶层 `extern "c"` 函数定义现在会 lower 成稳定 C 符号名，而不是内部 mangled name
+  - `staticlib` 已可直接承载这类定义，形成 P5 的第一块 C export 地基
+  - program-mode 入口 `main` 当前仍必须使用默认 Qlang ABI，避免与宿主 `@main` wrapper 冲突
 - 基础 codegen golden harness 已开始落地：
   - `crates/ql-cli/tests/codegen.rs`
   - `tests/codegen/pass/`
   - `tests/codegen/fail/`
-  - 黑盒锁定 `llvm-ir` / `obj` / `exe` / `staticlib`、extern C direct-call lowering 与 build-time unsupported diagnostics
+  - 黑盒锁定 `llvm-ir` / `obj` / `exe` / `staticlib`、library-mode extern C direct-call lowering、`extern "c"` definition export lowering 与 build-time unsupported diagnostics
 - 当前 unsupported backend features 会返回结构化 diagnostics，而不是静默跳过
 
 当前仍刻意未完成：
@@ -342,8 +349,8 @@ P4 已经启动，但当前完成的是 “backend foundation” 而不是“完
 - dylib
 - 更完整的系统 LLVM / linker family 组合探测
 - runtime startup object / richer ABI glue
-- closure / tuple / struct / cleanup lowering
-- `extern "c"` 导出函数与 extern ABI 更完整支持
+- first-class function value / closure / tuple / struct / cleanup lowering
+- exported ABI 的 linkage/visibility 控制与 extern ABI 更完整支持
 - codegen golden snapshot harness 扩容到更多 lowering / toolchain / fail 场景
 
 当前 P4 的核心目标不是“一次性做完整原生平台层”，而是先把 driver/codegen 边界、program/library 入口模型、失败模型和测试面固定住，避免后续为了补链接和运行时而大规模返工。
@@ -360,6 +367,33 @@ P4 已经启动，但当前完成的是 “backend foundation” 而不是“完
 - 支持 `extern "c"` 导入导出
 - 建立 FFI 安全包装模式
 - 标准库 `core`、`alloc`、`io` 打底
+
+### 当前状态（2026-03-26）
+
+P5 当前已经完成前三个可用切片，但仍只宣称“最小 C 互操作闭环已建立”，而不是“FFI 已完成”：
+
+- 顶层 `extern "c"` 函数定义现在可以保留 body 进入真实编译流水线
+- `ql-codegen-llvm` 会把这类定义 lower 成稳定 C 符号名，而不是内部 mangled name
+- `ql-driver` / `ql build --emit staticlib` 已可承载这类 exported symbol 的构建路径
+- parser、formatter、LLVM backend、driver 和 CLI black-box codegen snapshot 都已补上回归
+- `tests/ffi/pass/` 与 `crates/ql-cli/tests/ffi.rs` 现在已经建立真实 C 宿主集成 harness
+- 在 clang-style compiler 与 archiver 可用时，这层 harness 会真实执行“Qlang staticlib -> `ql ffi header` -> C link -> 可执行文件运行”的端到端回归
+- `ql ffi header <file>` 已经落地，默认输出 `target/ql/ffi/<stem>.h`
+- 当前头文件生成只投影 public 顶层 `extern "c"` 函数定义，并明确复用 analysis 结果而不是在 CLI 里重扫语法
+- 当前已支持的 header surface 包括：
+  - `Bool` / `Void`
+  - 当前后端已稳定的整数和浮点标量
+  - 原始指针和多级原始指针
+- `crates/ql-driver/src/ffi.rs`、`crates/ql-cli/tests/ffi_header.rs` 和真实 FFI harness 已经把这条路径锁进回归
+- 当前 program-mode 仍明确要求用户入口 `main` 使用默认 Qlang ABI；稳定 C 导出入口应定义为独立 helper
+
+当前仍刻意未完成：
+
+- extern import surface 的头文件投影
+- ABI 布局检查与 richer diagnostics
+- exported symbol 的 visibility/linkage 控制
+- bridge code generation 与更完整 `ql ffi` 子命令面
+- runtime `core` / `alloc` / `io` 地基
 
 ### 交付物
 

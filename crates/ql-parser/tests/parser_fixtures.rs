@@ -163,6 +163,27 @@ fn reports_bad_extern_fixture() {
 }
 
 #[test]
+fn parses_top_level_extern_function_definitions() {
+    let source = r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#;
+    let module = parse_source(source).expect("extern definition fixture should parse");
+    let function = match &module.items[0].kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+
+    assert_eq!(function.abi.as_deref(), Some("c"));
+    assert!(matches!(function.visibility, Visibility::Public));
+    assert!(
+        function.body.is_some(),
+        "extern function definition should keep its body"
+    );
+}
+
+#[test]
 fn parses_control_flow_heads_without_struct_literal_bias() {
     let source = r#"
 fn probe() {

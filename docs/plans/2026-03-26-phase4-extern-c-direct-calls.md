@@ -97,6 +97,7 @@ FunctionRef::ExternBlockMember { block: ItemId, index: usize }
 - codegen crate：`declare @symbol` + `call @symbol`
 - CLI 黑盒 snapshots：
   - pass: extern C direct-call LLVM IR
+  - pass: library-mode / `staticlib` extern C direct-call path
   - fail: unsupported non-C ABI declaration
 
 ## 结果

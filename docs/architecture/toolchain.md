@@ -4,6 +4,10 @@
 
 Qlang 不是“只有一个编译器二进制”的项目，而是一整套开发体验工程。工具链应围绕统一 CLI 和共享语义数据库展开。
 
+如果要看当前 `ql build`、`ql check`、`qlsp` 背后分别如何编排 analysis、codegen、toolchain invocation 和协议桥接，继续看：
+
+- [实现算法与分层边界](/architecture/implementation-algorithms)
+
 ## 统一入口
 
 建议统一入口命令为 `ql`，由它驱动各子工具：
@@ -63,7 +67,7 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 当前支持矩阵刻意收窄为：
 
 - 顶层 free function
-- `extern "c"` 顶层声明与 extern block 声明
+- `extern "c"` 顶层声明、extern block 声明与顶层函数定义
 - `main` 入口
 - 标量整数 / `Bool` / `Void`
 - direct function call
@@ -73,8 +77,11 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - `.lib` / `.a` 产物依赖 clang-style compiler 与 archive tool
 - codegen 会在 program mode 下把 Qlang 用户入口 lower 成内部符号，并额外生成宿主 `main` wrapper
 - `staticlib` 会走 library mode，因此当前单文件库不要求顶层 `main`
-- direct `extern "c"` 调用现在会 lower 成 LLVM `declare @symbol` + `call @symbol`
+- direct `extern "c"` 调用现在会在 program mode 和 library mode 下都 lower 成 LLVM `declare @symbol` + `call @symbol`
+- 顶层 `extern "c"` 函数定义现在会 lower 成稳定 C 符号名，例如 `define i64 @q_add(...)`
+- program mode 的入口 `main` 仍必须使用默认 Qlang ABI；如果需要导出稳定 C 符号，应定义独立的 `extern "c"` helper
 - `extern` callable 现在有共享 callable identity，因此 extern block 调用也能稳定参与参数类型检查与代码生成
+- first-class function value 不会再把后端打崩，而是返回结构化 unsupported diagnostics
 - Windows 上如果使用 `QLANG_CLANG` 覆盖路径，建议指向 `clang.exe` 或 `.cmd` wrapper，而不是裸 `.ps1`
 - 如果使用 `QLANG_AR` 覆盖路径，建议指向 `llvm-ar` / `ar` / `llvm-lib.exe` / `lib.exe` 或对应 `.cmd` wrapper
 - 如果 `QLANG_AR` 指向的 wrapper 文件名本身看不出是 `ar` 风格还是 `lib` 风格，可以额外设置 `QLANG_AR_STYLE=ar|lib`
@@ -84,11 +91,48 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - 独立 linker family discovery
 - runtime startup object
 - dynamic library
+- first-class function value lowering
 - closure / struct / tuple / cleanup lowering
-- `extern "c"` 导出函数与 richer ABI surface
+- exported ABI 的 linkage/visibility 控制与 richer ABI surface
 - extern ABI 与 runtime glue 的其余部分
 
 这不是功能缺失，而是为了先把 Phase 4 的后端边界做稳，而不是把系统 LLVM、链接器和运行时问题一口气缠死。
+
+### `ql ffi`
+
+P5 当前已经落地最小可用的 C header emit slice：
+
+- `ql ffi header <file>`
+- `ql ffi header <file> -o <output>`
+
+当前默认输出路径：
+
+- `target/ql/ffi/<stem>.h`
+
+当前 `ql ffi header` 的职责是：
+
+- 读取单个 `.ql` 文件
+- 复用 `ql-analysis` 完成 parse / HIR / resolve / typeck
+- 只筛选 public 顶层 `extern "c"` 函数定义
+- 将当前已支持的标量 / 指针类型投影到确定性的 C declaration
+- 输出 include guard、`<stdbool.h>` / `<stdint.h>`、C++ `extern "C"` wrapper
+
+当前支持矩阵刻意收窄为：
+
+- 顶层 `pub extern "c" fn ... { ... }`
+- `Bool` / `Void`
+- `Int` / `UInt` / `I8` / `I16` / `I32` / `I64` / `ISize`
+- `U8` / `U16` / `U32` / `U64` / `USize`
+- `F32` / `F64`
+- 原始指针和多级原始指针
+- 按源码顺序稳定输出 declaration
+
+当前明确未完成：
+
+- extern import surface 的头文件投影
+- struct / tuple / callable / function-pointer ABI
+- layout 校验与 richer diagnostics
+- bridge code generation
 
 ### `ql check`
 
@@ -176,8 +220,12 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - `cargo test -p ql-driver`
 - `cargo test -p ql-cli`
 - `cargo test -p ql-cli --test codegen`
+- 在 clang-style compiler 与 archiver 可用时：`cargo test -p ql-cli --test ffi`
+- `cargo test -p ql-cli --test ffi_header`
 - `cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir`
 - `cargo run -p ql-cli -- build fixtures/codegen/pass/extern_c_build.ql --emit llvm-ir`
+- `cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit staticlib`
+- `cargo run -p ql-cli -- ffi header tests/ffi/pass/extern_c_export.ql`
 - 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit obj`
 - 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit exe`
 - 在 clang 与 archiver 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_library.ql --emit staticlib`
@@ -194,6 +242,18 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - extern C direct-call LLVM IR 快照
 - mock object / executable / static library 产物
 - build 路径上的 unsupported diagnostics
+
+当前还新增了第一版真实 FFI smoke harness：
+
+- `crates/ql-cli/tests/ffi.rs`
+- `tests/ffi/pass/`
+
+这层回归会在 clang-style compiler 和 archiver 可用时：
+
+- 构建导出 `extern "c"` 符号的 Qlang `staticlib`
+- 通过 `ql ffi header` 生成对应的 C 头文件
+- 用包含该头文件的真实 C harness 链接该库
+- 运行宿主可执行文件确认导出符号可被调用
 
 ### `qlsp`
 

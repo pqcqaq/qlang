@@ -122,7 +122,8 @@ source
 
 - `ql-codegen-llvm`：library mode regression test
 - `ql-driver`：`staticlib` 成功 / 归档失败测试
-- `ql-cli`：`--emit staticlib` 路径测试
+- `ql-driver`：`staticlib + extern "c"` 成功路径测试
+- `ql-cli`：`--emit staticlib` 路径测试，包括 library-mode extern C 直调
 - CLI smoke：在 mock clang + mock archiver 下真实跑通
 
 ## 当前刻意不做

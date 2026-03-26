@@ -5,7 +5,10 @@ use std::process::ExitCode;
 
 use ql_analysis::{analyze_source as analyze_semantics, parse_errors_to_diagnostics};
 use ql_diagnostics::{Diagnostic, render_diagnostics};
-use ql_driver::{BuildEmit, BuildError, BuildOptions, BuildProfile, build_file};
+use ql_driver::{
+    BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderError, CHeaderOptions, build_file,
+    emit_c_header,
+};
 use ql_fmt::format_source;
 
 fn main() -> ExitCode {
@@ -114,6 +117,53 @@ fn run() -> Result<(), u8> {
             }
 
             build_path(Path::new(&path), &options)
+        }
+        "ffi" => {
+            let Some(subcommand) = args.next() else {
+                eprintln!("error: `ql ffi` expects a subcommand");
+                return Err(1);
+            };
+
+            match subcommand.as_str() {
+                "header" => {
+                    let Some(path) = args.next() else {
+                        eprintln!("error: `ql ffi header` expects a file path");
+                        return Err(1);
+                    };
+
+                    let mut options = CHeaderOptions::default();
+                    let remaining = args.collect::<Vec<_>>();
+                    let mut index = 0;
+
+                    while index < remaining.len() {
+                        match remaining[index].as_str() {
+                            "-o" | "--output" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql ffi header --output` expects a file path"
+                                    );
+                                    return Err(1);
+                                };
+                                options.output = Some(PathBuf::from(value));
+                            }
+                            other => {
+                                eprintln!("error: unknown `ql ffi header` option `{other}`");
+                                return Err(1);
+                            }
+                        }
+
+                        index += 1;
+                    }
+
+                    emit_c_header_path(Path::new(&path), &options)
+                }
+                other => {
+                    eprintln!("error: unknown `ql ffi` subcommand `{other}`");
+                    print_usage();
+                    Err(1)
+                }
+            }
         }
         _ => {
             eprintln!("error: unknown command `{command}`");
@@ -267,6 +317,31 @@ fn build_path(path: &Path, options: &BuildOptions) -> Result<(), u8> {
     }
 }
 
+fn emit_c_header_path(path: &Path, options: &CHeaderOptions) -> Result<(), u8> {
+    match emit_c_header(path, options) {
+        Ok(artifact) => {
+            println!("wrote c-header: {}", artifact.path.display());
+            Ok(())
+        }
+        Err(CHeaderError::InvalidInput(message)) => {
+            eprintln!("error: {message}");
+            Err(1)
+        }
+        Err(CHeaderError::Io { path, error }) => {
+            eprintln!("error: failed to access `{}`: {error}", path.display());
+            Err(1)
+        }
+        Err(CHeaderError::Diagnostics {
+            path,
+            source,
+            diagnostics,
+        }) => {
+            print_diagnostics(&path, &source, &diagnostics);
+            Err(1)
+        }
+    }
+}
+
 fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
     let analysis = analyze_semantics(source)?;
     if analysis.has_errors() {
@@ -375,6 +450,7 @@ fn print_usage() {
     eprintln!("usage:");
     eprintln!("  ql check <file-or-dir>");
     eprintln!("  ql build <file> [--emit llvm-ir|obj|exe|staticlib] [--release] [-o <output>]");
+    eprintln!("  ql ffi header <file> [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
     eprintln!("  ql mir <file>");
     eprintln!("  ql ownership <file>");

@@ -16,6 +16,10 @@ Qlang 仓库结构必须同时服务于四类工作：
 - 测试资源散落，难以回归
 - 文档和 RFC 无法沉淀
 
+如果要看这些目录在当前实现里分别承载什么算法与分层责任，继续看：
+
+- [实现算法与分层边界](/architecture/implementation-algorithms)
+
 ## 推荐结构
 
 ```text
@@ -104,6 +108,12 @@ Qlang 仓库结构必须同时服务于四类工作：
 
 也就是说，当前目录结构不是“设计图纸”，而是已经有一个最小但真实的前端闭环，并且已经开始向语义层扩展。
 
+当前仓库根测试目录也已经不再只有占位设计：
+
+- `tests/ui/` 已承载 CLI 黑盒 diagnostics 快照
+- `tests/codegen/` 已承载 backend / artifact 黑盒快照
+- `tests/ffi/` 已承载真实 C 宿主集成夹具，并通过 `ql ffi header` 生成的头文件驱动 C harness 编译
+
 当前测试组织也有一条明确约束：
 
 - parser 夹具回归继续放在 `fixtures/` + `crates/ql-parser/tests/`
@@ -112,6 +122,7 @@ Qlang 仓库结构必须同时服务于四类工作：
 - `ql-borrowck` 的 moved-state / consume-event / merge 回归应留在 `crates/ql-borrowck/tests/`，锁定 ownership slice 的边界而不是把语义噪声塞进 CLI 黑盒
 - `ql-codegen-llvm` 的 IR 结构与 unsupported diagnostics 优先留在 crate 自己的测试里，避免 P4 一开始就把 backend 回归全部堆进黑盒 CLI 层
 - `ql-driver` 的输出路径和产物落盘测试也应留在 crate-local tests，避免把 build orchestration 和参数解析耦死
+- `ql-driver` 的 exported C header 投影和类型映射回归也应留在 crate-local tests，避免把 FFI surface 逻辑塞回 CLI 层
 - 仓库根 `tests/` 保留给后续 CLI 黑盒、UI diagnostics、codegen、FFI 这类跨 crate 测试
 
 ## 为什么这样分

@@ -7,5 +7,10 @@ license.workspace = true
 
 [dependencies]
 ql-analysis.workspace = true
+ql-ast.workspace = true
 ql-codegen-llvm.workspace = true
 ql-diagnostics.workspace = true
+ql-hir.workspace = true
+ql-resolve.workspace = true
+ql-span.workspace = true
+ql-typeck.workspace = true

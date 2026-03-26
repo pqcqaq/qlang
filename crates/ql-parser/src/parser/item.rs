@@ -381,7 +381,7 @@ impl Parser {
             false,
             is_unsafe || fn_is_unsafe,
             Some(abi),
-            FunctionBodyMode::Forbidden,
+            FunctionBodyMode::Optional,
         )?;
         Ok(ItemKind::Function(function))
     }

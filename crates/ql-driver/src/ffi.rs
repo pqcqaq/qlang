@@ -1,0 +1,620 @@
+use std::env;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use ql_analysis::analyze_source;
+use ql_ast::Visibility;
+use ql_diagnostics::{Diagnostic, Label};
+use ql_hir::{self as hir, ItemKind, Param};
+use ql_resolve::{BuiltinType, ResolutionMap};
+use ql_typeck::{Ty, lower_type};
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CHeaderOptions {
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CHeaderArtifact {
+    pub path: PathBuf,
+    pub exported_functions: usize,
+}
+
+#[derive(Debug)]
+pub enum CHeaderError {
+    InvalidInput(String),
+    Io {
+        path: PathBuf,
+        error: io::Error,
+    },
+    Diagnostics {
+        path: PathBuf,
+        source: String,
+        diagnostics: Vec<Diagnostic>,
+    },
+}
+
+impl CHeaderError {
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::InvalidInput(_) => None,
+            Self::Io { path, .. } | Self::Diagnostics { path, .. } => Some(path),
+        }
+    }
+
+    pub fn source(&self) -> Option<&str> {
+        match self {
+            Self::Diagnostics { source, .. } => Some(source),
+            Self::InvalidInput(_) | Self::Io { .. } => None,
+        }
+    }
+
+    pub fn diagnostics(&self) -> Option<&[Diagnostic]> {
+        match self {
+            Self::Diagnostics { diagnostics, .. } => Some(diagnostics),
+            Self::InvalidInput(_) | Self::Io { .. } => None,
+        }
+    }
+}
+
+pub fn emit_c_header(
+    path: &Path,
+    options: &CHeaderOptions,
+) -> Result<CHeaderArtifact, CHeaderError> {
+    if !path.is_file() {
+        return Err(CHeaderError::InvalidInput(format!(
+            "`{}` is not a file",
+            path.display()
+        )));
+    }
+
+    let source = fs::read_to_string(path).map_err(|error| CHeaderError::Io {
+        path: path.to_path_buf(),
+        error,
+    })?;
+
+    let analysis = analyze_source(&source).map_err(|diagnostics| CHeaderError::Diagnostics {
+        path: path.to_path_buf(),
+        source: source.clone(),
+        diagnostics,
+    })?;
+
+    if analysis.has_errors() {
+        return Err(CHeaderError::Diagnostics {
+            path: path.to_path_buf(),
+            source: source.clone(),
+            diagnostics: analysis.diagnostics().to_vec(),
+        });
+    }
+
+    let exports = collect_exported_c_functions(analysis.hir(), analysis.resolution()).map_err(
+        |diagnostics| CHeaderError::Diagnostics {
+            path: path.to_path_buf(),
+            source: source.clone(),
+            diagnostics,
+        },
+    )?;
+    if exports.is_empty() {
+        return Err(CHeaderError::InvalidInput(format!(
+            "`{}` does not define any public exported `extern \"c\"` functions with bodies",
+            path.display()
+        )));
+    }
+
+    let output_path = match &options.output {
+        Some(path) => path.clone(),
+        None => {
+            let build_root = env::current_dir().map_err(|error| CHeaderError::Io {
+                path: PathBuf::from("."),
+                error,
+            })?;
+            default_c_header_output_path(&build_root, path)
+        }
+    };
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| CHeaderError::Io {
+            path: parent.to_path_buf(),
+            error,
+        })?;
+    }
+
+    let rendered = render_c_header(path, &exports);
+    fs::write(&output_path, rendered).map_err(|error| CHeaderError::Io {
+        path: output_path.clone(),
+        error,
+    })?;
+
+    Ok(CHeaderArtifact {
+        path: output_path,
+        exported_functions: exports.len(),
+    })
+}
+
+pub fn default_c_header_output_path(build_root: &Path, input_path: &Path) -> PathBuf {
+    let stem = input_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("module");
+    build_root
+        .join("target")
+        .join("ql")
+        .join("ffi")
+        .join(format!("{stem}.h"))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ExportedCFunction {
+    name: String,
+    params: Vec<ExportedCParam>,
+    return_ty: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ExportedCParam {
+    name: String,
+    ty: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CTypeSpelling {
+    base: String,
+    pointer_constness: Vec<bool>,
+}
+
+fn collect_exported_c_functions(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+) -> Result<Vec<ExportedCFunction>, Vec<Diagnostic>> {
+    let mut exports = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for item_id in &module.items {
+        let ItemKind::Function(function) = &module.item(*item_id).kind else {
+            continue;
+        };
+        if function.visibility != Visibility::Public
+            || function.abi.as_deref() != Some("c")
+            || function.body.is_none()
+        {
+            continue;
+        }
+
+        if !function.generics.is_empty() {
+            diagnostics.push(unsupported_export(
+                function.span,
+                "C header generation does not support generic exported functions yet",
+            ));
+            continue;
+        }
+        if !function.where_clause.is_empty() {
+            diagnostics.push(unsupported_export(
+                function.span,
+                "C header generation does not support `where` clauses on exported functions yet",
+            ));
+            continue;
+        }
+        if function.is_async {
+            diagnostics.push(unsupported_export(
+                function.span,
+                "C header generation does not support `async fn` exports yet",
+            ));
+            continue;
+        }
+        if function.is_unsafe {
+            diagnostics.push(unsupported_export(
+                function.span,
+                "C header generation does not support `unsafe fn` exports yet",
+            ));
+            continue;
+        }
+
+        let mut params = Vec::new();
+        let mut function_has_errors = false;
+        for param in &function.params {
+            match param {
+                Param::Regular(param) => {
+                    let ty = lower_type(module, resolution, param.ty);
+                    match render_c_type(&ty, module.ty(param.ty).span, "parameter type") {
+                        Ok(spelling) => params.push(ExportedCParam {
+                            name: param.name.clone(),
+                            ty: spelling,
+                        }),
+                        Err(error) => {
+                            function_has_errors = true;
+                            diagnostics.push(error);
+                        }
+                    }
+                }
+                Param::Receiver(receiver) => {
+                    function_has_errors = true;
+                    diagnostics.push(unsupported_export(
+                        receiver.span,
+                        "C header generation does not support receiver methods yet",
+                    ));
+                }
+            }
+        }
+
+        let return_ty = match function.return_type {
+            Some(type_id) => {
+                let ty = lower_type(module, resolution, type_id);
+                match render_c_type(&ty, module.ty(type_id).span, "return type") {
+                    Ok(spelling) => spelling,
+                    Err(error) => {
+                        function_has_errors = true;
+                        diagnostics.push(error);
+                        String::new()
+                    }
+                }
+            }
+            None => "void".to_owned(),
+        };
+
+        if function_has_errors {
+            continue;
+        }
+
+        exports.push(ExportedCFunction {
+            name: function.name.clone(),
+            params,
+            return_ty,
+        });
+    }
+
+    if diagnostics.is_empty() {
+        Ok(exports)
+    } else {
+        Err(diagnostics)
+    }
+}
+
+fn render_c_header(input_path: &Path, exports: &[ExportedCFunction]) -> String {
+    let include_guard = include_guard_name(input_path);
+    let mut output = String::new();
+
+    output.push_str("#ifndef ");
+    output.push_str(&include_guard);
+    output.push('\n');
+    output.push_str("#define ");
+    output.push_str(&include_guard);
+    output.push_str("\n\n");
+    output.push_str("#include <stdbool.h>\n");
+    output.push_str("#include <stdint.h>\n\n");
+    output.push_str("#ifdef __cplusplus\n");
+    output.push_str("extern \"C\" {\n");
+    output.push_str("#endif\n\n");
+
+    for export in exports {
+        output.push_str(&export.return_ty);
+        output.push(' ');
+        output.push_str(&export.name);
+        output.push('(');
+        if export.params.is_empty() {
+            output.push_str("void");
+        } else {
+            for (index, param) in export.params.iter().enumerate() {
+                if index > 0 {
+                    output.push_str(", ");
+                }
+                output.push_str(&param.ty);
+                output.push(' ');
+                output.push_str(&param.name);
+            }
+        }
+        output.push_str(");\n");
+    }
+
+    output.push_str("\n#ifdef __cplusplus\n");
+    output.push_str("}\n");
+    output.push_str("#endif\n\n");
+    output.push_str("#endif /* ");
+    output.push_str(&include_guard);
+    output.push_str(" */\n");
+    output
+}
+
+fn render_c_type(ty: &Ty, span: ql_span::Span, context: &str) -> Result<String, Diagnostic> {
+    let spelling = lower_c_type_spelling(ty, span, context)?;
+    Ok(render_c_type_spelling(&spelling))
+}
+
+fn lower_c_type_spelling(
+    ty: &Ty,
+    span: ql_span::Span,
+    context: &str,
+) -> Result<CTypeSpelling, Diagnostic> {
+    match ty {
+        Ty::Builtin(BuiltinType::Bool) => Ok(CTypeSpelling {
+            base: "bool".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::Void) => Ok(CTypeSpelling {
+            base: "void".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::Int)
+        | Ty::Builtin(BuiltinType::I64)
+        | Ty::Builtin(BuiltinType::ISize) => Ok(CTypeSpelling {
+            base: "int64_t".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::UInt)
+        | Ty::Builtin(BuiltinType::U64)
+        | Ty::Builtin(BuiltinType::USize) => Ok(CTypeSpelling {
+            base: "uint64_t".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::I32) => Ok(CTypeSpelling {
+            base: "int32_t".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::U32) => Ok(CTypeSpelling {
+            base: "uint32_t".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::I16) => Ok(CTypeSpelling {
+            base: "int16_t".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::U16) => Ok(CTypeSpelling {
+            base: "uint16_t".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::I8) => Ok(CTypeSpelling {
+            base: "int8_t".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::U8) => Ok(CTypeSpelling {
+            base: "uint8_t".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::F32) => Ok(CTypeSpelling {
+            base: "float".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::F64) => Ok(CTypeSpelling {
+            base: "double".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Pointer { is_const, inner } => {
+            let mut inner = lower_c_type_spelling(inner, span, context)?;
+            inner.pointer_constness.push(*is_const);
+            Ok(inner)
+        }
+        _ => Err(Diagnostic::error(format!(
+            "C header generation does not support {context} `{ty}` yet"
+        ))
+        .with_label(Label::new(span))),
+    }
+}
+
+fn render_c_type_spelling(spelling: &CTypeSpelling) -> String {
+    let mut rendered = spelling.base.clone();
+
+    for (index, is_const) in spelling.pointer_constness.iter().copied().enumerate() {
+        if is_const {
+            if index == 0 && !rendered.contains('*') {
+                rendered = format!("const {rendered}*");
+            } else {
+                rendered = format!("{rendered} const*");
+            }
+        } else {
+            rendered.push('*');
+        }
+    }
+
+    rendered
+}
+
+fn include_guard_name(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("module");
+    format!("QLANG_{}_H", sanitize_macro_segment(stem))
+}
+
+fn sanitize_macro_segment(raw: &str) -> String {
+    let mut output = String::new();
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() {
+            output.push(ch.to_ascii_uppercase());
+        } else {
+            output.push('_');
+        }
+    }
+
+    if output.is_empty() {
+        "MODULE".to_owned()
+    } else {
+        output
+    }
+}
+
+fn unsupported_export(span: ql_span::Span, message: impl Into<String>) -> Diagnostic {
+    Diagnostic::error(message).with_label(Label::new(span))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CHeaderError, CHeaderOptions, default_c_header_output_path, emit_c_header};
+    use std::env;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(prefix: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos();
+            let path = env::temp_dir().join(format!("{prefix}-{unique}"));
+            fs::create_dir_all(&path).expect("create temporary test directory");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+
+        fn write(&self, relative: &str, contents: &str) -> PathBuf {
+            let path = self.path.join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create test parent directory");
+            }
+            fs::write(&path, contents).expect("write test file");
+            path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn default_c_header_output_path_uses_target_ql_ffi_layout() {
+        let output =
+            default_c_header_output_path(Path::new("D:/workspace/demo"), Path::new("src/app.ql"));
+
+        assert_eq!(
+            output,
+            PathBuf::from("D:/workspace/demo/target/ql/ffi/app.h")
+        );
+    }
+
+    #[test]
+    fn emit_c_header_writes_public_exported_extern_c_definitions() {
+        let dir = TestDir::new("ql-driver-ffi-header");
+        let source = dir.write(
+            "ffi_export.ql",
+            r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+extern "c" fn imported_only(value: Int) -> Int
+
+fn internal(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/ffi_export.h");
+
+        let artifact = emit_c_header(
+            &source,
+            &CHeaderOptions {
+                output: Some(output.clone()),
+            },
+        )
+        .expect("header generation should succeed");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(artifact.exported_functions, 1);
+        let rendered = fs::read_to_string(output).expect("read generated header");
+        assert_eq!(
+            rendered,
+            "\
+#ifndef QLANG_FFI_EXPORT_H\n\
+#define QLANG_FFI_EXPORT_H\n\
+\n\
+#include <stdbool.h>\n\
+#include <stdint.h>\n\
+\n\
+#ifdef __cplusplus\n\
+extern \"C\" {\n\
+#endif\n\
+\n\
+int64_t q_add(int64_t left, int64_t right);\n\
+\n\
+#ifdef __cplusplus\n\
+}\n\
+#endif\n\
+\n\
+#endif /* QLANG_FFI_EXPORT_H */\n"
+        );
+    }
+
+    #[test]
+    fn emit_c_header_supports_pointer_exports() {
+        let dir = TestDir::new("ql-driver-ffi-pointer-header");
+        let source = dir.write(
+            "ffi_pointer.ql",
+            r#"
+extern "c" pub fn fill(buf: *U8, src: *const U8) -> *const U8 {
+    return src
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/ffi_pointer.h");
+
+        emit_c_header(
+            &source,
+            &CHeaderOptions {
+                output: Some(output.clone()),
+            },
+        )
+        .expect("pointer header generation should succeed");
+
+        let rendered = fs::read_to_string(output).expect("read generated pointer header");
+        assert!(rendered.contains("uint8_t* buf"));
+        assert!(rendered.contains("const uint8_t* src"));
+        assert!(rendered.contains("const uint8_t* fill"));
+    }
+
+    #[test]
+    fn emit_c_header_rejects_unsupported_export_types() {
+        let dir = TestDir::new("ql-driver-ffi-header-unsupported");
+        let source = dir.write(
+            "ffi_bad.ql",
+            r#"
+extern "c" pub fn q_print(message: String) -> Void {
+}
+"#,
+        );
+
+        let error = emit_c_header(&source, &CHeaderOptions::default())
+            .expect_err("unsupported exports should fail header generation");
+        let diagnostics = match error {
+            CHeaderError::Diagnostics { diagnostics, .. } => diagnostics,
+            other => panic!("expected diagnostics error, got {other:?}"),
+        };
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "C header generation does not support parameter type `String` yet"
+        }));
+    }
+
+    #[test]
+    fn emit_c_header_requires_at_least_one_public_export() {
+        let dir = TestDir::new("ql-driver-ffi-header-empty");
+        let source = dir.write(
+            "ffi_empty.ql",
+            r#"
+extern "c" fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+        );
+
+        let error = emit_c_header(&source, &CHeaderOptions::default())
+            .expect_err("header generation should require a public export");
+
+        match error {
+            CHeaderError::InvalidInput(message) => assert!(
+                message.contains("does not define any public exported `extern \"c\"` functions")
+            ),
+            other => panic!("expected invalid input error, got {other:?}"),
+        }
+    }
+}

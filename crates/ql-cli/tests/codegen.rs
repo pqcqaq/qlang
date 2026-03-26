@@ -28,6 +28,15 @@ fn codegen_snapshots_match() {
             archiver_style: None,
         },
         PassCase {
+            name: "extern_c_export_llvm_ir",
+            source_relative: "fixtures/codegen/pass/extern_c_export.ql",
+            emit: "llvm-ir",
+            expected_relative: "tests/codegen/pass/extern_c_export.ll",
+            mock_compiler: false,
+            mock_archiver: false,
+            archiver_style: None,
+        },
+        PassCase {
             name: "minimal_build_object",
             source_relative: "fixtures/codegen/pass/minimal_build.ql",
             emit: "obj",
@@ -54,6 +63,24 @@ fn codegen_snapshots_match() {
             mock_archiver: true,
             archiver_style: Some(current_archiver_style()),
         },
+        PassCase {
+            name: "extern_c_library_staticlib",
+            source_relative: "fixtures/codegen/pass/extern_c_library.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/extern_c_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+        },
+        PassCase {
+            name: "extern_c_top_level_library_staticlib",
+            source_relative: "fixtures/codegen/pass/extern_c_top_level_library.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/extern_c_top_level_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+        },
     ];
     let fail_cases = vec![
         FailCase {
@@ -67,6 +94,18 @@ fn codegen_snapshots_match() {
             source_relative: "tests/codegen/fail/unsupported_extern_rust_abi_build.ql",
             emit: "llvm-ir",
             expected_stderr_relative: "tests/codegen/fail/unsupported_extern_rust_abi_build.stderr",
+        },
+        FailCase {
+            name: "unsupported_extern_rust_abi_definition_build",
+            source_relative: "tests/codegen/fail/unsupported_extern_rust_abi_definition_build.ql",
+            emit: "llvm-ir",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_extern_rust_abi_definition_build.stderr",
+        },
+        FailCase {
+            name: "unsupported_function_value_build",
+            source_relative: "tests/codegen/fail/unsupported_function_value_build.ql",
+            emit: "llvm-ir",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_function_value_build.stderr",
         },
     ];
 

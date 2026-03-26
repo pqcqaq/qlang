@@ -91,7 +91,7 @@ impl<'a> ModuleEmitter<'a> {
         let (entry, reachable) = match self.input.mode {
             CodegenMode::Program => {
                 let entry = self.find_entry_function()?;
-                (Some(entry), self.collect_reachable_functions(entry))
+                (Some(entry), self.collect_reachable_functions(vec![entry]))
             }
             CodegenMode::Library => (None, self.collect_library_functions()),
         };
@@ -155,7 +155,7 @@ impl<'a> ModuleEmitter<'a> {
     }
 
     fn collect_library_functions(&self) -> Vec<FunctionRef> {
-        let mut functions = self
+        let mut roots = self
             .input
             .hir
             .items
@@ -168,12 +168,12 @@ impl<'a> ModuleEmitter<'a> {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        functions.sort_by_key(|function_ref| function_sort_key(*function_ref));
-        functions
+        roots.sort_by_key(|function_ref| function_sort_key(*function_ref));
+        self.collect_reachable_functions(roots)
     }
 
-    fn collect_reachable_functions(&self, entry: FunctionRef) -> Vec<FunctionRef> {
-        let mut queue = VecDeque::from([entry]);
+    fn collect_reachable_functions(&self, roots: Vec<FunctionRef>) -> Vec<FunctionRef> {
+        let mut queue = VecDeque::from(roots);
         let mut visited = HashSet::new();
         let mut ordered = Vec::new();
 
@@ -259,11 +259,14 @@ impl<'a> ModuleEmitter<'a> {
                 "LLVM IR backend foundation does not support `unsafe fn` bodies yet",
             ));
         }
-        if body_style == FunctionBodyStyle::Definition && function.abi.is_some() {
-            diagnostics.push(unsupported(
-                function.span,
-                "LLVM IR backend foundation does not support explicit function ABIs yet",
-            ));
+        if body_style == FunctionBodyStyle::Definition {
+            match function.abi.as_deref() {
+                Some("c") | None => {}
+                Some(_) => diagnostics.push(unsupported(
+                    function.span,
+                    "LLVM IR backend foundation only supports `extern \"c\"` function definitions yet",
+                )),
+            }
         }
         if body_style == FunctionBodyStyle::Declaration {
             match function.abi.as_deref() {
@@ -328,6 +331,13 @@ impl<'a> ModuleEmitter<'a> {
                 .with_label(Label::new(function.span))
                 .with_note("future phases will extend `ql build` to package-aware entry signatures"));
             }
+            if function.abi.is_some() {
+                diagnostics.push(Diagnostic::error(
+                    "entry function `main` must use the default Qlang ABI in the current native build pipeline",
+                )
+                .with_label(Label::new(function.span))
+                .with_note("use a separate `extern \"c\"` helper when you need a stable exported C symbol"));
+            }
             if !matches!(
                 return_ty,
                 Ty::Builtin(BuiltinType::Int) | Ty::Builtin(BuiltinType::Void)
@@ -347,10 +357,13 @@ impl<'a> ModuleEmitter<'a> {
             function_ref,
             name: function.name.clone(),
             llvm_name: match body_style {
-                FunctionBodyStyle::Definition => llvm_symbol_name(
-                    self.input.hir.function_owner_item(function_ref),
-                    &function.name,
-                ),
+                FunctionBodyStyle::Definition => match function.abi.as_deref() {
+                    Some("c") => sanitize_symbol(&function.name),
+                    _ => llvm_symbol_name(
+                        self.input.hir.function_owner_item(function_ref),
+                        &function.name,
+                    ),
+                },
                 FunctionBodyStyle::Declaration => sanitize_symbol(&function.name),
             },
             span: function.span,
@@ -469,8 +482,9 @@ impl<'a> ModuleEmitter<'a> {
             }
         }
 
+        let should_validate_local_types = diagnostics.is_empty();
         for local_id in body.local_ids() {
-            let Some(_ty) = local_types.get(&local_id) else {
+            let Some(ty) = local_types.get(&local_id) else {
                 diagnostics.push(Diagnostic::error(format!(
                     "could not infer LLVM type for MIR local `{}`",
                     body.local(local_id).name
@@ -479,6 +493,13 @@ impl<'a> ModuleEmitter<'a> {
                 .with_note("this usually means the current MIR shape is not part of the P4 backend foundation support matrix"));
                 continue;
             };
+
+            if !should_validate_local_types || is_void_ty(ty) {
+                continue;
+            }
+            if let Err(error) = lower_llvm_type(ty, body.local(local_id).span, "local type") {
+                diagnostics.push(error);
+            }
         }
 
         if diagnostics.is_empty() {
@@ -677,15 +698,12 @@ impl<'a> ModuleEmitter<'a> {
                 Constant::Integer(_) => Some(Ty::Builtin(BuiltinType::Int)),
                 Constant::Bool(_) => Some(Ty::Builtin(BuiltinType::Bool)),
                 Constant::Void => Some(void_ty()),
-                Constant::Function { function, .. } => {
-                    self.signatures.get(function).map(|signature| Ty::Callable {
-                        params: signature
-                            .params
-                            .iter()
-                            .map(|param| param.ty.clone())
-                            .collect(),
-                        ret: Box::new(signature.return_ty.clone()),
-                    })
+                Constant::Function { .. } => {
+                    diagnostics.push(unsupported(
+                        span,
+                        "LLVM IR backend foundation does not support first-class function values yet",
+                    ));
+                    None
                 }
                 Constant::Item { .. } => {
                     diagnostics.push(unsupported(
@@ -1638,6 +1656,82 @@ fn main() -> Int {
     }
 
     #[test]
+    fn library_mode_keeps_extern_block_declarations_for_direct_calls() {
+        let rendered = emit_library(
+            r#"
+extern "c" {
+    fn q_add(left: Int, right: Int) -> Int
+}
+
+fn add_two(value: Int) -> Int {
+    return q_add(value, 2)
+}
+"#,
+        );
+
+        assert!(rendered.contains("declare i64 @q_add(i64, i64)"));
+        assert!(rendered.contains("define i64 @ql_1_add_two(i64 %arg0)"));
+        assert!(rendered.contains("call i64 @q_add(i64 %t0, i64 2)"));
+    }
+
+    #[test]
+    fn library_mode_keeps_top_level_extern_declarations_for_direct_calls() {
+        let rendered = emit_library(
+            r#"
+extern "c" fn q_add(left: Int, right: Int) -> Int
+
+fn add_two(value: Int) -> Int {
+    return q_add(value, 2)
+}
+"#,
+        );
+
+        assert!(rendered.contains("declare i64 @q_add(i64, i64)"));
+        assert!(rendered.contains("define i64 @ql_1_add_two(i64 %arg0)"));
+        assert!(rendered.contains("call i64 @q_add(i64 %t0, i64 2)"));
+    }
+
+    #[test]
+    fn emits_extern_c_function_definitions_with_stable_symbol_names() {
+        let rendered = emit(
+            r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+fn main() -> Int {
+    return q_add(1, 2)
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @q_add(i64 %arg0, i64 %arg1)"));
+        assert!(rendered.contains("define i64 @ql_1_main()"));
+        assert!(rendered.contains("call i64 @q_add(i64 1, i64 2)"));
+        assert!(!rendered.contains("define i64 @ql_0_q_add"));
+    }
+
+    #[test]
+    fn library_mode_keeps_extern_c_function_definitions_exported() {
+        let rendered = emit_library(
+            r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+fn add_two(value: Int) -> Int {
+    return q_add(value, 2)
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @q_add(i64 %arg0, i64 %arg1)"));
+        assert!(rendered.contains("define i64 @ql_1_add_two(i64 %arg0)"));
+        assert!(rendered.contains("call i64 @q_add(i64 %t0, i64 2)"));
+        assert!(!rendered.contains("define i64 @main("));
+    }
+
+    #[test]
     fn rejects_non_c_extern_declarations() {
         let messages = emit_error(
             r#"
@@ -1651,6 +1745,62 @@ fn main() -> Int {
 
         assert!(messages.iter().any(|message| {
             message == "LLVM IR backend foundation only supports `extern \"c\"` declarations yet"
+        }));
+    }
+
+    #[test]
+    fn rejects_non_c_extern_definitions() {
+        let messages = emit_error(
+            r#"
+extern "rust" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+fn main() -> Int {
+    return q_add(1, 2)
+}
+"#,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message
+                == "LLVM IR backend foundation only supports `extern \"c\"` function definitions yet"
+        }));
+    }
+
+    #[test]
+    fn rejects_extern_c_entry_main_definitions() {
+        let messages = emit_error(
+            r#"
+extern "c" fn main() -> Int {
+    return 0
+}
+"#,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message
+                == "entry function `main` must use the default Qlang ABI in the current native build pipeline"
+        }));
+    }
+
+    #[test]
+    fn rejects_first_class_function_values() {
+        let messages = emit_error(
+            r#"
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+
+fn main() -> Int {
+    let f = add_one
+    return 0
+}
+"#,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message == "LLVM IR backend foundation does not support first-class function values yet"
         }));
     }
 

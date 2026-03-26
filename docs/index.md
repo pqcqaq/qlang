@@ -7,8 +7,8 @@ hero:
   tagline: 一个基于 LLVM 的编译型语言预研方案，目标是把安全性、可维护性、互操作性和工具链体验统一起来。
   actions:
     - theme: brand
-      text: 查看愿景
-      link: /vision
+      text: 查看阶段总览
+      link: /roadmap/phase-progress
     - theme: alt
       text: 查看开发计划
       link: /roadmap/development-plan
@@ -34,6 +34,12 @@ features:
 - 类型系统、内存模型、并发模型与 FFI 方案
 - 编译器、LSP、格式化器、文档系统与仓库结构
 - 细化到阶段出口标准的功能清单与执行路线图
+
+当前实现已经推进到 P4 backend foundation，并在 P5 上落地了最小可用的 C 互操作闭环：稳定 `extern "c"` 导出、真实 C 宿主集成 harness，以及 `ql ffi header` 头文件生成。建议先看：
+
+- [P1-P4 阶段总览](/roadmap/phase-progress)
+- [开发计划](/roadmap/development-plan)
+- [实现算法与分层边界](/architecture/implementation-algorithms)
 
 ## 核心判断
 

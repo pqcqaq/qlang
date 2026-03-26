@@ -827,6 +827,23 @@ mod tests {
     }
 
     #[test]
+    fn formatter_round_trips_extern_function_definitions() {
+        let formatted = format_source(
+            r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+        )
+        .expect("format extern definition");
+        let reformatted = format_source(&formatted).expect("format extern definition again");
+
+        assert_eq!(formatted, reformatted);
+        assert!(formatted.contains("extern \"c\" pub fn q_add"));
+        assert!(formatted.contains("{\n    return left + right\n}"));
+    }
+
+    #[test]
     fn formatter_escapes_keyword_identifiers() {
         let formatted = format_source(
             r#"

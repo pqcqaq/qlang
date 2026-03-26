@@ -10,8 +10,14 @@ Current scope:
 - repository layout, feature inventory, and phased execution plan
 - completed Phase 1 frontend baseline in Rust workspace form
 - landed Phase 2 semantic foundation, name resolution, and diagnostics hardening
+- landed Phase 3 MIR and ownership-analysis foundation
+- landed Phase 4 LLVM backend and native-artifact foundation
 
 Documentation lives in the VitePress subproject under [`docs/`](./docs).
+
+Phase summary:
+
+- [`docs/roadmap/phase-progress.md`](./docs/roadmap/phase-progress.md)
 
 ## Docs
 
@@ -44,9 +50,9 @@ Current Rust workspace status:
 - `crates/ql-borrowck`: Phase 3 ownership facts and explicit `move self` consumption diagnostics
 - `crates/ql-resolve`: Phase 2 scope graph and conservative name resolution
 - `crates/ql-typeck`: current Phase 2 semantic baseline checks
-- `crates/ql-driver`: Phase 4 build orchestration boundary for source loading, analysis handoff, and artifact output
+- `crates/ql-driver`: Phase 4/P5 build orchestration boundary for source loading, analysis handoff, native artifacts, and generated C headers
 - `crates/ql-codegen-llvm`: Phase 4 textual LLVM IR backend foundation over a narrow MIR subset
-- `crates/ql-cli`: `ql` CLI with `check`, `build`, `fmt`, `mir`, and `ownership`
+- `crates/ql-cli`: `ql` CLI with `check`, `build`, `ffi`, `fmt`, `mir`, and `ownership`
 
 Current implemented syntax slice:
 
@@ -76,8 +82,11 @@ Current semantic baseline in `ql check`:
   - `ql build <file> --emit obj`, `--emit exe`, and `--emit staticlib` now lower through compiler/archive toolchain boundaries into native artifacts
   - emitted LLVM IR now contains an internal Qlang entry plus a host `main` wrapper, so the same IR can back `.ll`, `.obj`, and `.exe`
   - `--emit staticlib` uses library-mode codegen, so single-file libraries no longer require a top-level `main`
-  - current codegen support is intentionally narrow: top-level free functions, `extern "c"` declarations, scalar integer/bool/void types, direct function calls, arithmetic, simple branching, and return
-  - direct `extern "c"` declarations now flow through resolve/typeck/MIR/codegen with a shared callable identity, so extern-block calls participate in argument checking and lower to LLVM `declare` + `call`
+  - current codegen support is intentionally narrow: top-level free functions, `extern "c"` declarations and `extern "c"` function definitions, scalar integer/bool/void types, direct function calls, arithmetic, simple branching, and return
+  - direct `extern "c"` declarations now flow through resolve/typeck/MIR/codegen with a shared callable identity, so both program-mode and library-mode extern calls participate in argument checking and lower to LLVM `declare` + `call`
+  - top-level `extern "c"` function definitions with bodies now lower to stable exported symbol names such as `@q_add`, which gives P5 a first real C-export path on top of the P4 artifact pipeline
+  - program-mode entry `main` is still required to use the default Qlang ABI; exported C ABI entrypoints must use a separate helper function
+  - unsupported first-class function values now fail with structured diagnostics instead of panicking the backend
   - unsupported backend features currently fail with structured diagnostics instead of silent partial lowering
   - native artifact emission currently requires clang on PATH or an explicit `QLANG_CLANG` override
   - static library emission currently requires an archive tool on PATH or an explicit `QLANG_AR` override
@@ -85,7 +94,10 @@ Current semantic baseline in `ql check`:
   - on Windows, `QLANG_AR` should point to an invocable archive binary such as `llvm-lib.exe`, `lib.exe`, or a `.cmd` wrapper
   - when `QLANG_AR` points to a wrapper whose filename does not imply the archive flavor, `QLANG_AR_STYLE=ar|lib` can pin the expected CLI style
   - toolchain failures preserve intermediate `.codegen.ll` and, when linking or archiving fails, intermediate `.codegen.obj` / `.codegen.o` files for debugging
-  - `crates/ql-cli/tests/codegen.rs` now provides black-box codegen snapshots for `llvm-ir`, `obj`, `exe`, `staticlib`, `extern "c"` direct-call lowering, and build-time unsupported diagnostics
+  - `crates/ql-cli/tests/codegen.rs` now provides black-box codegen snapshots for `llvm-ir`, `obj`, `exe`, `staticlib`, library-mode `extern "c"` direct-call lowering, `extern "c"` definition exports, and build-time unsupported diagnostics
+  - `crates/ql-cli/tests/ffi.rs` now provides a real C-host integration smoke test that builds a Qlang static library, links it into a C harness, and runs the resulting executable when a clang-style toolchain is available
+  - `ql ffi header <file>` now emits deterministic C headers for public top-level exported `extern "c"` definitions, defaulting to `target/ql/ffi/<stem>.h` when `-o` is not provided
+  - `crates/ql-cli/tests/ffi_header.rs` now locks the generated header surface with a black-box snapshot and failing-signature regression
 - `qlsp` now consumes that shared analysis layer to provide LSP hover, go-to-definition, and live diagnostics for open documents
 - Phase 3 has started with a structural MIR slice:
   - function bodies lower into explicit basic blocks, statements, terminators, locals, scopes, and cleanup actions
@@ -140,16 +152,19 @@ Current intentional gap:
 - Phase 3 ownership is intentionally narrow in this slice: direct-local `move self` consumption and direct-local `move` closure capture are diagnosed today; general call contracts, place-sensitive moves, borrow/escape analysis, and drop elaboration are still future passes on top of the current MIR foundation
 - cleanup-aware ownership is still intentionally partial: nested `defer` runtime modeling and projection-sensitive cleanup effects are future work
 - closure ownership is still intentionally partial: MIR capture facts, stable closure IDs, and conservative may-escape facts exist, but closure environment lowering and full escape graph construction are still future work
-- Phase 4 native artifacts are still intentionally partial: basic executable and static-library emission now exist, and direct `extern "c"` declarations can lower into LLVM/module builds, but separate linker-family discovery, runtime startup glue, dynamic libraries, exported ABIs, and richer ABI support remain follow-up work
+- Phase 4/P5 native artifacts are still intentionally partial: basic executable and static-library emission now exist, direct `extern "c"` declarations can lower in both program-mode and library-mode module builds, top-level `extern "c"` function definitions can now export stable C symbols, and `ql ffi header` can project a minimal exported C API surface, but symbol-visibility control, first-class function values, separate linker-family discovery, runtime startup glue, dynamic libraries, import-surface header generation, and richer ABI support remain follow-up work
 
 Quick start:
 
 ```bash
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test
+cargo test -p ql-cli --test ffi
+cargo test -p ql-cli --test ffi_header
 cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir
 cargo run -p ql-cli -- build fixtures/codegen/pass/extern_c_build.ql --emit llvm-ir
+cargo run -p ql-cli -- ffi header tests/ffi/pass/extern_c_export.ql
 cargo run -p ql-cli -- fmt fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- mir fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- ownership fixtures/parser/pass/basic.ql
@@ -164,4 +179,5 @@ When clang is available:
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit obj
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit exe
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_library.ql --emit staticlib
+cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit staticlib
 ```

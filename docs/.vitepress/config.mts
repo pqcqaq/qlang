@@ -8,6 +8,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: "愿景", link: "/vision" },
+      { text: "阶段总览", link: "/roadmap/phase-progress" },
       { text: "语言设计", link: "/design/principles" },
       { text: "架构", link: "/architecture/compiler-pipeline" },
       { text: "路线图", link: "/roadmap/development-plan" }
@@ -17,7 +18,8 @@ export default defineConfig({
         text: "总览",
         items: [
           { text: "首页", link: "/" },
-          { text: "项目愿景", link: "/vision" }
+          { text: "项目愿景", link: "/vision" },
+          { text: "P1-P4 阶段总览", link: "/roadmap/phase-progress" }
         ]
       },
       {
@@ -36,6 +38,7 @@ export default defineConfig({
         text: "架构",
         items: [
           { text: "编译器流水线", link: "/architecture/compiler-pipeline" },
+          { text: "实现算法与分层边界", link: "/architecture/implementation-algorithms" },
           { text: "工具链设计", link: "/architecture/toolchain" },
           { text: "仓库目录结构", link: "/architecture/repository-structure" }
         ]
@@ -44,6 +47,7 @@ export default defineConfig({
         text: "路线图",
         items: [
           { text: "功能清单", link: "/roadmap/feature-list" },
+          { text: "P1-P4 阶段总览", link: "/roadmap/phase-progress" },
           { text: "开发计划", link: "/roadmap/development-plan" }
         ]
       },
@@ -77,6 +81,18 @@ export default defineConfig({
           {
             text: "2026-03-26 P3.3d Closure Escape Facts",
             link: "/plans/2026-03-26-phase3-closure-escape-facts"
+          },
+          {
+            text: "2026-03-26 P5 Extern C Export",
+            link: "/plans/2026-03-26-phase5-extern-c-definition-exports"
+          },
+          {
+            text: "2026-03-26 P5 FFI Harness",
+            link: "/plans/2026-03-26-phase5-ffi-integration-harness"
+          },
+          {
+            text: "2026-03-26 P5 C Header Generation",
+            link: "/plans/2026-03-26-phase5-c-header-generation"
           }
         ]
       }

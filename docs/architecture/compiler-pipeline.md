@@ -25,6 +25,10 @@ source
   -> object / library / executable
 ```
 
+如果要看“当前代码到底按什么算法工作、每层输入输出是什么、未来应把新能力接到哪一层”，直接看：
+
+- [实现算法与分层边界](/architecture/implementation-algorithms)
+
 ## 分层原则
 
 ### AST
@@ -219,8 +223,10 @@ source
 - 新增 `ql-driver`，负责 build 请求、分析调用和产物输出
 - 新增 `ql-codegen-llvm`，只消费 `HIR` / `resolve` / `typeck` / `MIR`
 - 当前 `ql build` 已经能把受控 MIR 子集 lower 成文本 LLVM IR，并继续经 compiler/archive toolchain 产出 `.obj` / `.o`、基础 `.exe` 与 `.lib` / `.a`
+- `ql-driver` 现在还额外承接了最小 exported C API 头文件投影：`ql ffi header` 会复用 analysis 结果筛选 public 顶层 `extern "c"` 定义，并输出确定性的 `.h` 文件
 - `ql-codegen-llvm` 现在区分 program mode 与 library mode：前者会把用户态 `main` lower 成内部符号并补宿主 wrapper，后者则直接导出 free function 集合
 - 当前还新增了一层 callable identity：顶层函数与 `extern` block 声明会统一走 `FunctionRef`，因此 extern C direct call 不再是 parser-only 语法，而是能进入 typeck / MIR / LLVM IR 的真实后端路径
+- 顶层 `extern "c"` 函数定义现在也已经进入真实后端路径，并会使用稳定 C 符号名而不是内部 mangling
 - 当前仍然故意不把独立 linker family discovery、runtime startup object、dynamic library 和更完整平台差异一次性揉进同一刀实现里
 
 也就是说，P4 先固定“后端放在哪一层、如何失败、如何测试、如何贯通 artifact pipeline”，再继续补更完整的链接与运行时能力。
@@ -251,5 +257,9 @@ source
   - fixture 位于仓库根 `tests/ui/`
   - `crates/ql-cli/tests/ui.rs` 会驱动真实 `ql` 二进制
   - 当前已锁住 parser / resolve / duplicate-semantic / type diagnostics 的最终 stderr 输出
+- 黑盒 FFI header snapshot harness 已建立：
+  - `crates/ql-cli/tests/ffi_header.rs`
+  - `tests/codegen/pass/extern_c_export.h`
+- 真实 FFI smoke harness 现在不再手写 prototype，而是先调用 `ql ffi header` 再让 C 宿主消费生成的 header
 
 这也是目录结构设计要前置考虑的原因。

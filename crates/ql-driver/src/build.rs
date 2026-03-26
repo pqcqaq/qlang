@@ -735,6 +735,159 @@ fn add_two(value: Int) -> Int {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_extern_c_calls() {
+        let dir = TestDir::new("ql-driver-staticlib-extern");
+        let source = dir.write(
+            "ffi_math.ql",
+            r#"
+extern "c" {
+    fn q_add(left: Int, right: Int) -> Int
+}
+
+fn add_two(value: Int) -> Int {
+    return q_add(value, 2)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/ffi_math.lib"
+        } else {
+            "artifacts/libffi_math.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact =
+            build_file(&source, &options).expect("static library build with extern should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+        let leftovers = fs::read_dir(output.parent().expect("output should have a parent"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen."))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "successful extern-backed static library emission should clean up intermediate artifacts"
+        );
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_top_level_extern_c_calls() {
+        let dir = TestDir::new("ql-driver-staticlib-top-level-extern");
+        let source = dir.write(
+            "ffi_math_top_level.ql",
+            r#"
+extern "c" fn q_add(left: Int, right: Int) -> Int
+
+fn add_two(value: Int) -> Int {
+    return q_add(value, 2)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/ffi_math_top_level.lib"
+        } else {
+            "artifacts/libffi_math_top_level.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("static library build with top-level extern should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+        let leftovers = fs::read_dir(output.parent().expect("output should have a parent"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen."))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "successful top-level extern-backed static library emission should clean up intermediate artifacts"
+        );
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_extern_c_definition_exports() {
+        let dir = TestDir::new("ql-driver-staticlib-extern-export");
+        let source = dir.write(
+            "ffi_export.ql",
+            r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/ffi_export.lib"
+        } else {
+            "artifacts/libffi_export.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("static library build with extern definition export should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+        let leftovers = fs::read_dir(output.parent().expect("output should have a parent"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen."))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "successful extern definition export static library emission should clean up intermediate artifacts"
+        );
+    }
+
+    #[test]
     fn build_file_preserves_intermediate_ir_on_toolchain_failure() {
         let dir = TestDir::new("ql-driver-toolchain-fail");
         let source = dir.write(
@@ -890,6 +1043,34 @@ fn main() -> Int {
 
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message == "LLVM IR backend foundation does not support closure values yet"
+        }));
+    }
+
+    #[test]
+    fn build_file_surfaces_function_value_diagnostics_without_panicking() {
+        let dir = TestDir::new("ql-driver-function-values");
+        let source = dir.write(
+            "function_values.ql",
+            r#"
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+
+fn main() -> Int {
+    let f = add_one
+    return 0
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("unsupported codegen should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message
+                == "LLVM IR backend foundation does not support first-class function values yet"
         }));
     }
 
