@@ -127,13 +127,16 @@ source
   - regular parameter
   - generic parameter
   - receiver `self`
+  - struct field member token
+  - unique impl / extend method member token
   - named type root、pattern path root、struct literal root
   - import / builtin type 的 hover 与同文件 reference 级信息
 - `ql-resolve` 现在额外保留 item scope 和 function scope，`ql-analysis` 不再需要靠“重放 resolver 遍历顺序”去回推参数和泛型的声明位置
 - receiver parameter 的精确 span 也已从 AST 打通到 HIR，查询和 diagnostics 会锚定 `self` / `var self` / `move self` 本身，而不是整个函数 span
+- function / method declaration span 现在也保持精确，trait / impl / extend 里的多个方法会各自拥有独立 function scope，而不是共享整个块的 span
 - 这层边界先服务 CLI，并为后续 LSP 的 hover / definition / references / rename 打稳定地基
 - 现在 `ql-lsp` 已经成为这层边界的第一个真实消费者，而不只是“未来会用到”
-- 当前仍刻意不宣称完整 member / method / variant / module-path 查询，这部分要等更完整的语义面成熟后再继续扩展
+- 当前仍刻意不宣称完整 member / variant / module-path 查询：目前只覆盖 struct field 与唯一 method candidate，ambiguous method、variant payload/member-like query 以及 module-path deeper semantics 仍需后续补齐
 
 ### MIR
 

@@ -1,3 +1,3 @@
-error: tests/codegen/fail/unsupported_extern_rust_abi_build.ql:1:1: LLVM IR backend foundation only supports `extern "c"` declarations yet
+error: tests/codegen/fail/unsupported_extern_rust_abi_build.ql:1:15: LLVM IR backend foundation only supports `extern "c"` declarations yet
   extern "rust" fn q_add(left: Int, right: Int) -> Int
-  ^^^^^^^^
+                ^^^^^^^^

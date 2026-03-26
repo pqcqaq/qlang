@@ -8,6 +8,7 @@ use ql_hir::{
 };
 use ql_resolve::{ParamBinding, ResolutionMap, TypeResolution, ValueResolution};
 
+use crate::checker::{FieldTarget, MemberTarget, MethodTarget};
 use crate::types::{Ty, item_display_name, lower_type, void_ty};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -16,6 +17,7 @@ pub(crate) struct TypingResult {
     pub expr_types: HashMap<ExprId, Ty>,
     pub pattern_types: HashMap<PatternId, Ty>,
     pub local_types: HashMap<LocalId, Ty>,
+    pub member_targets: HashMap<ExprId, MemberTarget>,
 }
 
 /// Run the first-pass typing checks over lowered HIR plus name-resolution data.
@@ -27,6 +29,7 @@ pub(crate) fn analyze_module(module: &Module, resolution: &ResolutionMap) -> Typ
         expr_types: checker.expr_types,
         pattern_types: checker.pattern_types,
         local_types: checker.local_types,
+        member_targets: checker.member_targets,
     }
 }
 
@@ -37,6 +40,7 @@ struct Checker<'a> {
     expr_types: HashMap<ExprId, Ty>,
     pattern_types: HashMap<PatternId, Ty>,
     local_types: HashMap<LocalId, Ty>,
+    member_targets: HashMap<ExprId, MemberTarget>,
     param_types: HashMap<ParamBinding, Ty>,
     self_type: Option<Ty>,
     current_return: Option<Ty>,
@@ -51,6 +55,7 @@ impl<'a> Checker<'a> {
             expr_types: HashMap::new(),
             pattern_types: HashMap::new(),
             local_types: HashMap::new(),
+            member_targets: HashMap::new(),
             param_types: HashMap::new(),
             self_type: None,
             current_return: None,
@@ -255,7 +260,7 @@ impl<'a> Checker<'a> {
             }
             ExprKind::Closure { params, body, .. } => self.check_closure(params, *body, expected),
             ExprKind::Call { callee, args } => self.check_call(expr_id, *callee, args),
-            ExprKind::Member { object, field } => self.check_member(expr_id, *object, field),
+            ExprKind::Member { object, field, .. } => self.check_member(expr_id, *object, field),
             ExprKind::Bracket { target, items } => {
                 self.check_expr(*target, None);
                 for &item in items {
@@ -380,60 +385,126 @@ impl<'a> Checker<'a> {
 
     fn check_member(&mut self, expr_id: ExprId, object: ExprId, field: &str) -> Ty {
         let object_ty = self.check_expr(object, None);
-        let Ty::Item { item_id, .. } = &object_ty else {
+        let Ty::Item { .. } = &object_ty else {
             return Ty::Unknown;
         };
 
-        if self.has_method_candidate(&object_ty, field) {
-            return Ty::Unknown;
-        }
-
-        match &self.module.item(*item_id).kind {
-            ItemKind::Struct(struct_decl) => {
-                if let Some(field) = struct_decl
-                    .fields
-                    .iter()
-                    .find(|candidate| candidate.name == field)
-                {
-                    lower_type(self.module, self.resolution, field.ty)
-                } else {
-                    self.diagnostics.push(
-                        Diagnostic::error(format!(
-                            "unknown member `{field}` on type `{object_ty}`"
-                        ))
+        match self.select_member_target(&object_ty, field) {
+            SelectedMember::Field { target, ty } => {
+                self.member_targets
+                    .insert(expr_id, MemberTarget::Field(target));
+                ty
+            }
+            SelectedMember::Method(target) => {
+                self.member_targets
+                    .insert(expr_id, MemberTarget::Method(target));
+                Ty::Unknown
+            }
+            SelectedMember::AmbiguousMethod => Ty::Unknown,
+            SelectedMember::Missing => {
+                self.diagnostics.push(
+                    Diagnostic::error(format!("unknown member `{field}` on type `{object_ty}`"))
                         .with_label(
                             Label::new(self.module.expr(expr_id).span)
                                 .with_message("member access here"),
                         ),
-                    );
-                    Ty::Unknown
-                }
+                );
+                Ty::Unknown
             }
-            _ => Ty::Unknown,
         }
     }
 
-    fn has_method_candidate(&self, object_ty: &Ty, field: &str) -> bool {
-        self.module
-            .items
-            .iter()
-            .copied()
-            .any(|item_id| match &self.module.item(item_id).kind {
-                ItemKind::Impl(impl_block) => {
+    fn select_member_target(&self, object_ty: &Ty, field: &str) -> SelectedMember {
+        let Ty::Item { item_id, .. } = object_ty else {
+            return SelectedMember::Missing;
+        };
+
+        match self.select_method_target(object_ty, field, MethodSource::Impl) {
+            MethodSelection::Unique(target) => return SelectedMember::Method(target),
+            MethodSelection::Ambiguous => return SelectedMember::AmbiguousMethod,
+            MethodSelection::None => {}
+        }
+
+        match self.select_method_target(object_ty, field, MethodSource::Extend) {
+            MethodSelection::Unique(target) => return SelectedMember::Method(target),
+            MethodSelection::Ambiguous => return SelectedMember::AmbiguousMethod,
+            MethodSelection::None => {}
+        }
+
+        match &self.module.item(*item_id).kind {
+            ItemKind::Struct(struct_decl) => struct_decl
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_, candidate)| candidate.name == field)
+                .map(|(field_index, candidate)| SelectedMember::Field {
+                    target: FieldTarget {
+                        item_id: *item_id,
+                        field_index,
+                    },
+                    ty: lower_type(self.module, self.resolution, candidate.ty),
+                })
+                .unwrap_or(SelectedMember::Missing),
+            _ => SelectedMember::Missing,
+        }
+    }
+
+    fn select_method_target(
+        &self,
+        object_ty: &Ty,
+        field: &str,
+        source: MethodSource,
+    ) -> MethodSelection {
+        let mut matched_method = None;
+        let mut ambiguous_method = false;
+
+        for &candidate_item_id in &self.module.items {
+            match &self.module.item(candidate_item_id).kind {
+                ItemKind::Impl(impl_block) if source == MethodSource::Impl => {
                     let target_ty = lower_type(self.module, self.resolution, impl_block.target);
-                    object_ty.compatible_with(&target_ty)
-                        && impl_block.methods.iter().any(|method| method.name == field)
+                    if object_ty.compatible_with(&target_ty) {
+                        for (method_index, method) in impl_block.methods.iter().enumerate() {
+                            if method.name == field {
+                                if matched_method.is_some() {
+                                    ambiguous_method = true;
+                                } else {
+                                    matched_method = Some(MethodTarget {
+                                        item_id: candidate_item_id,
+                                        method_index,
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
-                ItemKind::Extend(extend_block) => {
+                ItemKind::Extend(extend_block) if source == MethodSource::Extend => {
                     let target_ty = lower_type(self.module, self.resolution, extend_block.target);
-                    object_ty.compatible_with(&target_ty)
-                        && extend_block
-                            .methods
-                            .iter()
-                            .any(|method| method.name == field)
+                    if object_ty.compatible_with(&target_ty) {
+                        for (method_index, method) in extend_block.methods.iter().enumerate() {
+                            if method.name == field {
+                                if matched_method.is_some() {
+                                    ambiguous_method = true;
+                                } else {
+                                    matched_method = Some(MethodTarget {
+                                        item_id: candidate_item_id,
+                                        method_index,
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
-                _ => false,
-            })
+                _ => {}
+            }
+        }
+
+        if ambiguous_method {
+            MethodSelection::Ambiguous
+        } else if let Some(target) = matched_method {
+            MethodSelection::Unique(target)
+        } else {
+            MethodSelection::None
+        }
     }
 
     fn call_signature(&self, callee: ExprId, callee_ty: &Ty) -> Option<Signature> {
@@ -441,6 +512,14 @@ impl<'a> Checker<'a> {
             self.resolution.expr_resolution(callee)
         {
             let function = self.module.function(*function_ref);
+            return Some(Signature::from_function(
+                self.module,
+                self.resolution,
+                function,
+            ));
+        }
+        if let Some(MemberTarget::Method(target)) = self.member_targets.get(&callee).copied() {
+            let function = self.method(target);
             return Some(Signature::from_function(
                 self.module,
                 self.resolution,
@@ -458,6 +537,15 @@ impl<'a> Checker<'a> {
                 ret: ret.as_ref().clone(),
             }),
             _ => None,
+        }
+    }
+
+    fn method(&self, target: MethodTarget) -> &Function {
+        match &self.module.item(target.item_id).kind {
+            ItemKind::Trait(trait_decl) => &trait_decl.methods[target.method_index],
+            ItemKind::Impl(impl_block) => &impl_block.methods[target.method_index],
+            ItemKind::Extend(extend_block) => &extend_block.methods[target.method_index],
+            other => panic!("expected method-bearing item, got {other:?}"),
         }
     }
 
@@ -1050,6 +1138,25 @@ struct FieldInfo {
     name: String,
     ty: Ty,
     has_default: bool,
+}
+
+enum SelectedMember {
+    Field { target: FieldTarget, ty: Ty },
+    Method(MethodTarget),
+    AmbiguousMethod,
+    Missing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MethodSource {
+    Impl,
+    Extend,
+}
+
+enum MethodSelection {
+    None,
+    Unique(MethodTarget),
+    Ambiguous,
 }
 
 struct Signature {

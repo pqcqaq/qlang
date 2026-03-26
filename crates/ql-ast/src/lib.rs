@@ -74,6 +74,7 @@ pub enum ItemKind {
 /// Reusable function signature model shared by free functions, trait items, and FFI declarations.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionDecl {
+    pub span: Span,
     pub visibility: Visibility,
     pub is_async: bool,
     pub is_unsafe: bool,
@@ -395,6 +396,7 @@ pub enum ExprKind {
     Member {
         object: Box<Expr>,
         field: String,
+        field_span: Span,
     },
     Bracket {
         target: Box<Expr>,

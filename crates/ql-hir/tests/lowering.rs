@@ -212,3 +212,33 @@ impl Counter {
 
     assert_eq!(&source[receiver.span.start..receiver.span.end], "var self");
 }
+
+#[test]
+fn lower_module_preserves_member_name_spans() {
+    let source = r#"
+fn main() {
+    user.name
+}
+"#;
+    let ast = parse_source(source).expect("source should parse");
+    let hir = lower_module(&ast);
+    let function = match &hir.item(hir.items[0]).kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+    let body = hir.block(function.body.expect("function should have body"));
+    let expr_id = body
+        .tail
+        .expect("member expression should be the block tail");
+    let expr = hir.expr(expr_id);
+
+    let ExprKind::Member {
+        field, field_span, ..
+    } = &expr.kind
+    else {
+        panic!("expected member expression");
+    };
+
+    assert_eq!(field, "name");
+    assert_eq!(&source[field_span.start..field_span.end], "name");
+}

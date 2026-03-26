@@ -180,22 +180,35 @@ fn build(cache: Map[String, Int]) -> Map[String, Int] {
 }
 
 #[test]
-fn receiver_queries_stay_on_the_root_binding() {
+fn receiver_and_member_queries_follow_precise_symbols() {
     let source = r#"
 struct Counter {
     value: Int,
 }
 
 impl Counter {
+    fn get(self) -> Int {
+        return self.value
+    }
+
     fn read(self) -> Int {
-        self.value
+        return self.get()
     }
 }
 "#;
 
     let analysis = analyzed(source);
+    let self_use = source.find("self.get").expect("self.get should exist");
+    let field_use = source
+        .find(".value")
+        .map(|offset| offset + 1)
+        .expect("member field use should exist");
+    let method_use = source
+        .find(".get")
+        .map(|offset| offset + 1)
+        .expect("member method use should exist");
     let self_hover = analysis
-        .hover_at(nth_offset(source, "self", 2))
+        .hover_at(self_use)
         .expect("receiver use should hover");
 
     assert_eq!(self_hover.kind, SymbolKind::SelfParameter);
@@ -203,18 +216,134 @@ impl Counter {
     assert_eq!(self_hover.ty.as_deref(), Some("Counter"));
     assert_eq!(
         self_hover.definition_span,
-        Some(nth_span(source, "self", 1))
+        Some(nth_span(source, "self", 3))
     );
     assert_eq!(
-        analysis.definition_at(nth_offset(source, "self", 2)),
+        analysis.definition_at(self_use),
         Some(ql_analysis::DefinitionTarget {
             kind: SymbolKind::SelfParameter,
             name: "self".to_owned(),
-            span: nth_span(source, "self", 1),
+            span: nth_span(source, "self", 3),
         })
     );
 
-    assert_eq!(analysis.hover_at(nth_offset(source, "value", 2)), None);
+    let field_hover = analysis
+        .hover_at(field_use)
+        .expect("member field use should hover");
+    assert_eq!(field_hover.kind, SymbolKind::Field);
+    assert_eq!(field_hover.detail, "field value: Int");
+    assert_eq!(field_hover.ty.as_deref(), Some("Int"));
+    assert_eq!(
+        field_hover.definition_span,
+        Some(nth_span(source, "value", 1))
+    );
+    assert_eq!(
+        analysis.definition_at(field_use),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Field,
+            name: "value".to_owned(),
+            span: nth_span(source, "value", 1),
+        })
+    );
+    assert_eq!(
+        analysis.references_at(field_use),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: "value".to_owned(),
+                span: nth_span(source, "value", 1),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: "value".to_owned(),
+                span: nth_span(source, "value", 2),
+                is_definition: false,
+            },
+        ])
+    );
+
+    let method_hover = analysis
+        .hover_at(method_use)
+        .expect("method use should hover");
+    assert_eq!(method_hover.kind, SymbolKind::Method);
+    assert_eq!(method_hover.detail, "fn get(self) -> Int");
+    assert_eq!(
+        method_hover.definition_span,
+        Some(nth_span(source, "get", 1))
+    );
+    assert_eq!(
+        analysis.definition_at(method_use),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Method,
+            name: "get".to_owned(),
+            span: nth_span(source, "get", 1),
+        })
+    );
+    assert_eq!(
+        analysis.references_at(method_use),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Method,
+                name: "get".to_owned(),
+                span: nth_span(source, "get", 1),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Method,
+                name: "get".to_owned(),
+                span: nth_span(source, "get", 2),
+                is_definition: false,
+            },
+        ])
+    );
+}
+
+#[test]
+fn member_queries_prefer_impl_methods_over_extend_methods() {
+    let source = r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn read(self, delta: Int) -> Int {
+        return self.value + delta
+    }
+}
+
+extend Counter {
+    fn read(self) -> Int {
+        return self.value
+    }
+}
+
+fn main() -> Int {
+    let counter = Counter { value: 1 }
+    return counter.read(1)
+}
+"#;
+
+    let analysis = analyzed(source);
+    let method_use = source
+        .rfind(".read")
+        .map(|offset| offset + 1)
+        .expect("member method use should exist");
+
+    let hover = analysis
+        .hover_at(method_use)
+        .expect("member method hover should exist");
+    assert_eq!(hover.kind, SymbolKind::Method);
+    assert_eq!(hover.detail, "fn read(self, delta: Int) -> Int");
+    assert_eq!(hover.definition_span, Some(nth_span(source, "read", 1)));
+    assert_eq!(
+        analysis.definition_at(method_use),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Method,
+            name: "read".to_owned(),
+            span: nth_span(source, "read", 1),
+        })
+    );
 }
 
 #[test]

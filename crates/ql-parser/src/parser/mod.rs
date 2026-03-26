@@ -236,7 +236,7 @@ impl Parser {
 fn expr_to_path(expr: &Expr) -> Option<Path> {
     match &expr.kind {
         ExprKind::Name(name) => Some(Path::new(vec![name.clone()])),
-        ExprKind::Member { object, field } => {
+        ExprKind::Member { object, field, .. } => {
             let mut path = expr_to_path(object)?;
             path.segments.push(field.clone());
             Some(path)

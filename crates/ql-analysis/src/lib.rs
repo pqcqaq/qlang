@@ -75,7 +75,8 @@ impl Analysis {
     /// Return the smallest indexed semantic symbol that covers `offset`.
     ///
     /// This currently stays conservative on purpose:
-    /// - expression queries only resolve root bindings, not full member chains
+    /// - expression queries cover root bindings plus struct fields and unique method members,
+    ///   but still do not model deeper member chains, variants, or module-path semantics
     /// - imports and builtin types can hover but have no source definition span
     pub fn symbol_at(&self, offset: usize) -> Option<HoverInfo> {
         self.index.symbol_at(offset)

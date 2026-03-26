@@ -2,15 +2,16 @@ use std::collections::HashMap;
 
 use ql_ast::{Path, ReceiverKind};
 use ql_hir::{
-    BlockId, ExprId, ExprKind, Function, FunctionRef, GenericParam, ItemId, ItemKind, LocalId,
-    MatchArm, Module, Param, PatternId, PatternKind, TypeAlias, TypeId, TypeKind, WherePredicate,
+    BlockId, ExprId, ExprKind, Field, Function, FunctionRef, GenericParam, ItemId, ItemKind,
+    LocalId, MatchArm, Module, Param, PatternId, PatternKind, TypeAlias, TypeId, TypeKind,
+    WherePredicate,
 };
 use ql_resolve::{
     BuiltinType, GenericBinding, ParamBinding, ResolutionMap, ScopeId, TypeResolution,
     ValueResolution,
 };
 use ql_span::Span;
-use ql_typeck::TypeckResult;
+use ql_typeck::{FieldTarget, MemberTarget, MethodTarget, TypeckResult};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SymbolKind {
@@ -21,6 +22,8 @@ pub enum SymbolKind {
     Enum,
     Trait,
     TypeAlias,
+    Field,
+    Method,
     Local,
     Parameter,
     Generic,
@@ -138,6 +141,8 @@ struct SymbolData {
 enum SymbolKey {
     Item(ItemId),
     Function(FunctionRef),
+    Field(FieldTarget),
+    Method(MethodTarget),
     DefinitionSpan(Span),
     Local(LocalId),
     Param(ParamBinding),
@@ -155,6 +160,8 @@ struct QueryIndexBuilder<'a> {
     occurrences: Vec<IndexedSymbol>,
     item_defs: HashMap<ItemId, SymbolData>,
     function_defs: HashMap<FunctionRef, SymbolData>,
+    field_defs: HashMap<FieldTarget, SymbolData>,
+    method_defs: HashMap<MethodTarget, SymbolData>,
     local_defs: HashMap<LocalId, SymbolData>,
     param_defs: HashMap<ParamBinding, SymbolData>,
     generic_defs: HashMap<GenericBinding, SymbolData>,
@@ -176,6 +183,8 @@ impl<'a> QueryIndexBuilder<'a> {
             occurrences: Vec::new(),
             item_defs: HashMap::new(),
             function_defs: HashMap::new(),
+            field_defs: HashMap::new(),
+            method_defs: HashMap::new(),
             local_defs: HashMap::new(),
             param_defs: HashMap::new(),
             generic_defs: HashMap::new(),
@@ -269,7 +278,14 @@ impl<'a> QueryIndexBuilder<'a> {
                 if let Some(scope) = self.resolution.item_scope(item_id) {
                     self.index_generic_bindings(scope, &struct_decl.generics);
                 }
-                for field in &struct_decl.fields {
+                for (field_index, field) in struct_decl.fields.iter().enumerate() {
+                    self.define_field(
+                        FieldTarget {
+                            item_id,
+                            field_index,
+                        },
+                        field,
+                    );
                     if let Some(default) = field.default {
                         self.index_expr_local_definitions(default);
                     }
@@ -310,8 +326,14 @@ impl<'a> QueryIndexBuilder<'a> {
                 if let Some(scope) = self.resolution.item_scope(item_id) {
                     self.index_generic_bindings(scope, &trait_decl.generics);
                 }
-                for method in &trait_decl.methods {
-                    self.define_function_site(None, method);
+                for (method_index, method) in trait_decl.methods.iter().enumerate() {
+                    self.define_method_site(
+                        MethodTarget {
+                            item_id,
+                            method_index,
+                        },
+                        method,
+                    );
                     if let Some(scope) = self.resolution.function_scope(method.span) {
                         self.index_function_bindings(method, scope, Some("Self".to_owned()));
                     }
@@ -324,8 +346,14 @@ impl<'a> QueryIndexBuilder<'a> {
                 }
 
                 let receiver_ty = render_type(self.module, impl_block.target);
-                for method in &impl_block.methods {
-                    self.define_function_site(None, method);
+                for (method_index, method) in impl_block.methods.iter().enumerate() {
+                    self.define_method_site(
+                        MethodTarget {
+                            item_id,
+                            method_index,
+                        },
+                        method,
+                    );
                     if let Some(scope) = self.resolution.function_scope(method.span) {
                         self.index_function_bindings(method, scope, Some(receiver_ty.clone()));
                     }
@@ -334,8 +362,14 @@ impl<'a> QueryIndexBuilder<'a> {
             }
             ItemKind::Extend(extend_block) => {
                 let receiver_ty = render_type(self.module, extend_block.target);
-                for method in &extend_block.methods {
-                    self.define_function_site(None, method);
+                for (method_index, method) in extend_block.methods.iter().enumerate() {
+                    self.define_method_site(
+                        MethodTarget {
+                            item_id,
+                            method_index,
+                        },
+                        method,
+                    );
                     if let Some(scope) = self.resolution.function_scope(method.span) {
                         self.index_function_bindings(method, scope, Some(receiver_ty.clone()));
                     }
@@ -795,7 +829,16 @@ impl<'a> QueryIndexBuilder<'a> {
                     }
                 }
             }
-            ExprKind::Member { object, .. } => self.index_expr_use(*object),
+            ExprKind::Member {
+                object, field_span, ..
+            } => {
+                self.index_expr_use(*object);
+                if let Some(target) = self.typeck.member_target(expr_id)
+                    && let Some(symbol) = self.symbol_for_member_target(target)
+                {
+                    self.push_occurrence(*field_span, &symbol);
+                }
+            }
             ExprKind::Bracket { target, items } => {
                 self.index_expr_use(*target);
                 for &item in items {
@@ -885,6 +928,33 @@ impl<'a> QueryIndexBuilder<'a> {
         if let Some(function_ref) = function_ref {
             self.function_defs.insert(function_ref, symbol);
         }
+    }
+
+    fn define_field(&mut self, target: FieldTarget, field: &Field) {
+        let ty = render_type(self.module, field.ty);
+        let symbol = SymbolData {
+            key: SymbolKey::Field(target),
+            kind: SymbolKind::Field,
+            name: field.name.clone(),
+            detail: format!("field {}: {}", field.name, ty),
+            ty: Some(ty),
+            definition_span: Some(field.name_span),
+        };
+        self.push_occurrence(field.name_span, &symbol);
+        self.field_defs.insert(target, symbol);
+    }
+
+    fn define_method_site(&mut self, target: MethodTarget, function: &Function) {
+        let symbol = SymbolData {
+            key: SymbolKey::Method(target),
+            kind: SymbolKind::Method,
+            name: function.name.clone(),
+            detail: render_function_signature(self.module, function),
+            ty: None,
+            definition_span: Some(function.name_span),
+        };
+        self.push_occurrence(function.name_span, &symbol);
+        self.method_defs.insert(target, symbol);
     }
 
     fn define_param(
@@ -1001,6 +1071,13 @@ impl<'a> QueryIndexBuilder<'a> {
                 ty: None,
                 definition_span: None,
             }),
+        }
+    }
+
+    fn symbol_for_member_target(&self, target: MemberTarget) -> Option<SymbolData> {
+        match target {
+            MemberTarget::Field(target) => self.field_defs.get(&target).cloned(),
+            MemberTarget::Method(target) => self.method_defs.get(&target).cloned(),
         }
     }
 

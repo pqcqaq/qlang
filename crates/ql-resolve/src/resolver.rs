@@ -569,7 +569,7 @@ impl<'module> Resolver<'module> {
         let expr = self.module.expr(expr_id);
         match &expr.kind {
             ExprKind::Name(name) => Some(Path::new(vec![name.clone()])),
-            ExprKind::Member { object, field } => {
+            ExprKind::Member { object, field, .. } => {
                 let mut path = self.expr_path(*object)?;
                 path.segments.push(field.clone());
                 Some(path)

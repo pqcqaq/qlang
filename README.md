@@ -75,6 +75,7 @@ Current semantic baseline in `ql check`:
 - `ql-analysis` now also lowers structural MIR after resolution so later ownership and codegen passes share one stable mid-level snapshot
 - `ql-analysis` now also runs the first ownership-facts pass and exposes rendered ownership state for CLI and future IDE tooling
 - `ql-analysis` now also exposes minimal position-based semantic queries for symbol lookup, hover, go-to-definition, and same-file find-references style tooling
+- member-name spans and method declaration spans now stay precise through AST -> HIR, so methods inside the same trait/impl/extend block no longer collapse onto one shared query scope anchor
 - Phase 4 has now started with a backend foundation slice:
   - `ql-driver` keeps build orchestration out of `ql-cli`
   - `ql-codegen-llvm` lowers a controlled MIR subset into textual LLVM IR, with explicit program-mode and library-mode entry behavior
@@ -131,6 +132,7 @@ Current semantic baseline in `ql check`:
   - return-value checking
   - bool conditions in `if` / `while` / match guards
   - callable argument arity and argument-type checking
+  - unique impl / extend method call argument-type checking through member selection
   - tuple-based multi-return destructuring
   - direct closure checking against expected callable types
   - struct literal field checking and missing-field validation
@@ -152,7 +154,7 @@ Current intentional gap:
 
 - default parameters are part of the language design docs, but they are not lowered into AST/HIR or checked yet
 - import / module / prelude unresolved-name strictness is still intentionally deferred
-- semantic queries are still intentionally conservative: they resolve root bindings and source-backed declarations, but not full member, variant, or module-path semantics yet
+- semantic queries are still intentionally conservative: they now cover root bindings plus struct-field / unique method member tokens, but not full variant, module-path, or ambiguous method semantics yet
 - `qlsp` is intentionally minimal in P2/P6: hover / definition / same-file references / diagnostics are live, but completion / rename / semantic tokens are still future work
 - Phase 3 ownership is intentionally narrow in this slice: direct-local `move self` consumption and direct-local `move` closure capture are diagnosed today; general call contracts, place-sensitive moves, borrow/escape analysis, and drop elaboration are still future passes on top of the current MIR foundation
 - cleanup-aware ownership is still intentionally partial: nested `defer` runtime modeling and projection-sensitive cleanup effects are future work

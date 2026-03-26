@@ -264,6 +264,67 @@ impl Counter {
 }
 
 #[test]
+fn reports_method_call_argument_type_mismatches_for_unique_member_selection() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn add(self, delta: Int) -> Int {
+        return self.value + delta
+    }
+}
+
+fn main() -> Int {
+    let counter = Counter { value: 1 }
+    return counter.add(true)
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"call argument has type mismatch: expected `Int`, found `Bool`".to_string())
+    );
+}
+
+#[test]
+fn prefers_impl_methods_over_extend_candidates() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn read(self, delta: Int) -> Int {
+        return self.value + delta
+    }
+}
+
+extend Counter {
+    fn read(self) -> Int {
+        return self.value
+    }
+}
+
+fn main() -> Int {
+    let counter = Counter { value: 1 }
+    return counter.read(true)
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"call argument has type mismatch: expected `Int`, found `Bool`".to_string()),
+        "expected impl method to win over extend candidate, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_struct_literal_shape_and_field_type_errors() {
     let diagnostics = diagnostic_messages(
         r#"

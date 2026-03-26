@@ -648,7 +648,7 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             }
             out.push(')');
         }
-        ExprKind::Member { object, field } => {
+        ExprKind::Member { object, field, .. } => {
             format_expr(object, indent, out);
             out.push('.');
             format_ident(field, out);

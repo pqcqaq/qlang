@@ -286,6 +286,7 @@ fn sample[T](value: Int) {
     let Point { x, y: alias } = point
     Point { x, y: alias };
     run(left: 1);
+    user.name;
     let closure = (item) => item
 }
 "#;
@@ -343,6 +344,14 @@ fn sample[T](value: Int) {
         "y"
     );
 
+    let StmtKind::Expr { expr, .. } = &body.statements[3].kind else {
+        panic!("expected member expression statement");
+    };
+    let ExprKind::Member { field_span, .. } = &expr.kind else {
+        panic!("expected member expression");
+    };
+    assert_eq!(&source[field_span.start..field_span.end], "name");
+
     let StmtKind::Expr { expr, .. } = &body.statements[2].kind else {
         panic!("expected call statement");
     };
@@ -354,7 +363,7 @@ fn sample[T](value: Int) {
     };
     assert_eq!(&source[name_span.start..name_span.end], "left");
 
-    let StmtKind::Let { value, .. } = &body.statements[3].kind else {
+    let StmtKind::Let { value, .. } = &body.statements[4].kind else {
         panic!("expected closure binding");
     };
     let ExprKind::Closure { params, .. } = &value.kind else {

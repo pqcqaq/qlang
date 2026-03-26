@@ -423,7 +423,7 @@ fn render_expr(hir: &hir::Module, expr_id: ExprId) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        hir::ExprKind::Member { object, field } => {
+        hir::ExprKind::Member { object, field, .. } => {
             format!("{}.{}", render_expr(hir, *object), field)
         }
         hir::ExprKind::Bracket { target, items } => format!(

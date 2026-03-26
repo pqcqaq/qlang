@@ -825,7 +825,7 @@ impl<'a> BodyBuilder<'a> {
                     (current, Place::local(local))
                 }
             },
-            ExprKind::Member { object, field } => {
+            ExprKind::Member { object, field, .. } => {
                 let (current, mut place) = self.lower_expr_to_place(*object, current, scope);
                 place.projections.push(ProjectionElem::Field(field.clone()));
                 (current, place)

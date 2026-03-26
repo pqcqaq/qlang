@@ -263,12 +263,13 @@ impl Parser {
             if self.at(TokenKind::Dot) && self.nth_kind(1) == TokenKind::Ident {
                 let start = expr.span.start;
                 self.bump();
-                let field = self.expect_ident("expected member name after `.`")?;
+                let field = self.expect_ident_token("expected member name after `.`")?;
                 expr = Expr::new(
                     Span::new(start, self.previous_end()),
                     ExprKind::Member {
                         object: Box::new(expr),
-                        field,
+                        field: field.text,
+                        field_span: field.span,
                     },
                 );
                 continue;

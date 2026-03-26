@@ -38,9 +38,7 @@ impl Lowerer {
 
     fn lower_item(&mut self, item: &ast::Item) -> ItemId {
         let kind = match &item.kind {
-            ast::ItemKind::Function(function) => {
-                ItemKind::Function(self.lower_function(function, item.span))
-            }
+            ast::ItemKind::Function(function) => ItemKind::Function(self.lower_function(function)),
             ast::ItemKind::Const(global) => ItemKind::Const(self.lower_global(global, item.span)),
             ast::ItemKind::Static(global) => ItemKind::Static(self.lower_global(global, item.span)),
             ast::ItemKind::Struct(struct_decl) => {
@@ -70,14 +68,14 @@ impl Lowerer {
         })
     }
 
-    fn lower_function(&mut self, function: &ast::FunctionDecl, span: Span) -> Function {
+    fn lower_function(&mut self, function: &ast::FunctionDecl) -> Function {
         Function {
-            span,
+            span: function.span,
             visibility: function.visibility.clone(),
             is_async: function.is_async,
             is_unsafe: function.is_unsafe,
             abi: function.abi.clone(),
-            generics: self.lower_generics(&function.generics, span),
+            generics: self.lower_generics(&function.generics, function.span),
             name: function.name.clone(),
             name_span: function.name_span,
             params: function
@@ -226,7 +224,7 @@ impl Lowerer {
             methods: trait_decl
                 .methods
                 .iter()
-                .map(|method| self.lower_function(method, span))
+                .map(|method| self.lower_function(method))
                 .collect(),
         }
     }
@@ -244,7 +242,7 @@ impl Lowerer {
             methods: impl_block
                 .methods
                 .iter()
-                .map(|method| self.lower_function(method, span))
+                .map(|method| self.lower_function(method))
                 .collect(),
         }
     }
@@ -256,7 +254,7 @@ impl Lowerer {
             methods: extend_block
                 .methods
                 .iter()
-                .map(|method| self.lower_function(method, span))
+                .map(|method| self.lower_function(method))
                 .collect(),
         }
     }
@@ -281,7 +279,7 @@ impl Lowerer {
             functions: extern_block
                 .functions
                 .iter()
-                .map(|function| self.lower_function(function, span))
+                .map(|function| self.lower_function(function))
                 .collect(),
         }
     }
@@ -501,9 +499,14 @@ impl Lowerer {
                 callee: self.lower_expr(callee),
                 args: args.iter().map(|arg| self.lower_call_arg(arg)).collect(),
             },
-            ast::ExprKind::Member { object, field } => ExprKind::Member {
+            ast::ExprKind::Member {
+                object,
+                field,
+                field_span,
+            } => ExprKind::Member {
                 object: self.lower_expr(object),
                 field: field.clone(),
+                field_span: *field_span,
             },
             ast::ExprKind::Bracket { target, items } => ExprKind::Bracket {
                 target: self.lower_expr(target),

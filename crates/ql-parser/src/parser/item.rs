@@ -27,8 +27,10 @@ impl Parser {
 
         let kind = match self.current().kind {
             TokenKind::Fn => {
+                let function_start = self.current_start();
                 self.bump();
                 self.parse_function_decl(
+                    function_start,
                     visibility,
                     is_async,
                     is_unsafe,
@@ -242,8 +244,10 @@ impl Parser {
                 Visibility::Private
             };
             let (is_async, is_unsafe) = self.parse_item_modifiers();
+            let function_start = self.current_start();
             self.expect(TokenKind::Fn, "expected `fn` in trait body")?;
             methods.push(self.parse_function_decl(
+                function_start,
                 method_visibility,
                 is_async,
                 is_unsafe,
@@ -284,8 +288,10 @@ impl Parser {
                 Visibility::Private
             };
             let (is_async, is_unsafe) = self.parse_item_modifiers();
+            let function_start = self.current_start();
             self.expect(TokenKind::Fn, "expected `fn` in impl block")?;
             methods.push(self.parse_function_decl(
+                function_start,
                 visibility,
                 is_async,
                 is_unsafe,
@@ -316,8 +322,10 @@ impl Parser {
                 Visibility::Private
             };
             let (is_async, is_unsafe) = self.parse_item_modifiers();
+            let function_start = self.current_start();
             self.expect(TokenKind::Fn, "expected `fn` in extend block")?;
             methods.push(self.parse_function_decl(
+                function_start,
                 visibility,
                 is_async,
                 is_unsafe,
@@ -351,8 +359,10 @@ impl Parser {
                     Visibility::Private
                 };
                 let (_, fn_is_unsafe) = self.parse_item_modifiers();
+                let function_start = self.current_start();
                 self.expect(TokenKind::Fn, "expected `fn` in extern block")?;
                 functions.push(self.parse_function_decl(
+                    function_start,
                     visibility,
                     false,
                     is_unsafe || fn_is_unsafe,
@@ -375,8 +385,10 @@ impl Parser {
             inherited_visibility
         };
         let (_, fn_is_unsafe) = self.parse_item_modifiers();
+        let function_start = self.current_start();
         self.expect(TokenKind::Fn, "expected `fn` after extern ABI")?;
         let function = self.parse_function_decl(
+            function_start,
             visibility,
             false,
             is_unsafe || fn_is_unsafe,
@@ -388,6 +400,7 @@ impl Parser {
 
     fn parse_function_decl(
         &mut self,
+        start: usize,
         visibility: Visibility,
         is_async: bool,
         is_unsafe: bool,
@@ -418,6 +431,7 @@ impl Parser {
         };
 
         Ok(FunctionDecl {
+            span: self.span_from(start),
             visibility,
             is_async,
             is_unsafe,

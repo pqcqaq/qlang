@@ -145,3 +145,42 @@ impl Counter {
         "methods should record a dedicated function scope even without an ItemId"
     );
 }
+
+#[test]
+fn methods_in_the_same_impl_record_distinct_function_scopes() {
+    let (module, resolution) = resolved(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn get(self) -> Int {
+        return self.value
+    }
+
+    fn read(self) -> Int {
+        return self.get()
+    }
+}
+"#,
+    );
+
+    let impl_block = module
+        .items
+        .iter()
+        .find_map(|&item_id| match &module.item(item_id).kind {
+            ql_hir::ItemKind::Impl(impl_block) => Some(impl_block),
+            _ => None,
+        })
+        .expect("impl block should exist");
+    let get_scope = resolution
+        .function_scope(impl_block.methods[0].span)
+        .expect("first method should have a function scope");
+    let read_scope = resolution
+        .function_scope(impl_block.methods[1].span)
+        .expect("second method should have a function scope");
+
+    assert_ne!(impl_block.methods[0].span, impl_block.methods[1].span);
+    assert_ne!(get_scope, read_scope);
+}

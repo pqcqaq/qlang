@@ -178,6 +178,8 @@ fn symbol_kind_name(kind: SymbolKind) -> &'static str {
         SymbolKind::Enum => "enum",
         SymbolKind::Trait => "trait",
         SymbolKind::TypeAlias => "type alias",
+        SymbolKind::Field => "field",
+        SymbolKind::Method => "method",
         SymbolKind::Local => "local",
         SymbolKind::Parameter => "parameter",
         SymbolKind::Generic => "generic",

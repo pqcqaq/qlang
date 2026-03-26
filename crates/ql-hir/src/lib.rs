@@ -428,6 +428,7 @@ pub enum ExprKind {
     Member {
         object: ExprId,
         field: String,
+        field_span: Span,
     },
     Bracket {
         target: ExprId,

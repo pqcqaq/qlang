@@ -85,6 +85,33 @@ fn id[T](value: T) -> T {
 }
 
 #[test]
+fn hover_bridge_renders_markdown_for_member_symbols() {
+    let source = r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn get(self) -> Int {
+        return self.value
+    }
+    }
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let field_position = span_to_range(source, nth_span(source, "value", 2)).start;
+    let hover =
+        hover_for_analysis(source, &analysis, field_position).expect("field hover should exist");
+
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown content");
+    };
+
+    assert!(markup.value.contains("**field** `value`"));
+    assert!(markup.value.contains("field value: Int"));
+    assert!(markup.value.contains("Type: `Int`"));
+}
+
+#[test]
 fn definition_bridge_returns_same_file_locations() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"

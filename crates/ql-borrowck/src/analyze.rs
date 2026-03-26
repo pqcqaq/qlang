@@ -892,7 +892,7 @@ impl<'a> BodyAnalyzer<'a> {
         reporter: Option<&mut Reporter>,
         use_site: UseSite,
     ) -> Option<(MirLocalId, MoveReason)> {
-        let hir::ExprKind::Member { object, field } = &self.hir.expr(callee).kind else {
+        let hir::ExprKind::Member { object, field, .. } = &self.hir.expr(callee).kind else {
             return None;
         };
         let local = self.direct_local_for_expr(*object)?;
