@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use ql_analysis::{analyze_source as analyze_semantics, parse_errors_to_diagnostics};
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
-    BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderError, CHeaderOptions, build_file,
-    emit_c_header,
+    BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderError, CHeaderOptions,
+    CHeaderSurface, build_file, emit_c_header,
 };
 use ql_fmt::format_source;
 
@@ -147,6 +147,22 @@ fn run() -> Result<(), u8> {
                                     return Err(1);
                                 };
                                 options.output = Some(PathBuf::from(value));
+                            }
+                            "--surface" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql ffi header --surface` expects `exports`, `imports`, or `both`"
+                                    );
+                                    return Err(1);
+                                };
+                                let Some(surface) = CHeaderSurface::parse(value) else {
+                                    eprintln!(
+                                        "error: unsupported `ql ffi header` surface `{value}`"
+                                    );
+                                    return Err(1);
+                                };
+                                options.surface = surface;
                             }
                             other => {
                                 eprintln!("error: unknown `ql ffi header` option `{other}`");
@@ -453,7 +469,7 @@ fn print_usage() {
     eprintln!(
         "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>]"
     );
-    eprintln!("  ql ffi header <file> [-o <output>]");
+    eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
     eprintln!("  ql mir <file>");
     eprintln!("  ql ownership <file>");

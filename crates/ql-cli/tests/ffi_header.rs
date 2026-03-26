@@ -6,47 +6,68 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn ffi_header_snapshot_matches() {
-    let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-ffi-header");
-    let output_path = temp.path().join("extern_c_export.h");
-    let expected_path = workspace_root.join("tests/codegen/pass/extern_c_export.h");
-    let expected = normalize(
-        &fs::read_to_string(&expected_path)
-            .unwrap_or_else(|_| panic!("read expected snapshot `{}`", expected_path.display())),
+    assert_ffi_header_snapshot(
+        "tests/ffi/pass/extern_c_export.ql",
+        None,
+        "extern_c_export.h",
+        "tests/codegen/pass/extern_c_export.h",
     );
+}
 
+#[test]
+fn ffi_header_import_snapshot_matches() {
+    assert_ffi_header_snapshot(
+        "tests/ffi/header/extern_c_surface.ql",
+        Some("imports"),
+        "extern_c_surface.imports.h",
+        "tests/codegen/pass/extern_c_surface.imports.h",
+    );
+}
+
+#[test]
+fn ffi_header_combined_snapshot_matches() {
+    assert_ffi_header_snapshot(
+        "tests/ffi/header/extern_c_surface.ql",
+        Some("both"),
+        "extern_c_surface.ffi.h",
+        "tests/codegen/pass/extern_c_surface.ffi.h",
+    );
+}
+
+#[test]
+fn ffi_header_rejects_unknown_surface() {
+    let workspace_root = workspace_root();
     let output = Command::new(env!("CARGO_BIN_EXE_ql"))
         .current_dir(&workspace_root)
         .args([
             "ffi",
             "header",
             "tests/ffi/pass/extern_c_export.ql",
-            "--output",
-            &output_path.to_string_lossy(),
+            "--surface",
+            "invalid",
         ])
         .output()
-        .expect("run `ql ffi header tests/ffi/pass/extern_c_export.ql`");
+        .expect("run `ql ffi header --surface invalid`");
     let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
     let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
 
     assert_eq!(
         output.status.code(),
-        Some(0),
-        "expected exit code 0\nstdout:\n{}\nstderr:\n{}",
+        Some(1),
+        "expected exit code 1\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr
     );
     assert!(
-        stderr.trim().is_empty(),
-        "expected no stderr for successful header generation\nstderr:\n{}",
+        stdout.trim().is_empty(),
+        "expected no stdout for failing header generation\nstdout:\n{}",
+        stdout
+    );
+    assert!(
+        stderr.contains("unsupported `ql ffi header` surface `invalid`"),
+        "expected invalid-surface diagnostic in stderr\nstderr:\n{}",
         stderr
     );
-
-    let actual = normalize(
-        &fs::read_to_string(&output_path)
-            .unwrap_or_else(|_| panic!("read generated header `{}`", output_path.display())),
-    );
-    assert_eq!(actual, expected, "generated header snapshot mismatch");
 }
 
 #[test]
@@ -121,6 +142,61 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
+}
+
+fn assert_ffi_header_snapshot(
+    source_path: &str,
+    surface: Option<&str>,
+    output_name: &str,
+    expected_path: &str,
+) {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-ffi-header");
+    let output_path = temp.path().join(output_name);
+    let expected_path = workspace_root.join(expected_path);
+    let expected = normalize(
+        &fs::read_to_string(&expected_path)
+            .unwrap_or_else(|_| panic!("read expected snapshot `{}`", expected_path.display())),
+    );
+
+    let mut args = vec![
+        "ffi".to_owned(),
+        "header".to_owned(),
+        source_path.to_owned(),
+    ];
+    if let Some(surface) = surface {
+        args.push("--surface".to_owned());
+        args.push(surface.to_owned());
+    }
+    args.push("--output".to_owned());
+    args.push(output_path.to_string_lossy().into_owned());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ql"))
+        .current_dir(&workspace_root)
+        .args(&args)
+        .output()
+        .unwrap_or_else(|_| panic!("run `ql {}`", args.join(" ")));
+    let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "expected exit code 0\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stderr.trim().is_empty(),
+        "expected no stderr for successful header generation\nstderr:\n{}",
+        stderr
+    );
+
+    let actual = normalize(
+        &fs::read_to_string(&output_path)
+            .unwrap_or_else(|_| panic!("read generated header `{}`", output_path.display())),
+    );
+    assert_eq!(actual, expected, "generated header snapshot mismatch");
 }
 
 fn workspace_root() -> PathBuf {

@@ -67,7 +67,7 @@
 
 - 任意 shared-library surface
 - richer ABI layout / visibility 策略
-- import surface 的自动头文件投影
+- import surface 的自动头文件投影（后续已由 P5 import-surface header projection 补上）
 - runtime startup object
 - 更完整的 linker-family 发现逻辑
 

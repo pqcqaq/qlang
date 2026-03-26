@@ -108,35 +108,46 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 P5 当前已经落地最小可用的 C header emit slice：
 
 - `ql ffi header <file>`
+- `ql ffi header <file> --surface exports`
+- `ql ffi header <file> --surface imports`
+- `ql ffi header <file> --surface both`
 - `ql ffi header <file> -o <output>`
 
 当前默认输出路径：
 
 - `target/ql/ffi/<stem>.h`
+- `target/ql/ffi/<stem>.imports.h`
+- `target/ql/ffi/<stem>.ffi.h`
 
 当前 `ql ffi header` 的职责是：
 
 - 读取单个 `.ql` 文件
 - 复用 `ql-analysis` 完成 parse / HIR / resolve / typeck
-- 只筛选 public 顶层 `extern "c"` 函数定义
+- 默认投影 public 顶层 `extern "c"` 函数定义作为 exported surface
+- 在 `--surface imports` 下投影顶层 `extern "c"` 声明和 `extern "c"` block 成员声明
+- 在 `--surface both` 下按源码顺序合并 import/export surface
 - 将当前已支持的标量 / 指针类型投影到确定性的 C declaration
 - 输出 include guard、`<stdbool.h>` / `<stdint.h>`、C++ `extern "C"` wrapper
+- include guard 会按最终输出头文件名生成，避免 export/import/both 三份 header 互相冲突
 
 当前支持矩阵刻意收窄为：
 
 - 顶层 `pub extern "c" fn ... { ... }`
+- 顶层 `extern "c" fn ...`
+- `extern "c" { fn ... }`
 - `Bool` / `Void`
 - `Int` / `UInt` / `I8` / `I16` / `I32` / `I64` / `ISize`
 - `U8` / `U16` / `U32` / `U64` / `USize`
 - `F32` / `F64`
 - 原始指针和多级原始指针
+- `exports` / `imports` / `both` 三种 surface 选择
 - 按源码顺序稳定输出 declaration
 
 当前明确未完成：
 
-- extern import surface 的头文件投影
 - struct / tuple / callable / function-pointer ABI
 - layout 校验与 richer diagnostics
+- exported symbol 的 visibility/linkage 控制
 - bridge code generation
 
 ### `ql check`
@@ -232,6 +243,7 @@ P5 当前已经落地最小可用的 C header emit slice：
 - `cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit staticlib`
 - `cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit dylib`
 - `cargo run -p ql-cli -- ffi header tests/ffi/pass/extern_c_export.ql`
+- `cargo run -p ql-cli -- ffi header tests/ffi/header/extern_c_surface.ql --surface imports`
 - 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit obj`
 - 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit exe`
 - 在 clang 与 archiver 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_library.ql --emit staticlib`

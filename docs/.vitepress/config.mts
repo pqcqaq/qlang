@@ -95,6 +95,10 @@ export default defineConfig({
             link: "/plans/2026-03-26-phase5-c-header-generation"
           },
           {
+            text: "2026-03-26 P5 Import Surface Header Projection",
+            link: "/plans/2026-03-26-phase5-import-surface-header-projection"
+          },
+          {
             text: "2026-03-26 P5 Dynamic Library Emission",
             link: "/plans/2026-03-26-phase5-dynamic-library-emission"
           },

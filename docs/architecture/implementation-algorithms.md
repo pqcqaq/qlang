@@ -462,10 +462,11 @@
 1. 校验输入路径必须是单个文件。
 2. 读取源码文本。
 3. 复用 `analyze_source`，确保 parser / resolve / typeck diagnostics 和 build 路径一致。
-4. 只扫描 public 顶层 `extern "c"` 定义：
-   - declaration-only extern import 会被忽略
-   - 非 `pub` helper 会被忽略
-5. 对选中的 exported function：
+4. 根据 `CHeaderSurface` 分类可投影的函数：
+   - `exports` 只收集 public 顶层 `extern "c"` 定义
+   - `imports` 收集顶层 `extern "c"` 声明与 `extern "c"` block 成员声明
+   - `both` 按源码顺序合并 import/export surface
+5. 对选中的 function：
    - 拒绝 generics、`where`、`async`、`unsafe fn`
    - 使用 `ql-typeck::lower_type` 把 HIR type 投影到当前 C 支持矩阵
 6. 输出固定结构：
@@ -474,7 +475,11 @@
    - `#include <stdint.h>`
    - `extern "C"` wrapper
    - declaration list
-7. 默认输出到 `target/ql/ffi/<stem>.h`，或写入用户提供的 `-o` 路径。
+7. 默认输出路径按 surface 选择：
+   - `exports` -> `target/ql/ffi/<stem>.h`
+   - `imports` -> `target/ql/ffi/<stem>.imports.h`
+   - `both` -> `target/ql/ffi/<stem>.ffi.h`
+8. include guard 按最终输出头文件名生成，确保 export/import/both 三份头文件能并存。
 
 这层的关键纪律是：头文件生成依然建立在 analysis 之后，而不是让 CLI 重新扫描语法树或手写一套类型映射。
 

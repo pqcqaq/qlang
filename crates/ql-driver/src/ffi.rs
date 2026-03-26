@@ -10,15 +10,69 @@ use ql_hir::{self as hir, ItemKind, Param};
 use ql_resolve::{BuiltinType, ResolutionMap};
 use ql_typeck::{Ty, lower_type};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CHeaderSurface {
+    #[default]
+    Exports,
+    Imports,
+    Both,
+}
+
+impl CHeaderSurface {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Exports => "exports",
+            Self::Imports => "imports",
+            Self::Both => "both",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "exports" => Some(Self::Exports),
+            "imports" => Some(Self::Imports),
+            "both" => Some(Self::Both),
+            _ => None,
+        }
+    }
+
+    pub const fn includes_exports(self) -> bool {
+        matches!(self, Self::Exports | Self::Both)
+    }
+
+    pub const fn includes_imports(self) -> bool {
+        matches!(self, Self::Imports | Self::Both)
+    }
+
+    const fn output_suffix(self) -> Option<&'static str> {
+        match self {
+            Self::Exports => None,
+            Self::Imports => Some("imports"),
+            Self::Both => Some("ffi"),
+        }
+    }
+
+    fn empty_surface_description(self) -> &'static str {
+        match self {
+            Self::Exports => "any public exported `extern \"c\"` functions with bodies",
+            Self::Imports => "any imported `extern \"c\"` function declarations",
+            Self::Both => "any imported or exported `extern \"c\"` functions",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CHeaderOptions {
     pub output: Option<PathBuf>,
+    pub surface: CHeaderSurface,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CHeaderArtifact {
     pub path: PathBuf,
+    pub surface: CHeaderSurface,
     pub exported_functions: usize,
+    pub imported_functions: usize,
 }
 
 #[derive(Debug)]
@@ -88,17 +142,18 @@ pub fn emit_c_header(
         });
     }
 
-    let exports = collect_exported_c_functions(analysis.hir(), analysis.resolution()).map_err(
-        |diagnostics| CHeaderError::Diagnostics {
-            path: path.to_path_buf(),
-            source: source.clone(),
-            diagnostics,
-        },
-    )?;
-    if exports.is_empty() {
+    let functions =
+        collect_c_header_functions(analysis.hir(), analysis.resolution(), options.surface)
+            .map_err(|diagnostics| CHeaderError::Diagnostics {
+                path: path.to_path_buf(),
+                source: source.clone(),
+                diagnostics,
+            })?;
+    if functions.is_empty() {
         return Err(CHeaderError::InvalidInput(format!(
-            "`{}` does not define any public exported `extern \"c\"` functions with bodies",
-            path.display()
+            "`{}` does not define {}",
+            path.display(),
+            options.surface.empty_surface_description()
         )));
     }
 
@@ -109,7 +164,7 @@ pub fn emit_c_header(
                 path: PathBuf::from("."),
                 error,
             })?;
-            default_c_header_output_path(&build_root, path)
+            default_c_header_output_path_for_surface(&build_root, path, options.surface)
         }
     };
     if let Some(parent) = output_path.parent() {
@@ -119,29 +174,52 @@ pub fn emit_c_header(
         })?;
     }
 
-    let rendered = render_c_header(path, &exports);
+    let rendered = render_c_header(&output_path, &functions);
     fs::write(&output_path, rendered).map_err(|error| CHeaderError::Io {
         path: output_path.clone(),
         error,
     })?;
 
+    let exported_functions = functions
+        .iter()
+        .filter(|function| function.kind == CHeaderFunctionKind::Export)
+        .count();
+    let imported_functions = functions
+        .iter()
+        .filter(|function| function.kind == CHeaderFunctionKind::Import)
+        .count();
+
     Ok(CHeaderArtifact {
         path: output_path,
-        exported_functions: exports.len(),
+        surface: options.surface,
+        exported_functions,
+        imported_functions,
     })
 }
 
 pub fn default_c_header_output_path(build_root: &Path, input_path: &Path) -> PathBuf {
+    default_c_header_output_path_for_surface(build_root, input_path, CHeaderSurface::Exports)
+}
+
+pub fn default_c_header_output_path_for_surface(
+    build_root: &Path,
+    input_path: &Path,
+    surface: CHeaderSurface,
+) -> PathBuf {
     let stem = input_path
         .file_stem()
         .and_then(|stem| stem.to_str())
         .filter(|stem| !stem.is_empty())
         .unwrap_or("module");
+    let file_name = match surface.output_suffix() {
+        Some(suffix) => format!("{stem}.{suffix}.h"),
+        None => format!("{stem}.h"),
+    };
     build_root
         .join("target")
         .join("ql")
         .join("ffi")
-        .join(format!("{stem}.h"))
+        .join(file_name)
 }
 
 pub(crate) fn exported_c_symbol_names(module: &hir::Module) -> Vec<String> {
@@ -158,16 +236,23 @@ pub(crate) fn exported_c_symbol_names(module: &hir::Module) -> Vec<String> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ExportedCFunction {
+struct CHeaderFunction {
+    kind: CHeaderFunctionKind,
     name: String,
-    params: Vec<ExportedCParam>,
+    params: Vec<CHeaderParam>,
     return_ty: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ExportedCParam {
+struct CHeaderParam {
     name: String,
     ty: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CHeaderFunctionKind {
+    Export,
+    Import,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -176,107 +261,172 @@ struct CTypeSpelling {
     pointer_constness: Vec<bool>,
 }
 
-fn collect_exported_c_functions(
+fn collect_c_header_functions(
     module: &hir::Module,
     resolution: &ResolutionMap,
-) -> Result<Vec<ExportedCFunction>, Vec<Diagnostic>> {
-    let mut exports = Vec::new();
+    surface: CHeaderSurface,
+) -> Result<Vec<CHeaderFunction>, Vec<Diagnostic>> {
+    let mut functions = Vec::new();
     let mut diagnostics = Vec::new();
 
     for item_id in &module.items {
-        let ItemKind::Function(function) = &module.item(*item_id).kind else {
-            continue;
-        };
-        if !is_exported_c_definition(function) {
-            continue;
-        }
-
-        if !function.generics.is_empty() {
-            diagnostics.push(unsupported_export(
-                function.span,
-                "C header generation does not support generic exported functions yet",
-            ));
-            continue;
-        }
-        if !function.where_clause.is_empty() {
-            diagnostics.push(unsupported_export(
-                function.span,
-                "C header generation does not support `where` clauses on exported functions yet",
-            ));
-            continue;
-        }
-        if function.is_async {
-            diagnostics.push(unsupported_export(
-                function.span,
-                "C header generation does not support `async fn` exports yet",
-            ));
-            continue;
-        }
-        if function.is_unsafe {
-            diagnostics.push(unsupported_export(
-                function.span,
-                "C header generation does not support `unsafe fn` exports yet",
-            ));
-            continue;
-        }
-
-        let mut params = Vec::new();
-        let mut function_has_errors = false;
-        for param in &function.params {
-            match param {
-                Param::Regular(param) => {
-                    let ty = lower_type(module, resolution, param.ty);
-                    match render_c_type(&ty, module.ty(param.ty).span, "parameter type") {
-                        Ok(spelling) => params.push(ExportedCParam {
-                            name: param.name.clone(),
-                            ty: spelling,
-                        }),
-                        Err(error) => {
-                            function_has_errors = true;
-                            diagnostics.push(error);
-                        }
-                    }
+        match &module.item(*item_id).kind {
+            ItemKind::Function(function) => {
+                let Some(kind) = classify_top_level_c_header_function(function, surface) else {
+                    continue;
+                };
+                collect_c_header_function(
+                    module,
+                    resolution,
+                    function,
+                    kind,
+                    &mut functions,
+                    &mut diagnostics,
+                );
+            }
+            ItemKind::ExternBlock(extern_block) => {
+                if !surface.includes_imports() || extern_block.abi != "c" {
+                    continue;
                 }
-                Param::Receiver(receiver) => {
-                    function_has_errors = true;
-                    diagnostics.push(unsupported_export(
-                        receiver.span,
-                        "C header generation does not support receiver methods yet",
-                    ));
+                for function in &extern_block.functions {
+                    collect_c_header_function(
+                        module,
+                        resolution,
+                        function,
+                        CHeaderFunctionKind::Import,
+                        &mut functions,
+                        &mut diagnostics,
+                    );
                 }
             }
+            _ => {}
         }
-
-        let return_ty = match function.return_type {
-            Some(type_id) => {
-                let ty = lower_type(module, resolution, type_id);
-                match render_c_type(&ty, module.ty(type_id).span, "return type") {
-                    Ok(spelling) => spelling,
-                    Err(error) => {
-                        function_has_errors = true;
-                        diagnostics.push(error);
-                        String::new()
-                    }
-                }
-            }
-            None => "void".to_owned(),
-        };
-
-        if function_has_errors {
-            continue;
-        }
-
-        exports.push(ExportedCFunction {
-            name: function.name.clone(),
-            params,
-            return_ty,
-        });
     }
 
     if diagnostics.is_empty() {
-        Ok(exports)
+        Ok(functions)
     } else {
         Err(diagnostics)
+    }
+}
+
+fn collect_c_header_function(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    function: &hir::Function,
+    kind: CHeaderFunctionKind,
+    functions: &mut Vec<CHeaderFunction>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let role = c_header_function_role(kind);
+
+    if !function.generics.is_empty() {
+        diagnostics.push(unsupported_c_header_function(
+            function.span,
+            format!("C header generation does not support generic {role} functions yet"),
+        ));
+        return;
+    }
+    if !function.where_clause.is_empty() {
+        diagnostics.push(unsupported_c_header_function(
+            function.span,
+            format!("C header generation does not support `where` clauses on {role} functions yet"),
+        ));
+        return;
+    }
+    if function.is_async {
+        diagnostics.push(unsupported_c_header_function(
+            function.span,
+            format!("C header generation does not support `async fn` {role} functions yet"),
+        ));
+        return;
+    }
+    if function.is_unsafe {
+        diagnostics.push(unsupported_c_header_function(
+            function.span,
+            format!("C header generation does not support `unsafe fn` {role} functions yet"),
+        ));
+        return;
+    }
+
+    let mut params = Vec::new();
+    let mut function_has_errors = false;
+    for param in &function.params {
+        match param {
+            Param::Regular(param) => {
+                let ty = lower_type(module, resolution, param.ty);
+                match render_c_type(&ty, module.ty(param.ty).span, "parameter type") {
+                    Ok(spelling) => params.push(CHeaderParam {
+                        name: param.name.clone(),
+                        ty: spelling,
+                    }),
+                    Err(error) => {
+                        function_has_errors = true;
+                        diagnostics.push(error);
+                    }
+                }
+            }
+            Param::Receiver(receiver) => {
+                function_has_errors = true;
+                diagnostics.push(unsupported_c_header_function(
+                    receiver.span,
+                    format!(
+                        "C header generation does not support receiver methods on {role} functions yet"
+                    ),
+                ));
+            }
+        }
+    }
+
+    let return_ty = match function.return_type {
+        Some(type_id) => {
+            let ty = lower_type(module, resolution, type_id);
+            match render_c_type(&ty, module.ty(type_id).span, "return type") {
+                Ok(spelling) => spelling,
+                Err(error) => {
+                    function_has_errors = true;
+                    diagnostics.push(error);
+                    String::new()
+                }
+            }
+        }
+        None => "void".to_owned(),
+    };
+
+    if function_has_errors {
+        return;
+    }
+
+    functions.push(CHeaderFunction {
+        kind,
+        name: function.name.clone(),
+        params,
+        return_ty,
+    });
+}
+
+fn classify_top_level_c_header_function(
+    function: &hir::Function,
+    surface: CHeaderSurface,
+) -> Option<CHeaderFunctionKind> {
+    if function.abi.as_deref() != Some("c") {
+        return None;
+    }
+
+    match (
+        function.body.is_some(),
+        function.visibility == Visibility::Public,
+    ) {
+        (true, true) if surface.includes_exports() => Some(CHeaderFunctionKind::Export),
+        (false, _) if surface.includes_imports() => Some(CHeaderFunctionKind::Import),
+        _ => None,
+    }
+}
+
+fn c_header_function_role(kind: CHeaderFunctionKind) -> &'static str {
+    match kind {
+        CHeaderFunctionKind::Export => "exported",
+        CHeaderFunctionKind::Import => "imported",
     }
 }
 
@@ -286,8 +436,8 @@ fn is_exported_c_definition(function: &hir::Function) -> bool {
         && function.body.is_some()
 }
 
-fn render_c_header(input_path: &Path, exports: &[ExportedCFunction]) -> String {
-    let include_guard = include_guard_name(input_path);
+fn render_c_header(header_path: &Path, functions: &[CHeaderFunction]) -> String {
+    let include_guard = include_guard_name(header_path);
     let mut output = String::new();
 
     output.push_str("#ifndef ");
@@ -302,15 +452,15 @@ fn render_c_header(input_path: &Path, exports: &[ExportedCFunction]) -> String {
     output.push_str("extern \"C\" {\n");
     output.push_str("#endif\n\n");
 
-    for export in exports {
-        output.push_str(&export.return_ty);
+    for function in functions {
+        output.push_str(&function.return_ty);
         output.push(' ');
-        output.push_str(&export.name);
+        output.push_str(&function.name);
         output.push('(');
-        if export.params.is_empty() {
+        if function.params.is_empty() {
             output.push_str("void");
         } else {
-            for (index, param) in export.params.iter().enumerate() {
+            for (index, param) in function.params.iter().enumerate() {
                 if index > 0 {
                     output.push_str(", ");
                 }
@@ -450,15 +600,15 @@ fn sanitize_macro_segment(raw: &str) -> String {
     }
 }
 
-fn unsupported_export(span: ql_span::Span, message: impl Into<String>) -> Diagnostic {
+fn unsupported_c_header_function(span: ql_span::Span, message: impl Into<String>) -> Diagnostic {
     Diagnostic::error(message).with_label(Label::new(span))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CHeaderError, CHeaderOptions, default_c_header_output_path, emit_c_header,
-        exported_c_symbol_names,
+        CHeaderError, CHeaderOptions, CHeaderSurface, default_c_header_output_path,
+        default_c_header_output_path_for_surface, emit_c_header, exported_c_symbol_names,
     };
     use std::env;
     use std::fs;
@@ -512,6 +662,29 @@ mod tests {
     }
 
     #[test]
+    fn default_c_header_output_path_for_surface_uses_surface_specific_suffixes() {
+        let imports = default_c_header_output_path_for_surface(
+            Path::new("D:/workspace/demo"),
+            Path::new("src/app.ql"),
+            CHeaderSurface::Imports,
+        );
+        let both = default_c_header_output_path_for_surface(
+            Path::new("D:/workspace/demo"),
+            Path::new("src/app.ql"),
+            CHeaderSurface::Both,
+        );
+
+        assert_eq!(
+            imports,
+            PathBuf::from("D:/workspace/demo/target/ql/ffi/app.imports.h")
+        );
+        assert_eq!(
+            both,
+            PathBuf::from("D:/workspace/demo/target/ql/ffi/app.ffi.h")
+        );
+    }
+
+    #[test]
     fn emit_c_header_writes_public_exported_extern_c_definitions() {
         let dir = TestDir::new("ql-driver-ffi-header");
         let source = dir.write(
@@ -534,12 +707,15 @@ fn internal(value: Int) -> Int {
             &source,
             &CHeaderOptions {
                 output: Some(output.clone()),
+                ..CHeaderOptions::default()
             },
         )
         .expect("header generation should succeed");
 
         assert_eq!(artifact.path, output);
+        assert_eq!(artifact.surface, CHeaderSurface::Exports);
         assert_eq!(artifact.exported_functions, 1);
+        assert_eq!(artifact.imported_functions, 0);
         let rendered = fs::read_to_string(output).expect("read generated header");
         assert_eq!(
             rendered,
@@ -565,6 +741,121 @@ int64_t q_add(int64_t left, int64_t right);\n\
     }
 
     #[test]
+    fn emit_c_header_writes_imported_extern_c_declarations_and_extern_block_members() {
+        let dir = TestDir::new("ql-driver-ffi-import-header");
+        let source = dir.write(
+            "ffi_imports.ql",
+            r#"
+extern "c" fn q_host_log(message: *const U8) -> Void
+
+extern "c" {
+    fn q_host_add(left: Int, right: Int) -> Int
+}
+
+extern "c" pub fn q_exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/ffi_imports.h");
+
+        let artifact = emit_c_header(
+            &source,
+            &CHeaderOptions {
+                output: Some(output.clone()),
+                surface: CHeaderSurface::Imports,
+            },
+        )
+        .expect("import header generation should succeed");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(artifact.surface, CHeaderSurface::Imports);
+        assert_eq!(artifact.exported_functions, 0);
+        assert_eq!(artifact.imported_functions, 2);
+        let rendered = fs::read_to_string(output).expect("read generated import header");
+        assert_eq!(
+            rendered,
+            "\
+#ifndef QLANG_FFI_IMPORTS_H\n\
+#define QLANG_FFI_IMPORTS_H\n\
+\n\
+#include <stdbool.h>\n\
+#include <stdint.h>\n\
+\n\
+#ifdef __cplusplus\n\
+extern \"C\" {\n\
+#endif\n\
+\n\
+void q_host_log(const uint8_t* message);\n\
+int64_t q_host_add(int64_t left, int64_t right);\n\
+\n\
+#ifdef __cplusplus\n\
+}\n\
+#endif\n\
+\n\
+#endif /* QLANG_FFI_IMPORTS_H */\n"
+        );
+    }
+
+    #[test]
+    fn emit_c_header_writes_combined_import_and_export_surface() {
+        let dir = TestDir::new("ql-driver-ffi-both-header");
+        let source = dir.write(
+            "ffi_surface.ql",
+            r#"
+extern "c" fn q_host_log(message: *const U8) -> Void
+
+extern "c" {
+    fn q_host_add(left: Int, right: Int) -> Int
+}
+
+extern "c" pub fn q_exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/ffi_surface.ffi.h");
+
+        let artifact = emit_c_header(
+            &source,
+            &CHeaderOptions {
+                output: Some(output.clone()),
+                surface: CHeaderSurface::Both,
+            },
+        )
+        .expect("combined header generation should succeed");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(artifact.surface, CHeaderSurface::Both);
+        assert_eq!(artifact.exported_functions, 1);
+        assert_eq!(artifact.imported_functions, 2);
+        let rendered = fs::read_to_string(output).expect("read generated combined header");
+        assert_eq!(
+            rendered,
+            "\
+#ifndef QLANG_FFI_SURFACE_FFI_H\n\
+#define QLANG_FFI_SURFACE_FFI_H\n\
+\n\
+#include <stdbool.h>\n\
+#include <stdint.h>\n\
+\n\
+#ifdef __cplusplus\n\
+extern \"C\" {\n\
+#endif\n\
+\n\
+void q_host_log(const uint8_t* message);\n\
+int64_t q_host_add(int64_t left, int64_t right);\n\
+int64_t q_exported(int64_t value);\n\
+\n\
+#ifdef __cplusplus\n\
+}\n\
+#endif\n\
+\n\
+#endif /* QLANG_FFI_SURFACE_FFI_H */\n"
+        );
+    }
+
+    #[test]
     fn emit_c_header_supports_pointer_exports() {
         let dir = TestDir::new("ql-driver-ffi-pointer-header");
         let source = dir.write(
@@ -581,6 +872,7 @@ extern "c" pub fn fill(buf: *U8, src: *const U8) -> *const U8 {
             &source,
             &CHeaderOptions {
                 output: Some(output.clone()),
+                ..CHeaderOptions::default()
             },
         )
         .expect("pointer header generation should succeed");

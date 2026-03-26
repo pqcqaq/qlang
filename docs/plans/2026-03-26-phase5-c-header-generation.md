@@ -1,5 +1,7 @@
 # Phase 5 Minimal C Header Generation
 
+> 更新（2026-03-26 后续）：这里记录的是 export-surface 头文件生成的首个切片。后续已经补上 import/both surface 投影，见 [P5 Import Surface Header Projection](/plans/2026-03-26-phase5-import-surface-header-projection)。
+
 ## 为什么现在做这一刀
 
 P5 的前两步已经把两件关键事情打通了：
@@ -24,9 +26,8 @@ P5 的前两步已经把两件关键事情打通了：
 - 必须有 body
 - 参数和返回类型必须能映射到当前已支持的 C 标量/指针类型
 
-当前明确不做：
+这个初始切片当时明确不做：
 
-- extern import surface 的头文件投影
 - struct / tuple / enum / callable / closure ABI
 - 布局校验
 - bridge code generation
@@ -115,7 +116,7 @@ CLI 只负责：
 
 ## 下一步
 
-在这个切片之后，P5 更合理的扩展方向是：
+在这个切片之后，P5 当时更合理的扩展方向是：
 
 1. import surface 的 header projection
 2. richer ABI/layout diagnostics
