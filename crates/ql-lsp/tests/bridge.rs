@@ -1,11 +1,16 @@
+use std::collections::HashMap;
+
 use ql_analysis::analyze_source;
 use ql_diagnostics::{Diagnostic as CompilerDiagnostic, Label};
 use ql_lsp::bridge::{
     definition_for_analysis, diagnostics_to_lsp, hover_for_analysis, position_to_offset,
-    references_for_analysis, span_to_range,
+    prepare_rename_for_analysis, references_for_analysis, rename_for_analysis, span_to_range,
 };
 use ql_span::Span;
-use tower_lsp::lsp_types::{GotoDefinitionResponse, HoverContents, Location, Position, Url};
+use tower_lsp::lsp_types::{
+    GotoDefinitionResponse, HoverContents, Location, Position, PrepareRenameResponse, TextEdit,
+    Url, WorkspaceEdit,
+};
 
 fn nth_span(source: &str, needle: &str, occurrence: usize) -> Span {
     source
@@ -195,5 +200,73 @@ fn id[T](value: T) -> T {
             uri,
             span_to_range(source, nth_span(source, "value", 2))
         )]
+    );
+}
+
+#[test]
+fn prepare_rename_bridge_returns_range_and_placeholder() {
+    let source = r#"
+fn id(value: Int) -> Int {
+    return value
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let response = prepare_rename_for_analysis(source, &analysis, Position::new(2, 11))
+        .expect("prepare rename should exist");
+
+    let PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } = response else {
+        panic!("expected range plus placeholder");
+    };
+
+    assert_eq!(range, span_to_range(source, nth_span(source, "value", 2)));
+    assert_eq!(placeholder, "value");
+}
+
+#[test]
+fn rename_bridge_returns_same_file_workspace_edits() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+fn id(value: Int) -> Int {
+    return value
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let edit = rename_for_analysis(&uri, source, &analysis, Position::new(2, 11), "input")
+        .expect("rename should validate")
+        .expect("rename should produce edits");
+
+    let mut expected_changes = HashMap::new();
+    expected_changes.insert(
+        uri,
+        vec![
+            TextEdit::new(
+                span_to_range(source, nth_span(source, "value", 1)),
+                "input".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(source, nth_span(source, "value", 2)),
+                "input".to_owned(),
+            ),
+        ],
+    );
+
+    assert_eq!(edit, WorkspaceEdit::new(expected_changes));
+}
+
+#[test]
+fn rename_bridge_surfaces_invalid_names() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+fn id(value: Int) -> Int {
+    return value
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    assert_eq!(
+        rename_for_analysis(&uri, source, &analysis, Position::new(2, 11), "match"),
+        Err(ql_analysis::RenameError::Keyword("match".to_owned()))
     );
 }

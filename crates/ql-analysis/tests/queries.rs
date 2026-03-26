@@ -471,6 +471,189 @@ fn read(command: Command) -> Int {
 }
 
 #[test]
+fn rename_queries_follow_supported_same_file_symbols() {
+    let source = r#"
+enum Command {
+    Retry(Int),
+}
+
+fn id[T](value: T) -> T {
+    let local_value = value
+    return local_value
+}
+
+fn build() -> Command {
+    return Command.Retry(id(1))
+}
+"#;
+
+    let analysis = analyzed(source);
+    let param_use = source
+        .find("= value")
+        .map(|offset| offset + 2)
+        .expect("parameter use should exist");
+    let param_use_span = ql_span::Span::new(param_use, param_use + "value".len());
+
+    assert_eq!(
+        analysis.prepare_rename_at(nth_offset(source, "T", 2)),
+        Some(ql_analysis::RenameTarget {
+            kind: SymbolKind::Generic,
+            name: "T".to_owned(),
+            span: nth_span(source, "T", 2),
+        })
+    );
+    assert_eq!(
+        analysis.rename_at(param_use, "input"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Parameter,
+            old_name: "value".to_owned(),
+            new_name: "input".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "value", 1),
+                    replacement: "input".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: param_use_span,
+                    replacement: "input".to_owned(),
+                },
+            ],
+        }))
+    );
+    assert_eq!(
+        analysis.rename_at(nth_offset(source, "local_value", 2), "result"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Local,
+            old_name: "local_value".to_owned(),
+            new_name: "result".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "local_value", 1),
+                    replacement: "result".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "local_value", 2),
+                    replacement: "result".to_owned(),
+                },
+            ],
+        }))
+    );
+    assert_eq!(
+        analysis.rename_at(nth_offset(source, "id", 2), "identity"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Function,
+            old_name: "id".to_owned(),
+            new_name: "identity".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "id", 1),
+                    replacement: "identity".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "id", 2),
+                    replacement: "identity".to_owned(),
+                },
+            ],
+        }))
+    );
+    assert_eq!(
+        analysis.rename_at(nth_offset(source, "Retry", 2), "Repeat"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Variant,
+            old_name: "Retry".to_owned(),
+            new_name: "Repeat".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "Retry", 1),
+                    replacement: "Repeat".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "Retry", 2),
+                    replacement: "Repeat".to_owned(),
+                },
+            ],
+        }))
+    );
+}
+
+#[test]
+fn rename_queries_validate_new_identifiers() {
+    let source = r#"
+fn id(value: Int) -> Int {
+    return value
+}
+"#;
+
+    let analysis = analyzed(source);
+    let value_use = nth_offset(source, "value", 2);
+
+    assert_eq!(
+        analysis.rename_at(value_use, "match"),
+        Err(ql_analysis::RenameError::Keyword("match".to_owned()))
+    );
+    assert_eq!(
+        analysis.rename_at(value_use, "2value"),
+        Err(ql_analysis::RenameError::InvalidIdentifier(
+            "2value".to_owned()
+        ))
+    );
+
+    let escaped = analysis
+        .rename_at(value_use, "`match`")
+        .expect("escaped keywords should validate")
+        .expect("parameter rename should be supported");
+    assert_eq!(escaped.new_name, "`match`");
+    assert_eq!(escaped.edits.len(), 2);
+    assert!(
+        escaped
+            .edits
+            .iter()
+            .all(|edit| edit.replacement == "`match`")
+    );
+}
+
+#[test]
+fn rename_queries_skip_unsupported_symbols() {
+    let source = r#"
+use std.collections.HashMap as Map
+
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn get(self, cache: Map[String, Int]) -> Int {
+        return self.value + self.get()
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+    let import_use = source
+        .find("Map[String, Int]")
+        .expect("import alias use should exist");
+    let builtin_use = nth_offset(source, "String", 1);
+    let field_use = source
+        .find(".value")
+        .map(|offset| offset + 1)
+        .expect("field use should exist");
+    let method_use = source
+        .find(".get")
+        .map(|offset| offset + 1)
+        .expect("method use should exist");
+    let self_use = source.find("self.value").expect("self use should exist");
+
+    assert_eq!(analysis.prepare_rename_at(import_use), None);
+    assert_eq!(analysis.prepare_rename_at(builtin_use), None);
+    assert_eq!(analysis.prepare_rename_at(field_use), None);
+    assert_eq!(analysis.prepare_rename_at(method_use), None);
+    assert_eq!(analysis.prepare_rename_at(self_use), None);
+
+    assert_eq!(analysis.rename_at(field_use, "renamed"), Ok(None));
+    assert_eq!(analysis.rename_at(method_use, "renamed"), Ok(None));
+}
+
+#[test]
 fn extern_block_function_queries_follow_callable_declarations() {
     let source = r#"
 extern "c" {

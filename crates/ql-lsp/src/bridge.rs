@@ -1,11 +1,14 @@
-use ql_analysis::{Analysis, HoverInfo, SymbolKind};
+use std::collections::HashMap;
+
+use ql_analysis::{Analysis, HoverInfo, RenameError, SymbolKind};
 use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, GotoDefinitionResponse, Hover,
-    HoverContents, Location, MarkupContent, MarkupKind, Position, Range, Url,
+    HoverContents, Location, MarkupContent, MarkupKind, Position, PrepareRenameResponse, Range,
+    TextEdit, Url, WorkspaceEdit,
 };
 
 pub fn position_to_offset(source: &str, position: Position) -> Option<usize> {
@@ -96,6 +99,46 @@ pub fn references_for_analysis(
             .map(|reference| Location::new(uri.clone(), span_to_range(source, reference.span)))
             .collect(),
     )
+}
+
+pub fn prepare_rename_for_analysis(
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<PrepareRenameResponse> {
+    let offset = position_to_offset(source, position)?;
+    let target = analysis.prepare_rename_at(offset)?;
+    let placeholder = source.get(target.span.start..target.span.end)?.to_owned();
+
+    Some(PrepareRenameResponse::RangeWithPlaceholder {
+        range: span_to_range(source, target.span),
+        placeholder,
+    })
+}
+
+pub fn rename_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+    new_name: &str,
+) -> Result<Option<WorkspaceEdit>, RenameError> {
+    let Some(offset) = position_to_offset(source, position) else {
+        return Ok(None);
+    };
+    let Some(rename) = analysis.rename_at(offset, new_name)? else {
+        return Ok(None);
+    };
+
+    let edits = rename
+        .edits
+        .into_iter()
+        .map(|edit| TextEdit::new(span_to_range(source, edit.span), edit.replacement))
+        .collect::<Vec<_>>();
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), edits);
+
+    Ok(Some(WorkspaceEdit::new(changes)))
 }
 
 fn diagnostic_to_lsp(uri: &Url, source: &str, diagnostic: &CompilerDiagnostic) -> Diagnostic {

@@ -349,14 +349,17 @@ LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
   - `textDocument/hover`
   - `textDocument/definition`
   - `textDocument/references`（当前为 same-file）
+  - `textDocument/prepareRename`
+  - `textDocument/rename`（当前为 same-file）
   - `textDocument/publishDiagnostics`
 - LSP 协议桥接已单独分层：
   - 位置 `Position <-> byte offset` 换算
   - `Span -> Range`
   - compiler diagnostics -> LSP diagnostics
-  - analysis hover / definition / references -> LSP response
+  - analysis hover / definition / references / rename -> LSP response
 - 这意味着 `qlsp` 的第一版不需要重新发明一套“源码位置 -> 语义实体”的逻辑
-- 但这还不是完整 LSP 语义层：当前精度只覆盖 struct field、唯一 method candidate、enum variant token；module-path、ambiguous method、completion / rename 仍需要后续继续补齐
+- 当前 same-file rename 也明确只开放保守符号集：function / const / static / struct / enum / variant / trait / type alias / local / parameter / generic
+- 但这还不是完整 LSP 语义层：当前精度只覆盖 struct field、唯一 method candidate、enum variant token；module-path、ambiguous method、completion、field-or-method rename 和 cross-file rename 仍需要后续继续补齐
 
 ### `qfmt`
 

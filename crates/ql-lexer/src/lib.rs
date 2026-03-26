@@ -98,6 +98,15 @@ pub fn is_keyword(text: &str) -> bool {
     keyword_kind(text).is_some()
 }
 
+pub fn is_valid_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    is_ident_start(first) && chars.all(is_ident_continue)
+}
+
 /// Lex a source file into tokens and recoverable lexical errors.
 pub fn lex(source: &str) -> (Vec<Token>, Vec<LexError>) {
     let mut lexer = Lexer::new(source);
@@ -632,7 +641,7 @@ fn keyword_kind(text: &str) -> Option<TokenKind> {
 
 #[cfg(test)]
 mod tests {
-    use super::{TokenKind, lex};
+    use super::{TokenKind, is_valid_identifier, lex};
 
     fn token_kinds(source: &str) -> Vec<TokenKind> {
         let (tokens, errors) = lex(source);
@@ -656,6 +665,18 @@ mod tests {
         assert!(errors.is_empty(), "unexpected lex errors: {errors:?}");
         assert_eq!(tokens[1].kind, TokenKind::Ident);
         assert_eq!(tokens[1].text, "type");
+    }
+
+    #[test]
+    fn validates_identifier_shapes_without_keyword_policy() {
+        assert!(is_valid_identifier("value"));
+        assert!(is_valid_identifier("_value2"));
+        assert!(is_valid_identifier("match"));
+
+        assert!(!is_valid_identifier(""));
+        assert!(!is_valid_identifier("2value"));
+        assert!(!is_valid_identifier("value-name"));
+        assert!(!is_valid_identifier("`value`"));
     }
 
     #[test]

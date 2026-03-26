@@ -12,7 +12,10 @@ use ql_parser::{ParseError, parse_source};
 use ql_resolve::{ResolutionMap, resolve_module};
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
 use query::QueryIndex;
-pub use query::{DefinitionTarget, HoverInfo, ReferenceTarget, SymbolKind};
+pub use query::{
+    DefinitionTarget, HoverInfo, ReferenceTarget, RenameEdit, RenameError, RenameResult,
+    RenameTarget, SymbolKind,
+};
 
 /// Parsed-and-lowered semantic analysis snapshot shared by CLI and future LSP work.
 #[derive(Clone, Debug)]
@@ -95,6 +98,20 @@ impl Analysis {
     /// Return every indexed occurrence for the symbol covering `offset` within the current file.
     pub fn references_at(&self, offset: usize) -> Option<Vec<ReferenceTarget>> {
         self.index.references_at(offset)
+    }
+
+    /// Return rename metadata when the symbol under `offset` is safe for same-file renaming.
+    pub fn prepare_rename_at(&self, offset: usize) -> Option<RenameTarget> {
+        self.index.prepare_rename_at(offset)
+    }
+
+    /// Return same-file rename edits for the symbol covering `offset`.
+    pub fn rename_at(
+        &self,
+        offset: usize,
+        new_name: &str,
+    ) -> Result<Option<RenameResult>, RenameError> {
+        self.index.rename_at(offset, new_name)
     }
 
     pub fn render_diagnostics(&self, path: &Path, source: &str) -> String {

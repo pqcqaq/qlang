@@ -1,16 +1,18 @@
-use ql_analysis::analyze_source;
-use tower_lsp::jsonrpc::Result;
+use ql_analysis::{Analysis, analyze_source};
+use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::{
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
     InitializeParams, InitializeResult, InitializedParams, Location, MessageType, OneOf,
-    ReferenceParams, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions,
+    PrepareRenameResponse, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities,
+    ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, Url, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 
 use crate::bridge::{
-    definition_for_analysis, diagnostics_to_lsp, hover_for_analysis, references_for_analysis,
+    definition_for_analysis, diagnostics_to_lsp, hover_for_analysis, prepare_rename_for_analysis,
+    references_for_analysis, rename_for_analysis,
 };
 use crate::store::DocumentStore;
 
@@ -38,6 +40,12 @@ impl Backend {
             .publish_diagnostics(uri.clone(), diagnostics, None)
             .await;
     }
+
+    async fn analyzed_document(&self, uri: &Url) -> Option<(String, Analysis)> {
+        let source = self.documents.get(uri).await?;
+        let analysis = analyze_source(&source).ok()?;
+        Some((source, analysis))
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -59,6 +67,10 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
                 ..Default::default()
             },
         })
@@ -103,10 +115,7 @@ impl LanguageServer for Backend {
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some(source) = self.documents.get(&uri).await else {
-            return Ok(None);
-        };
-        let Ok(analysis) = analyze_source(&source) else {
+        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
             return Ok(None);
         };
 
@@ -119,10 +128,7 @@ impl LanguageServer for Backend {
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some(source) = self.documents.get(&uri).await else {
-            return Ok(None);
-        };
-        let Ok(analysis) = analyze_source(&source) else {
+        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
             return Ok(None);
         };
 
@@ -132,10 +138,7 @@ impl LanguageServer for Backend {
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
-        let Some(source) = self.documents.get(&uri).await else {
-            return Ok(None);
-        };
-        let Ok(analysis) = analyze_source(&source) else {
+        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
             return Ok(None);
         };
 
@@ -146,5 +149,29 @@ impl LanguageServer for Backend {
             position,
             params.context.include_declaration,
         ))
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        let uri = params.text_document.uri;
+        let position = params.position;
+        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+            return Ok(None);
+        };
+
+        Ok(prepare_rename_for_analysis(&source, &analysis, position))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+            return Ok(None);
+        };
+
+        rename_for_analysis(&uri, &source, &analysis, position, &params.new_name)
+            .map_err(|error| Error::invalid_params(error.to_string()))
     }
 }

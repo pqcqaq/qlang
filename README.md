@@ -43,8 +43,8 @@ Current Rust workspace status:
 - `crates/ql-parser`: modular parser for the current Phase 1 slice
 - `crates/ql-fmt`: formatter for the current frontend slice
 - `crates/ql-diagnostics`: shared semantic and parser diagnostics model plus text renderer
-- `crates/ql-analysis`: shared parse/HIR/resolve/typeck analysis entry for CLI and future LSP
-- `crates/ql-lsp`: minimal `qlsp` server for hover, go-to-definition, same-file find-references, and diagnostics over stdio
+- `crates/ql-analysis`: shared parse/HIR/resolve/typeck analysis entry plus same-file query/rename scaffolding for CLI and LSP
+- `crates/ql-lsp`: minimal `qlsp` server for hover, go-to-definition, same-file find-references, conservative same-file rename, and diagnostics over stdio
 - `crates/ql-hir`: AST -> HIR lowering with stable IDs and semantic normalization
 - `crates/ql-mir`: Phase 3 structural MIR with explicit CFG, cleanup actions, and textual dumps
 - `crates/ql-borrowck`: Phase 3 ownership facts and explicit `move self` consumption diagnostics
@@ -74,9 +74,10 @@ Current semantic baseline in `ql check`:
 - `ql-analysis` now centralizes parse -> HIR -> resolve -> typeck orchestration
 - `ql-analysis` now also lowers structural MIR after resolution so later ownership and codegen passes share one stable mid-level snapshot
 - `ql-analysis` now also runs the first ownership-facts pass and exposes rendered ownership state for CLI and future IDE tooling
-- `ql-analysis` now also exposes minimal position-based semantic queries for symbol lookup, hover, go-to-definition, and same-file find-references style tooling
+- `ql-analysis` now also exposes minimal position-based semantic queries for symbol lookup, hover, go-to-definition, same-file find-references, and conservative same-file rename style tooling
 - member-name spans and method declaration spans now stay precise through AST -> HIR, so methods inside the same trait/impl/extend block no longer collapse onto one shared query scope anchor
 - named-path segment spans now also stay precise through parser -> resolver -> query indexing, so enum variant uses in patterns and constructors can anchor to the variant token itself instead of collapsing onto the enum root
+- same-file rename now reuses that shared `QueryIndex`, validates new identifier text against lexer rules, and currently only enables symbol kinds whose reference surface is already considered stable enough to edit safely
 - Phase 4 has now started with a backend foundation slice:
   - `ql-driver` keeps build orchestration out of `ql-cli`
   - `ql-codegen-llvm` lowers a controlled MIR subset into textual LLVM IR, with explicit program-mode and library-mode entry behavior
@@ -105,7 +106,7 @@ Current semantic baseline in `ql check`:
   - `ql build <file> --emit dylib|staticlib` now also supports build-side header sidecars through `--header`, `--header-surface`, and `--header-output`; when no header output is specified, the header is written next to the built library artifact but keeps the source stem, for example `libffi_export.so` + `--header` -> `ffi_export.h`
   - build-side header generation reuses the same analysis snapshot as codegen, is rejected for non-library emits, rejects primary-artifact/header path collisions up front, and removes the just-built library artifact if sidecar generation fails so the CLI does not leave a half-success state behind
   - `crates/ql-cli/tests/ffi_header.rs` now locks export/import/both header surfaces plus failing-signature and invalid-surface regressions with black-box snapshots
-- `qlsp` now consumes that shared analysis layer to provide LSP hover, go-to-definition, same-file find-references, and live diagnostics for open documents
+- `qlsp` now consumes that shared analysis layer to provide LSP hover, go-to-definition, same-file find-references, same-file prepare/rename, and live diagnostics for open documents
 - Phase 3 has started with a structural MIR slice:
   - function bodies lower into explicit basic blocks, statements, terminators, locals, scopes, and cleanup actions
   - `defer` is now represented as registered cleanup plus explicit run-cleanup steps on scope exits
@@ -156,7 +157,7 @@ Current intentional gap:
 - default parameters are part of the language design docs, but they are not lowered into AST/HIR or checked yet
 - import / module / prelude unresolved-name strictness is still intentionally deferred
 - semantic queries are still intentionally conservative: they now cover root bindings plus struct-field / unique method member tokens and enum variant tokens, but not full module-path or ambiguous method semantics yet
-- `qlsp` is intentionally minimal in P2/P6: hover / definition / same-file references / diagnostics are live, but completion / rename / semantic tokens are still future work
+- `qlsp` is intentionally minimal in P2/P6: hover / definition / same-file references / same-file rename / diagnostics are live, but completion, semantic tokens, field-or-method rename, and cross-file rename are still future work
 - Phase 3 ownership is intentionally narrow in this slice: direct-local `move self` consumption and direct-local `move` closure capture are diagnosed today; general call contracts, place-sensitive moves, borrow/escape analysis, and drop elaboration are still future passes on top of the current MIR foundation
 - cleanup-aware ownership is still intentionally partial: nested `defer` runtime modeling and projection-sensitive cleanup effects are future work
 - closure ownership is still intentionally partial: MIR capture facts, stable closure IDs, and conservative may-escape facts exist, but closure environment lowering and full escape graph construction are still future work

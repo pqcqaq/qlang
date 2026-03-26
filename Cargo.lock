@@ -394,6 +394,7 @@ dependencies = [
  "ql-borrowck",
  "ql-diagnostics",
  "ql-hir",
+ "ql-lexer",
  "ql-mir",
  "ql-parser",
  "ql-resolve",

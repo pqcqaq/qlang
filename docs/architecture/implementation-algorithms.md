@@ -28,7 +28,7 @@
 | `ql-codegen-llvm` | HIR + MIR + resolution + typeck | 文本 LLVM IR 或 codegen diagnostics | 受控子集 lowering | LLVM 只存在于 backend crate |
 | `ql-driver` | 文件路径 + build/ffi options | `.ll` / `.obj` / `.exe` / `.lib` / `.a` / `.h` | 分析编排 + 工具链调用 + C surface projection + 失败保留中间产物 | CLI 不直接碰底层构建细节 |
 | `ql-cli` | 命令行参数 | 文本输出 / 进程退出码 | 薄分发层 | 不重复实现 analysis/build/ffi logic |
-| `ql-lsp` | 文档文本 + LSP 请求 | diagnostics / hover / definition / references | 文档缓存 + analysis 重算 + 协议桥接 | 不复制编译器语义 |
+| `ql-lsp` | 文档文本 + LSP 请求 | diagnostics / hover / definition / references / rename | 文档缓存 + analysis 重算 + 协议桥接 | 不复制编译器语义 |
 
 ## 前端基础层
 
@@ -285,6 +285,8 @@
 - `hover_at`
 - `definition_at`
 - `references_at`
+- `prepare_rename_at`
+- `rename_at`
 
 当前覆盖面：
 
@@ -300,6 +302,23 @@
 - pattern path root
 - struct literal root
 - import / builtin type 的 hover 级信息
+
+当前 rename 算法也直接建立在这套 occurrence 分组之上：
+
+1. 先用 `occurrence_at(offset)` 找到当前最窄命中的 symbol
+2. 只允许已经证明“引用面足够稳定”的 symbol kind 进入 rename
+3. 新名字先走 lexer 级 identifier 校验
+4. 裸关键字直接拒绝；确实要用关键字时，要求用户显式传入转义标识符
+5. 再复用同一个 `SymbolKey` 收集同文件 occurrence，按源码顺序输出 text edits
+
+当前刻意保守不开放 rename 的对象：
+
+- field
+- method
+- receiver `self`
+- import alias
+- builtin type
+- cross-file symbol
 
 ## 中层表示与所有权分析
 
@@ -557,13 +576,23 @@
    - 调用 `analysis.references_at(offset)`
    - 根据 `includeDeclaration` 过滤 declaration occurrence
    - `Span -> Range` 后返回同文件 `Location` 列表
+7. `prepare_rename`
+   - `Position -> byte offset`
+   - 调用 `analysis.prepare_rename_at(offset)`
+   - 取当前 occurrence span 作为 rename range
+   - 用源码切片作为 placeholder，避免 declaration/use token 形态不一致时丢失真实文本
+8. `rename`
+   - `Position -> byte offset`
+   - 调用 `analysis.rename_at(offset, new_name)`
+   - 分析层先做 rename kind 过滤和 identifier 校验
+   - 再把同文件 `Span` 集合桥接成当前文档的 `WorkspaceEdit`
 
 当前桥接层职责明确在 `bridge.rs`：
 
 - `Position <-> byte offset`
 - `Span -> Range`
 - 编译器 diagnostics -> LSP diagnostics
-- compiler hover / definition / references -> LSP response
+- compiler hover / definition / references / rename -> LSP response
 
 为什么这样设计：
 
@@ -603,7 +632,7 @@
 
 ### 规则 6：CLI 与 LSP 必须复用 `ql-analysis`
 
-- 新增 completion / rename，或继续把 hover / references 从 root-binding 扩到更深 member 语义时，应优先扩展 query surface
+- 继续做 completion、cross-file rename，或继续把 hover / references / same-file rename 从 root-binding 扩到更深 member 语义时，应优先扩展 query surface
 - 不要在 `ql-cli` 或 `ql-lsp` 里各自复制一份语义遍历
 
 ### 规则 7：测试要沿分层布局

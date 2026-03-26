@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
 use ql_ast::{Path, ReceiverKind};
 use ql_hir::{
@@ -6,6 +6,7 @@ use ql_hir::{
     ItemKind, LocalId, MatchArm, Module, Param, PatternId, PatternKind, TypeAlias, TypeId,
     TypeKind, VariantFields, WherePredicate,
 };
+use ql_lexer::{is_keyword, is_valid_identifier};
 use ql_resolve::{
     BuiltinType, GenericBinding, ParamBinding, ResolutionMap, ScopeId, TypeResolution,
     ValueResolution,
@@ -33,6 +34,25 @@ pub enum SymbolKind {
     Import,
 }
 
+impl SymbolKind {
+    fn supports_same_file_rename(self) -> bool {
+        matches!(
+            self,
+            Self::Function
+                | Self::Const
+                | Self::Static
+                | Self::Struct
+                | Self::Enum
+                | Self::Variant
+                | Self::Trait
+                | Self::TypeAlias
+                | Self::Local
+                | Self::Parameter
+                | Self::Generic
+        )
+    }
+}
+
 /// Source-backed definition target for go-to-definition style queries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DefinitionTarget {
@@ -49,6 +69,54 @@ pub struct ReferenceTarget {
     pub span: Span,
     pub is_definition: bool,
 }
+
+/// Rename-ready source span for the symbol under the current cursor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenameTarget {
+    pub kind: SymbolKind,
+    pub name: String,
+    pub span: Span,
+}
+
+/// One same-file text edit for a rename operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenameEdit {
+    pub span: Span,
+    pub replacement: String,
+}
+
+/// Same-file rename result returned by the semantic query layer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RenameResult {
+    pub kind: SymbolKind,
+    pub old_name: String,
+    pub new_name: String,
+    pub edits: Vec<RenameEdit>,
+}
+
+/// User-facing rename validation failures.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RenameError {
+    InvalidIdentifier(String),
+    Keyword(String),
+}
+
+impl fmt::Display for RenameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidIdentifier(name) => write!(
+                f,
+                "rename target `{name}` is not a valid identifier; use letters, digits, and underscores, and do not start with a digit"
+            ),
+            Self::Keyword(name) => write!(
+                f,
+                "rename target `{name}` is a reserved keyword; escape it with backticks if you really want this name"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RenameError {}
 
 /// Minimal semantic hover payload shared by CLI-side tests and future LSP work.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,10 +166,9 @@ impl QueryIndex {
 
     pub(crate) fn references_at(&self, offset: usize) -> Option<Vec<ReferenceTarget>> {
         let key = self.occurrence_at(offset).map(|entry| entry.key.clone())?;
-        let mut references = self
-            .occurrences
-            .iter()
-            .filter(|entry| entry.key == key)
+        let references = self
+            .occurrences_for_key(&key)
+            .into_iter()
             .map(|entry| ReferenceTarget {
                 kind: entry.hover.kind,
                 name: entry.hover.name.clone(),
@@ -109,15 +176,69 @@ impl QueryIndex {
                 is_definition: entry.hover.definition_span == Some(entry.span),
             })
             .collect::<Vec<_>>();
-        references.sort_by_key(|entry| (entry.span.start, entry.span.end));
-        references.dedup_by_key(|entry| entry.span);
         Some(references)
+    }
+
+    pub(crate) fn prepare_rename_at(&self, offset: usize) -> Option<RenameTarget> {
+        let entry = self.occurrence_at(offset)?;
+        entry
+            .hover
+            .kind
+            .supports_same_file_rename()
+            .then(|| RenameTarget {
+                kind: entry.hover.kind,
+                name: entry.hover.name.clone(),
+                span: entry.span,
+            })
+    }
+
+    pub(crate) fn rename_at(
+        &self,
+        offset: usize,
+        new_name: &str,
+    ) -> Result<Option<RenameResult>, RenameError> {
+        validate_rename_text(new_name)?;
+
+        let Some(entry) = self.occurrence_at(offset) else {
+            return Ok(None);
+        };
+        if !entry.hover.kind.supports_same_file_rename() {
+            return Ok(None);
+        }
+
+        let replacement = new_name.to_owned();
+        let edits = self
+            .occurrences_for_key(&entry.key)
+            .into_iter()
+            .map(|entry| RenameEdit {
+                span: entry.span,
+                replacement: replacement.clone(),
+            })
+            .collect();
+
+        Ok(Some(RenameResult {
+            kind: entry.hover.kind,
+            old_name: entry.hover.name.clone(),
+            new_name: replacement,
+            edits,
+        }))
     }
 
     fn occurrence_at(&self, offset: usize) -> Option<&IndexedSymbol> {
         self.occurrences
             .iter()
             .find(|entry| entry.span.contains(offset))
+    }
+
+    fn occurrences_for_key(&self, key: &SymbolKey) -> Vec<&IndexedSymbol> {
+        let mut occurrences = self
+            .occurrences
+            .iter()
+            .filter(|entry| &entry.key == key)
+            .collect::<Vec<_>>();
+        occurrences.sort_by_key(|entry| (entry.span.start, entry.span.end));
+        occurrences.dedup_by_key(|entry| entry.span);
+        occurrences
     }
 }
 
@@ -1481,4 +1602,24 @@ fn builtin_type_name(builtin: BuiltinType) -> &'static str {
         BuiltinType::F32 => "F32",
         BuiltinType::F64 => "F64",
     }
+}
+
+fn validate_rename_text(text: &str) -> Result<(), RenameError> {
+    let escaped = text
+        .strip_prefix('`')
+        .and_then(|value| value.strip_suffix('`'));
+    if let Some(inner) = escaped {
+        return is_valid_identifier(inner)
+            .then_some(())
+            .ok_or_else(|| RenameError::InvalidIdentifier(text.to_owned()));
+    }
+
+    if !is_valid_identifier(text) {
+        return Err(RenameError::InvalidIdentifier(text.to_owned()));
+    }
+    if is_keyword(text) {
+        return Err(RenameError::Keyword(text.to_owned()));
+    }
+
+    Ok(())
 }
