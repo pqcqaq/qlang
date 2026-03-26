@@ -8,7 +8,10 @@ use ql_analysis::analyze_source;
 use ql_codegen_llvm::{CodegenError, CodegenInput, CodegenMode, emit_module};
 use ql_diagnostics::Diagnostic;
 
-use crate::ffi::exported_c_symbol_names;
+use crate::ffi::{
+    CHeaderArtifact, CHeaderError, CHeaderOptions, CHeaderSurface, emit_c_header_from_analysis,
+    exported_c_symbol_names,
+};
 use crate::toolchain::{ToolchainError, ToolchainOptions, discover_toolchain};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,7 +55,14 @@ pub struct BuildOptions {
     pub emit: BuildEmit,
     pub profile: BuildProfile,
     pub output: Option<PathBuf>,
+    pub c_header: Option<BuildCHeaderOptions>,
     pub toolchain: ToolchainOptions,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BuildCHeaderOptions {
+    pub output: Option<PathBuf>,
+    pub surface: CHeaderSurface,
 }
 
 impl Default for BuildEmit {
@@ -72,6 +82,7 @@ pub struct BuildArtifact {
     pub emit: BuildEmit,
     pub profile: BuildProfile,
     pub path: PathBuf,
+    pub c_header: Option<CHeaderArtifact>,
 }
 
 #[derive(Debug)]
@@ -154,6 +165,13 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
         )));
     }
 
+    if options.c_header.is_some() && !build_emit_supports_c_header(options.emit) {
+        return Err(BuildError::InvalidInput(format!(
+            "build-side C header generation only supports `dylib` and `staticlib`, found `{}`",
+            options.emit.as_str()
+        )));
+    }
+
     let source = fs::read_to_string(path).map_err(|error| BuildError::Io {
         path: path.to_path_buf(),
         error,
@@ -211,6 +229,20 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
             default_output_path(&build_root, path, options.profile, options.emit)
         }
     };
+    let c_header_options =
+        resolve_build_c_header_options(path, &output_path, options.c_header.as_ref());
+    if let Some(header_options) = c_header_options.as_ref() {
+        let header_path = header_options
+            .output
+            .as_ref()
+            .expect("build-side C header output path should be resolved");
+        if header_path == &output_path {
+            return Err(BuildError::InvalidInput(format!(
+                "build-side C header output `{}` must differ from the primary artifact output",
+                header_path.display()
+            )));
+        }
+    }
 
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent).map_err(|error| BuildError::Io {
@@ -240,11 +272,87 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
         }
     }
 
+    let c_header = match c_header_options {
+        Some(ref header_options) => {
+            let header_path = header_options
+                .output
+                .clone()
+                .expect("build-side C header output path should be resolved");
+            match emit_c_header_from_analysis(path, &source, &analysis, header_options) {
+                Ok(artifact) => Some(artifact),
+                Err(error) => {
+                    cleanup_artifacts(&[output_path.clone(), header_path]);
+                    return Err(map_c_header_error(error));
+                }
+            }
+        }
+        None => None,
+    };
+
     Ok(BuildArtifact {
         emit: options.emit,
         profile: options.profile,
         path: output_path,
+        c_header,
     })
+}
+
+fn build_emit_supports_c_header(emit: BuildEmit) -> bool {
+    matches!(emit, BuildEmit::DynamicLibrary | BuildEmit::StaticLibrary)
+}
+
+fn resolve_build_c_header_options(
+    input_path: &Path,
+    artifact_path: &Path,
+    options: Option<&BuildCHeaderOptions>,
+) -> Option<CHeaderOptions> {
+    options.map(|options| {
+        let output = options.output.clone().unwrap_or_else(|| {
+            default_build_c_header_output_path(artifact_path, input_path, options.surface)
+        });
+        CHeaderOptions {
+            output: Some(output),
+            surface: options.surface,
+        }
+    })
+}
+
+fn default_build_c_header_output_path(
+    artifact_path: &Path,
+    input_path: &Path,
+    surface: CHeaderSurface,
+) -> PathBuf {
+    let stem = input_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("module");
+    let file_name = match surface.output_suffix() {
+        Some(suffix) => format!("{stem}.{suffix}.h"),
+        None => format!("{stem}.h"),
+    };
+
+    let directory = artifact_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    directory.join(file_name)
+}
+
+fn map_c_header_error(error: CHeaderError) -> BuildError {
+    match error {
+        CHeaderError::InvalidInput(message) => BuildError::InvalidInput(message),
+        CHeaderError::Io { path, error } => BuildError::Io { path, error },
+        CHeaderError::Diagnostics {
+            path,
+            source,
+            diagnostics,
+        } => BuildError::Diagnostics {
+            path,
+            source,
+            diagnostics,
+        },
+    }
 }
 
 pub fn default_output_path(
@@ -520,7 +628,8 @@ mod tests {
     };
 
     use super::{
-        BuildEmit, BuildError, BuildOptions, BuildProfile, build_file, default_output_path,
+        BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderSurface,
+        build_file, default_build_c_header_output_path, default_output_path,
     };
 
     struct TestDir {
@@ -631,6 +740,38 @@ mod tests {
     }
 
     #[test]
+    fn default_build_c_header_output_path_uses_artifact_directory_and_source_stem() {
+        let exports = default_build_c_header_output_path(
+            Path::new("D:/workspace/demo/target/ql/debug/libffi_export.so"),
+            Path::new("src/ffi_export.ql"),
+            CHeaderSurface::Exports,
+        );
+        let imports = default_build_c_header_output_path(
+            Path::new("D:/workspace/demo/artifacts/math.lib"),
+            Path::new("pkg/math.ql"),
+            CHeaderSurface::Imports,
+        );
+        let both = default_build_c_header_output_path(
+            Path::new("D:/workspace/demo/artifacts/libsurface.a"),
+            Path::new("pkg/surface.ql"),
+            CHeaderSurface::Both,
+        );
+
+        assert_eq!(
+            exports,
+            PathBuf::from("D:/workspace/demo/target/ql/debug/ffi_export.h")
+        );
+        assert_eq!(
+            imports,
+            PathBuf::from("D:/workspace/demo/artifacts/math.imports.h")
+        );
+        assert_eq!(
+            both,
+            PathBuf::from("D:/workspace/demo/artifacts/surface.ffi.h")
+        );
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_to_explicit_output() {
         let dir = TestDir::new("ql-driver-build");
         let source = dir.write(
@@ -650,6 +791,7 @@ fn main() -> Int {
             emit: BuildEmit::LlvmIr,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions::default(),
         };
 
@@ -686,6 +828,7 @@ fn main() -> Int {
             emit: BuildEmit::Object,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(clang),
                 ..ToolchainOptions::default()
@@ -739,6 +882,7 @@ fn main() -> Int {
             emit: BuildEmit::Executable,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(clang),
                 ..ToolchainOptions::default()
@@ -789,6 +933,7 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
             emit: BuildEmit::DynamicLibrary,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(mock_dynamic_library_invocation(&dir, &["q_add"])),
                 ..ToolchainOptions::default()
@@ -819,6 +964,51 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
     }
 
     #[test]
+    fn build_file_writes_dynamic_library_with_default_export_header_sidecar() {
+        let dir = TestDir::new("ql-driver-dylib-header-sidecar");
+        let source = dir.write(
+            "ffi_export.ql",
+            r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/ffi_export.dll"
+        } else if cfg!(target_os = "macos") {
+            "artifacts/libffi_export.dylib"
+        } else {
+            "artifacts/libffi_export.so"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::DynamicLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: Some(BuildCHeaderOptions::default()),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_dynamic_library_invocation(&dir, &["q_add"])),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact =
+            build_file(&source, &options).expect("dynamic library build with header should work");
+        let header = artifact
+            .c_header
+            .expect("dynamic library build should return a generated header");
+        let rendered = fs::read_to_string(&header.path).expect("read generated sidecar header");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(header.path, dir.path().join("artifacts/ffi_export.h"));
+        assert_eq!(header.surface, CHeaderSurface::Exports);
+        assert_eq!(header.exported_functions, 1);
+        assert_eq!(header.imported_functions, 0);
+        assert!(rendered.contains("#ifndef QLANG_FFI_EXPORT_H"));
+        assert!(rendered.contains("int64_t q_add(int64_t left, int64_t right);"));
+    }
+
+    #[test]
     fn build_file_writes_static_library_without_requiring_main() {
         let dir = TestDir::new("ql-driver-staticlib");
         let source = dir.write(
@@ -842,6 +1032,7 @@ fn add_two(value: Int) -> Int {
             emit: BuildEmit::StaticLibrary,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(mock_success_invocation(&dir)),
                 archiver: Some(mock_success_archiver_invocation(&dir)),
@@ -894,6 +1085,7 @@ fn add_two(value: Int) -> Int {
             emit: BuildEmit::StaticLibrary,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(mock_success_invocation(&dir)),
                 archiver: Some(mock_success_archiver_invocation(&dir)),
@@ -924,6 +1116,56 @@ fn add_two(value: Int) -> Int {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_import_header_sidecar() {
+        let dir = TestDir::new("ql-driver-staticlib-import-header");
+        let source = dir.write(
+            "ffi_math.ql",
+            r#"
+extern "c" {
+    fn q_add(left: Int, right: Int) -> Int
+}
+
+fn add_two(value: Int) -> Int {
+    return q_add(value, 2)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/ffi_math.lib"
+        } else {
+            "artifacts/libffi_math.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: Some(BuildCHeaderOptions {
+                output: None,
+                surface: CHeaderSurface::Imports,
+            }),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact =
+            build_file(&source, &options).expect("static library build with import header");
+        let header = artifact
+            .c_header
+            .expect("static library build should return a generated header");
+        let rendered = fs::read_to_string(&header.path).expect("read generated import header");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(header.path, dir.path().join("artifacts/ffi_math.imports.h"));
+        assert_eq!(header.surface, CHeaderSurface::Imports);
+        assert_eq!(header.exported_functions, 0);
+        assert_eq!(header.imported_functions, 1);
+        assert!(rendered.contains("#ifndef QLANG_FFI_MATH_IMPORTS_H"));
+        assert!(rendered.contains("int64_t q_add(int64_t left, int64_t right);"));
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_top_level_extern_c_calls() {
         let dir = TestDir::new("ql-driver-staticlib-top-level-extern");
         let source = dir.write(
@@ -945,6 +1187,7 @@ fn add_two(value: Int) -> Int {
             emit: BuildEmit::StaticLibrary,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(mock_success_invocation(&dir)),
                 archiver: Some(mock_success_archiver_invocation(&dir)),
@@ -994,6 +1237,7 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
             emit: BuildEmit::StaticLibrary,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(mock_success_invocation(&dir)),
                 archiver: Some(mock_success_archiver_invocation(&dir)),
@@ -1043,6 +1287,7 @@ fn main() -> Int {
             emit: BuildEmit::Object,
             profile: BuildProfile::Debug,
             output: Some(output),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(clang),
                 ..ToolchainOptions::default()
@@ -1085,6 +1330,7 @@ fn main() -> Int {
             emit: BuildEmit::Executable,
             profile: BuildProfile::Debug,
             output: Some(output),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(clang),
                 ..ToolchainOptions::default()
@@ -1132,6 +1378,7 @@ fn add_one(value: Int) -> Int {
             emit: BuildEmit::StaticLibrary,
             profile: BuildProfile::Debug,
             output: Some(output),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(mock_success_invocation(&dir)),
                 archiver: Some(mock_archive_failure_invocation(&dir)),
@@ -1228,6 +1475,7 @@ fn add_one(value: Int) -> Int {
                 emit: BuildEmit::DynamicLibrary,
                 profile: BuildProfile::Debug,
                 output: None,
+                c_header: None,
                 toolchain: ToolchainOptions::default(),
             },
         )
@@ -1237,6 +1485,135 @@ fn add_one(value: Int) -> Int {
             BuildError::InvalidInput(message) => assert!(message.contains(
                 "requires at least one public top-level `extern \"c\"` function definition"
             )),
+            other => panic!("expected invalid input error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_file_rejects_c_header_sidecars_for_non_library_emits() {
+        let dir = TestDir::new("ql-driver-header-non-library");
+        let source = dir.write(
+            "sample.ql",
+            r#"
+fn main() -> Int {
+    return 1
+}
+"#,
+        );
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::Executable,
+                profile: BuildProfile::Debug,
+                output: None,
+                c_header: Some(BuildCHeaderOptions::default()),
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("header sidecars should be rejected for executables");
+
+        match error {
+            BuildError::InvalidInput(message) => assert!(
+                message.contains("only supports `dylib` and `staticlib`"),
+                "unexpected invalid input message: {message}"
+            ),
+            other => panic!("expected invalid input error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_file_removes_library_artifact_when_header_generation_fails() {
+        let dir = TestDir::new("ql-driver-header-build-fail");
+        let source = dir.write(
+            "unsupported.ql",
+            r#"
+extern "c" pub fn q_print(value: Int) -> Void {
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/unsupported.lib"
+        } else {
+            "artifacts/libunsupported.a"
+        });
+        let header = dir.path().join("artifacts/unsupported.h");
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: Some(BuildCHeaderOptions {
+                output: Some(header.clone()),
+                surface: CHeaderSurface::Imports,
+            }),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let error = build_file(&source, &options)
+            .expect_err("missing import surface should fail the sidecar build");
+        match error {
+            BuildError::InvalidInput(message) => assert!(
+                message
+                    .contains("does not define any imported `extern \"c\"` function declarations"),
+                "unexpected invalid input message: {message}"
+            ),
+            other => panic!("expected invalid input error, got {other:?}"),
+        }
+        assert!(
+            !output.exists(),
+            "library artifact should be removed when sidecar generation fails"
+        );
+        assert!(
+            !header.exists(),
+            "header artifact should not be left behind on failure"
+        );
+    }
+
+    #[test]
+    fn build_file_rejects_header_output_path_equal_to_primary_artifact() {
+        let dir = TestDir::new("ql-driver-header-output-collision");
+        let source = dir.write(
+            "ffi_export.ql",
+            r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/ffi_export.dll"
+        } else if cfg!(target_os = "macos") {
+            "artifacts/libffi_export.dylib"
+        } else {
+            "artifacts/libffi_export.so"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::DynamicLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: Some(BuildCHeaderOptions {
+                    output: Some(output.clone()),
+                    surface: CHeaderSurface::Exports,
+                }),
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_dynamic_library_invocation(&dir, &["q_add"])),
+                    ..ToolchainOptions::default()
+                },
+            },
+        )
+        .expect_err("header output path collisions should be rejected");
+
+        match error {
+            BuildError::InvalidInput(message) => assert!(
+                message.contains("must differ from the primary artifact output"),
+                "unexpected invalid input message: {message}"
+            ),
             other => panic!("expected invalid input error, got {other:?}"),
         }
     }

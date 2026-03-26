@@ -53,6 +53,9 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - `ql build <file> --emit staticlib`
 - `ql build <file> --release`
 - `ql build <file> -o <output>`
+- `ql build <file> --emit dylib --header`
+- `ql build <file> --emit staticlib --header-surface imports`
+- `ql build <file> --emit dylib --header-output <output>`
 
 当前默认输出路径：
 
@@ -66,6 +69,15 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - `target/ql/release/<stem>.dll` / `target/ql/release/lib<stem>.so` / `target/ql/release/lib<stem>.dylib`
 - `target/ql/debug/<stem>.lib` / `target/ql/debug/lib<stem>.a`
 - `target/ql/release/<stem>.lib` / `target/ql/release/lib<stem>.a`
+
+当 `--emit` 是 `dylib` 或 `staticlib` 且启用了 build-side header 时：
+
+- `--header` 生成默认 `exports` surface
+- `--header-surface exports|imports|both` 会隐式启用 header sidecar
+- `--header-output <output>` 也会隐式启用 header sidecar
+- 未显式指定 header 输出路径时，header 会写到主 library artifact 同目录，但使用源码 stem 而不是 library 文件名：
+  - `target/ql/debug/libffi_export.so` + `--header` -> `target/ql/debug/ffi_export.h`
+  - `target/ql/debug/math.lib` + `--header-surface imports` -> `target/ql/debug/math.imports.h`
 
 当前支持矩阵刻意收窄为：
 
@@ -85,6 +97,11 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - direct `extern "c"` 调用现在会在 program mode 和 library mode 下都 lower 成 LLVM `declare @symbol` + `call @symbol`
 - 顶层 `extern "c"` 函数定义现在会 lower 成稳定 C 符号名，例如 `define i64 @q_add(...)`
 - Windows 上 `dylib` 链接会为这些稳定导出符号显式追加 `/EXPORT:<symbol>`，确保 DLL 导出表和 Qlang 的 exported C surface 保持一致
+- `dylib` / `staticlib` 现在还可以在构建成功后直接附带 C header sidecar，而不需要额外再跑一次 `ql ffi header`
+- build-side header 会复用同一份 analysis 结果，而不是重新 parse / resolve / typeck
+- build-side header 只允许出现在 `dylib` / `staticlib` 上；对 `llvm-ir` / `obj` / `exe` 会直接拒绝
+- 如果显式 `--header-output` 与主 artifact 路径相同，driver 会在真正构建前直接报错，避免 header 覆盖库文件
+- 如果 library 已成功产出但 sidecar header 生成失败，driver 会回收刚生成的主 artifact，避免留下“库成功、头文件失败”的半成功状态
 - program mode 的入口 `main` 仍必须使用默认 Qlang ABI；如果需要导出稳定 C 符号，应定义独立的 `extern "c"` helper
 - `extern` callable 现在有共享 callable identity，因此 extern block 调用也能稳定参与参数类型检查与代码生成
 - first-class function value 不会再把后端打崩，而是返回结构化 unsupported diagnostics
@@ -112,12 +129,21 @@ P5 当前已经落地最小可用的 C header emit slice：
 - `ql ffi header <file> --surface imports`
 - `ql ffi header <file> --surface both`
 - `ql ffi header <file> -o <output>`
+- `ql build <file> --emit dylib|staticlib --header`
+- `ql build <file> --emit dylib|staticlib --header-surface exports|imports|both`
+- `ql build <file> --emit dylib|staticlib --header-output <output>`
 
 当前默认输出路径：
 
 - `target/ql/ffi/<stem>.h`
 - `target/ql/ffi/<stem>.imports.h`
 - `target/ql/ffi/<stem>.ffi.h`
+
+build-side sidecar 默认输出路径：
+
+- `<library-dir>/<source-stem>.h`
+- `<library-dir>/<source-stem>.imports.h`
+- `<library-dir>/<source-stem>.ffi.h`
 
 当前 `ql ffi header` 的职责是：
 
@@ -129,6 +155,8 @@ P5 当前已经落地最小可用的 C header emit slice：
 - 将当前已支持的标量 / 指针类型投影到确定性的 C declaration
 - 输出 include guard、`<stdbool.h>` / `<stdint.h>`、C++ `extern "C"` wrapper
 - include guard 会按最终输出头文件名生成，避免 export/import/both 三份 header 互相冲突
+
+而 `ql build` 上的 header sidecar 只是复用同一套投影逻辑，但把默认输出目录改成 library artifact 同目录，并挂到 build orchestration 上统一交付。
 
 当前支持矩阵刻意收窄为：
 
@@ -240,8 +268,9 @@ P5 当前已经落地最小可用的 C header emit slice：
 - `cargo test -p ql-cli --test ffi_header`
 - `cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir`
 - `cargo run -p ql-cli -- build fixtures/codegen/pass/extern_c_build.ql --emit llvm-ir`
-- `cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit staticlib`
-- `cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit dylib`
+- `cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit staticlib --header`
+- `cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit dylib --header`
+- `cargo run -p ql-cli -- build fixtures/codegen/pass/extern_c_library.ql --emit staticlib --header-surface imports`
 - `cargo run -p ql-cli -- ffi header tests/ffi/pass/extern_c_export.ql`
 - `cargo run -p ql-cli -- ffi header tests/ffi/header/extern_c_surface.ql --surface imports`
 - 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit obj`
@@ -259,6 +288,7 @@ P5 当前已经落地最小可用的 C header emit slice：
 - LLVM IR 快照
 - extern C direct-call LLVM IR 快照
 - mock object / executable / static library 产物
+- build-side export/import header sidecar 快照
 - build 路径上的 unsupported diagnostics
 
 当前还新增了第一版真实 FFI smoke harness：
@@ -269,14 +299,14 @@ P5 当前已经落地最小可用的 C header emit slice：
 静态库回归会在 clang-style compiler 和 archiver 可用时：
 
 - 构建导出 `extern "c"` 符号的 Qlang `staticlib`
-- 通过 `ql ffi header` 生成对应的 C 头文件
+- 在同一次 `ql build --header-output` 里生成对应的 C 头文件
 - 用包含该头文件的真实 C harness 链接该库
 - 运行宿主可执行文件确认导出符号可被调用
 
 共享库回归会在 clang-style compiler 可用时：
 
 - 构建导出 `extern "c"` 符号的 Qlang `dylib`
-- 通过 `ql ffi header` 生成对应的 C 头文件
+- 在同一次 `ql build --header-output` 里生成对应的 C 头文件
 - 用真实 C loader harness 编译宿主可执行文件
 - 运行宿主可执行文件，并在进程内通过 `LoadLibraryA` / `dlopen` 解析并调用导出符号
 

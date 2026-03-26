@@ -112,7 +112,7 @@ Qlang 仓库结构必须同时服务于四类工作：
 
 - `tests/ui/` 已承载 CLI 黑盒 diagnostics 快照
 - `tests/codegen/` 已承载 backend / artifact 黑盒快照
-- `tests/ffi/` 已承载真实 C 宿主集成夹具，并通过 `ql ffi header` 生成的头文件驱动 C harness 编译
+- `tests/ffi/` 已承载真实 C 宿主集成夹具，并通过 `ql build --header-output` 生成的头文件驱动 C harness 编译
 
 当前测试组织也有一条明确约束：
 

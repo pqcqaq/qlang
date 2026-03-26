@@ -3,7 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use ql_analysis::analyze_source;
+use ql_analysis::{Analysis, analyze_source};
 use ql_ast::Visibility;
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{self as hir, ItemKind, Param};
@@ -44,7 +44,7 @@ impl CHeaderSurface {
         matches!(self, Self::Imports | Self::Both)
     }
 
-    const fn output_suffix(self) -> Option<&'static str> {
+    pub(crate) const fn output_suffix(self) -> Option<&'static str> {
         match self {
             Self::Exports => None,
             Self::Imports => Some("imports"),
@@ -134,10 +134,19 @@ pub fn emit_c_header(
         diagnostics,
     })?;
 
+    emit_c_header_from_analysis(path, &source, &analysis, options)
+}
+
+pub(crate) fn emit_c_header_from_analysis(
+    path: &Path,
+    source: &str,
+    analysis: &Analysis,
+    options: &CHeaderOptions,
+) -> Result<CHeaderArtifact, CHeaderError> {
     if analysis.has_errors() {
         return Err(CHeaderError::Diagnostics {
             path: path.to_path_buf(),
-            source: source.clone(),
+            source: source.to_owned(),
             diagnostics: analysis.diagnostics().to_vec(),
         });
     }
@@ -146,7 +155,7 @@ pub fn emit_c_header(
         collect_c_header_functions(analysis.hir(), analysis.resolution(), options.surface)
             .map_err(|diagnostics| CHeaderError::Diagnostics {
                 path: path.to_path_buf(),
-                source: source.clone(),
+                source: source.to_owned(),
                 diagnostics,
             })?;
     if functions.is_empty() {
@@ -157,6 +166,14 @@ pub fn emit_c_header(
         )));
     }
 
+    let output_path = resolve_c_header_output_path(path, options)?;
+    write_c_header_artifact(output_path, options.surface, &functions)
+}
+
+fn resolve_c_header_output_path(
+    path: &Path,
+    options: &CHeaderOptions,
+) -> Result<PathBuf, CHeaderError> {
     let output_path = match &options.output {
         Some(path) => path.clone(),
         None => {
@@ -167,6 +184,15 @@ pub fn emit_c_header(
             default_c_header_output_path_for_surface(&build_root, path, options.surface)
         }
     };
+
+    Ok(output_path)
+}
+
+fn write_c_header_artifact(
+    output_path: PathBuf,
+    surface: CHeaderSurface,
+    functions: &[CHeaderFunction],
+) -> Result<CHeaderArtifact, CHeaderError> {
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent).map_err(|error| CHeaderError::Io {
             path: parent.to_path_buf(),
@@ -174,7 +200,7 @@ pub fn emit_c_header(
         })?;
     }
 
-    let rendered = render_c_header(&output_path, &functions);
+    let rendered = render_c_header(&output_path, functions);
     fs::write(&output_path, rendered).map_err(|error| CHeaderError::Io {
         path: output_path.clone(),
         error,
@@ -191,7 +217,7 @@ pub fn emit_c_header(
 
     Ok(CHeaderArtifact {
         path: output_path,
-        surface: options.surface,
+        surface,
         exported_functions,
         imported_functions,
     })

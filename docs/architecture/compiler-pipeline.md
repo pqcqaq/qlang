@@ -224,10 +224,12 @@ source
 - 新增 `ql-codegen-llvm`，只消费 `HIR` / `resolve` / `typeck` / `MIR`
 - 当前 `ql build` 已经能把受控 MIR 子集 lower 成文本 LLVM IR，并继续经 compiler/archive toolchain 产出 `.obj` / `.o`、基础 `.exe`、受约束的 `.dll` / `.so` / `.dylib`，以及 `.lib` / `.a`
 - `ql-driver` 现在还额外承接了最小 C API 头文件投影：`ql ffi header` 会复用 analysis 结果筛选 public 顶层 `extern "c"` 定义、顶层 `extern "c"` 声明和 `extern "c"` block 声明，并按 export/import/both surface 输出确定性的 `.h` 文件
+- `ql-driver` 现在还会把这套 header 投影逻辑挂到 library build 路径上：`ql build --emit dylib|staticlib --header*` 会在主 artifact 成功后直接生成 sidecar header，并把它作为 build artifact 的一部分返回给 CLI
 - `ql-codegen-llvm` 现在区分 program mode 与 library mode：前者会把用户态 `main` lower 成内部符号并补宿主 wrapper，后者则直接导出 free function 集合
 - 当前还新增了一层 callable identity：顶层函数与 `extern` block 声明会统一走 `FunctionRef`，因此 extern C direct call 不再是 parser-only 语法，而是能进入 typeck / MIR / LLVM IR 的真实后端路径
 - 顶层 `extern "c"` 函数定义现在也已经进入真实后端路径，并会使用稳定 C 符号名而不是内部 mangling
 - `ql-driver` 现在还会在 `dylib` 请求里先投影 exported C symbol 列表，再把这份符号集传给 toolchain；Windows 下会显式把它们转成 `/EXPORT:<symbol>` linker 参数
+- build-side header sidecar 只允许用于 `dylib` / `staticlib`，会提前拒绝与主 artifact 路径冲突的 `--header-output`，并在 sidecar 失败时回收刚生成的 library artifact，避免 pipeline 暴露半成功状态
 - 当前仍然故意不把独立 linker family discovery、runtime startup object、任意 shared-library surface 和更完整平台差异一次性揉进同一刀实现里
 
 也就是说，P4 先固定“后端放在哪一层、如何失败、如何测试、如何贯通 artifact pipeline”，再继续补更完整的链接与运行时能力。
@@ -263,6 +265,9 @@ source
   - `tests/codegen/pass/extern_c_export.h`
   - `tests/codegen/pass/extern_c_surface.imports.h`
   - `tests/codegen/pass/extern_c_surface.ffi.h`
-- 真实 FFI smoke harness 现在不再手写 prototype，而是先调用 `ql ffi header` 再让 C 宿主消费生成的 header
+- 黑盒 `ql build` snapshot 现在还额外锁住 library build sidecar header：
+  - `tests/codegen/pass/extern_c_export.h`
+  - `tests/codegen/pass/extern_c_library.imports.h`
+- 真实 FFI smoke harness 现在不再手写 prototype，并且已经改成在同一次 `ql build --header-output` 中同时拿到 library artifact 与 C header，再让宿主消费生成的 header
 
 这也是目录结构设计要前置考虑的原因。

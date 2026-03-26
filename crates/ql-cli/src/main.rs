@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use ql_analysis::{analyze_source as analyze_semantics, parse_errors_to_diagnostics};
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
-    BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderError, CHeaderOptions,
-    CHeaderSurface, build_file, emit_c_header,
+    BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderError,
+    CHeaderOptions, CHeaderSurface, build_file, emit_c_header,
 };
 use ql_fmt::format_source;
 
@@ -107,6 +107,39 @@ fn run() -> Result<(), u8> {
                             return Err(1);
                         };
                         options.output = Some(PathBuf::from(value));
+                    }
+                    "--header" => {
+                        options
+                            .c_header
+                            .get_or_insert_with(BuildCHeaderOptions::default);
+                    }
+                    "--header-surface" => {
+                        index += 1;
+                        let Some(value) = remaining.get(index) else {
+                            eprintln!(
+                                "error: `ql build --header-surface` expects `exports`, `imports`, or `both`"
+                            );
+                            return Err(1);
+                        };
+                        let Some(surface) = CHeaderSurface::parse(value) else {
+                            eprintln!("error: unsupported `ql build` header surface `{value}`");
+                            return Err(1);
+                        };
+                        let header = options
+                            .c_header
+                            .get_or_insert_with(BuildCHeaderOptions::default);
+                        header.surface = surface;
+                    }
+                    "--header-output" => {
+                        index += 1;
+                        let Some(value) = remaining.get(index) else {
+                            eprintln!("error: `ql build --header-output` expects a file path");
+                            return Err(1);
+                        };
+                        let header = options
+                            .c_header
+                            .get_or_insert_with(BuildCHeaderOptions::default);
+                        header.output = Some(PathBuf::from(value));
                     }
                     other => {
                         eprintln!("error: unknown `ql build` option `{other}`");
@@ -300,6 +333,9 @@ fn build_path(path: &Path, options: &BuildOptions) -> Result<(), u8> {
                 artifact.emit.as_str(),
                 artifact.path.display()
             );
+            if let Some(header) = artifact.c_header {
+                println!("wrote c-header: {}", header.path.display());
+            }
             Ok(())
         }
         Err(BuildError::InvalidInput(message)) => {
@@ -467,7 +503,7 @@ fn print_usage() {
     eprintln!("usage:");
     eprintln!("  ql check <file-or-dir>");
     eprintln!(
-        "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>]"
+        "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
     );
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
@@ -681,6 +717,7 @@ fn main() -> Int {
             emit: BuildEmit::LlvmIr,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions::default(),
         };
 
@@ -711,6 +748,7 @@ fn main() -> Int {
             emit: BuildEmit::Object,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(mock_success_invocation(&dir)),
                 ..ToolchainOptions::default()
@@ -743,6 +781,7 @@ fn main() -> Int {
             emit: BuildEmit::Executable,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(mock_success_invocation(&dir)),
                 ..ToolchainOptions::default()
@@ -777,6 +816,7 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
             emit: BuildEmit::DynamicLibrary,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(mock_success_invocation(&dir)),
                 ..ToolchainOptions::default()
@@ -810,6 +850,7 @@ fn add_one(value: Int) -> Int {
             emit: BuildEmit::StaticLibrary,
             profile: BuildProfile::Debug,
             output: Some(output.clone()),
+            c_header: None,
             toolchain: ToolchainOptions {
                 clang: Some(mock_success_invocation(&dir)),
                 archiver: Some(mock_success_archiver_invocation(&dir)),

@@ -120,6 +120,7 @@ fn run_static_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> R
         &relative_ql,
         "staticlib",
         &staticlib,
+        Some(&header),
     )?;
     if !staticlib.is_file() {
         return Err(format!(
@@ -128,11 +129,9 @@ fn run_static_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> R
             staticlib.display()
         ));
     }
-
-    run_ql_ffi_header(workspace_root, &case.name, &relative_ql, &header)?;
     if !header.is_file() {
         return Err(format!(
-            "[{}] expected generated header `{}` to exist after `ql ffi header`",
+            "[{}] expected generated header `{}` to exist after `ql build --header-output`",
             case.name,
             header.display()
         ));
@@ -205,6 +204,7 @@ fn run_dynamic_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> 
         &relative_ql,
         "dylib",
         &dynamic_library,
+        Some(&header),
     )?;
     if !dynamic_library.is_file() {
         return Err(format!(
@@ -213,11 +213,9 @@ fn run_dynamic_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> 
             dynamic_library.display()
         ));
     }
-
-    run_ql_ffi_header(workspace_root, &case.name, &relative_ql, &header)?;
     if !header.is_file() {
         return Err(format!(
-            "[{}] expected generated header `{}` to exist after `ql ffi header`",
+            "[{}] expected generated header `{}` to exist after `ql build --header-output`",
             case.name,
             header.display()
         ));
@@ -460,17 +458,21 @@ fn run_ql_build(
     relative_ql: &str,
     emit: &str,
     output_path: &Path,
+    header_path: Option<&Path>,
 ) -> Result<(), String> {
-    let build = Command::new(env!("CARGO_BIN_EXE_ql"))
-        .current_dir(workspace_root)
-        .args([
-            "build",
-            relative_ql,
-            "--emit",
-            emit,
-            "--output",
-            &output_path.to_string_lossy(),
-        ])
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ql"));
+    command.current_dir(workspace_root).args([
+        "build",
+        relative_ql,
+        "--emit",
+        emit,
+        "--output",
+        &output_path.to_string_lossy(),
+    ]);
+    if let Some(header_path) = header_path {
+        command.args(["--header-output", &header_path.to_string_lossy()]);
+    }
+    let build = command
         .output()
         .unwrap_or_else(|_| panic!("run `ql build {relative_ql} --emit {emit}`"));
     let build_stdout = normalize(&String::from_utf8_lossy(&build.stdout));
@@ -483,37 +485,6 @@ fn run_ql_build(
             build.status.code(),
             build_stdout,
             build_stderr
-        ));
-    }
-    Ok(())
-}
-
-fn run_ql_ffi_header(
-    workspace_root: &Path,
-    case_name: &str,
-    relative_ql: &str,
-    header_path: &Path,
-) -> Result<(), String> {
-    let header_emit = Command::new(env!("CARGO_BIN_EXE_ql"))
-        .current_dir(workspace_root)
-        .args([
-            "ffi",
-            "header",
-            relative_ql,
-            "--output",
-            &header_path.to_string_lossy(),
-        ])
-        .output()
-        .unwrap_or_else(|_| panic!("run `ql ffi header {relative_ql}`"));
-    let header_stdout = normalize(&String::from_utf8_lossy(&header_emit.stdout));
-    let header_stderr = normalize(&String::from_utf8_lossy(&header_emit.stderr));
-    if header_emit.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected `ql ffi header` to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case_name,
-            header_emit.status.code(),
-            header_stdout,
-            header_stderr
         ));
     }
     Ok(())

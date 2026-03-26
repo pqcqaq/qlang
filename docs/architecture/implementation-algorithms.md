@@ -435,13 +435,23 @@
 6. 调用 `emit_module` 拿到文本 LLVM IR。
 7. 计算默认输出路径：
    - `target/ql/<profile>/<stem>.<ext>`
-8. 根据 `emit` 分派：
+8. 若启用了 build-side C header：
+   - 只允许 `emit` 是 `dylib` / `staticlib`
+   - 先把 header 输出路径解析成显式路径：
+     - `--header-output` 直接使用显式路径
+     - 否则使用主 library artifact 所在目录 + 源码 stem
+   - 若 header 输出路径与主 artifact 输出路径相同，直接返回 invalid input
+9. 根据 `emit` 分派：
    - `llvm-ir` 直接写 `.ll`
    - `obj` 先出中间 `.codegen.ll` 再调用 compiler
    - `exe` 先出中间 `.codegen.ll` 和 `.codegen.obj/.o` 再调用 linker/compiler
    - `dylib` 先筛出 public 顶层 `extern "c"` 导出符号；若为空则直接返回 invalid input，再出中间 `.codegen.ll` 和 `.codegen.obj/.o` 调用 shared-library link
    - `staticlib` 先出中间 `.codegen.ll` 和 `.codegen.obj/.o` 再调用 archiver
-9. 失败时按阶段尽量保留中间产物，方便排查 toolchain 问题。
+10. 若主 artifact 成功且存在 build-side C header 请求：
+   - 复用同一份 `source + Analysis` 调用 header 投影
+   - 成功则把 `CHeaderArtifact` 挂到 `BuildArtifact`
+   - 失败则删除刚生成的主 library artifact，再把 header 错误映射回 build error
+11. 失败时按阶段尽量保留中间产物，方便排查 toolchain 问题。
 
 当前工具链探测/配置规则：
 
@@ -462,24 +472,28 @@
 1. 校验输入路径必须是单个文件。
 2. 读取源码文本。
 3. 复用 `analyze_source`，确保 parser / resolve / typeck diagnostics 和 build 路径一致。
-4. 根据 `CHeaderSurface` 分类可投影的函数：
+4. `emit_c_header_from_analysis` 作为内部 helper，允许 build orchestration 直接复用已有的 `source + Analysis`，避免 build sidecar 重新 parse / resolve / typeck。
+5. 根据 `CHeaderSurface` 分类可投影的函数：
    - `exports` 只收集 public 顶层 `extern "c"` 定义
    - `imports` 收集顶层 `extern "c"` 声明与 `extern "c"` block 成员声明
    - `both` 按源码顺序合并 import/export surface
-5. 对选中的 function：
+6. 对选中的 function：
    - 拒绝 generics、`where`、`async`、`unsafe fn`
    - 使用 `ql-typeck::lower_type` 把 HIR type 投影到当前 C 支持矩阵
-6. 输出固定结构：
+7. 输出固定结构：
    - include guard
    - `#include <stdbool.h>`
    - `#include <stdint.h>`
    - `extern "C"` wrapper
    - declaration list
-7. 默认输出路径按 surface 选择：
+8. 默认输出路径按 surface 选择：
    - `exports` -> `target/ql/ffi/<stem>.h`
    - `imports` -> `target/ql/ffi/<stem>.imports.h`
    - `both` -> `target/ql/ffi/<stem>.ffi.h`
-8. include guard 按最终输出头文件名生成，确保 export/import/both 三份头文件能并存。
+9. include guard 按最终输出头文件名生成，确保 export/import/both 三份头文件能并存。
+10. build-side sidecar 与 `ql ffi header` 共享同一套 render/write 逻辑，只是默认输出目录不同：
+    - `ql ffi header` 默认写 `target/ql/ffi/`
+    - `ql build --header*` 默认写主 library artifact 同目录
 
 这层的关键纪律是：头文件生成依然建立在 analysis 之后，而不是让 CLI 重新扫描语法树或手写一套类型映射。
 

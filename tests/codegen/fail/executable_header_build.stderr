@@ -1,0 +1,1 @@
+error: build-side C header generation only supports `dylib` and `staticlib`, found `executable`

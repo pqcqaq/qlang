@@ -17,6 +17,8 @@ fn codegen_snapshots_match() {
             mock_compiler: false,
             mock_archiver: false,
             archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
         },
         PassCase {
             name: "extern_c_build_llvm_ir",
@@ -26,6 +28,8 @@ fn codegen_snapshots_match() {
             mock_compiler: false,
             mock_archiver: false,
             archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
         },
         PassCase {
             name: "extern_c_export_llvm_ir",
@@ -35,6 +39,8 @@ fn codegen_snapshots_match() {
             mock_compiler: false,
             mock_archiver: false,
             archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
         },
         PassCase {
             name: "minimal_build_object",
@@ -44,6 +50,8 @@ fn codegen_snapshots_match() {
             mock_compiler: true,
             mock_archiver: false,
             archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
         },
         PassCase {
             name: "minimal_build_executable",
@@ -53,6 +61,8 @@ fn codegen_snapshots_match() {
             mock_compiler: true,
             mock_archiver: false,
             archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
         },
         PassCase {
             name: "extern_c_export_dylib",
@@ -62,6 +72,19 @@ fn codegen_snapshots_match() {
             mock_compiler: true,
             mock_archiver: false,
             archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
+            name: "extern_c_export_dylib_with_header",
+            source_relative: "fixtures/codegen/pass/extern_c_export.ql",
+            emit: "dylib",
+            expected_relative: "tests/codegen/pass/extern_c_export.dylib.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: Some("exports"),
+            expected_header_relative: Some("tests/codegen/pass/extern_c_export.h"),
         },
         PassCase {
             name: "minimal_library_staticlib",
@@ -71,6 +94,8 @@ fn codegen_snapshots_match() {
             mock_compiler: true,
             mock_archiver: true,
             archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
         },
         PassCase {
             name: "extern_c_library_staticlib",
@@ -80,6 +105,19 @@ fn codegen_snapshots_match() {
             mock_compiler: true,
             mock_archiver: true,
             archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
+            name: "extern_c_library_staticlib_with_import_header",
+            source_relative: "fixtures/codegen/pass/extern_c_library.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/extern_c_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: Some("imports"),
+            expected_header_relative: Some("tests/codegen/pass/extern_c_library.imports.h"),
         },
         PassCase {
             name: "extern_c_top_level_library_staticlib",
@@ -89,6 +127,8 @@ fn codegen_snapshots_match() {
             mock_compiler: true,
             mock_archiver: true,
             archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
         },
     ];
     let fail_cases = vec![
@@ -97,30 +137,42 @@ fn codegen_snapshots_match() {
             source_relative: "tests/codegen/fail/unsupported_closure_build.ql",
             emit: "llvm-ir",
             expected_stderr_relative: "tests/codegen/fail/unsupported_closure_build.stderr",
+            extra_args: &[],
         },
         FailCase {
             name: "unsupported_extern_rust_abi_build",
             source_relative: "tests/codegen/fail/unsupported_extern_rust_abi_build.ql",
             emit: "llvm-ir",
             expected_stderr_relative: "tests/codegen/fail/unsupported_extern_rust_abi_build.stderr",
+            extra_args: &[],
         },
         FailCase {
             name: "unsupported_extern_rust_abi_definition_build",
             source_relative: "tests/codegen/fail/unsupported_extern_rust_abi_definition_build.ql",
             emit: "llvm-ir",
             expected_stderr_relative: "tests/codegen/fail/unsupported_extern_rust_abi_definition_build.stderr",
+            extra_args: &[],
         },
         FailCase {
             name: "unsupported_function_value_build",
             source_relative: "tests/codegen/fail/unsupported_function_value_build.ql",
             emit: "llvm-ir",
             expected_stderr_relative: "tests/codegen/fail/unsupported_function_value_build.stderr",
+            extra_args: &[],
         },
         FailCase {
             name: "dylib_requires_export_build",
             source_relative: "tests/codegen/fail/dylib_requires_export_build.ql",
             emit: "dylib",
             expected_stderr_relative: "tests/codegen/fail/dylib_requires_export_build.stderr",
+            extra_args: &[],
+        },
+        FailCase {
+            name: "executable_header_build",
+            source_relative: "fixtures/codegen/pass/minimal_build.ql",
+            emit: "exe",
+            expected_stderr_relative: "tests/codegen/fail/executable_header_build.stderr",
+            extra_args: &["--header"],
         },
     ];
 
@@ -154,6 +206,8 @@ struct PassCase {
     mock_compiler: bool,
     mock_archiver: bool,
     archiver_style: Option<&'static str>,
+    header_surface: Option<&'static str>,
+    expected_header_relative: Option<&'static str>,
 }
 
 #[derive(Clone, Copy)]
@@ -162,6 +216,7 @@ struct FailCase {
     source_relative: &'static str,
     emit: &'static str,
     expected_stderr_relative: &'static str,
+    extra_args: &'static [&'static str],
 }
 
 struct TempDir {
@@ -208,6 +263,13 @@ fn run_pass_case(workspace_root: &Path, case: &PassCase) -> Result<(), String> {
         "--output",
         &output_path.to_string_lossy(),
     ]);
+    if let Some(surface) = case.header_surface {
+        if surface == "exports" {
+            command.arg("--header");
+        } else {
+            command.args(["--header-surface", surface]);
+        }
+    }
 
     let mut compiler_wrapper = None;
     if case.mock_compiler {
@@ -265,6 +327,34 @@ fn run_pass_case(workspace_root: &Path, case: &PassCase) -> Result<(), String> {
         ));
     }
 
+    if let Some(expected_header_relative) = case.expected_header_relative {
+        let expected_header_path = workspace_root.join(expected_header_relative);
+        let expected_header = normalize_artifact(&normalize(
+            &fs::read_to_string(&expected_header_path).unwrap_or_else(|_| {
+                panic!(
+                    "read expected header snapshot `{}`",
+                    expected_header_path.display()
+                )
+            }),
+        ));
+        let surface = case
+            .header_surface
+            .expect("header snapshots require an explicit surface");
+        let header_output_path =
+            default_sidecar_header_output_path(&output_path, case.source_relative, surface);
+        let actual_header = normalize_artifact(&normalize(
+            &fs::read_to_string(&header_output_path).unwrap_or_else(|_| {
+                panic!("read generated header `{}`", header_output_path.display())
+            }),
+        ));
+        if actual_header != expected_header {
+            return Err(format!(
+                "[{}] header snapshot mismatch\n--- expected ---\n{}\n--- actual ---\n{}",
+                case.name, expected_header, actual_header
+            ));
+        }
+    }
+
     let leftovers = fs::read_dir(temp.path())
         .unwrap_or_else(|_| panic!("read temp dir `{}`", temp.path().display()))
         .filter_map(Result::ok)
@@ -299,16 +389,17 @@ fn run_fail_case(workspace_root: &Path, case: &FailCase) -> Result<(), String> {
         )
     }));
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ql"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ql"));
+    command
         .current_dir(workspace_root)
-        .args(["build", case.source_relative, "--emit", case.emit])
-        .output()
-        .unwrap_or_else(|_| {
-            panic!(
-                "run `ql build {} --emit {}`",
-                case.source_relative, case.emit
-            )
-        });
+        .args(["build", case.source_relative, "--emit", case.emit]);
+    command.args(case.extra_args);
+    let output = command.output().unwrap_or_else(|_| {
+        panic!(
+            "run `ql build {} --emit {}`",
+            case.source_relative, case.emit
+        )
+    });
 
     let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
     let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
@@ -378,6 +469,29 @@ fn artifact_output_path(root: &Path, emit: &str) -> PathBuf {
         }),
         other => panic!("unsupported emit kind `{other}`"),
     }
+}
+
+fn default_sidecar_header_output_path(
+    artifact_path: &Path,
+    source_relative: &str,
+    surface: &str,
+) -> PathBuf {
+    let stem = Path::new(source_relative)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("module");
+    let file_name = match surface {
+        "exports" => format!("{stem}.h"),
+        "imports" => format!("{stem}.imports.h"),
+        "both" => format!("{stem}.ffi.h"),
+        other => panic!("unsupported header surface `{other}`"),
+    };
+
+    artifact_path
+        .parent()
+        .expect("artifact output should have a parent directory")
+        .join(file_name)
 }
 
 fn render_expected_snapshot(snapshot: &str) -> String {
