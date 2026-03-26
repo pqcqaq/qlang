@@ -120,6 +120,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: Some("tests/codegen/pass/extern_c_library.imports.h"),
         },
         PassCase {
+            name: "extern_c_import_top_level_staticlib_with_both_header",
+            source_relative: "tests/ffi/pass/extern_c_import_top_level.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/extern_c_import_top_level.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: Some("both"),
+            expected_header_relative: Some("tests/codegen/pass/extern_c_import_top_level.ffi.h"),
+        },
+        PassCase {
             name: "extern_c_top_level_library_staticlib",
             source_relative: "fixtures/codegen/pass/extern_c_top_level_library.ql",
             emit: "staticlib",

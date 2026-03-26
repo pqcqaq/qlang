@@ -295,6 +295,7 @@ build-side sidecar 默认输出路径：
 
 - `crates/ql-cli/tests/ffi.rs`
 - `tests/ffi/pass/`
+- `tests/ffi/pass/*.header-surface`
 
 静态库回归会在 clang-style compiler 和 archiver 可用时：
 
@@ -302,6 +303,10 @@ build-side sidecar 默认输出路径：
 - 在同一次 `ql build --header-output` 里生成对应的 C 头文件
 - 用包含该头文件的真实 C harness 链接该库
 - 运行宿主可执行文件确认导出符号可被调用
+- imported-host 夹具还会通过 `both` surface header 同时拿到 imported/exported 声明，并验证 Qlang 导出函数体内的 imported C 调用能真实命中宿主实现
+- 当前 imported-host staticlib 已覆盖：
+  - extern block declaration
+  - top-level extern declaration
 
 共享库回归会在 clang-style compiler 可用时：
 
@@ -309,6 +314,12 @@ build-side sidecar 默认输出路径：
 - 在同一次 `ql build --header-output` 里生成对应的 C 头文件
 - 用真实 C loader harness 编译宿主可执行文件
 - 运行宿主可执行文件，并在进程内通过 `LoadLibraryA` / `dlopen` 解析并调用导出符号
+
+当前 `.header-surface` fixture 元数据规则：
+
+- 不存在时默认 `exports`
+- 存在时内容必须是 `exports` / `imports` / `both`
+- 这让 FFI harness 可以在不硬编码 case 名称的前提下，为 imported-host 夹具切换到 combined surface
 
 ### `qlsp`
 

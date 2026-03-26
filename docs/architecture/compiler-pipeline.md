@@ -268,6 +268,9 @@ source
 - 黑盒 `ql build` snapshot 现在还额外锁住 library build sidecar header：
   - `tests/codegen/pass/extern_c_export.h`
   - `tests/codegen/pass/extern_c_library.imports.h`
+- 黑盒 `ql build` snapshot 现在也锁住 build-side `both` header 在 imported-host library 上的输出：
+  - `tests/codegen/pass/extern_c_import_top_level.ffi.h`
 - 真实 FFI smoke harness 现在不再手写 prototype，并且已经改成在同一次 `ql build --header-output` 中同时拿到 library artifact 与 C header，再让宿主消费生成的 header
+- 真实 FFI smoke harness 现在还覆盖“Qlang 导出函数体内调用宿主提供的 imported C symbol”，并且同时验证 extern block 与 top-level extern 两种导入语法
 
 这也是目录结构设计要前置考虑的原因。

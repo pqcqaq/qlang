@@ -79,6 +79,42 @@ struct FfiCase {
     name: String,
     ql_path: PathBuf,
     harness_path: PathBuf,
+    header_surface: HeaderSurface,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum HeaderSurface {
+    #[default]
+    Exports,
+    Imports,
+    Both,
+}
+
+impl HeaderSurface {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "exports" => Some(Self::Exports),
+            "imports" => Some(Self::Imports),
+            "both" => Some(Self::Both),
+            _ => None,
+        }
+    }
+
+    fn cli_value(self) -> &'static str {
+        match self {
+            Self::Exports => "exports",
+            Self::Imports => "imports",
+            Self::Both => "both",
+        }
+    }
+
+    fn header_file_name(self, stem: &str) -> String {
+        match self {
+            Self::Exports => format!("{stem}.h"),
+            Self::Imports => format!("{stem}.imports.h"),
+            Self::Both => format!("{stem}.ffi.h"),
+        }
+    }
 }
 
 struct TempDir {
@@ -109,7 +145,7 @@ impl Drop for TempDir {
 
 fn run_static_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> Result<(), String> {
     let temp = TempDir::new(&format!("ql-ffi-static-{}", case.name));
-    let header = header_output_path(temp.path(), &case.name);
+    let header = header_output_path(temp.path(), &case.name, case.header_surface);
     let staticlib = static_library_output_path(temp.path(), &case.name);
     let executable = executable_output_path(temp.path(), &case.name);
     let relative_ql = relative_ql_path(workspace_root, &case.ql_path);
@@ -120,6 +156,7 @@ fn run_static_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> R
         &relative_ql,
         "staticlib",
         &staticlib,
+        case.header_surface,
         Some(&header),
     )?;
     if !staticlib.is_file() {
@@ -193,7 +230,7 @@ fn run_static_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> R
 
 fn run_dynamic_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> Result<(), String> {
     let temp = TempDir::new(&format!("ql-ffi-shared-{}", case.name));
-    let header = header_output_path(temp.path(), &case.name);
+    let header = header_output_path(temp.path(), &case.name, case.header_surface);
     let dynamic_library = dynamic_library_output_path(temp.path(), &case.name);
     let executable = executable_output_path(temp.path(), &format!("{}_shared", case.name));
     let relative_ql = relative_ql_path(workspace_root, &case.ql_path);
@@ -204,6 +241,7 @@ fn run_dynamic_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> 
         &relative_ql,
         "dylib",
         &dynamic_library,
+        case.header_surface,
         Some(&header),
     )?;
     if !dynamic_library.is_file() {
@@ -317,10 +355,12 @@ fn collect_static_ffi_cases(root: &Path) -> Vec<FfiCase> {
             harness_path.display(),
             path.display()
         );
+        let header_surface = read_header_surface_metadata(&path);
         cases.push(FfiCase {
             name,
             ql_path: path,
             harness_path,
+            header_surface,
         });
     }
     cases.sort_by(|left, right| left.name.cmp(&right.name));
@@ -347,10 +387,12 @@ fn collect_dynamic_ffi_cases(root: &Path) -> Vec<FfiCase> {
         if !harness_path.is_file() {
             continue;
         }
+        let header_surface = read_header_surface_metadata(&path);
         cases.push(FfiCase {
             name,
             ql_path: path,
             harness_path,
+            header_surface,
         });
     }
     cases.sort_by(|left, right| left.name.cmp(&right.name));
@@ -436,8 +478,8 @@ fn dynamic_library_output_path(root: &Path, stem: &str) -> PathBuf {
     }
 }
 
-fn header_output_path(root: &Path, stem: &str) -> PathBuf {
-    root.join(format!("{stem}.h"))
+fn header_output_path(root: &Path, stem: &str, surface: HeaderSurface) -> PathBuf {
+    root.join(surface.header_file_name(stem))
 }
 
 fn executable_output_path(root: &Path, stem: &str) -> PathBuf {
@@ -458,6 +500,7 @@ fn run_ql_build(
     relative_ql: &str,
     emit: &str,
     output_path: &Path,
+    header_surface: HeaderSurface,
     header_path: Option<&Path>,
 ) -> Result<(), String> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ql"));
@@ -470,6 +513,7 @@ fn run_ql_build(
         &output_path.to_string_lossy(),
     ]);
     if let Some(header_path) = header_path {
+        command.args(["--header-surface", header_surface.cli_value()]);
         command.args(["--header-output", &header_path.to_string_lossy()]);
     }
     let build = command
@@ -488,4 +532,25 @@ fn run_ql_build(
         ));
     }
     Ok(())
+}
+
+fn read_header_surface_metadata(ql_path: &Path) -> HeaderSurface {
+    let metadata_path = ql_path.with_extension("header-surface");
+    if !metadata_path.is_file() {
+        return HeaderSurface::Exports;
+    }
+
+    let contents = fs::read_to_string(&metadata_path).unwrap_or_else(|_| {
+        panic!(
+            "read FFI header-surface metadata `{}`",
+            metadata_path.display()
+        )
+    });
+    HeaderSurface::parse(contents.trim()).unwrap_or_else(|| {
+        panic!(
+            "unsupported FFI header-surface `{}` in `{}`",
+            contents.trim(),
+            metadata_path.display()
+        )
+    })
 }
