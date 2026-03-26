@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use ql_ast::{Path, ReceiverKind};
 use ql_hir::{
-    BlockId, ExprId, ExprKind, Field, Function, FunctionRef, GenericParam, ItemId, ItemKind,
-    LocalId, MatchArm, Module, Param, PatternId, PatternKind, TypeAlias, TypeId, TypeKind,
-    WherePredicate,
+    BlockId, EnumVariant, ExprId, ExprKind, Field, Function, FunctionRef, GenericParam, ItemId,
+    ItemKind, LocalId, MatchArm, Module, Param, PatternId, PatternKind, TypeAlias, TypeId,
+    TypeKind, VariantFields, WherePredicate,
 };
 use ql_resolve::{
     BuiltinType, GenericBinding, ParamBinding, ResolutionMap, ScopeId, TypeResolution,
@@ -20,6 +20,7 @@ pub enum SymbolKind {
     Static,
     Struct,
     Enum,
+    Variant,
     Trait,
     TypeAlias,
     Field,
@@ -141,6 +142,7 @@ struct SymbolData {
 enum SymbolKey {
     Item(ItemId),
     Function(FunctionRef),
+    Variant(VariantTarget),
     Field(FieldTarget),
     Method(MethodTarget),
     DefinitionSpan(Span),
@@ -160,12 +162,19 @@ struct QueryIndexBuilder<'a> {
     occurrences: Vec<IndexedSymbol>,
     item_defs: HashMap<ItemId, SymbolData>,
     function_defs: HashMap<FunctionRef, SymbolData>,
+    variant_defs: HashMap<VariantTarget, SymbolData>,
     field_defs: HashMap<FieldTarget, SymbolData>,
     method_defs: HashMap<MethodTarget, SymbolData>,
     local_defs: HashMap<LocalId, SymbolData>,
     param_defs: HashMap<ParamBinding, SymbolData>,
     generic_defs: HashMap<GenericBinding, SymbolData>,
     self_defs: HashMap<ScopeId, SymbolData>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct VariantTarget {
+    item_id: ItemId,
+    variant_index: usize,
 }
 
 impl<'a> QueryIndexBuilder<'a> {
@@ -183,6 +192,7 @@ impl<'a> QueryIndexBuilder<'a> {
             occurrences: Vec::new(),
             item_defs: HashMap::new(),
             function_defs: HashMap::new(),
+            variant_defs: HashMap::new(),
             field_defs: HashMap::new(),
             method_defs: HashMap::new(),
             local_defs: HashMap::new(),
@@ -307,6 +317,16 @@ impl<'a> QueryIndexBuilder<'a> {
 
                 if let Some(scope) = self.resolution.item_scope(item_id) {
                     self.index_generic_bindings(scope, &enum_decl.generics);
+                }
+                for (variant_index, variant) in enum_decl.variants.iter().enumerate() {
+                    self.define_variant(
+                        VariantTarget {
+                            item_id,
+                            variant_index,
+                        },
+                        &enum_decl.name,
+                        variant,
+                    );
                 }
             }
             ItemKind::Trait(trait_decl) => {
@@ -741,14 +761,17 @@ impl<'a> QueryIndexBuilder<'a> {
                     self.index_pattern_use(item);
                 }
             }
-            PatternKind::Path(_) | PatternKind::TupleStruct { .. } | PatternKind::Struct { .. } => {
+            PatternKind::Path(path)
+            | PatternKind::TupleStruct { path, .. }
+            | PatternKind::Struct { path, .. } => {
                 if let Some(resolution) = self.resolution.pattern_resolution(pattern_id)
                     && let Some(symbol) = self.symbol_for_value_resolution(
                         resolution,
                         self.resolution.pattern_scope(pattern_id),
                     )
                 {
-                    self.push_occurrence(self.root_span(pattern.span), &symbol);
+                    self.push_occurrence(self.path_root_span(path, pattern.span), &symbol);
+                    self.index_variant_value_path_use(path, resolution);
                 }
 
                 match &pattern.kind {
@@ -830,13 +853,19 @@ impl<'a> QueryIndexBuilder<'a> {
                 }
             }
             ExprKind::Member {
-                object, field_span, ..
+                object,
+                field,
+                field_span,
             } => {
                 self.index_expr_use(*object);
                 if let Some(target) = self.typeck.member_target(expr_id)
                     && let Some(symbol) = self.symbol_for_member_target(target)
                 {
                     self.push_occurrence(*field_span, &symbol);
+                } else if let Some(ValueResolution::Item(item_id)) =
+                    self.resolution.expr_resolution(expr_id)
+                {
+                    self.index_variant_member_use(*item_id, field, *field_span);
                 }
             }
             ExprKind::Bracket { target, items } => {
@@ -845,11 +874,12 @@ impl<'a> QueryIndexBuilder<'a> {
                     self.index_expr_use(item);
                 }
             }
-            ExprKind::StructLiteral { fields, .. } => {
+            ExprKind::StructLiteral { path, fields } => {
                 if let Some(resolution) = self.resolution.struct_literal_resolution(expr_id)
                     && let Some(symbol) = self.symbol_for_type_resolution(resolution)
                 {
-                    self.push_occurrence(self.root_span(expr.span), &symbol);
+                    self.push_occurrence(self.path_root_span(path, expr.span), &symbol);
+                    self.index_variant_type_path_use(path, resolution);
                 }
                 for field in fields {
                     self.index_expr_use(field.value);
@@ -867,11 +897,11 @@ impl<'a> QueryIndexBuilder<'a> {
         let ty = self.module.ty(type_id);
         match &ty.kind {
             TypeKind::Pointer { inner, .. } => self.index_type_use(*inner),
-            TypeKind::Named { args, .. } => {
+            TypeKind::Named { path, args } => {
                 if let Some(resolution) = self.resolution.type_resolution(type_id)
                     && let Some(symbol) = self.symbol_for_type_resolution(resolution)
                 {
-                    self.push_occurrence(self.root_span(ty.span), &symbol);
+                    self.push_occurrence(self.path_root_span(path, ty.span), &symbol);
                 }
                 for &arg in args {
                     self.index_type_use(arg);
@@ -928,6 +958,19 @@ impl<'a> QueryIndexBuilder<'a> {
         if let Some(function_ref) = function_ref {
             self.function_defs.insert(function_ref, symbol);
         }
+    }
+
+    fn define_variant(&mut self, target: VariantTarget, enum_name: &str, variant: &EnumVariant) {
+        let symbol = SymbolData {
+            key: SymbolKey::Variant(target),
+            kind: SymbolKind::Variant,
+            name: variant.name.clone(),
+            detail: render_variant_detail(self.module, enum_name, variant),
+            ty: Some(enum_name.to_owned()),
+            definition_span: Some(variant.name_span),
+        };
+        self.push_occurrence(variant.name_span, &symbol);
+        self.variant_defs.insert(target, symbol);
     }
 
     fn define_field(&mut self, target: FieldTarget, field: &Field) {
@@ -1081,6 +1124,29 @@ impl<'a> QueryIndexBuilder<'a> {
         }
     }
 
+    fn symbol_for_variant_target(&self, target: VariantTarget) -> Option<SymbolData> {
+        self.variant_defs.get(&target).cloned()
+    }
+
+    fn variant_target_for_enum_item(
+        &self,
+        item_id: ItemId,
+        variant_name: &str,
+    ) -> Option<VariantTarget> {
+        let ItemKind::Enum(enum_decl) = &self.module.item(item_id).kind else {
+            return None;
+        };
+        enum_decl
+            .variants
+            .iter()
+            .enumerate()
+            .find(|(_, variant)| variant.name == variant_name)
+            .map(|(variant_index, _)| VariantTarget {
+                item_id,
+                variant_index,
+            })
+    }
+
     fn lookup_self(&self, scope: Option<ScopeId>) -> Option<SymbolData> {
         let mut next = scope;
         while let Some(scope_id) = next {
@@ -1109,6 +1175,60 @@ impl<'a> QueryIndexBuilder<'a> {
                 definition_span: symbol.definition_span,
             },
         });
+    }
+
+    fn index_variant_value_path_use(&mut self, path: &Path, resolution: &ValueResolution) {
+        let ValueResolution::Item(item_id) = resolution else {
+            return;
+        };
+        let Some(variant_name) = path.segments.last() else {
+            return;
+        };
+        let Some(variant_span) = path.last_segment_span() else {
+            return;
+        };
+        if path.segments.len() < 2 {
+            return;
+        }
+        if let Some(target) = self.variant_target_for_enum_item(*item_id, variant_name)
+            && let Some(symbol) = self.symbol_for_variant_target(target)
+        {
+            self.push_occurrence(variant_span, &symbol);
+        }
+    }
+
+    fn index_variant_type_path_use(&mut self, path: &Path, resolution: &TypeResolution) {
+        let TypeResolution::Item(item_id) = resolution else {
+            return;
+        };
+        let Some(variant_name) = path.segments.last() else {
+            return;
+        };
+        let Some(variant_span) = path.last_segment_span() else {
+            return;
+        };
+        if path.segments.len() < 2 {
+            return;
+        }
+        if let Some(target) = self.variant_target_for_enum_item(*item_id, variant_name)
+            && let Some(symbol) = self.symbol_for_variant_target(target)
+        {
+            self.push_occurrence(variant_span, &symbol);
+        }
+    }
+
+    fn index_variant_member_use(&mut self, item_id: ItemId, variant_name: &str, span: Span) {
+        if let Some(target) = self.variant_target_for_enum_item(item_id, variant_name)
+            && let Some(symbol) = self.symbol_for_variant_target(target)
+        {
+            self.push_occurrence(span, &symbol);
+        }
+    }
+
+    fn path_root_span(&self, path: &Path, fallback: Span) -> Span {
+        path.first_segment_span()
+            .filter(|span| !span.is_empty())
+            .unwrap_or_else(|| self.root_span(fallback))
     }
 
     fn root_span(&self, span: Span) -> Span {
@@ -1158,6 +1278,32 @@ fn render_function_signature(module: &Module, function: &Function) -> String {
 
     parts.push(signature);
     parts.join(" ")
+}
+
+fn render_variant_detail(module: &Module, enum_name: &str, variant: &EnumVariant) -> String {
+    match &variant.fields {
+        VariantFields::Unit => format!("variant {}.{}", enum_name, variant.name),
+        VariantFields::Tuple(items) => format!(
+            "variant {}.{}({})",
+            enum_name,
+            variant.name,
+            items
+                .iter()
+                .map(|type_id| render_type(module, *type_id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        VariantFields::Struct(fields) => format!(
+            "variant {}.{} {{ {} }}",
+            enum_name,
+            variant.name,
+            fields
+                .iter()
+                .map(|field| format!("{}: {}", field.name, render_type(module, field.ty)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }
 
 fn render_struct_detail(is_data: bool, name: &str, generics: &[GenericParam]) -> String {

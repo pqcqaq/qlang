@@ -273,7 +273,7 @@
 2. `index_uses`
    - 再遍历 type / pattern / expr，把 use-site 映射到前面登记的 symbol data
 3. 为每个 occurrence 绑定稳定 `SymbolKey`
-   - item / extern function / field / method / local / param / generic / receiver `self` 使用真实语义 ID
+   - item / extern function / variant / field / method / local / param / generic / receiver `self` 使用真实语义 ID
    - 暂时没有可解析语义 ID 的 declaration site 退化为 `DefinitionSpan`
    - import / builtin type 使用可稳定分组的轻量 key
 4. 把 occurrence 按 `(span.len(), span.start, span.end)` 排序
@@ -293,6 +293,7 @@
 - parameter
 - generic parameter
 - receiver `self`
+- enum variant token
 - struct field member token
 - unique method member token
 - named type root

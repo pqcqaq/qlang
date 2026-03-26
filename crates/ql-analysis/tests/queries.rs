@@ -347,6 +347,130 @@ fn main() -> Int {
 }
 
 #[test]
+fn variant_queries_follow_declarations_patterns_and_constructors() {
+    let source = r#"
+enum Command {
+    Retry(Int),
+    Config { retries: Int },
+}
+
+fn build(flag: Bool) -> Command {
+    if flag {
+        return Command.Retry(1)
+    }
+    return Command.Config { retries: 2 }
+}
+
+fn read(command: Command) -> Int {
+    match command {
+        Command.Retry(times) => times,
+        Command.Config { retries } => retries,
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+    let retry_use = source
+        .find(".Retry")
+        .map(|offset| offset + 1)
+        .expect("retry constructor should exist");
+    let config_literal_use = source
+        .find("Command.Config {")
+        .map(|offset| offset + "Command.".len())
+        .expect("config struct literal should exist");
+    let config_pattern_use = source
+        .rfind("Command.Config {")
+        .map(|offset| offset + "Command.".len())
+        .expect("config pattern should exist");
+
+    let retry_hover = analysis
+        .hover_at(retry_use)
+        .expect("retry variant hover should exist");
+    assert_eq!(retry_hover.kind, SymbolKind::Variant);
+    assert_eq!(retry_hover.detail, "variant Command.Retry(Int)");
+    assert_eq!(retry_hover.ty.as_deref(), Some("Command"));
+    assert_eq!(
+        retry_hover.definition_span,
+        Some(nth_span(source, "Retry", 1))
+    );
+    assert_eq!(
+        analysis.definition_at(retry_use),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Variant,
+            name: "Retry".to_owned(),
+            span: nth_span(source, "Retry", 1),
+        })
+    );
+    assert_eq!(
+        analysis.references_at(retry_use),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Variant,
+                name: "Retry".to_owned(),
+                span: nth_span(source, "Retry", 1),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Variant,
+                name: "Retry".to_owned(),
+                span: nth_span(source, "Retry", 2),
+                is_definition: false,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Variant,
+                name: "Retry".to_owned(),
+                span: nth_span(source, "Retry", 3),
+                is_definition: false,
+            },
+        ])
+    );
+
+    let config_hover = analysis
+        .hover_at(config_literal_use)
+        .expect("config variant hover should exist");
+    assert_eq!(config_hover.kind, SymbolKind::Variant);
+    assert_eq!(
+        config_hover.detail,
+        "variant Command.Config { retries: Int }"
+    );
+    assert_eq!(
+        config_hover.definition_span,
+        Some(nth_span(source, "Config", 1))
+    );
+    assert_eq!(
+        analysis.definition_at(config_pattern_use),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Variant,
+            name: "Config".to_owned(),
+            span: nth_span(source, "Config", 1),
+        })
+    );
+    assert_eq!(
+        analysis.references_at(config_literal_use),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Variant,
+                name: "Config".to_owned(),
+                span: nth_span(source, "Config", 1),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Variant,
+                name: "Config".to_owned(),
+                span: nth_span(source, "Config", 2),
+                is_definition: false,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Variant,
+                name: "Config".to_owned(),
+                span: nth_span(source, "Config", 3),
+                is_definition: false,
+            },
+        ])
+    );
+}
+
+#[test]
 fn extern_block_function_queries_follow_callable_declarations() {
     let source = r#"
 extern "c" {

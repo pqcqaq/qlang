@@ -27,16 +27,54 @@ pub struct UseItem {
 }
 
 /// Qualified package or type path using `.` separators.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Path {
     pub segments: Vec<String>,
+    pub segment_spans: Vec<Span>,
 }
 
 impl Path {
     pub fn new(segments: Vec<String>) -> Self {
-        Self { segments }
+        Self {
+            segment_spans: vec![Span::default(); segments.len()],
+            segments,
+        }
+    }
+
+    pub fn with_spans(segments: Vec<String>, segment_spans: Vec<Span>) -> Self {
+        debug_assert_eq!(segments.len(), segment_spans.len());
+        Self {
+            segments,
+            segment_spans,
+        }
+    }
+
+    pub fn segment_span(&self, index: usize) -> Option<Span> {
+        self.segment_spans
+            .get(index)
+            .copied()
+            .filter(|span| !span.is_empty())
+    }
+
+    pub fn first_segment_span(&self) -> Option<Span> {
+        self.segment_span(0)
+    }
+
+    pub fn last_segment_span(&self) -> Option<Span> {
+        self.segment_spans
+            .len()
+            .checked_sub(1)
+            .and_then(|index| self.segment_span(index))
     }
 }
+
+impl PartialEq for Path {
+    fn eq(&self, other: &Self) -> bool {
+        self.segments == other.segments
+    }
+}
+
+impl Eq for Path {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Visibility {

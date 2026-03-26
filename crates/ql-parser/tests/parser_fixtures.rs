@@ -395,3 +395,54 @@ impl Counter {
 
     assert_eq!(&source[receiver_span.start..receiver_span.end], "var self");
 }
+
+#[test]
+fn captures_precise_path_segment_spans_for_variant_uses() {
+    let source = r#"
+fn sample() {
+    let config = Command.Config { retries: 1 }
+    match config {
+        Command.Retry(times) => times,
+    }
+}
+"#;
+    let module = parse_source(source).expect("variant path fixture should parse");
+    let function = match &module.items[0].kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+    let body = function.body.as_ref().expect("function should have body");
+
+    let StmtKind::Let { value, .. } = &body.statements[0].kind else {
+        panic!("expected variant struct literal binding");
+    };
+    let ExprKind::StructLiteral { path, .. } = &value.kind else {
+        panic!("expected variant struct literal");
+    };
+    assert_eq!(
+        &source[path.first_segment_span().expect("root span").start
+            ..path.first_segment_span().expect("root span").end],
+        "Command"
+    );
+    assert_eq!(
+        &source[path.last_segment_span().expect("variant span").start
+            ..path.last_segment_span().expect("variant span").end],
+        "Config"
+    );
+
+    let match_expr = body
+        .tail
+        .as_ref()
+        .expect("match expression should be block tail");
+    let ExprKind::Match { arms, .. } = &match_expr.kind else {
+        panic!("expected match expression");
+    };
+    let PatternKind::TupleStruct { path, .. } = &arms[0].pattern.kind else {
+        panic!("expected tuple-struct variant pattern");
+    };
+    assert_eq!(
+        &source[path.last_segment_span().expect("variant span").start
+            ..path.last_segment_span().expect("variant span").end],
+        "Retry"
+    );
+}

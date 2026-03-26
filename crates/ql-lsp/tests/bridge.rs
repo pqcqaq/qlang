@@ -112,6 +112,31 @@ impl Counter {
 }
 
 #[test]
+fn hover_bridge_renders_markdown_for_variant_symbols() {
+    let source = r#"
+enum Command {
+    Retry(Int),
+}
+
+fn build() -> Command {
+    return Command.Retry(1)
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let variant_position = span_to_range(source, nth_span(source, "Retry", 2)).start;
+    let hover = hover_for_analysis(source, &analysis, variant_position)
+        .expect("variant hover should exist");
+
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown content");
+    };
+
+    assert!(markup.value.contains("**variant** `Retry`"));
+    assert!(markup.value.contains("variant Command.Retry(Int)"));
+    assert!(markup.value.contains("Type: `Command`"));
+}
+
+#[test]
 fn definition_bridge_returns_same_file_locations() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"

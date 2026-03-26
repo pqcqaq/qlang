@@ -339,6 +339,7 @@ LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
 - `ql-analysis` 已提供最小可用的 hover / definition / references 查询面
 - `ql-analysis` 现在还提供基于稳定 symbol identity 的 same-file references 查询面
 - struct field 与唯一 method candidate 的 member token 现在也能直接复用同一套查询面
+- enum variant declaration / pattern use / constructor use 现在也能直接复用同一套查询面
 - `qlsp` 的第一版已经落地在 `crates/ql-lsp`
 - 当前通过 stdio 运行，复用 `ql-analysis`
 - 当前已实现：
@@ -355,7 +356,7 @@ LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
   - compiler diagnostics -> LSP diagnostics
   - analysis hover / definition / references -> LSP response
 - 这意味着 `qlsp` 的第一版不需要重新发明一套“源码位置 -> 语义实体”的逻辑
-- 但这还不是完整 LSP 语义层：当前 member 精度只覆盖 struct field 与唯一 method candidate；variant / module-path、ambiguous method、completion / rename 仍需要后续继续补齐
+- 但这还不是完整 LSP 语义层：当前精度只覆盖 struct field、唯一 method candidate、enum variant token；module-path、ambiguous method、completion / rename 仍需要后续继续补齐
 
 ### `qfmt`
 

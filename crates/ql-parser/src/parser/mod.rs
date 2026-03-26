@@ -122,12 +122,16 @@ impl Parser {
     }
 
     fn parse_path(&mut self) -> Result<Path, ()> {
-        let mut segments = vec![self.expect_ident("expected identifier path segment")?];
+        let first = self.expect_ident_token("expected identifier path segment")?;
+        let mut segments = vec![first.text];
+        let mut segment_spans = vec![first.span];
         while self.at(TokenKind::Dot) && self.nth_kind(1) == TokenKind::Ident {
             self.bump();
-            segments.push(self.expect_ident("expected identifier after `.`")?);
+            let segment = self.expect_ident_token("expected identifier after `.`")?;
+            segments.push(segment.text);
+            segment_spans.push(segment.span);
         }
-        Ok(Path::new(segments))
+        Ok(Path::with_spans(segments, segment_spans))
     }
 
     fn synchronize_item(&mut self) {
@@ -235,10 +239,15 @@ impl Parser {
 
 fn expr_to_path(expr: &Expr) -> Option<Path> {
     match &expr.kind {
-        ExprKind::Name(name) => Some(Path::new(vec![name.clone()])),
-        ExprKind::Member { object, field, .. } => {
+        ExprKind::Name(name) => Some(Path::with_spans(vec![name.clone()], vec![expr.span])),
+        ExprKind::Member {
+            object,
+            field,
+            field_span,
+        } => {
             let mut path = expr_to_path(object)?;
             path.segments.push(field.clone());
+            path.segment_spans.push(*field_span);
             Some(path)
         }
         _ => None,

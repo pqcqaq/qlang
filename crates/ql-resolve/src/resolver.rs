@@ -568,10 +568,15 @@ impl<'module> Resolver<'module> {
     fn expr_path(&self, expr_id: ExprId) -> Option<Path> {
         let expr = self.module.expr(expr_id);
         match &expr.kind {
-            ExprKind::Name(name) => Some(Path::new(vec![name.clone()])),
-            ExprKind::Member { object, field, .. } => {
+            ExprKind::Name(name) => Some(Path::with_spans(vec![name.clone()], vec![expr.span])),
+            ExprKind::Member {
+                object,
+                field,
+                field_span,
+            } => {
                 let mut path = self.expr_path(*object)?;
                 path.segments.push(field.clone());
+                path.segment_spans.push(*field_span);
                 Some(path)
             }
             _ => None,
