@@ -141,6 +141,10 @@ export default defineConfig({
             link: "/plans/2026-03-26-phase6-import-alias-definition-precision"
           },
           {
+            text: "2026-03-26 P6 Field Rename Expansion",
+            link: "/plans/2026-03-26-phase6-field-rename-shorthand-expansion"
+          },
+          {
             text: "2026-03-26 P5 Dynamic Library Emission",
             link: "/plans/2026-03-26-phase5-dynamic-library-emission"
           },

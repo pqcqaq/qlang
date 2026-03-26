@@ -46,6 +46,7 @@ impl SymbolKind {
                 | Self::Variant
                 | Self::Trait
                 | Self::TypeAlias
+                | Self::Field
                 | Self::Local
                 | Self::Parameter
                 | Self::Generic
@@ -133,6 +134,7 @@ pub struct HoverInfo {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct QueryIndex {
     occurrences: Vec<IndexedSymbol>,
+    field_shorthand_occurrences: HashMap<FieldTarget, Vec<FieldShorthandOccurrence>>,
 }
 
 impl QueryIndex {
@@ -208,14 +210,27 @@ impl QueryIndex {
         }
 
         let replacement = new_name.to_owned();
-        let edits = self
+        let mut edits = self
             .occurrences_for_key(&entry.key)
             .into_iter()
             .map(|entry| RenameEdit {
                 span: entry.span,
                 replacement: replacement.clone(),
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        if let SymbolKey::Field(target) = &entry.key
+            && let Some(shorthand_occurrences) = self.field_shorthand_occurrences.get(target)
+        {
+            edits.extend(shorthand_occurrences.iter().map(|occurrence| RenameEdit {
+                span: occurrence.span,
+                replacement: format!("{replacement}: {}", occurrence.binding_text),
+            }));
+        }
+        edits.sort_by_key(|edit| (edit.span.start, edit.span.end));
+        edits.dedup_by(|left, right| {
+            left.span == right.span && left.replacement == right.replacement
+        });
 
         Ok(Some(RenameResult {
             kind: entry.hover.kind,
@@ -248,6 +263,12 @@ struct IndexedSymbol {
     span: Span,
     key: SymbolKey,
     hover: HoverInfo,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FieldShorthandOccurrence {
+    span: Span,
+    binding_text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -292,6 +313,7 @@ struct QueryIndexBuilder<'a> {
     generic_defs: HashMap<GenericBinding, SymbolData>,
     self_defs: HashMap<ScopeId, SymbolData>,
     import_defs: HashMap<ImportBinding, SymbolData>,
+    field_shorthand_occurrences: HashMap<FieldTarget, Vec<FieldShorthandOccurrence>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -323,14 +345,20 @@ impl<'a> QueryIndexBuilder<'a> {
             generic_defs: HashMap::new(),
             self_defs: HashMap::new(),
             import_defs: HashMap::new(),
+            field_shorthand_occurrences: HashMap::new(),
         }
     }
 
     fn finish(mut self) -> QueryIndex {
         self.occurrences
             .sort_by_key(|entry| (entry.span.len(), entry.span.start, entry.span.end));
+        for occurrences in self.field_shorthand_occurrences.values_mut() {
+            occurrences.sort_by_key(|occurrence| (occurrence.span.start, occurrence.span.end));
+            occurrences.dedup_by(|left, right| left.span == right.span);
+        }
         QueryIndex {
             occurrences: self.occurrences,
+            field_shorthand_occurrences: self.field_shorthand_occurrences,
         }
     }
 
@@ -923,13 +951,15 @@ impl<'a> QueryIndexBuilder<'a> {
                             _ => None,
                         };
                         for field in fields {
-                            if !field.is_shorthand
-                                && let Some(item_id) = field_owner
+                            if let Some(item_id) = field_owner
                                 && let Some(target) =
                                     self.field_target_for_struct_item(item_id, &field.name)
-                                && let Some(symbol) = self.field_defs.get(&target).cloned()
                             {
-                                self.push_occurrence(field.name_span, &symbol);
+                                if field.is_shorthand {
+                                    self.record_field_shorthand_occurrence(target, field.name_span);
+                                } else if let Some(symbol) = self.field_defs.get(&target).cloned() {
+                                    self.push_occurrence(field.name_span, &symbol);
+                                }
                             }
                             self.index_pattern_use(field.pattern);
                         }
@@ -1035,13 +1065,15 @@ impl<'a> QueryIndexBuilder<'a> {
                     self.index_variant_type_path_use(path, resolution);
                 }
                 for field in fields {
-                    if !field.is_shorthand
-                        && let Some(item_id) = field_owner
+                    if let Some(item_id) = field_owner
                         && let Some(target) =
                             self.field_target_for_struct_item(item_id, &field.name)
-                        && let Some(symbol) = self.field_defs.get(&target).cloned()
                     {
-                        self.push_occurrence(field.name_span, &symbol);
+                        if field.is_shorthand {
+                            self.record_field_shorthand_occurrence(target, field.name_span);
+                        } else if let Some(symbol) = self.field_defs.get(&target).cloned() {
+                            self.push_occurrence(field.name_span, &symbol);
+                        }
                     }
                     self.index_expr_use(field.value);
                 }
@@ -1283,6 +1315,20 @@ impl<'a> QueryIndexBuilder<'a> {
             ty: None,
             definition_span: Some(binding.definition_span),
         }
+    }
+
+    fn record_field_shorthand_occurrence(&mut self, target: FieldTarget, span: Span) {
+        let Some(binding_text) = self.source.get(span.start..span.end) else {
+            return;
+        };
+
+        self.field_shorthand_occurrences
+            .entry(target)
+            .or_default()
+            .push(FieldShorthandOccurrence {
+                span,
+                binding_text: binding_text.to_owned(),
+            });
     }
 
     fn symbol_for_member_target(&self, target: MemberTarget) -> Option<SymbolData> {

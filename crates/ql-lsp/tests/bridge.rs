@@ -354,3 +354,83 @@ fn build(cache: Map[String, Int]) -> Map[String, Int] {
 
     assert_eq!(edit, WorkspaceEdit::new(expected_changes));
 }
+
+#[test]
+fn rename_bridge_expands_shorthand_field_sites() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(point: Point, value: Int) -> Int {
+    let x = value
+    let built = Point { x }
+    match point {
+        Point { x } => x,
+    }
+    return point.x
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let literal_shorthand = source
+        .find("{ x }")
+        .map(|offset| offset + 2)
+        .expect("shorthand struct literal field should exist");
+    let pattern_shorthand = source
+        .rfind("{ x }")
+        .map(|offset| offset + 2)
+        .expect("shorthand struct pattern field should exist");
+    let member_use = source
+        .rfind(".x")
+        .map(|offset| offset + 1)
+        .expect("field member use should exist");
+    let member_position =
+        span_to_range(source, Span::new(member_use, member_use + "x".len())).start;
+
+    let prepare = prepare_rename_for_analysis(source, &analysis, member_position)
+        .expect("field prepare rename should exist");
+    let PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } = prepare else {
+        panic!("expected range plus placeholder");
+    };
+    assert_eq!(
+        range,
+        span_to_range(source, Span::new(member_use, member_use + "x".len()))
+    );
+    assert_eq!(placeholder, "x");
+
+    let edit = rename_for_analysis(&uri, source, &analysis, member_position, "coord_x")
+        .expect("rename should validate")
+        .expect("rename should produce edits");
+
+    let mut expected_changes = HashMap::new();
+    expected_changes.insert(
+        uri,
+        vec![
+            TextEdit::new(
+                span_to_range(source, nth_span(source, "x", 1)),
+                "coord_x".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(
+                    source,
+                    Span::new(literal_shorthand, literal_shorthand + "x".len()),
+                ),
+                "coord_x: x".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(
+                    source,
+                    Span::new(pattern_shorthand, pattern_shorthand + "x".len()),
+                ),
+                "coord_x: x".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(source, Span::new(member_use, member_use + "x".len())),
+                "coord_x".to_owned(),
+            ),
+        ],
+    );
+
+    assert_eq!(edit, WorkspaceEdit::new(expected_changes));
+}

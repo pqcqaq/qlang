@@ -433,7 +433,40 @@ fn read(point: Point, value: Int) -> Int {
             },
         ])
     );
-    assert_eq!(analysis.prepare_rename_at(literal_field_x), None);
+    assert_eq!(
+        analysis.prepare_rename_at(literal_field_x),
+        Some(ql_analysis::RenameTarget {
+            kind: SymbolKind::Field,
+            name: "x".to_owned(),
+            span: Span::new(literal_field_x, literal_field_x + "x".len()),
+        })
+    );
+    assert_eq!(
+        analysis.rename_at(literal_field_x, "coord_x"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Field,
+            old_name: "x".to_owned(),
+            new_name: "coord_x".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 1),
+                    replacement: "coord_x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 2),
+                    replacement: "coord_x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 3),
+                    replacement: "coord_x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 4),
+                    replacement: "coord_x".to_owned(),
+                },
+            ],
+        }))
+    );
 }
 
 #[test]
@@ -462,6 +495,65 @@ fn read(value: Int) -> Int {
     assert_eq!(hover.kind, SymbolKind::Local);
     assert_eq!(hover.name, "x");
     assert_eq!(hover.definition_span, Some(nth_span(source, "x", 2)));
+}
+
+#[test]
+fn field_rename_expands_shorthand_struct_sites() {
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(point: Point, value: Int) -> Int {
+    let x = value
+    let built = Point { x }
+    match point {
+        Point { x } => x,
+    }
+    return point.x
+}
+"#;
+
+    let analysis = analyzed(source);
+    let literal_shorthand = source
+        .find("{ x }")
+        .map(|offset| offset + 2)
+        .expect("shorthand struct literal field should exist");
+    let pattern_shorthand = source
+        .rfind("{ x }")
+        .map(|offset| offset + 2)
+        .expect("shorthand struct pattern field should exist");
+    let member_use = source
+        .rfind(".x")
+        .map(|offset| offset + 1)
+        .expect("field member use should exist");
+
+    assert_eq!(
+        analysis.rename_at(member_use, "coord_x"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Field,
+            old_name: "x".to_owned(),
+            new_name: "coord_x".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 1),
+                    replacement: "coord_x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: Span::new(literal_shorthand, literal_shorthand + "x".len()),
+                    replacement: "coord_x: x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: Span::new(pattern_shorthand, pattern_shorthand + "x".len()),
+                    replacement: "coord_x: x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: Span::new(member_use, member_use + "x".len()),
+                    replacement: "coord_x".to_owned(),
+                },
+            ],
+        }))
+    );
 }
 
 #[test]
@@ -731,7 +823,7 @@ fn id(value: Int) -> Int {
 }
 
 #[test]
-fn rename_queries_skip_unsupported_symbols() {
+fn rename_queries_support_fields_and_skip_remaining_unsupported_symbols() {
     let source = r#"
 use std.collections.HashMap as Map
 
@@ -770,7 +862,14 @@ impl Counter {
         })
     );
     assert_eq!(analysis.prepare_rename_at(builtin_use), None);
-    assert_eq!(analysis.prepare_rename_at(field_use), None);
+    assert_eq!(
+        analysis.prepare_rename_at(field_use),
+        Some(ql_analysis::RenameTarget {
+            kind: SymbolKind::Field,
+            name: "value".to_owned(),
+            span: Span::new(field_use, field_use + "value".len()),
+        })
+    );
     assert_eq!(analysis.prepare_rename_at(method_use), None);
     assert_eq!(analysis.prepare_rename_at(self_use), None);
 
@@ -792,7 +891,24 @@ impl Counter {
             ],
         }))
     );
-    assert_eq!(analysis.rename_at(field_use, "renamed"), Ok(None));
+    assert_eq!(
+        analysis.rename_at(field_use, "count"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Field,
+            old_name: "value".to_owned(),
+            new_name: "count".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "value", 1),
+                    replacement: "count".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: Span::new(field_use, field_use + "value".len()),
+                    replacement: "count".to_owned(),
+                },
+            ],
+        }))
+    );
     assert_eq!(analysis.rename_at(method_use, "renamed"), Ok(None));
 }
 

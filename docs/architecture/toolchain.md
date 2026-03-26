@@ -362,9 +362,9 @@ LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
   - compiler diagnostics -> LSP diagnostics
   - analysis hover / definition / references / rename -> LSP response
 - 这意味着 `qlsp` 的第一版不需要重新发明一套“源码位置 -> 语义实体”的逻辑
-- 当前 same-file rename 也明确只开放保守符号集：function / const / static / struct / enum / variant / trait / type alias / local / parameter / generic / import
-- 显式字段标签虽然已经能 hover / definition / references 到 struct field，但 shorthand `Point { x }` token 仍故意保守，不会提前开放 field rename
-- 但这还不是完整 LSP 语义层：当前精度只覆盖 struct field、显式字段标签、唯一 method candidate、enum variant token；module-path、ambiguous method、completion、field-or-method rename 和 cross-file rename 仍需要后续继续补齐
+- 当前 same-file rename 也明确只开放保守符号集：function / const / static / struct / enum / variant / trait / type alias / local / parameter / generic / import / field
+- 显式字段标签虽然已经能 hover / definition / references 到 struct field，shorthand `Point { x }` token 仍故意保守地继续解析为 local/binding；但从 source-backed field symbol 发起 rename 时，这些 shorthand site 会被自动扩写成显式标签
+- 但这还不是完整 LSP 语义层：当前精度只覆盖 struct field、显式字段标签、唯一 method candidate、enum variant token；module-path、ambiguous method、completion、method rename、从 shorthand field token 本身发起的 rename 和 cross-file rename 仍需要后续继续补齐
 
 ### `qfmt`
 

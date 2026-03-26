@@ -313,14 +313,14 @@
 3. 新名字先走 lexer 级 identifier 校验
 4. 裸关键字直接拒绝；确实要用关键字时，要求用户显式传入转义标识符
 5. 再复用同一个 `SymbolKey` 收集同文件 occurrence，按源码顺序输出 text edits
+6. 如果目标是 local struct field，还会额外把 shorthand struct literal / struct pattern site 重写成显式标签，例如 `x` -> `coord_x: x`
 
 当前刻意保守不开放 rename 的对象：
 
-- field
 - method
 - receiver `self`
 - builtin type
-- shorthand struct field token
+- 从 shorthand struct field token 本身发起的 rename
 - cross-file symbol
 
 ## 中层表示与所有权分析
