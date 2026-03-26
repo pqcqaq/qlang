@@ -97,6 +97,10 @@ export default defineConfig({
           {
             text: "2026-03-26 P5 Dynamic Library Emission",
             link: "/plans/2026-03-26-phase5-dynamic-library-emission"
+          },
+          {
+            text: "2026-03-26 P5 Shared Library FFI Harness",
+            link: "/plans/2026-03-26-phase5-shared-library-ffi-harness"
           }
         ]
       }

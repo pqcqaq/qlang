@@ -5,39 +5,71 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
-fn ffi_exports_link_from_c_harnesses() {
+fn ffi_exports_link_from_c_static_harnesses() {
     let workspace_root = workspace_root();
     let fixture_root = workspace_root.join("tests/ffi/pass");
-    let cases = collect_ffi_cases(&fixture_root);
+    let cases = collect_static_ffi_cases(&fixture_root);
     assert!(
         !cases.is_empty(),
-        "expected at least one FFI fixture under `{}`",
+        "expected at least one static FFI fixture under `{}`",
         fixture_root.display()
     );
 
     let Some(clang) = resolve_program_from_env_or_path("QLANG_CLANG", &clang_candidates()) else {
         eprintln!(
-            "skipping FFI integration tests: no clang-style compiler found on PATH and `QLANG_CLANG` is not set"
+            "skipping static FFI integration tests: no clang-style compiler found on PATH and `QLANG_CLANG` is not set"
         );
         return;
     };
     if resolve_program_from_env_or_path("QLANG_AR", &archiver_candidates()).is_none() {
         eprintln!(
-            "skipping FFI integration tests: no archive tool found on PATH and `QLANG_AR` is not set"
+            "skipping static FFI integration tests: no archive tool found on PATH and `QLANG_AR` is not set"
         );
         return;
     }
 
     let mut failures = Vec::new();
     for case in cases {
-        if let Err(message) = run_ffi_case(&workspace_root, &clang, &case) {
+        if let Err(message) = run_static_ffi_case(&workspace_root, &clang, &case) {
             failures.push(message);
         }
     }
 
     assert!(
         failures.is_empty(),
-        "FFI integration regressions:\n\n{}",
+        "static FFI integration regressions:\n\n{}",
+        failures.join("\n\n")
+    );
+}
+
+#[test]
+fn ffi_exports_load_from_c_dynamic_harnesses() {
+    let workspace_root = workspace_root();
+    let fixture_root = workspace_root.join("tests/ffi/pass");
+    let cases = collect_dynamic_ffi_cases(&fixture_root);
+    assert!(
+        !cases.is_empty(),
+        "expected at least one shared-library FFI fixture under `{}`",
+        fixture_root.display()
+    );
+
+    let Some(clang) = resolve_program_from_env_or_path("QLANG_CLANG", &clang_candidates()) else {
+        eprintln!(
+            "skipping shared-library FFI integration tests: no clang-style compiler found on PATH and `QLANG_CLANG` is not set"
+        );
+        return;
+    };
+
+    let mut failures = Vec::new();
+    for case in cases {
+        if let Err(message) = run_dynamic_ffi_case(&workspace_root, &clang, &case) {
+            failures.push(message);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "shared-library FFI integration regressions:\n\n{}",
         failures.join("\n\n")
     );
 }
@@ -46,7 +78,7 @@ fn ffi_exports_link_from_c_harnesses() {
 struct FfiCase {
     name: String,
     ql_path: PathBuf,
-    c_path: PathBuf,
+    harness_path: PathBuf,
 }
 
 struct TempDir {
@@ -75,41 +107,20 @@ impl Drop for TempDir {
     }
 }
 
-fn run_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> Result<(), String> {
-    let temp = TempDir::new(&format!("ql-ffi-{}", case.name));
+fn run_static_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> Result<(), String> {
+    let temp = TempDir::new(&format!("ql-ffi-static-{}", case.name));
     let header = header_output_path(temp.path(), &case.name);
     let staticlib = static_library_output_path(temp.path(), &case.name);
     let executable = executable_output_path(temp.path(), &case.name);
-    let relative_ql = case
-        .ql_path
-        .strip_prefix(workspace_root)
-        .expect("ffi fixture should be inside workspace root")
-        .to_string_lossy()
-        .replace('\\', "/");
+    let relative_ql = relative_ql_path(workspace_root, &case.ql_path);
 
-    let build = Command::new(env!("CARGO_BIN_EXE_ql"))
-        .current_dir(workspace_root)
-        .args([
-            "build",
-            &relative_ql,
-            "--emit",
-            "staticlib",
-            "--output",
-            &staticlib.to_string_lossy(),
-        ])
-        .output()
-        .unwrap_or_else(|_| panic!("run `ql build {relative_ql} --emit staticlib`"));
-    let build_stdout = normalize(&String::from_utf8_lossy(&build.stdout));
-    let build_stderr = normalize(&String::from_utf8_lossy(&build.stderr));
-    if build.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected `ql build` to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            build.status.code(),
-            build_stdout,
-            build_stderr
-        ));
-    }
+    run_ql_build(
+        workspace_root,
+        &case.name,
+        &relative_ql,
+        "staticlib",
+        &staticlib,
+    )?;
     if !staticlib.is_file() {
         return Err(format!(
             "[{}] expected static library `{}` to exist after build",
@@ -118,28 +129,7 @@ fn run_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> Result<(
         ));
     }
 
-    let header_emit = Command::new(env!("CARGO_BIN_EXE_ql"))
-        .current_dir(workspace_root)
-        .args([
-            "ffi",
-            "header",
-            &relative_ql,
-            "--output",
-            &header.to_string_lossy(),
-        ])
-        .output()
-        .unwrap_or_else(|_| panic!("run `ql ffi header {relative_ql}`"));
-    let header_stdout = normalize(&String::from_utf8_lossy(&header_emit.stdout));
-    let header_stderr = normalize(&String::from_utf8_lossy(&header_emit.stderr));
-    if header_emit.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected `ql ffi header` to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            header_emit.status.code(),
-            header_stdout,
-            header_stderr
-        ));
-    }
+    run_ql_ffi_header(workspace_root, &case.name, &relative_ql, &header)?;
     if !header.is_file() {
         return Err(format!(
             "[{}] expected generated header `{}` to exist after `ql ffi header`",
@@ -152,14 +142,14 @@ fn run_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> Result<(
         .current_dir(workspace_root)
         .arg("-I")
         .arg(temp.path())
-        .arg(&case.c_path)
+        .arg(&case.harness_path)
         .arg(&staticlib)
         .arg("-o")
         .arg(&executable)
         .output()
         .unwrap_or_else(|_| {
             panic!(
-                "run C harness compiler `{}` for `{}`",
+                "run static C harness compiler `{}` for `{}`",
                 clang.display(),
                 case.name
             )
@@ -168,7 +158,7 @@ fn run_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> Result<(
     let compile_stderr = normalize(&String::from_utf8_lossy(&compile.stderr));
     if compile.status.code().is_none_or(|code| code != 0) {
         return Err(format!(
-            "[{}] expected C harness link to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            "[{}] expected static C harness link to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
             case.name,
             compile.status.code(),
             compile_stdout,
@@ -177,7 +167,7 @@ fn run_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> Result<(
     }
     if !executable.is_file() {
         return Err(format!(
-            "[{}] expected executable `{}` to exist after C link",
+            "[{}] expected executable `{}` to exist after static C link",
             case.name,
             executable.display()
         ));
@@ -186,12 +176,105 @@ fn run_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> Result<(
     let run = Command::new(&executable)
         .current_dir(workspace_root)
         .output()
-        .unwrap_or_else(|_| panic!("run FFI executable `{}`", executable.display()));
+        .unwrap_or_else(|_| panic!("run static FFI executable `{}`", executable.display()));
     let run_stdout = normalize(&String::from_utf8_lossy(&run.stdout));
     let run_stderr = normalize(&String::from_utf8_lossy(&run.stderr));
     if run.status.code().is_none_or(|code| code != 0) {
         return Err(format!(
-            "[{}] expected FFI executable to exit with 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            "[{}] expected static FFI executable to exit with 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            case.name,
+            run.status.code(),
+            run_stdout,
+            run_stderr
+        ));
+    }
+
+    Ok(())
+}
+
+fn run_dynamic_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> Result<(), String> {
+    let temp = TempDir::new(&format!("ql-ffi-shared-{}", case.name));
+    let header = header_output_path(temp.path(), &case.name);
+    let dynamic_library = dynamic_library_output_path(temp.path(), &case.name);
+    let executable = executable_output_path(temp.path(), &format!("{}_shared", case.name));
+    let relative_ql = relative_ql_path(workspace_root, &case.ql_path);
+
+    run_ql_build(
+        workspace_root,
+        &case.name,
+        &relative_ql,
+        "dylib",
+        &dynamic_library,
+    )?;
+    if !dynamic_library.is_file() {
+        return Err(format!(
+            "[{}] expected dynamic library `{}` to exist after build",
+            case.name,
+            dynamic_library.display()
+        ));
+    }
+
+    run_ql_ffi_header(workspace_root, &case.name, &relative_ql, &header)?;
+    if !header.is_file() {
+        return Err(format!(
+            "[{}] expected generated header `{}` to exist after `ql ffi header`",
+            case.name,
+            header.display()
+        ));
+    }
+
+    let mut compile = Command::new(clang);
+    compile
+        .current_dir(workspace_root)
+        .arg("-I")
+        .arg(temp.path())
+        .arg(&case.harness_path)
+        .arg("-o")
+        .arg(&executable);
+    if cfg!(target_os = "linux") {
+        compile.arg("-ldl");
+    }
+    let compile = compile.output().unwrap_or_else(|_| {
+        panic!(
+            "run shared-library C harness compiler `{}` for `{}`",
+            clang.display(),
+            case.name
+        )
+    });
+    let compile_stdout = normalize(&String::from_utf8_lossy(&compile.stdout));
+    let compile_stderr = normalize(&String::from_utf8_lossy(&compile.stderr));
+    if compile.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[{}] expected shared-library C harness build to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            case.name,
+            compile.status.code(),
+            compile_stdout,
+            compile_stderr
+        ));
+    }
+    if !executable.is_file() {
+        return Err(format!(
+            "[{}] expected executable `{}` to exist after shared-library C harness build",
+            case.name,
+            executable.display()
+        ));
+    }
+
+    let run = Command::new(&executable)
+        .current_dir(workspace_root)
+        .arg(&dynamic_library)
+        .output()
+        .unwrap_or_else(|_| {
+            panic!(
+                "run shared-library FFI executable `{}`",
+                executable.display()
+            )
+        });
+    let run_stdout = normalize(&String::from_utf8_lossy(&run.stdout));
+    let run_stderr = normalize(&String::from_utf8_lossy(&run.stderr));
+    if run.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[{}] expected shared-library FFI executable to exit with 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
             case.name,
             run.status.code(),
             run_stdout,
@@ -213,12 +296,12 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn collect_ffi_cases(root: &Path) -> Vec<FfiCase> {
+fn collect_static_ffi_cases(root: &Path) -> Vec<FfiCase> {
     let mut cases = Vec::new();
     for entry in
         fs::read_dir(root).unwrap_or_else(|_| panic!("read FFI fixture dir `{}`", root.display()))
     {
-        let entry = entry.expect("read FFI fixture entry");
+        let entry = entry.expect("read static FFI fixture entry");
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("ql") {
             continue;
@@ -229,21 +312,59 @@ fn collect_ffi_cases(root: &Path) -> Vec<FfiCase> {
             .and_then(|stem| stem.to_str())
             .unwrap_or("ffi_case")
             .to_owned();
-        let c_path = path.with_extension("c");
+        let harness_path = path.with_extension("c");
         assert!(
-            c_path.is_file(),
-            "expected matching C harness `{}` for `{}`",
-            c_path.display(),
+            harness_path.is_file(),
+            "expected matching static C harness `{}` for `{}`",
+            harness_path.display(),
             path.display()
         );
         cases.push(FfiCase {
             name,
             ql_path: path,
-            c_path,
+            harness_path,
         });
     }
     cases.sort_by(|left, right| left.name.cmp(&right.name));
     cases
+}
+
+fn collect_dynamic_ffi_cases(root: &Path) -> Vec<FfiCase> {
+    let mut cases = Vec::new();
+    for entry in
+        fs::read_dir(root).unwrap_or_else(|_| panic!("read FFI fixture dir `{}`", root.display()))
+    {
+        let entry = entry.expect("read shared-library FFI fixture entry");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("ql") {
+            continue;
+        }
+
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("ffi_case")
+            .to_owned();
+        let harness_path = root.join(format!("{name}.shared.c"));
+        if !harness_path.is_file() {
+            continue;
+        }
+        cases.push(FfiCase {
+            name,
+            ql_path: path,
+            harness_path,
+        });
+    }
+    cases.sort_by(|left, right| left.name.cmp(&right.name));
+    cases
+}
+
+fn relative_ql_path(workspace_root: &Path, ql_path: &Path) -> String {
+    ql_path
+        .strip_prefix(workspace_root)
+        .expect("ffi fixture should be inside workspace root")
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn resolve_program_from_env_or_path(env_var: &str, candidates: &[&str]) -> Option<PathBuf> {
@@ -307,6 +428,16 @@ fn static_library_output_path(root: &Path, stem: &str) -> PathBuf {
     }
 }
 
+fn dynamic_library_output_path(root: &Path, stem: &str) -> PathBuf {
+    if cfg!(windows) {
+        root.join(format!("{stem}.dll"))
+    } else if cfg!(target_os = "macos") {
+        root.join(format!("lib{stem}.dylib"))
+    } else {
+        root.join(format!("lib{stem}.so"))
+    }
+}
+
 fn header_output_path(root: &Path, stem: &str) -> PathBuf {
     root.join(format!("{stem}.h"))
 }
@@ -321,4 +452,69 @@ fn executable_output_path(root: &Path, stem: &str) -> PathBuf {
 
 fn normalize(text: &str) -> String {
     text.replace("\r\n", "\n")
+}
+
+fn run_ql_build(
+    workspace_root: &Path,
+    case_name: &str,
+    relative_ql: &str,
+    emit: &str,
+    output_path: &Path,
+) -> Result<(), String> {
+    let build = Command::new(env!("CARGO_BIN_EXE_ql"))
+        .current_dir(workspace_root)
+        .args([
+            "build",
+            relative_ql,
+            "--emit",
+            emit,
+            "--output",
+            &output_path.to_string_lossy(),
+        ])
+        .output()
+        .unwrap_or_else(|_| panic!("run `ql build {relative_ql} --emit {emit}`"));
+    let build_stdout = normalize(&String::from_utf8_lossy(&build.stdout));
+    let build_stderr = normalize(&String::from_utf8_lossy(&build.stderr));
+    if build.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[{}] expected `ql build --emit {}` to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            case_name,
+            emit,
+            build.status.code(),
+            build_stdout,
+            build_stderr
+        ));
+    }
+    Ok(())
+}
+
+fn run_ql_ffi_header(
+    workspace_root: &Path,
+    case_name: &str,
+    relative_ql: &str,
+    header_path: &Path,
+) -> Result<(), String> {
+    let header_emit = Command::new(env!("CARGO_BIN_EXE_ql"))
+        .current_dir(workspace_root)
+        .args([
+            "ffi",
+            "header",
+            relative_ql,
+            "--output",
+            &header_path.to_string_lossy(),
+        ])
+        .output()
+        .unwrap_or_else(|_| panic!("run `ql ffi header {relative_ql}`"));
+    let header_stdout = normalize(&String::from_utf8_lossy(&header_emit.stdout));
+    let header_stderr = normalize(&String::from_utf8_lossy(&header_emit.stderr));
+    if header_emit.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[{}] expected `ql ffi header` to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            case_name,
+            header_emit.status.code(),
+            header_stdout,
+            header_stderr
+        ));
+    }
+    Ok(())
 }

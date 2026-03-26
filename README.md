@@ -97,7 +97,7 @@ Current semantic baseline in `ql check`:
   - when `QLANG_AR` points to a wrapper whose filename does not imply the archive flavor, `QLANG_AR_STYLE=ar|lib` can pin the expected CLI style
   - toolchain failures preserve intermediate `.codegen.ll` and, when linking or archiving fails, intermediate `.codegen.obj` / `.codegen.o` files for debugging
   - `crates/ql-cli/tests/codegen.rs` now provides black-box codegen snapshots for `llvm-ir`, `obj`, `exe`, `dylib`, `staticlib`, library-mode `extern "c"` direct-call lowering, `extern "c"` definition exports, and build-time unsupported diagnostics
-  - `crates/ql-cli/tests/ffi.rs` now provides a real C-host integration smoke test that builds a Qlang static library, links it into a C harness, and runs the resulting executable when a clang-style toolchain is available
+  - `crates/ql-cli/tests/ffi.rs` now provides real C-host integration smoke tests for both static-library linking and shared-library runtime loading when a clang-style toolchain is available
   - `ql ffi header <file>` now emits deterministic C headers for public top-level exported `extern "c"` definitions, defaulting to `target/ql/ffi/<stem>.h` when `-o` is not provided
   - `crates/ql-cli/tests/ffi_header.rs` now locks the generated header surface with a black-box snapshot and failing-signature regression
 - `qlsp` now consumes that shared analysis layer to provide LSP hover, go-to-definition, and live diagnostics for open documents

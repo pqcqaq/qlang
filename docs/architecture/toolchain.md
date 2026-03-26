@@ -254,12 +254,19 @@ P5 当前已经落地最小可用的 C header emit slice：
 - `crates/ql-cli/tests/ffi.rs`
 - `tests/ffi/pass/`
 
-这层回归会在 clang-style compiler 和 archiver 可用时：
+静态库回归会在 clang-style compiler 和 archiver 可用时：
 
 - 构建导出 `extern "c"` 符号的 Qlang `staticlib`
 - 通过 `ql ffi header` 生成对应的 C 头文件
 - 用包含该头文件的真实 C harness 链接该库
 - 运行宿主可执行文件确认导出符号可被调用
+
+共享库回归会在 clang-style compiler 可用时：
+
+- 构建导出 `extern "c"` 符号的 Qlang `dylib`
+- 通过 `ql ffi header` 生成对应的 C 头文件
+- 用真实 C loader harness 编译宿主可执行文件
+- 运行宿主可执行文件，并在进程内通过 `LoadLibraryA` / `dlopen` 解析并调用导出符号
 
 ### `qlsp`
 

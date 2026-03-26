@@ -23,11 +23,13 @@ P5 的第一刀已经把顶层 `extern "c"` 导出定义接进了真实后端，
 
 当前 harness 刻意保持克制：
 
-- 先只覆盖静态库
+- 已覆盖静态库直连与共享库运行时装载两条路径
 - 先只覆盖简单 `extern "c"` 标量函数导出
 - 先只覆盖 C 宿主，不同时引入 Rust/C++ 宿主
 
 ## 当前测试流
+
+当前静态库流：
 
 1. 读取 `tests/ffi/pass/<name>.ql`
 2. 读取匹配的 `tests/ffi/pass/<name>.c`
@@ -35,6 +37,16 @@ P5 的第一刀已经把顶层 `extern "c"` 导出定义接进了真实后端，
 4. 用 clang-style compiler 编译并链接 C harness
 5. 运行生成的宿主可执行文件
 6. 以进程退出码作为 smoke 验证结果
+
+当前共享库流：
+
+1. 读取 `tests/ffi/pass/<name>.ql`
+2. 读取匹配的 `tests/ffi/pass/<name>.shared.c`
+3. 调用真实 `ql build --emit dylib`
+4. 调用 `ql ffi header`
+5. 用 clang-style compiler 编译 loader-style C harness
+6. 宿主进程通过 `LoadLibraryA` / `dlopen` 显式装载共享库并解析导出符号
+7. 以进程退出码作为 smoke 验证结果
 
 ## 为什么允许“工具链缺失时跳过”
 
