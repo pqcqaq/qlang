@@ -55,6 +55,15 @@ fn codegen_snapshots_match() {
             archiver_style: None,
         },
         PassCase {
+            name: "extern_c_export_dylib",
+            source_relative: "fixtures/codegen/pass/extern_c_export.ql",
+            emit: "dylib",
+            expected_relative: "tests/codegen/pass/extern_c_export.dylib.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+        },
+        PassCase {
             name: "minimal_library_staticlib",
             source_relative: "fixtures/codegen/pass/minimal_library.ql",
             emit: "staticlib",
@@ -106,6 +115,12 @@ fn codegen_snapshots_match() {
             source_relative: "tests/codegen/fail/unsupported_function_value_build.ql",
             emit: "llvm-ir",
             expected_stderr_relative: "tests/codegen/fail/unsupported_function_value_build.stderr",
+        },
+        FailCase {
+            name: "dylib_requires_export_build",
+            source_relative: "tests/codegen/fail/dylib_requires_export_build.ql",
+            emit: "dylib",
+            expected_stderr_relative: "tests/codegen/fail/dylib_requires_export_build.stderr",
         },
     ];
 
@@ -349,6 +364,13 @@ fn artifact_output_path(root: &Path, emit: &str) -> PathBuf {
         } else {
             "artifact"
         }),
+        "dylib" => root.join(if cfg!(windows) {
+            "artifact.dll"
+        } else if cfg!(target_os = "macos") {
+            "libartifact.dylib"
+        } else {
+            "libartifact.so"
+        }),
         "staticlib" => root.join(if cfg!(windows) {
             "artifact.lib"
         } else {
@@ -394,13 +416,17 @@ fn make_mock_compiler_wrapper(root: &Path) -> PathBuf {
 param([string[]]$args)
 $out = $null
 $isCompile = $false
+$isShared = $false
 for ($i = 0; $i -lt $args.Count; $i++) {
     if ($args[$i] -eq '-c') { $isCompile = $true }
+    if ($args[$i] -eq '-shared' -or $args[$i] -eq '-dynamiclib') { $isShared = $true }
     if ($args[$i] -eq '-o') { $out = $args[$i + 1] }
 }
 if ($null -eq $out) { Write-Error 'missing -o'; exit 1 }
 if ($isCompile) {
     Set-Content -Path $out -NoNewline -Value 'mock-object'
+} elseif ($isShared) {
+    Set-Content -Path $out -NoNewline -Value 'mock-dylib'
 } else {
     Set-Content -Path $out -NoNewline -Value 'mock-executable'
 }
@@ -424,9 +450,15 @@ if ($isCompile) {
             r#"#!/bin/sh
 out=""
 is_compile=0
+is_shared=0
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-c" ]; then
     is_compile=1
+    shift
+    continue
+  fi
+  if [ "$1" = "-shared" ] || [ "$1" = "-dynamiclib" ]; then
+    is_shared=1
     shift
     continue
   fi
@@ -443,6 +475,8 @@ if [ "$out" = "" ]; then
 fi
 if [ "$is_compile" -eq 1 ]; then
   printf 'mock-object' > "$out"
+elif [ "$is_shared" -eq 1 ]; then
+  printf 'mock-dylib' > "$out"
 else
   printf 'mock-executable' > "$out"
 fi

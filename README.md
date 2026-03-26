@@ -79,12 +79,14 @@ Current semantic baseline in `ql check`:
   - `ql-driver` keeps build orchestration out of `ql-cli`
   - `ql-codegen-llvm` lowers a controlled MIR subset into textual LLVM IR, with explicit program-mode and library-mode entry behavior
   - `ql build <file>` now writes `.ll` output, defaulting to `target/ql/<profile>/<stem>.ll`
-  - `ql build <file> --emit obj`, `--emit exe`, and `--emit staticlib` now lower through compiler/archive toolchain boundaries into native artifacts
+  - `ql build <file> --emit obj`, `--emit exe`, `--emit dylib`, and `--emit staticlib` now lower through compiler/archive toolchain boundaries into native artifacts
   - emitted LLVM IR now contains an internal Qlang entry plus a host `main` wrapper, so the same IR can back `.ll`, `.obj`, and `.exe`
   - `--emit staticlib` uses library-mode codegen, so single-file libraries no longer require a top-level `main`
+  - `--emit dylib` also uses library-mode codegen and currently requires at least one public top-level `extern "c"` function definition so the produced shared library has an intentional exported C surface
   - current codegen support is intentionally narrow: top-level free functions, `extern "c"` declarations and `extern "c"` function definitions, scalar integer/bool/void types, direct function calls, arithmetic, simple branching, and return
   - direct `extern "c"` declarations now flow through resolve/typeck/MIR/codegen with a shared callable identity, so both program-mode and library-mode extern calls participate in argument checking and lower to LLVM `declare` + `call`
   - top-level `extern "c"` function definitions with bodies now lower to stable exported symbol names such as `@q_add`, which gives P5 a first real C-export path on top of the P4 artifact pipeline
+  - on Windows, `--emit dylib` forwards `/EXPORT:<symbol>` directives for those exported C symbols so the resulting DLL exposes the intended ABI instead of producing a no-export artifact
   - program-mode entry `main` is still required to use the default Qlang ABI; exported C ABI entrypoints must use a separate helper function
   - unsupported first-class function values now fail with structured diagnostics instead of panicking the backend
   - unsupported backend features currently fail with structured diagnostics instead of silent partial lowering
@@ -94,7 +96,7 @@ Current semantic baseline in `ql check`:
   - on Windows, `QLANG_AR` should point to an invocable archive binary such as `llvm-lib.exe`, `lib.exe`, or a `.cmd` wrapper
   - when `QLANG_AR` points to a wrapper whose filename does not imply the archive flavor, `QLANG_AR_STYLE=ar|lib` can pin the expected CLI style
   - toolchain failures preserve intermediate `.codegen.ll` and, when linking or archiving fails, intermediate `.codegen.obj` / `.codegen.o` files for debugging
-  - `crates/ql-cli/tests/codegen.rs` now provides black-box codegen snapshots for `llvm-ir`, `obj`, `exe`, `staticlib`, library-mode `extern "c"` direct-call lowering, `extern "c"` definition exports, and build-time unsupported diagnostics
+  - `crates/ql-cli/tests/codegen.rs` now provides black-box codegen snapshots for `llvm-ir`, `obj`, `exe`, `dylib`, `staticlib`, library-mode `extern "c"` direct-call lowering, `extern "c"` definition exports, and build-time unsupported diagnostics
   - `crates/ql-cli/tests/ffi.rs` now provides a real C-host integration smoke test that builds a Qlang static library, links it into a C harness, and runs the resulting executable when a clang-style toolchain is available
   - `ql ffi header <file>` now emits deterministic C headers for public top-level exported `extern "c"` definitions, defaulting to `target/ql/ffi/<stem>.h` when `-o` is not provided
   - `crates/ql-cli/tests/ffi_header.rs` now locks the generated header surface with a black-box snapshot and failing-signature regression
@@ -152,7 +154,7 @@ Current intentional gap:
 - Phase 3 ownership is intentionally narrow in this slice: direct-local `move self` consumption and direct-local `move` closure capture are diagnosed today; general call contracts, place-sensitive moves, borrow/escape analysis, and drop elaboration are still future passes on top of the current MIR foundation
 - cleanup-aware ownership is still intentionally partial: nested `defer` runtime modeling and projection-sensitive cleanup effects are future work
 - closure ownership is still intentionally partial: MIR capture facts, stable closure IDs, and conservative may-escape facts exist, but closure environment lowering and full escape graph construction are still future work
-- Phase 4/P5 native artifacts are still intentionally partial: basic executable and static-library emission now exist, direct `extern "c"` declarations can lower in both program-mode and library-mode module builds, top-level `extern "c"` function definitions can now export stable C symbols, and `ql ffi header` can project a minimal exported C API surface, but symbol-visibility control, first-class function values, separate linker-family discovery, runtime startup glue, dynamic libraries, import-surface header generation, and richer ABI support remain follow-up work
+- Phase 4/P5 native artifacts are still intentionally partial: basic executable, dynamic-library, and static-library emission now exist, direct `extern "c"` declarations can lower in both program-mode and library-mode module builds, top-level `extern "c"` function definitions can now export stable C symbols, and `ql ffi header` can project a minimal exported C API surface, but arbitrary shared-library surfaces without exported C ABI, symbol-visibility control, first-class function values, separate linker-family discovery, runtime startup glue, import-surface header generation, and richer ABI support remain follow-up work
 
 Quick start:
 
@@ -178,6 +180,7 @@ When clang is available:
 ```bash
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit obj
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit exe
+cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit dylib
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_library.ql --emit staticlib
 cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit staticlib
 ```

@@ -370,6 +370,16 @@ P4 的目标是把 MIR 真正接到原生产物链路上，同时把 driver / ba
 - `staticlib` 走 library mode，不再要求单文件库定义顶层 `main`
 - mock compiler + mock archiver 路径已经进入测试
 
+#### P4.4b Dynamic library emission
+
+已完成：
+
+- `ql build --emit dylib`
+- `dylib` 走 library mode，不再要求单文件库定义顶层 `main`
+- 当前要求模块至少存在一个 public 顶层 `extern "c"` 函数定义，明确把 shared-library 输出约束在可解释的 C ABI surface 上
+- Windows 下会把这些 exported symbol 显式转成 `/EXPORT:<symbol>` 传给 linker
+- 黑盒快照已经覆盖 `dylib` 成功路径与“无导出时拒绝构建”的失败路径
+
 #### P4.5 Extern C direct-call foundation
 
 已完成：
@@ -389,7 +399,7 @@ P4 的目标是把 MIR 真正接到原生产物链路上，同时把 driver / ba
 - `crates/ql-cli/tests/codegen.rs`
 - `tests/codegen/pass/`
 - `tests/codegen/fail/`
-- 黑盒快照覆盖 `llvm-ir` / `obj` / `exe` / `staticlib`
+- 黑盒快照覆盖 `llvm-ir` / `obj` / `exe` / `dylib` / `staticlib`
 - 增加 library-mode extern C direct-call lowering 快照
 - unsupported backend features 走结构化 diagnostics，而不是静默跳过
 - first-class function value 现在也会返回结构化 diagnostics，而不是 panic backend
@@ -397,7 +407,7 @@ P4 的目标是把 MIR 真正接到原生产物链路上，同时把 driver / ba
 ### 已交付能力
 
 - `ql build` 已经是可工作的后端入口
-- `.ll` / `.obj` / `.exe` / `staticlib` 路径都已经存在
+- `.ll` / `.obj` / `.exe` / `dylib` / `staticlib` 路径都已经存在
 - toolchain failure model 与中间产物保留策略已建立
 - codegen regression harness 已建立
 
@@ -411,12 +421,11 @@ P4 的目标是把 MIR 真正接到原生产物链路上，同时把 driver / ba
 
 P4 当前仍刻意未完成：
 
-- dylib
 - 更完整的 LLVM / linker family 组合探测
 - runtime startup object / richer ABI glue
 - first-class function value lowering
 - closure / tuple / struct / cleanup lowering
-- `extern "c"` export 与更完整 ABI surface
+- 一般化 shared-library surface、`extern "c"` export 的 visibility/linkage 控制与更完整 ABI surface
 - 更大规模的 toolchain / lowering / fail snapshot 扩容
 
 ## 阶段状态表

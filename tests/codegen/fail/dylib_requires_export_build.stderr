@@ -1,0 +1,1 @@
+error: dynamic library emission currently requires at least one public top-level `extern "c"` function definition

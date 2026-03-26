@@ -144,6 +144,19 @@ pub fn default_c_header_output_path(build_root: &Path, input_path: &Path) -> Pat
         .join(format!("{stem}.h"))
 }
 
+pub(crate) fn exported_c_symbol_names(module: &hir::Module) -> Vec<String> {
+    module
+        .items
+        .iter()
+        .filter_map(|item_id| {
+            let ItemKind::Function(function) = &module.item(*item_id).kind else {
+                return None;
+            };
+            is_exported_c_definition(function).then(|| function.name.clone())
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ExportedCFunction {
     name: String,
@@ -174,10 +187,7 @@ fn collect_exported_c_functions(
         let ItemKind::Function(function) = &module.item(*item_id).kind else {
             continue;
         };
-        if function.visibility != Visibility::Public
-            || function.abi.as_deref() != Some("c")
-            || function.body.is_none()
-        {
+        if !is_exported_c_definition(function) {
             continue;
         }
 
@@ -268,6 +278,12 @@ fn collect_exported_c_functions(
     } else {
         Err(diagnostics)
     }
+}
+
+fn is_exported_c_definition(function: &hir::Function) -> bool {
+    function.visibility == Visibility::Public
+        && function.abi.as_deref() == Some("c")
+        && function.body.is_some()
 }
 
 fn render_c_header(input_path: &Path, exports: &[ExportedCFunction]) -> String {
@@ -440,7 +456,10 @@ fn unsupported_export(span: ql_span::Span, message: impl Into<String>) -> Diagno
 
 #[cfg(test)]
 mod tests {
-    use super::{CHeaderError, CHeaderOptions, default_c_header_output_path, emit_c_header};
+    use super::{
+        CHeaderError, CHeaderOptions, default_c_header_output_path, emit_c_header,
+        exported_c_symbol_names,
+    };
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -616,5 +635,29 @@ extern "c" fn q_add(left: Int, right: Int) -> Int {
             ),
             other => panic!("expected invalid input error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn exported_c_symbol_names_only_collect_public_definitions() {
+        let module = ql_analysis::analyze_source(
+            r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+extern "c" fn q_hidden(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+extern "c" pub fn q_imported(left: Int, right: Int) -> Int
+
+fn q_internal() -> Int {
+    return 0
+}
+"#,
+        )
+        .expect("analysis should succeed");
+
+        assert_eq!(exported_c_symbol_names(module.hir()), vec!["q_add"]);
     }
 }

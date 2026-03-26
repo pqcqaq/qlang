@@ -222,12 +222,13 @@ source
 
 - 新增 `ql-driver`，负责 build 请求、分析调用和产物输出
 - 新增 `ql-codegen-llvm`，只消费 `HIR` / `resolve` / `typeck` / `MIR`
-- 当前 `ql build` 已经能把受控 MIR 子集 lower 成文本 LLVM IR，并继续经 compiler/archive toolchain 产出 `.obj` / `.o`、基础 `.exe` 与 `.lib` / `.a`
+- 当前 `ql build` 已经能把受控 MIR 子集 lower 成文本 LLVM IR，并继续经 compiler/archive toolchain 产出 `.obj` / `.o`、基础 `.exe`、受约束的 `.dll` / `.so` / `.dylib`，以及 `.lib` / `.a`
 - `ql-driver` 现在还额外承接了最小 exported C API 头文件投影：`ql ffi header` 会复用 analysis 结果筛选 public 顶层 `extern "c"` 定义，并输出确定性的 `.h` 文件
 - `ql-codegen-llvm` 现在区分 program mode 与 library mode：前者会把用户态 `main` lower 成内部符号并补宿主 wrapper，后者则直接导出 free function 集合
 - 当前还新增了一层 callable identity：顶层函数与 `extern` block 声明会统一走 `FunctionRef`，因此 extern C direct call 不再是 parser-only 语法，而是能进入 typeck / MIR / LLVM IR 的真实后端路径
 - 顶层 `extern "c"` 函数定义现在也已经进入真实后端路径，并会使用稳定 C 符号名而不是内部 mangling
-- 当前仍然故意不把独立 linker family discovery、runtime startup object、dynamic library 和更完整平台差异一次性揉进同一刀实现里
+- `ql-driver` 现在还会在 `dylib` 请求里先投影 exported C symbol 列表，再把这份符号集传给 toolchain；Windows 下会显式把它们转成 `/EXPORT:<symbol>` linker 参数
+- 当前仍然故意不把独立 linker family discovery、runtime startup object、任意 shared-library surface 和更完整平台差异一次性揉进同一刀实现里
 
 也就是说，P4 先固定“后端放在哪一层、如何失败、如何测试、如何贯通 artifact pipeline”，再继续补更完整的链接与运行时能力。
 

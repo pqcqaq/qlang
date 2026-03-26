@@ -8,6 +8,7 @@ use ql_analysis::analyze_source;
 use ql_codegen_llvm::{CodegenError, CodegenInput, CodegenMode, emit_module};
 use ql_diagnostics::Diagnostic;
 
+use crate::ffi::exported_c_symbol_names;
 use crate::toolchain::{ToolchainError, ToolchainOptions, discover_toolchain};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,6 +16,7 @@ pub enum BuildEmit {
     LlvmIr,
     Object,
     Executable,
+    DynamicLibrary,
     StaticLibrary,
 }
 
@@ -24,6 +26,7 @@ impl BuildEmit {
             Self::LlvmIr => "llvm-ir",
             Self::Object => "object",
             Self::Executable => "executable",
+            Self::DynamicLibrary => "dylib",
             Self::StaticLibrary => "staticlib",
         }
     }
@@ -170,6 +173,19 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
         });
     }
 
+    let exported_symbols = if options.emit == BuildEmit::DynamicLibrary {
+        let symbols = exported_c_symbol_names(analysis.hir());
+        if symbols.is_empty() {
+            return Err(BuildError::InvalidInput(
+                "dynamic library emission currently requires at least one public top-level `extern \"c\"` function definition"
+                    .to_owned(),
+            ));
+        }
+        symbols
+    } else {
+        Vec::new()
+    };
+
     let module_name = default_module_name(path);
     let ir = emit_module(CodegenInput {
         module_name: &module_name,
@@ -215,6 +231,9 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
         }
         BuildEmit::Executable => {
             build_executable_file(&output_path, &ir, &options.toolchain)?;
+        }
+        BuildEmit::DynamicLibrary => {
+            build_dynamic_library_file(&output_path, &ir, &exported_symbols, &options.toolchain)?;
         }
         BuildEmit::StaticLibrary => {
             build_static_library_file(&output_path, &ir, &options.toolchain)?;
@@ -342,6 +361,45 @@ fn build_static_library_file(
     Ok(())
 }
 
+fn build_dynamic_library_file(
+    output_path: &Path,
+    ir: &str,
+    exported_symbols: &[String],
+    toolchain_options: &ToolchainOptions,
+) -> Result<(), BuildError> {
+    let intermediate_ir = intermediate_ir_path(output_path);
+    fs::write(&intermediate_ir, ir).map_err(|error| BuildError::Io {
+        path: intermediate_ir.clone(),
+        error,
+    })?;
+
+    let toolchain = discover_toolchain(toolchain_options)
+        .map_err(|error| toolchain_failure(error, vec![intermediate_ir.clone()]))?;
+    let intermediate_object = intermediate_object_path(output_path);
+
+    if let Err(error) = toolchain.compile_llvm_ir_to_object(&intermediate_ir, &intermediate_object)
+    {
+        let _ = fs::remove_file(&intermediate_object);
+        let _ = fs::remove_file(output_path);
+        return Err(toolchain_failure(error, vec![intermediate_ir]));
+    }
+
+    if let Err(error) = toolchain.link_object_to_dynamic_library(
+        &intermediate_object,
+        output_path,
+        exported_symbols,
+    ) {
+        let _ = fs::remove_file(output_path);
+        return Err(toolchain_failure(
+            error,
+            vec![intermediate_ir, intermediate_object],
+        ));
+    }
+
+    cleanup_artifacts(&[intermediate_ir, intermediate_object]);
+    Ok(())
+}
+
 fn intermediate_ir_path(output_path: &Path) -> PathBuf {
     intermediate_artifact_path(output_path, "ll")
 }
@@ -423,11 +481,22 @@ fn static_library_name(stem: &str) -> String {
     }
 }
 
+fn dynamic_library_name(stem: &str) -> String {
+    if cfg!(windows) {
+        format!("{stem}.dll")
+    } else if cfg!(target_os = "macos") {
+        format!("lib{stem}.dylib")
+    } else {
+        format!("lib{stem}.so")
+    }
+}
+
 fn default_output_name(stem: &str, emit: BuildEmit) -> String {
     match emit {
         BuildEmit::LlvmIr => format!("{stem}.ll"),
         BuildEmit::Object => format!("{stem}.{}", object_extension()),
         BuildEmit::Executable => executable_name(stem),
+        BuildEmit::DynamicLibrary => dynamic_library_name(stem),
         BuildEmit::StaticLibrary => static_library_name(stem),
     }
 }
@@ -435,7 +504,7 @@ fn default_output_name(stem: &str, emit: BuildEmit) -> String {
 fn codegen_mode(emit: BuildEmit) -> CodegenMode {
     match emit {
         BuildEmit::LlvmIr | BuildEmit::Object | BuildEmit::Executable => CodegenMode::Program,
-        BuildEmit::StaticLibrary => CodegenMode::Library,
+        BuildEmit::DynamicLibrary | BuildEmit::StaticLibrary => CodegenMode::Library,
     }
 }
 
@@ -509,6 +578,12 @@ mod tests {
             BuildProfile::Release,
             BuildEmit::Executable,
         );
+        let dynamic_library = default_output_path(
+            Path::new("D:/workspace/demo"),
+            Path::new("src/app.ql"),
+            BuildProfile::Release,
+            BuildEmit::DynamicLibrary,
+        );
         let static_library = default_output_path(
             Path::new("D:/workspace/demo"),
             Path::new("src/app.ql"),
@@ -533,6 +608,16 @@ mod tests {
                 "D:/workspace/demo/target/ql/release/app.exe"
             } else {
                 "D:/workspace/demo/target/ql/release/app"
+            })
+        );
+        assert_eq!(
+            dynamic_library,
+            PathBuf::from(if cfg!(windows) {
+                "D:/workspace/demo/target/ql/release/app.dll"
+            } else if cfg!(target_os = "macos") {
+                "D:/workspace/demo/target/ql/release/libapp.dylib"
+            } else {
+                "D:/workspace/demo/target/ql/release/libapp.so"
             })
         );
         assert_eq!(
@@ -679,6 +764,57 @@ fn main() -> Int {
         assert!(
             leftovers.is_empty(),
             "successful executable emission should clean up intermediate artifacts"
+        );
+    }
+
+    #[test]
+    fn build_file_writes_dynamic_library_with_extern_c_definition_exports() {
+        let dir = TestDir::new("ql-driver-dylib-extern-export");
+        let source = dir.write(
+            "ffi_export.ql",
+            r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/ffi_export.dll"
+        } else if cfg!(target_os = "macos") {
+            "artifacts/libffi_export.dylib"
+        } else {
+            "artifacts/libffi_export.so"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::DynamicLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_dynamic_library_invocation(&dir, &["q_add"])),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("dynamic library build with extern definition export should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated dynamic library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-dylib");
+        let leftovers = fs::read_dir(output.parent().expect("output should have a parent"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen."))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "successful dynamic library emission should clean up intermediate artifacts"
         );
     }
 
@@ -1074,6 +1210,37 @@ fn main() -> Int {
         }));
     }
 
+    #[test]
+    fn build_file_rejects_dynamic_libraries_without_public_extern_c_exports() {
+        let dir = TestDir::new("ql-driver-dylib-no-exports");
+        let source = dir.write(
+            "library.ql",
+            r#"
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+"#,
+        );
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::DynamicLibrary,
+                profile: BuildProfile::Debug,
+                output: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("dynamic library build should require a public extern export");
+
+        match error {
+            BuildError::InvalidInput(message) => assert!(message.contains(
+                "requires at least one public top-level `extern \"c\"` function definition"
+            )),
+            other => panic!("expected invalid input error, got {other:?}"),
+        }
+    }
+
     fn mock_success_invocation(dir: &TestDir) -> ProgramInvocation {
         if cfg!(windows) {
             let script = dir.write(
@@ -1093,8 +1260,16 @@ if ($null -eq $out) {
     Write-Error "missing -o"
     exit 1
 }
+$isShared = $false
+foreach ($arg in $args) {
+    if ($arg -eq '-shared' -or $arg -eq '-dynamiclib') {
+        $isShared = $true
+    }
+}
 if ($isCompile) {
     Set-Content -Path $out -NoNewline -Value "mock-object"
+} elseif ($isShared) {
+    Set-Content -Path $out -NoNewline -Value "mock-dylib"
 } else {
     Set-Content -Path $out -NoNewline -Value "mock-executable"
 }
@@ -1111,9 +1286,15 @@ if ($isCompile) {
                 "mock-clang-success.sh",
                 r#"out=""
 is_compile=0
+is_shared=0
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-c" ]; then
     is_compile=1
+    shift
+    continue
+  fi
+  if [ "$1" = "-shared" ] || [ "$1" = "-dynamiclib" ]; then
+    is_shared=1
     shift
     continue
   fi
@@ -1126,6 +1307,8 @@ while [ "$#" -gt 0 ]; do
 done
 if [ "$is_compile" -eq 1 ]; then
   printf 'mock-object' > "$out"
+elif [ "$is_shared" -eq 1 ]; then
+  printf 'mock-dylib' > "$out"
 else
   printf 'mock-executable' > "$out"
 fi
@@ -1283,6 +1466,108 @@ if [ "$is_compile" -eq 1 ]; then
 fi
 echo 'mock link failure' 1>&2
 exit 7
+"#,
+            );
+            ProgramInvocation::new("/bin/sh").with_args_prefix(vec![script.display().to_string()])
+        }
+    }
+
+    fn mock_dynamic_library_invocation(
+        dir: &TestDir,
+        expected_exports: &[&str],
+    ) -> ProgramInvocation {
+        if cfg!(windows) {
+            let expected_exports = expected_exports
+                .iter()
+                .map(|symbol| format!("'/EXPORT:{symbol}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let script = dir.write(
+                "mock-clang-dylib-success.ps1",
+                &format!(
+                    r#"
+$expectedExports = @({expected_exports})
+$out = $null
+$isCompile = $false
+$isShared = $false
+$seenExports = @()
+for ($i = 0; $i -lt $args.Count; $i++) {{
+    if ($args[$i] -eq '-c') {{
+        $isCompile = $true
+    }}
+    if ($args[$i] -eq '-shared' -or $args[$i] -eq '-dynamiclib') {{
+        $isShared = $true
+    }}
+    if ($args[$i] -eq '-o') {{
+        $out = $args[$i + 1]
+    }}
+    if ($args[$i] -like '/EXPORT:*') {{
+        $seenExports += $args[$i]
+    }}
+}}
+if ($null -eq $out) {{
+    Write-Error "missing -o"
+    exit 1
+}}
+if ($isCompile) {{
+    Set-Content -Path $out -NoNewline -Value "mock-object"
+    exit 0
+}}
+if (-not $isShared) {{
+    Write-Error "expected shared library link"
+    exit 1
+}}
+foreach ($expected in $expectedExports) {{
+    if (-not ($seenExports -contains $expected)) {{
+        Write-Error "missing $expected"
+        exit 1
+    }}
+}}
+Set-Content -Path $out -NoNewline -Value "mock-dylib"
+"#
+                ),
+            );
+            ProgramInvocation::new("powershell.exe").with_args_prefix(vec![
+                "-ExecutionPolicy".to_owned(),
+                "Bypass".to_owned(),
+                "-File".to_owned(),
+                script.display().to_string(),
+            ])
+        } else {
+            let script = dir.write(
+                "mock-clang-dylib-success.sh",
+                r#"out=""
+is_compile=0
+is_shared=0
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-c" ]; then
+    is_compile=1
+    shift
+    continue
+  fi
+  if [ "$1" = "-shared" ] || [ "$1" = "-dynamiclib" ]; then
+    is_shared=1
+    shift
+    continue
+  fi
+  if [ "$1" = "-o" ]; then
+    out="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+if [ "$out" = "" ]; then
+  echo "missing -o" 1>&2
+  exit 1
+fi
+if [ "$is_compile" -eq 1 ]; then
+  printf 'mock-object' > "$out"
+elif [ "$is_shared" -eq 1 ]; then
+  printf 'mock-dylib' > "$out"
+else
+  printf 'mock-executable' > "$out"
+fi
 "#,
             );
             ProgramInvocation::new("/bin/sh").with_args_prefix(vec![script.display().to_string()])

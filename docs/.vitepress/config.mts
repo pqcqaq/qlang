@@ -93,6 +93,10 @@ export default defineConfig({
           {
             text: "2026-03-26 P5 C Header Generation",
             link: "/plans/2026-03-26-phase5-c-header-generation"
+          },
+          {
+            text: "2026-03-26 P5 Dynamic Library Emission",
+            link: "/plans/2026-03-26-phase5-dynamic-library-emission"
           }
         ]
       }

@@ -91,6 +91,31 @@ impl DiscoveredToolchain {
         ])
     }
 
+    pub fn link_object_to_dynamic_library(
+        &self,
+        input_object: &Path,
+        output_dynamic_library: &Path,
+        exported_symbols: &[String],
+    ) -> Result<(), ToolchainError> {
+        let mut args = if cfg!(target_os = "macos") {
+            vec!["-dynamiclib".to_owned()]
+        } else {
+            vec!["-shared".to_owned()]
+        };
+        args.push(input_object.display().to_string());
+        args.push("-o".to_owned());
+        args.push(output_dynamic_library.display().to_string());
+
+        if cfg!(windows) {
+            for symbol in exported_symbols {
+                args.push("-Xlinker".to_owned());
+                args.push(format!("/EXPORT:{symbol}"));
+            }
+        }
+
+        self.run_clang(args)
+    }
+
     pub fn archive_object_to_static_library(
         &self,
         input_object: &Path,

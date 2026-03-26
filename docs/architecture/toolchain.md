@@ -35,7 +35,7 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - 读取单个 `.ql` 文件
 - 复用 `ql-analysis` 完成 parse / HIR / resolve / typeck / MIR
 - 在无语义错误时调用 `ql-codegen-llvm`
-- 输出文本 LLVM IR、对象文件、静态库和基础可执行文件
+- 输出文本 LLVM IR、对象文件、动态库、静态库和基础可执行文件
 
 当前实现边界：
 
@@ -49,6 +49,7 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - `ql build <file> --emit llvm-ir`
 - `ql build <file> --emit obj`
 - `ql build <file> --emit exe`
+- `ql build <file> --emit dylib`
 - `ql build <file> --emit staticlib`
 - `ql build <file> --release`
 - `ql build <file> -o <output>`
@@ -61,6 +62,8 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - `target/ql/release/<stem>.obj` / `target/ql/release/<stem>.o`
 - `target/ql/debug/<stem>.exe` / `target/ql/debug/<stem>`
 - `target/ql/release/<stem>.exe` / `target/ql/release/<stem>`
+- `target/ql/debug/<stem>.dll` / `target/ql/debug/lib<stem>.so` / `target/ql/debug/lib<stem>.dylib`
+- `target/ql/release/<stem>.dll` / `target/ql/release/lib<stem>.so` / `target/ql/release/lib<stem>.dylib`
 - `target/ql/debug/<stem>.lib` / `target/ql/debug/lib<stem>.a`
 - `target/ql/release/<stem>.lib` / `target/ql/release/lib<stem>.a`
 
@@ -74,11 +77,14 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 - arithmetic / compare / branch / return
 - `.ll` 文本产物始终可用
 - `.obj` / `.o` / 基础 `.exe` 产物依赖 clang-style compiler
+- `.dll` / `.so` / `.dylib` 产物依赖 clang-style compiler
 - `.lib` / `.a` 产物依赖 clang-style compiler 与 archive tool
 - codegen 会在 program mode 下把 Qlang 用户入口 lower 成内部符号，并额外生成宿主 `main` wrapper
-- `staticlib` 会走 library mode，因此当前单文件库不要求顶层 `main`
+- `dylib` 和 `staticlib` 都走 library mode，因此当前单文件库不要求顶层 `main`
+- `dylib` 当前要求模块里至少存在一个 public 顶层 `extern "c"` 函数定义，避免生成没有明确导出面的共享库
 - direct `extern "c"` 调用现在会在 program mode 和 library mode 下都 lower 成 LLVM `declare @symbol` + `call @symbol`
 - 顶层 `extern "c"` 函数定义现在会 lower 成稳定 C 符号名，例如 `define i64 @q_add(...)`
+- Windows 上 `dylib` 链接会为这些稳定导出符号显式追加 `/EXPORT:<symbol>`，确保 DLL 导出表和 Qlang 的 exported C surface 保持一致
 - program mode 的入口 `main` 仍必须使用默认 Qlang ABI；如果需要导出稳定 C 符号，应定义独立的 `extern "c"` helper
 - `extern` callable 现在有共享 callable identity，因此 extern block 调用也能稳定参与参数类型检查与代码生成
 - first-class function value 不会再把后端打崩，而是返回结构化 unsupported diagnostics
@@ -90,10 +96,9 @@ P4 的第一刀已经落地为“LLVM IR backend foundation”，当前 `ql buil
 
 - 独立 linker family discovery
 - runtime startup object
-- dynamic library
 - first-class function value lowering
 - closure / struct / tuple / cleanup lowering
-- exported ABI 的 linkage/visibility 控制与 richer ABI surface
+- 任意共享库 surface、exported ABI 的 linkage/visibility 控制与 richer ABI surface
 - extern ABI 与 runtime glue 的其余部分
 
 这不是功能缺失，而是为了先把 Phase 4 的后端边界做稳，而不是把系统 LLVM、链接器和运行时问题一口气缠死。
@@ -225,6 +230,7 @@ P5 当前已经落地最小可用的 C header emit slice：
 - `cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir`
 - `cargo run -p ql-cli -- build fixtures/codegen/pass/extern_c_build.ql --emit llvm-ir`
 - `cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit staticlib`
+- `cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit dylib`
 - `cargo run -p ql-cli -- ffi header tests/ffi/pass/extern_c_export.ql`
 - 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit obj`
 - 在 clang 可用或 mock toolchain 注入时：`cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit exe`

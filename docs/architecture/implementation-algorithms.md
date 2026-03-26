@@ -439,6 +439,7 @@
    - `llvm-ir` 直接写 `.ll`
    - `obj` 先出中间 `.codegen.ll` 再调用 compiler
    - `exe` 先出中间 `.codegen.ll` 和 `.codegen.obj/.o` 再调用 linker/compiler
+   - `dylib` 先筛出 public 顶层 `extern "c"` 导出符号；若为空则直接返回 invalid input，再出中间 `.codegen.ll` 和 `.codegen.obj/.o` 调用 shared-library link
    - `staticlib` 先出中间 `.codegen.ll` 和 `.codegen.obj/.o` 再调用 archiver
 9. 失败时按阶段尽量保留中间产物，方便排查 toolchain 问题。
 
@@ -447,6 +448,7 @@
 - compiler 优先走 `QLANG_CLANG`
 - archiver 优先走 `QLANG_AR`
 - `QLANG_AR_STYLE` 可显式指定 `ar|lib`
+- Windows 下 `dylib` 链接会把导出符号展开成 `/EXPORT:<symbol>` 透传给 linker
 - Windows 下建议指向 `.exe` 或 `.cmd` wrapper，而不是裸 `.ps1`
 
 这个分层的意义：

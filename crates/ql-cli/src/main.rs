@@ -89,6 +89,7 @@ fn run() -> Result<(), u8> {
                             "llvm-ir" => options.emit = BuildEmit::LlvmIr,
                             "obj" => options.emit = BuildEmit::Object,
                             "exe" => options.emit = BuildEmit::Executable,
+                            "dylib" => options.emit = BuildEmit::DynamicLibrary,
                             "staticlib" => options.emit = BuildEmit::StaticLibrary,
                             other => {
                                 eprintln!("error: unsupported build emit target `{other}`");
@@ -449,7 +450,9 @@ fn print_usage() {
     eprintln!("Qlang CLI");
     eprintln!("usage:");
     eprintln!("  ql check <file-or-dir>");
-    eprintln!("  ql build <file> [--emit llvm-ir|obj|exe|staticlib] [--release] [-o <output>]");
+    eprintln!(
+        "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>]"
+    );
     eprintln!("  ql ffi header <file> [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
     eprintln!("  ql mir <file>");
@@ -737,6 +740,41 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_path_emits_dynamic_library_for_supported_source() {
+        let dir = TestDir::new("ql-cli-build-dylib");
+        dir.write(
+            "ffi_export.ql",
+            r#"
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/ffi_export.dll"
+        } else if cfg!(target_os = "macos") {
+            "artifacts/libffi_export.dylib"
+        } else {
+            "artifacts/libffi_export.so"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::DynamicLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        assert!(build_path(&dir.path().join("ffi_export.ql"), &options).is_ok());
+
+        let rendered =
+            fs::read_to_string(output).expect("read emitted dynamic library placeholder");
+        assert_eq!(rendered, "mock-dylib");
+    }
+
+    #[test]
     fn build_path_emits_static_library_for_supported_source() {
         let dir = TestDir::new("ql-cli-build-staticlib");
         dir.write(
@@ -775,9 +813,13 @@ fn add_one(value: Int) -> Int {
                 r#"
 $out = $null
 $isCompile = $false
+$isShared = $false
 for ($i = 0; $i -lt $args.Count; $i++) {
     if ($args[$i] -eq '-c') {
         $isCompile = $true
+    }
+    if ($args[$i] -eq '-shared' -or $args[$i] -eq '-dynamiclib') {
+        $isShared = $true
     }
     if ($args[$i] -eq '-o') {
         $out = $args[$i + 1]
@@ -789,6 +831,8 @@ if ($null -eq $out) {
 }
 if ($isCompile) {
     Set-Content -Path $out -NoNewline -Value "mock-object"
+} elseif ($isShared) {
+    Set-Content -Path $out -NoNewline -Value "mock-dylib"
 } else {
     Set-Content -Path $out -NoNewline -Value "mock-executable"
 }
@@ -805,9 +849,15 @@ if ($isCompile) {
                 "mock-clang-success.sh",
                 r#"out=""
 is_compile=0
+is_shared=0
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-c" ]; then
     is_compile=1
+    shift
+    continue
+  fi
+  if [ "$1" = "-shared" ] || [ "$1" = "-dynamiclib" ]; then
+    is_shared=1
     shift
     continue
   fi
@@ -820,6 +870,8 @@ while [ "$#" -gt 0 ]; do
 done
 if [ "$is_compile" -eq 1 ]; then
   printf 'mock-object' > "$out"
+elif [ "$is_shared" -eq 1 ]; then
+  printf 'mock-dylib' > "$out"
 else
   printf 'mock-executable' > "$out"
 fi
