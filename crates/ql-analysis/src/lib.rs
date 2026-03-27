@@ -94,7 +94,7 @@ impl Analysis {
         self.symbol_at(offset)
     }
 
-    /// Return async semantic context for `await` / `spawn` at `offset`.
+    /// Return async semantic context for `await` / `spawn` / `for await` at `offset`.
     pub fn async_context_at(&self, offset: usize) -> Option<AsyncContextInfo> {
         self.index.async_context_at(offset)
     }

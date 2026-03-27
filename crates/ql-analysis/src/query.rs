@@ -106,6 +106,7 @@ pub struct SemanticTokenOccurrence {
 pub enum AsyncOperatorKind {
     Await,
     Spawn,
+    ForAwait,
 }
 
 /// Async semantic context for one source operator occurrence.
@@ -650,7 +651,15 @@ impl<'a> QueryIndexBuilder<'a> {
                     self.index_block_async_contexts(*body);
                 }
                 ql_hir::StmtKind::Loop { body } => self.index_block_async_contexts(*body),
-                ql_hir::StmtKind::For { iterable, body, .. } => {
+                ql_hir::StmtKind::For {
+                    is_await,
+                    iterable,
+                    body,
+                    ..
+                } => {
+                    if *is_await {
+                        self.record_for_await_context(stmt.span, *iterable);
+                    }
                     self.index_expr_async_contexts(*iterable);
                     self.index_block_async_contexts(*body);
                 }
@@ -750,6 +759,41 @@ impl<'a> QueryIndexBuilder<'a> {
             operator,
             in_async_function: self.resolution.expr_is_in_async_function(expr_id),
         });
+    }
+
+    fn record_for_await_context(&mut self, stmt_span: Span, iterable_expr: ExprId) {
+        self.async_contexts.push(AsyncContextInfo {
+            span: self.for_await_operator_span(stmt_span),
+            operator: AsyncOperatorKind::ForAwait,
+            in_async_function: self.resolution.expr_is_in_async_function(iterable_expr),
+        });
+    }
+
+    fn for_await_operator_span(&self, stmt_span: Span) -> Span {
+        let fallback = self.root_span(stmt_span);
+        let Some(stmt_text) = self.source.get(stmt_span.start..stmt_span.end) else {
+            return fallback;
+        };
+
+        let mut offset = skip_whitespace_prefix(stmt_text, 0);
+        let Some(rest) = stmt_text.get(offset..) else {
+            return fallback;
+        };
+        if !rest.starts_with("for") {
+            return fallback;
+        }
+
+        offset += "for".len();
+        offset = skip_whitespace_prefix(stmt_text, offset);
+        let Some(rest) = stmt_text.get(offset..) else {
+            return fallback;
+        };
+        if !rest.starts_with("await") {
+            return fallback;
+        }
+
+        let start = stmt_span.start + offset;
+        Span::new(start, start + "await".len())
     }
 
     fn index_completion_support(&mut self) {
@@ -2552,6 +2596,17 @@ impl<'a> QueryIndexBuilder<'a> {
 
 fn completion_span_contains(span: Span, offset: usize) -> bool {
     span.start <= offset && offset <= span.end
+}
+
+fn skip_whitespace_prefix(text: &str, start: usize) -> usize {
+    let mut offset = start;
+    while let Some(ch) = text.get(offset..).and_then(|suffix| suffix.chars().next()) {
+        if !ch.is_whitespace() {
+            break;
+        }
+        offset += ch.len_utf8();
+    }
+    offset
 }
 
 const fn completion_namespace_rank(namespace: CompletionNamespace) -> usize {

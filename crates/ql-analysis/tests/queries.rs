@@ -6923,11 +6923,17 @@ fn worker() -> Int {
 }
 
 fn sync_main() -> Int {
+    for await value in [1, 2, 3] {
+        let current = value
+    }
     spawn worker()
     return await worker()
 }
 
 async fn async_main() -> Int {
+    for await value in [1, 2, 3] {
+        let current = value
+    }
     spawn worker()
     return await worker()
 }
@@ -6935,6 +6941,14 @@ async fn async_main() -> Int {
 
     let analysis = analyzed(source);
 
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "await", 1)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "await", 1),
+            operator: AsyncOperatorKind::ForAwait,
+            in_async_function: false,
+        })
+    );
     assert_eq!(
         analysis.async_context_at(nth_offset(source, "spawn", 1)),
         Some(AsyncContextInfo {
@@ -6944,11 +6958,19 @@ async fn async_main() -> Int {
         })
     );
     assert_eq!(
-        analysis.async_context_at(nth_offset(source, "await", 1)),
+        analysis.async_context_at(nth_offset(source, "await", 2)),
         Some(AsyncContextInfo {
-            span: nth_span(source, "await", 1),
+            span: nth_span(source, "await", 2),
             operator: AsyncOperatorKind::Await,
             in_async_function: false,
+        })
+    );
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "await", 3)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "await", 3),
+            operator: AsyncOperatorKind::ForAwait,
+            in_async_function: true,
         })
     );
     assert_eq!(
@@ -6960,9 +6982,9 @@ async fn async_main() -> Int {
         })
     );
     assert_eq!(
-        analysis.async_context_at(nth_offset(source, "await", 2)),
+        analysis.async_context_at(nth_offset(source, "await", 4)),
         Some(AsyncContextInfo {
-            span: nth_span(source, "await", 2),
+            span: nth_span(source, "await", 4),
             operator: AsyncOperatorKind::Await,
             in_async_function: true,
         })
