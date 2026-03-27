@@ -18,10 +18,11 @@
 - 已在 `ql-typeck` 落地 `await` / `spawn` 的 async 上下文约束：在非 `async fn` 内使用会给出显式诊断
 - 已补充 `crates/ql-typeck/tests/async_typing.rs`，锁住 `await` / `spawn` 边界与 async 函数内允许路径
 - 已在 `ql-resolve` 增加 async 上下文查询契约（`expr_is_in_async_function` / `scope_is_in_async_function`）
-- 已在 `ql-analysis` 暴露 `async_context_at`，可查询 `await` / `spawn` 在当前位置是否位于 `async fn` 内
+- 已在 `ql-analysis` 暴露 `async_context_at`，可查询 `await` / `spawn` / `for await` 在当前位置是否位于 `async fn` 内
 - 已补充 `crates/ql-analysis/tests/queries.rs` 的 async 查询回归
 - 已在 `ql-lsp` bridge 层增加只读 `async_context_for_analysis` 桥接（不扩展协议面）
 - 已补充 `crates/ql-lsp/tests/bridge.rs` 的 async 桥接回归
+- 已把 `for await` 纳入 `ql-analysis` / `ql-lsp` async 查询桥接回归，统一 async 运算符语义查询面（`for await` 当前锚定 `await` 关键字 span）
 - 已在 `ql-typeck` 增补 `for await` 上下文约束：非 `async fn` 内使用会给出显式诊断
 - 已补充 `crates/ql-typeck/tests/async_typing.rs` 的 `for await` 边界回归
 - 已在 `ql-typeck` 收紧 `await` / `spawn` 操作数约束：当前仅允许直接作用于 call expression，非调用操作数会给出显式诊断

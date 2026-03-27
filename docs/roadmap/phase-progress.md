@@ -714,10 +714,11 @@ P6 当前仍刻意未完成：
 - `await` / `spawn` 在非 `async fn` 内使用会给出显式 diagnostics
 - 新增 `crates/ql-typeck/tests/async_typing.rs`，锁住边界行为
 - `ql-resolve` 新增 async 语义查询契约：`expr_is_in_async_function` / `scope_is_in_async_function`
-- `ql-analysis` 新增 `async_context_at`（`await` / `spawn` -> 是否处于 async 函数上下文）
+- `ql-analysis` 新增 `async_context_at`（`await` / `spawn` / `for await` -> 是否处于 async 函数上下文）
 - 新增 `ql-analysis` async 查询回归测试，锁住查询语义
 - `ql-lsp` bridge 新增 `async_context_for_analysis` 只读桥接（位置 -> async 运算符上下文）
 - 新增 `ql-lsp` async 桥接回归测试，锁住 bridge 行为
+- `ql-analysis` / `ql-lsp` async 查询桥接已覆盖 `for await` 运算符上下文（当前锚定 `await` 关键字 span）
 - `ql-typeck` 新增 `for await` 的 async 上下文约束（非 `async fn` 显式诊断）
 - 新增 `ql-typeck` 的 `for await` 边界回归测试
 - `ql-typeck` 新增 `await` / `spawn` 操作数形态约束：当前要求操作数必须是 call expression
