@@ -10,7 +10,7 @@ use ql_driver::{
     CHeaderOptions, CHeaderSurface, build_file, emit_c_header,
 };
 use ql_fmt::format_source;
-use ql_runtime::collect_runtime_hooks;
+use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 
 fn main() -> ExitCode {
     match run() {
@@ -450,17 +450,24 @@ fn render_runtime_requirements(analysis: &ql_analysis::Analysis) -> String {
             requirement.capability.description(),
         ));
     }
-    for hook in collect_runtime_hooks(
-        analysis
-            .runtime_requirements()
-            .iter()
-            .map(|requirement| requirement.capability),
-    ) {
+    let capabilities = analysis
+        .runtime_requirements()
+        .iter()
+        .map(|requirement| requirement.capability)
+        .collect::<Vec<_>>();
+    for hook in collect_runtime_hooks(capabilities.iter().copied()) {
         rendered.push_str(&format!(
             "runtime hook: {} -> {} ({})\n",
             hook.stable_name(),
             hook.symbol_name(),
             hook.description(),
+        ));
+    }
+    for signature in collect_runtime_hook_signatures(capabilities.iter().copied()) {
+        rendered.push_str(&format!(
+            "runtime hook abi: {} {}\n",
+            signature.hook.stable_name(),
+            signature.render_contract(),
         ));
     }
     rendered
@@ -789,6 +796,20 @@ async fn helper() -> Int {
         assert!(rendered.contains("runtime hook: executor-spawn -> qlrt_executor_spawn"));
         assert!(rendered.contains("runtime hook: task-await -> qlrt_task_await"));
         assert!(rendered.contains("runtime hook: async-iter-next -> qlrt_async_iter_next"));
+        assert!(rendered.contains(
+            "runtime hook abi: async-task-create ccc qlrt_async_task_create(entry: ptr, frame: ptr) -> ptr"
+        ));
+        assert!(rendered.contains(
+            "runtime hook abi: executor-spawn ccc qlrt_executor_spawn(executor: ptr, task: ptr) -> ptr"
+        ));
+        assert!(
+            rendered.contains(
+                "runtime hook abi: task-await ccc qlrt_task_await(join_handle: ptr) -> ptr"
+            )
+        );
+        assert!(rendered.contains(
+            "runtime hook abi: async-iter-next ccc qlrt_async_iter_next(iterator: ptr) -> ptr"
+        ));
     }
 
     #[test]

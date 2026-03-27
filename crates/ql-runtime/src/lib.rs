@@ -75,6 +75,116 @@ impl RuntimeHook {
     }
 }
 
+/// Minimal ABI-level type vocabulary for future runtime hook lowering.
+///
+/// This intentionally stays tiny and opaque at first so the compiler can
+/// freeze symbol names plus a first LLVM-facing signature shape without
+/// committing to concrete task/join/result/frame layouts yet.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum RuntimeAbiType {
+    Void,
+    Bool,
+    I64,
+    Ptr,
+}
+
+impl RuntimeAbiType {
+    pub const fn stable_name(self) -> &'static str {
+        match self {
+            Self::Void => "void",
+            Self::Bool => "bool",
+            Self::I64 => "i64",
+            Self::Ptr => "ptr",
+        }
+    }
+
+    pub const fn llvm_ir(self) -> &'static str {
+        match self {
+            Self::Void => "void",
+            Self::Bool => "i1",
+            Self::I64 => "i64",
+            Self::Ptr => "ptr",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct RuntimeHookParam {
+    pub name: &'static str,
+    pub ty: RuntimeAbiType,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RuntimeHookSignature {
+    pub hook: RuntimeHook,
+    pub return_type: RuntimeAbiType,
+    pub params: &'static [RuntimeHookParam],
+}
+
+impl RuntimeHookSignature {
+    pub const fn calling_convention(self) -> &'static str {
+        "ccc"
+    }
+
+    pub fn render_contract(self) -> String {
+        let params = self
+            .params
+            .iter()
+            .map(|param| format!("{}: {}", param.name, param.ty.stable_name()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "{} {}({params}) -> {}",
+            self.calling_convention(),
+            self.hook.symbol_name(),
+            self.return_type.stable_name(),
+        )
+    }
+
+    pub fn render_llvm_declaration(self) -> String {
+        let params = self
+            .params
+            .iter()
+            .map(|param| param.ty.llvm_ir())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "declare {} @{}({params})",
+            self.return_type.llvm_ir(),
+            self.hook.symbol_name(),
+        )
+    }
+}
+
+const ASYNC_TASK_CREATE_PARAMS: &[RuntimeHookParam] = &[
+    RuntimeHookParam {
+        name: "entry",
+        ty: RuntimeAbiType::Ptr,
+    },
+    RuntimeHookParam {
+        name: "frame",
+        ty: RuntimeAbiType::Ptr,
+    },
+];
+const EXECUTOR_SPAWN_PARAMS: &[RuntimeHookParam] = &[
+    RuntimeHookParam {
+        name: "executor",
+        ty: RuntimeAbiType::Ptr,
+    },
+    RuntimeHookParam {
+        name: "task",
+        ty: RuntimeAbiType::Ptr,
+    },
+];
+const TASK_AWAIT_PARAMS: &[RuntimeHookParam] = &[RuntimeHookParam {
+    name: "join_handle",
+    ty: RuntimeAbiType::Ptr,
+}];
+const ASYNC_ITER_NEXT_PARAMS: &[RuntimeHookParam] = &[RuntimeHookParam {
+    name: "iterator",
+    ty: RuntimeAbiType::Ptr,
+}];
+
 const ASYNC_FUNCTION_BODY_HOOKS: &[RuntimeHook] = &[RuntimeHook::AsyncTaskCreate];
 const TASK_SPAWN_HOOKS: &[RuntimeHook] = &[RuntimeHook::ExecutorSpawn];
 const TASK_AWAIT_HOOKS: &[RuntimeHook] = &[RuntimeHook::TaskAwait];
@@ -103,6 +213,41 @@ where
     }
     hooks.sort();
     hooks
+}
+
+pub const fn runtime_hook_signature(hook: RuntimeHook) -> RuntimeHookSignature {
+    match hook {
+        RuntimeHook::AsyncTaskCreate => RuntimeHookSignature {
+            hook,
+            return_type: RuntimeAbiType::Ptr,
+            params: ASYNC_TASK_CREATE_PARAMS,
+        },
+        RuntimeHook::ExecutorSpawn => RuntimeHookSignature {
+            hook,
+            return_type: RuntimeAbiType::Ptr,
+            params: EXECUTOR_SPAWN_PARAMS,
+        },
+        RuntimeHook::TaskAwait => RuntimeHookSignature {
+            hook,
+            return_type: RuntimeAbiType::Ptr,
+            params: TASK_AWAIT_PARAMS,
+        },
+        RuntimeHook::AsyncIterNext => RuntimeHookSignature {
+            hook,
+            return_type: RuntimeAbiType::Ptr,
+            params: ASYNC_ITER_NEXT_PARAMS,
+        },
+    }
+}
+
+pub fn collect_runtime_hook_signatures<I>(capabilities: I) -> Vec<RuntimeHookSignature>
+where
+    I: IntoIterator<Item = RuntimeCapability>,
+{
+    collect_runtime_hooks(capabilities)
+        .into_iter()
+        .map(runtime_hook_signature)
+        .collect()
 }
 
 pub trait Task {

@@ -2,7 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use ql_runtime::{
-    Executor, InlineExecutor, RuntimeCapability, RuntimeHook, collect_runtime_hooks,
+    Executor, InlineExecutor, RuntimeAbiType, RuntimeCapability, RuntimeHook,
+    collect_runtime_hook_signatures, collect_runtime_hooks, runtime_hook_signature,
     runtime_hooks_for_capability,
 };
 
@@ -48,6 +49,45 @@ fn runtime_hooks_expose_stable_names_and_symbols() {
             ("executor-spawn", "qlrt_executor_spawn"),
             ("task-await", "qlrt_task_await"),
             ("async-iter-next", "qlrt_async_iter_next"),
+        ]
+    );
+}
+
+#[test]
+fn runtime_hook_signatures_expose_stable_contract_strings() {
+    let signature = runtime_hook_signature(RuntimeHook::AsyncTaskCreate);
+
+    assert_eq!(signature.calling_convention(), "ccc");
+    assert_eq!(signature.return_type, RuntimeAbiType::Ptr);
+    assert_eq!(
+        signature.render_contract(),
+        "ccc qlrt_async_task_create(entry: ptr, frame: ptr) -> ptr"
+    );
+    assert_eq!(
+        signature.render_llvm_declaration(),
+        "declare ptr @qlrt_async_task_create(ptr, ptr)"
+    );
+}
+
+#[test]
+fn collect_runtime_hook_signatures_preserves_sorted_hook_plan() {
+    let signatures = collect_runtime_hook_signatures([
+        RuntimeCapability::TaskAwait,
+        RuntimeCapability::AsyncFunctionBodies,
+        RuntimeCapability::TaskSpawn,
+        RuntimeCapability::AsyncIteration,
+    ]);
+
+    assert_eq!(
+        signatures
+            .into_iter()
+            .map(|signature| signature.render_contract())
+            .collect::<Vec<_>>(),
+        vec![
+            "ccc qlrt_async_task_create(entry: ptr, frame: ptr) -> ptr",
+            "ccc qlrt_executor_spawn(executor: ptr, task: ptr) -> ptr",
+            "ccc qlrt_task_await(join_handle: ptr) -> ptr",
+            "ccc qlrt_async_iter_next(iterator: ptr) -> ptr",
         ]
     );
 }
