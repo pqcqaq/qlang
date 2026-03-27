@@ -512,7 +512,7 @@
 2. `Point { x: value }`、`P { x: value }` 这类 root struct path 继续保留既有字段标签语义
 3. `Point.Scope.Config { x: value }`、`P.Scope.Config { x: value }` 这类更深 path 不会继续从 root struct 偷出 field identity
 4. 这类更深 path 只保留上层 lexical fallback，不伪造字段 occurrence
-5. 如果更深 path 上使用 shorthand token，例如 `Point.Scope.Config { x }` / `Point.Scope.Config { source }`，token 仍复用它本来已有的 lexical symbol（local / pattern binding / import alias）；同文件 rename 也只做 binding/import 自身的 raw replacement，不执行依赖 field owner 的 shorthand 扩写
+5. 如果更深 path 上使用 shorthand token，例如 `Point.Scope.Config { x }` / `Point.Scope.Config { source }`，token 仍复用它本来已有的 lexical symbol（local / pattern binding / import alias）；因此 hover / definition / references / semantic tokens 继续走 lexical surface，同文件 rename 也只做 binding/import 自身的 raw replacement，不执行依赖 field owner 的 shorthand 扩写
 6. 这仍然不是 module-path struct semantics；cross-file / deeper module graph 继续关闭
 
 当前同文件 local import alias variant follow-through 继续复用这条 truth surface：

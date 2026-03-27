@@ -5045,6 +5045,73 @@ fn read(point: Point) -> Int {
 }
 
 #[test]
+fn semantic_tokens_keep_deeper_struct_like_local_shorthand_tokens_lexical() {
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(value: Int, point: Point) -> Int {
+    let x = value
+    let built = Point.Scope.Config { x }
+    return match point {
+        Point.Scope.Config { x } => x,
+        _ => 0,
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+    let tokens = analysis.semantic_tokens();
+
+    for span in [nth_span(source, "x", 3), nth_span(source, "x", 4)] {
+        assert!(tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+            span,
+            kind: SymbolKind::Local,
+        }));
+        assert!(!tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+            span,
+            kind: SymbolKind::Field,
+        }));
+    }
+}
+
+#[test]
+fn semantic_tokens_keep_deeper_struct_like_import_shorthand_tokens_lexical() {
+    let source = r#"
+use source_value as source
+
+struct Point {
+    source: Int,
+}
+
+const source_value: Int = 1
+
+fn read() -> Int {
+    let built = Point.Scope.Config { source }
+    return source
+}
+"#;
+
+    let analysis = analyzed(source);
+    let tokens = analysis.semantic_tokens();
+    let shorthand = source
+        .find("{ source }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct literal field should exist");
+    let shorthand_span = Span::new(shorthand, shorthand + "source".len());
+
+    assert!(tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: shorthand_span,
+        kind: SymbolKind::Import,
+    }));
+    assert!(!tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: shorthand_span,
+        kind: SymbolKind::Field,
+    }));
+}
+
+#[test]
 fn completion_queries_do_not_offer_variant_candidates_on_deeper_struct_literal_and_pattern_paths() {
     let source = r#"
 use Command as Cmd

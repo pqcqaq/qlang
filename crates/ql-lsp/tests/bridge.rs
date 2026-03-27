@@ -2213,6 +2213,135 @@ fn read() -> Int {
 }
 
 #[test]
+fn references_bridge_keeps_deeper_struct_like_shorthand_tokens_on_local_symbols() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(value: Int) -> Int {
+    let x = value
+    let built = Point.Scope.Config { x }
+    return x
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let shorthand = source
+        .find("{ x }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct literal field should exist");
+    let shorthand_position =
+        span_to_range(source, Span::new(shorthand, shorthand + "x".len())).start;
+
+    let with_declaration =
+        references_for_analysis(&uri, source, &analysis, shorthand_position, true)
+            .expect("references should exist");
+    let without_declaration =
+        references_for_analysis(&uri, source, &analysis, shorthand_position, false)
+            .expect("references should exist");
+
+    assert_eq!(
+        with_declaration,
+        vec![
+            Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 2))),
+            Location::new(
+                uri.clone(),
+                span_to_range(source, Span::new(shorthand, shorthand + "x".len())),
+            ),
+            Location::new(uri, span_to_range(source, nth_span(source, "x", 4))),
+        ]
+    );
+    assert_eq!(
+        without_declaration,
+        vec![
+            Location::new(
+                Url::parse("file:///sample.ql").expect("URI should parse"),
+                span_to_range(source, Span::new(shorthand, shorthand + "x".len())),
+            ),
+            Location::new(
+                Url::parse("file:///sample.ql").expect("URI should parse"),
+                span_to_range(source, nth_span(source, "x", 4)),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn references_bridge_keeps_deeper_struct_like_shorthand_tokens_on_import_alias_symbols() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use source_value as source
+
+struct Point {
+    source: Int,
+}
+
+const source_value: Int = 1
+
+fn read() -> Int {
+    let built = Point.Scope.Config { source }
+    return source
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let shorthand = source
+        .find("{ source }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct literal field should exist");
+    let return_source = source
+        .rfind("return source")
+        .map(|offset| offset + "return ".len())
+        .expect("return source use should exist");
+    let shorthand_position =
+        span_to_range(source, Span::new(shorthand, shorthand + "source".len())).start;
+
+    let with_declaration =
+        references_for_analysis(&uri, source, &analysis, shorthand_position, true)
+            .expect("references should exist");
+    let without_declaration =
+        references_for_analysis(&uri, source, &analysis, shorthand_position, false)
+            .expect("references should exist");
+
+    assert_eq!(
+        with_declaration,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(source, alias_span(source, "source"))
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(source, Span::new(shorthand, shorthand + "source".len())),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(return_source, return_source + "source".len()),
+                ),
+            ),
+        ]
+    );
+    assert_eq!(
+        without_declaration,
+        vec![
+            Location::new(
+                Url::parse("file:///sample.ql").expect("URI should parse"),
+                span_to_range(source, Span::new(shorthand, shorthand + "source".len())),
+            ),
+            Location::new(
+                Url::parse("file:///sample.ql").expect("URI should parse"),
+                span_to_range(
+                    source,
+                    Span::new(return_source, return_source + "source".len()),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn references_bridge_respects_include_declaration() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
@@ -5347,6 +5476,112 @@ fn read(point: Point) -> Int {
             property_type,
         )));
     }
+}
+
+#[test]
+fn semantic_tokens_bridge_keeps_deeper_struct_like_local_shorthand_tokens_lexical() {
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(value: Int, point: Point) -> Int {
+    let x = value
+    let built = Point.Scope.Config { x }
+    return match point {
+        Point.Scope.Config { x } => x,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let SemanticTokensResult::Tokens(tokens) = semantic_tokens_for_analysis(source, &analysis)
+    else {
+        panic!("expected full semantic tokens");
+    };
+    let decoded = decode_semantic_tokens(&tokens.data);
+    let legend = semantic_tokens_legend();
+    let variable_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::VARIABLE)
+        .expect("variable legend entry should exist") as u32;
+    let property_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::PROPERTY)
+        .expect("property legend entry should exist") as u32;
+
+    for range in [
+        span_to_range(source, nth_span(source, "x", 3)),
+        span_to_range(source, nth_span(source, "x", 4)),
+    ] {
+        assert!(decoded.contains(&(
+            range.start.line,
+            range.start.character,
+            range.end.character - range.start.character,
+            variable_type,
+        )));
+        assert!(!decoded.contains(&(
+            range.start.line,
+            range.start.character,
+            range.end.character - range.start.character,
+            property_type,
+        )));
+    }
+}
+
+#[test]
+fn semantic_tokens_bridge_keeps_deeper_struct_like_import_shorthand_tokens_lexical() {
+    let source = r#"
+use source_value as source
+
+struct Point {
+    source: Int,
+}
+
+const source_value: Int = 1
+
+fn read() -> Int {
+    let built = Point.Scope.Config { source }
+    return source
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let SemanticTokensResult::Tokens(tokens) = semantic_tokens_for_analysis(source, &analysis)
+    else {
+        panic!("expected full semantic tokens");
+    };
+    let decoded = decode_semantic_tokens(&tokens.data);
+    let legend = semantic_tokens_legend();
+    let namespace_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::NAMESPACE)
+        .expect("namespace legend entry should exist") as u32;
+    let property_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::PROPERTY)
+        .expect("property legend entry should exist") as u32;
+    let shorthand = source
+        .find("{ source }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct literal field should exist");
+    let range = span_to_range(source, Span::new(shorthand, shorthand + "source".len()));
+
+    assert!(decoded.contains(&(
+        range.start.line,
+        range.start.character,
+        range.end.character - range.start.character,
+        namespace_type,
+    )));
+    assert!(!decoded.contains(&(
+        range.start.line,
+        range.start.character,
+        range.end.character - range.start.character,
+        property_type,
+    )));
 }
 
 #[test]
