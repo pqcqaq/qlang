@@ -37,6 +37,7 @@ fn runtime_hooks_expose_stable_names_and_symbols() {
         RuntimeHook::AsyncTaskCreate,
         RuntimeHook::ExecutorSpawn,
         RuntimeHook::TaskAwait,
+        RuntimeHook::TaskResultRelease,
         RuntimeHook::AsyncIterNext,
     ];
 
@@ -50,6 +51,7 @@ fn runtime_hooks_expose_stable_names_and_symbols() {
             ("async-task-create", "qlrt_async_task_create"),
             ("executor-spawn", "qlrt_executor_spawn"),
             ("task-await", "qlrt_task_await"),
+            ("task-result-release", "qlrt_task_result_release"),
             ("async-iter-next", "qlrt_async_iter_next"),
         ]
     );
@@ -88,6 +90,22 @@ fn async_task_create_signature_keeps_entry_and_frame_contract() {
 }
 
 #[test]
+fn task_result_release_signature_keeps_payload_release_contract() {
+    let signature = runtime_hook_signature(RuntimeHook::TaskResultRelease);
+
+    assert_eq!(signature.calling_convention(), "ccc");
+    assert_eq!(signature.return_type, RuntimeAbiType::Void);
+    assert_eq!(
+        signature.render_contract(),
+        "ccc qlrt_task_result_release(result: ptr) -> void"
+    );
+    assert_eq!(
+        signature.render_llvm_declaration(),
+        "declare void @qlrt_task_result_release(ptr)"
+    );
+}
+
+#[test]
 fn collect_runtime_hook_signatures_preserves_sorted_hook_plan() {
     let signatures = collect_runtime_hook_signatures([
         RuntimeCapability::TaskAwait,
@@ -106,6 +124,7 @@ fn collect_runtime_hook_signatures_preserves_sorted_hook_plan() {
             "ccc qlrt_async_task_create(entry: ptr, frame: ptr) -> ptr",
             "ccc qlrt_executor_spawn(executor: ptr, task: ptr) -> ptr",
             "ccc qlrt_task_await(join_handle: ptr) -> ptr",
+            "ccc qlrt_task_result_release(result: ptr) -> void",
             "ccc qlrt_async_iter_next(iterator: ptr) -> ptr",
         ]
     );
@@ -123,7 +142,7 @@ fn runtime_capabilities_map_to_shared_hook_contracts() {
     );
     assert_eq!(
         runtime_hooks_for_capability(RuntimeCapability::TaskAwait),
-        &[RuntimeHook::TaskAwait]
+        &[RuntimeHook::TaskAwait, RuntimeHook::TaskResultRelease]
     );
     assert_eq!(
         runtime_hooks_for_capability(RuntimeCapability::AsyncIteration),
@@ -148,6 +167,7 @@ fn collect_runtime_hooks_dedupes_and_orders_the_contract_surface() {
             RuntimeHook::AsyncTaskCreate,
             RuntimeHook::ExecutorSpawn,
             RuntimeHook::TaskAwait,
+            RuntimeHook::TaskResultRelease,
             RuntimeHook::AsyncIterNext,
         ]
     );

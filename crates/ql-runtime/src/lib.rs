@@ -44,6 +44,7 @@ pub enum RuntimeHook {
     AsyncTaskCreate,
     ExecutorSpawn,
     TaskAwait,
+    TaskResultRelease,
     AsyncIterNext,
 }
 
@@ -54,6 +55,7 @@ impl RuntimeHook {
             Self::AsyncTaskCreate => "async-task-create",
             Self::ExecutorSpawn => "executor-spawn",
             Self::TaskAwait => "task-await",
+            Self::TaskResultRelease => "task-result-release",
             Self::AsyncIterNext => "async-iter-next",
         }
     }
@@ -64,6 +66,7 @@ impl RuntimeHook {
             Self::AsyncTaskCreate => "qlrt_async_task_create",
             Self::ExecutorSpawn => "qlrt_executor_spawn",
             Self::TaskAwait => "qlrt_task_await",
+            Self::TaskResultRelease => "qlrt_task_result_release",
             Self::AsyncIterNext => "qlrt_async_iter_next",
         }
     }
@@ -76,6 +79,9 @@ impl RuntimeHook {
             Self::AsyncTaskCreate => "materializing an executable task from an `async fn` body",
             Self::ExecutorSpawn => "submitting a task to the configured runtime executor",
             Self::TaskAwait => "waiting for an asynchronous task result",
+            Self::TaskResultRelease => {
+                "releasing an opaque task result payload after value extraction"
+            }
             Self::AsyncIterNext => "advancing the next item in a `for await` iteration",
         }
     }
@@ -196,6 +202,10 @@ const TASK_AWAIT_PARAMS: &[RuntimeHookParam] = &[RuntimeHookParam {
     name: "join_handle",
     ty: RuntimeAbiType::Ptr,
 }];
+const TASK_RESULT_RELEASE_PARAMS: &[RuntimeHookParam] = &[RuntimeHookParam {
+    name: "result",
+    ty: RuntimeAbiType::Ptr,
+}];
 const ASYNC_ITER_NEXT_PARAMS: &[RuntimeHookParam] = &[RuntimeHookParam {
     name: "iterator",
     ty: RuntimeAbiType::Ptr,
@@ -204,7 +214,7 @@ const ASYNC_ITER_NEXT_PARAMS: &[RuntimeHookParam] = &[RuntimeHookParam {
 const ASYNC_FUNCTION_BODY_HOOKS: &[RuntimeHook] =
     &[RuntimeHook::AsyncFrameAlloc, RuntimeHook::AsyncTaskCreate];
 const TASK_SPAWN_HOOKS: &[RuntimeHook] = &[RuntimeHook::ExecutorSpawn];
-const TASK_AWAIT_HOOKS: &[RuntimeHook] = &[RuntimeHook::TaskAwait];
+const TASK_AWAIT_HOOKS: &[RuntimeHook] = &[RuntimeHook::TaskAwait, RuntimeHook::TaskResultRelease];
 const ASYNC_ITERATION_HOOKS: &[RuntimeHook] = &[RuntimeHook::AsyncIterNext];
 
 pub const fn runtime_hooks_for_capability(capability: RuntimeCapability) -> &'static [RuntimeHook] {
@@ -253,6 +263,11 @@ pub const fn runtime_hook_signature(hook: RuntimeHook) -> RuntimeHookSignature {
             hook,
             return_type: RuntimeAbiType::Ptr,
             params: TASK_AWAIT_PARAMS,
+        },
+        RuntimeHook::TaskResultRelease => RuntimeHookSignature {
+            hook,
+            return_type: RuntimeAbiType::Void,
+            params: TASK_RESULT_RELEASE_PARAMS,
         },
         RuntimeHook::AsyncIterNext => RuntimeHookSignature {
             hook,

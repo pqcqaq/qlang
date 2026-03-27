@@ -796,6 +796,7 @@ async fn helper() -> Int {
         assert!(rendered.contains("runtime hook: async-task-create -> qlrt_async_task_create"));
         assert!(rendered.contains("runtime hook: executor-spawn -> qlrt_executor_spawn"));
         assert!(rendered.contains("runtime hook: task-await -> qlrt_task_await"));
+        assert!(rendered.contains("runtime hook: task-result-release -> qlrt_task_result_release"));
         assert!(rendered.contains("runtime hook: async-iter-next -> qlrt_async_iter_next"));
         assert!(rendered.contains(
             "runtime hook abi: async-frame-alloc ccc qlrt_async_frame_alloc(size: i64, align: i64) -> ptr"
@@ -811,6 +812,9 @@ async fn helper() -> Int {
                 "runtime hook abi: task-await ccc qlrt_task_await(join_handle: ptr) -> ptr"
             )
         );
+        assert!(rendered.contains(
+            "runtime hook abi: task-result-release ccc qlrt_task_result_release(result: ptr) -> void"
+        ));
         assert!(rendered.contains(
             "runtime hook abi: async-iter-next ccc qlrt_async_iter_next(iterator: ptr) -> ptr"
         ));

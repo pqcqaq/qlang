@@ -1994,6 +1994,7 @@ fn main() -> Int {
     fn emits_runtime_hook_declarations_from_shared_abi_contract() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
             RuntimeCapability::AsyncFunctionBodies,
         ]);
         let rendered = emit_with_runtime_hooks(
@@ -2009,11 +2010,15 @@ fn main() -> Int {
         let async_frame_alloc = "declare ptr @qlrt_async_frame_alloc(i64, i64)";
         let async_task_create = "declare ptr @qlrt_async_task_create(ptr, ptr)";
         let executor_spawn = "declare ptr @qlrt_executor_spawn(ptr, ptr)";
+        let task_await = "declare ptr @qlrt_task_await(ptr)";
+        let task_result_release = "declare void @qlrt_task_result_release(ptr)";
         let entry_definition = "define i64 @ql_0_main()";
 
         assert!(rendered.contains(async_frame_alloc));
         assert!(rendered.contains(async_task_create));
         assert!(rendered.contains(executor_spawn));
+        assert!(rendered.contains(task_await));
+        assert!(rendered.contains(task_result_release));
         assert!(
             rendered
                 .find(async_frame_alloc)
@@ -2033,6 +2038,22 @@ fn main() -> Int {
         assert!(
             rendered
                 .find(executor_spawn)
+                .expect("runtime declaration should exist")
+                < rendered
+                    .find(entry_definition)
+                    .expect("entry function should exist")
+        );
+        assert!(
+            rendered
+                .find(task_await)
+                .expect("runtime declaration should exist")
+                < rendered
+                    .find(entry_definition)
+                    .expect("entry function should exist")
+        );
+        assert!(
+            rendered
+                .find(task_result_release)
                 .expect("runtime declaration should exist")
                 < rendered
                     .find(entry_definition)
