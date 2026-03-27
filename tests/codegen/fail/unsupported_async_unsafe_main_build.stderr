@@ -1,0 +1,6 @@
+error: tests/codegen/fail/unsupported_async_unsafe_main_build.ql:1:14: LLVM IR backend foundation does not support `async fn` yet
+  async unsafe fn main() -> Int {
+               ^^^^^^^^
+error: tests/codegen/fail/unsupported_async_unsafe_main_build.ql:1:14: LLVM IR backend foundation does not support `unsafe fn` bodies yet
+  async unsafe fn main() -> Int {
+               ^^^^^^^^
