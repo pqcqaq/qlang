@@ -953,6 +953,18 @@ let task = spawn fetch_user(id)
 let user = await task?
 ```
 
+当前语义草案中，异步任务句柄也可以显式出现在类型位置：
+
+```rust
+fn schedule(id: UserId) -> Task[Result[User, HttpError]] {
+    return fetch_user(id)
+}
+
+async fn main(id: UserId) -> Result[User, HttpError] {
+    return await schedule(id)
+}
+```
+
 ### `unsafe`
 
 ```rust

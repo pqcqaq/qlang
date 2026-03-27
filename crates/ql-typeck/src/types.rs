@@ -259,12 +259,19 @@ pub fn lower_type(module: &Module, resolution: &ResolutionMap, type_id: TypeId) 
             len: *len,
         },
         TypeKind::Named { path, args } => {
-            let args = args
+            let args: Vec<_> = args
                 .iter()
                 .map(|&arg| lower_type(module, resolution, arg))
                 .collect();
             let path_text = path.segments.join(".");
             let is_single_segment = path.segments.len() == 1;
+            if is_single_segment
+                && path_text == "Task"
+                && args.len() == 1
+                && resolution.type_resolution(type_id).is_none()
+            {
+                return Ty::TaskHandle(Box::new(args.into_iter().next().unwrap()));
+            }
             match resolution.type_resolution(type_id) {
                 Some(TypeResolution::Builtin(builtin)) if is_single_segment => {
                     Ty::Builtin(*builtin)

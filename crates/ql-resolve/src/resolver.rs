@@ -322,6 +322,9 @@ impl<'module> Resolver<'module> {
             TypeKind::Named { path, args } => {
                 if let Some(resolution) = self.lookup_type_path(path, scope) {
                     self.resolution.type_paths.insert(type_id, resolution);
+                } else if task_handle_type_path(path, args) {
+                    // `Task[T]` is currently a reserved compiler type surface that
+                    // stays intentionally out of the user-defined scope graph.
                 } else if let Some((name, span)) = single_segment_path_root(path) {
                     self.resolution
                         .diagnostics
@@ -759,6 +762,10 @@ fn unresolved_type_diagnostic(name: &str, span: ql_span::Span) -> Diagnostic {
     Diagnostic::error(format!("unresolved type `{name}`")).with_label(
         Label::new(span).with_message("could not resolve this type in the current scope"),
     )
+}
+
+fn task_handle_type_path(path: &Path, args: &[TypeId]) -> bool {
+    matches!(path.segments.as_slice(), [name] if name == "Task") && args.len() == 1
 }
 
 fn single_segment_path_root(path: &Path) -> Option<(&str, ql_span::Span)> {

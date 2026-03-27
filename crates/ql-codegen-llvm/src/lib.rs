@@ -2994,6 +2994,37 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn emits_await_lowering_for_task_handle_helpers() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn helper() -> Int {
+    return await schedule()
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define ptr @ql_1_schedule()"));
+        assert!(rendered.contains("call ptr @ql_0_worker()"));
+        assert!(rendered.contains("call ptr @ql_1_schedule()"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load i64, ptr %t"));
+    }
+
+    #[test]
     fn emits_await_lowering_for_void_async_results() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,

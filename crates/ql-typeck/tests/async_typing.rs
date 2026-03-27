@@ -139,6 +139,54 @@ async fn main() -> Int {
 }
 
 #[test]
+fn accepts_returning_async_task_handles_through_explicit_task_types() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn main() -> Int {
+    return await schedule()
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected explicit Task-return helper flow to succeed, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_passing_async_calls_to_task_handle_parameters() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn main() -> Int {
+    return await forward(worker())
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected task-handle parameter flow to succeed, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_await_sync_calls_inside_async_functions() {
     let diagnostics = diagnostic_messages(
         r#"

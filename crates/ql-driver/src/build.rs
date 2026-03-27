@@ -1269,6 +1269,50 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_task_handle_helpers() {
+        let dir = TestDir::new("ql-driver-staticlib-async-task-handle");
+        let source = dir.write(
+            "async_task_handle.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn helper() -> Int {
+    return await schedule()
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_task_handle.lib"
+        } else {
+            "artifacts/libasync_task_handle.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("static library build with task-handle helpers should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_supported_async_tuple_library_bodies() {
         let dir = TestDir::new("ql-driver-staticlib-async-tuple");
         let source = dir.write(

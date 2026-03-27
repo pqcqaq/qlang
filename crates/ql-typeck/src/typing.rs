@@ -411,7 +411,7 @@ impl<'a> Checker<'a> {
                 self.check_match(expr_id, &value_ty, arms, expected)
             }
             ExprKind::Closure { params, body, .. } => self.check_closure(params, *body, expected),
-            ExprKind::Call { callee, args } => self.check_call(expr_id, *callee, args),
+            ExprKind::Call { callee, args } => self.check_call(expr_id, *callee, args, expected),
             ExprKind::Member { object, field, .. } => self.check_member(expr_id, *object, field),
             ExprKind::Bracket { target, items } => self.check_bracket(expr_id, *target, items),
             ExprKind::StructLiteral { .. } => self.check_struct_literal(expr_id),
@@ -1214,7 +1214,13 @@ impl<'a> Checker<'a> {
             .map(|variant| variant.name.as_str())
     }
 
-    fn check_call(&mut self, expr_id: ExprId, callee: ExprId, args: &[CallArg]) -> Ty {
+    fn check_call(
+        &mut self,
+        expr_id: ExprId,
+        callee: ExprId,
+        args: &[CallArg],
+        expected: Option<&Ty>,
+    ) -> Ty {
         let callee_ty = self.check_expr(callee, None);
         let signature = self.call_signature(callee, &callee_ty);
         let Some(signature) = signature else {
@@ -1240,7 +1246,10 @@ impl<'a> Checker<'a> {
         };
 
         self.check_call_args(expr_id, &signature, args);
-        if signature.is_async && self.allow_async_call_operands == 0 {
+        let expected_task_handle = expected.is_some_and(|expected| {
+            matches!(expected, Ty::TaskHandle(output) if output.compatible_with(&signature.ret))
+        });
+        if signature.is_async && self.allow_async_call_operands == 0 && !expected_task_handle {
             self.diagnostics.push(
                 Diagnostic::error(
                     "`async fn` calls currently must be consumed by `await` or `spawn`".to_string(),

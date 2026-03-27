@@ -189,6 +189,43 @@ fn make(name: String) -> User {
 }
 
 #[test]
+fn accepts_reserved_task_handle_type_roots_without_unresolved_diagnostics() {
+    let (module, resolution) = resolved(
+        r#"
+fn schedule(task: Task[Int]) -> Task[Int] {
+    task
+}
+"#,
+    );
+
+    let function = find_function(&module, "schedule");
+    let Param::Regular(param) = &function.params[0] else {
+        panic!("function should have a regular parameter");
+    };
+    let return_type = function
+        .return_type
+        .expect("function should declare a return type");
+
+    assert_eq!(
+        resolution.type_resolution(param.ty),
+        None,
+        "reserved Task[T] roots should stay out of the resolver map"
+    );
+    assert_eq!(
+        resolution.type_resolution(return_type),
+        None,
+        "reserved Task[T] return roots should stay out of the resolver map"
+    );
+    assert!(
+        resolution
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.message != "unresolved type `Task`"),
+        "Task[T] should not produce unresolved-type diagnostics"
+    );
+}
+
+#[test]
 fn reports_unresolved_bare_named_types() {
     let (module, resolution) = resolved(
         r#"
