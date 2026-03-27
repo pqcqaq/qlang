@@ -282,6 +282,38 @@ fn diagnostics_conversion_omits_related_information_when_only_primary_label_exis
 }
 
 #[test]
+fn diagnostics_conversion_preserves_secondary_label_order_and_message_fallback() {
+    let source = "left mid right\n";
+    let diagnostics = diagnostics_to_lsp(
+        &Url::parse("file:///sample.ql").expect("URI should parse"),
+        source,
+        &[CompilerDiagnostic::error("duplicate binding")
+            .with_label(Label::new(Span::new(0, 4)).with_message("primary binding"))
+            .with_label(
+                Label::new(Span::new(5, 8))
+                    .secondary()
+                    .with_message("middle detail"),
+            )
+            .with_label(Label::new(Span::new(9, 14)).secondary())],
+    );
+    let related = diagnostics[0]
+        .related_information
+        .as_ref()
+        .expect("secondary labels should convert into related information");
+    assert_eq!(related.len(), 2);
+    assert_eq!(
+        related[0].location.range,
+        span_to_range(source, Span::new(5, 8))
+    );
+    assert_eq!(related[0].message, "middle detail");
+    assert_eq!(
+        related[1].location.range,
+        span_to_range(source, Span::new(9, 14))
+    );
+    assert_eq!(related[1].message, "related span");
+}
+
+#[test]
 fn hover_bridge_renders_markdown_for_semantic_symbols() {
     let source = r#"
 fn id[T](value: T) -> T {
