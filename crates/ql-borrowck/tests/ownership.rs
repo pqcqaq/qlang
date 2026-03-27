@@ -254,6 +254,133 @@ async fn main() -> Int {
 }
 
 #[test]
+fn reports_use_after_passing_task_handle_to_helper() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = worker()
+    let forwarded = forward(task)
+    return await task
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `task` was used after move".to_string()));
+}
+
+#[test]
+fn reports_named_task_handle_helper_argument_as_move() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn pair(value: Int, task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = worker()
+    let forwarded = pair(value: 1, task: task)
+    return await task
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `task` was used after move".to_string()));
+}
+
+#[test]
+fn reports_maybe_moved_after_conditionally_passing_task_handle_to_helper() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main(flag: Bool) -> Int {
+    let task = worker()
+    if flag {
+        forward(task)
+    } else {
+        worker()
+    }
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"local `task` may have been moved on another control-flow path".to_string())
+    );
+}
+
+#[test]
+fn reassigning_a_helper_consumed_task_handle_makes_it_available_again() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    var task = worker()
+    let forwarded = forward(task)
+    task = worker()
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_deferred_cleanup_use_after_helper_consumes_task_handle() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = worker()
+    defer await task
+    defer forward(task)
+    return 0
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `task` was used after move".to_string()));
+}
+
+#[test]
 fn closure_captures_read_moved_direct_locals() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -553,6 +680,30 @@ async fn main() -> Int {
     );
 
     assert!(rendered.contains("consume(spawn task handle)"));
+    assert!(rendered.contains("consume(await task handle)"));
+}
+
+#[test]
+fn renders_helper_task_handle_argument_consumes_for_debugging() {
+    let rendered = render_output(
+        r#"
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = worker()
+    let forwarded = forward(task)
+    return await forwarded
+}
+"#,
+    );
+
+    assert!(rendered.contains("consume(call task handle argument)"));
     assert!(rendered.contains("consume(await task handle)"));
 }
 

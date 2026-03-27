@@ -9,7 +9,7 @@ use ql_mir::{
     TerminatorKind,
 };
 use ql_resolve::{ResolutionMap, ValueResolution};
-use ql_typeck::{Ty, TypeckResult, lower_type};
+use ql_typeck::{MemberTarget, MethodTarget, Ty, TypeckResult, lower_type};
 
 use crate::{
     BlockFacts, BodyFacts, BorrowckResult, ClosureEscape, ClosureEscapeKind, ClosureFacts,
@@ -48,6 +48,9 @@ struct BodyAnalyzer<'a> {
     body: &'a MirBody,
     function: &'a Function,
     receiver_ty: Option<Ty>,
+    // MIR call rvalues retain lowered operands but not the source call ExprId, so
+    // ownership needs a small HIR/typeck-derived lookup table keyed by call span.
+    task_handle_call_plans: HashMap<ql_span::Span, Vec<bool>>,
     binding_locals: HashMap<hir::LocalId, MirLocalId>,
     param_locals: HashMap<usize, MirLocalId>,
     receiver_local: Option<MirLocalId>,
@@ -62,6 +65,8 @@ impl<'a> BodyAnalyzer<'a> {
         function: &'a Function,
     ) -> Self {
         let receiver_ty = receiver_target_ty(hir, resolution, body.owner);
+        let task_handle_call_plans =
+            collect_task_handle_call_plans(hir, resolution, typeck, function);
         let mut binding_locals = HashMap::new();
         let mut param_locals = HashMap::new();
         let mut receiver_local = None;
@@ -89,6 +94,7 @@ impl<'a> BodyAnalyzer<'a> {
             body,
             function,
             receiver_ty,
+            task_handle_call_plans,
             binding_locals,
             param_locals,
             receiver_local,
@@ -267,8 +273,20 @@ impl<'a> BodyAnalyzer<'a> {
                 if pending_consume.is_none() {
                     self.read_operand(states, callee, span, reporter.as_deref_mut());
                 }
-                for arg in args {
-                    self.read_operand(states, &arg.value, span, reporter.as_deref_mut());
+                for (index, arg) in args.iter().enumerate() {
+                    if let Some((local, reason)) =
+                        self.classify_task_handle_call_argument_operand(span, index, &arg.value)
+                    {
+                        self.check_moved_use(
+                            states,
+                            local,
+                            UseSite::normal(span),
+                            reporter.as_deref_mut(),
+                        );
+                        self.apply_consume(states, local, span, reason, reporter.as_deref_mut());
+                    } else {
+                        self.read_operand(states, &arg.value, span, reporter.as_deref_mut());
+                    }
                 }
                 if let Some((local, reason)) = pending_consume {
                     self.apply_consume(states, local, span, reason, reporter);
@@ -391,20 +409,11 @@ impl<'a> BodyAnalyzer<'a> {
         op: UnaryOp,
         operand: &Operand,
     ) -> Option<(MirLocalId, MoveReason)> {
-        let Operand::Place(place) = operand else {
-            return None;
-        };
-        if !place.projections.is_empty() {
-            return None;
-        }
-        let operand_ty = self.local_ty(place.base)?;
-        if !matches!(operand_ty, Ty::TaskHandle(_)) {
-            return None;
-        }
+        let local = self.direct_task_handle_local_for_operand(operand)?;
 
         match op {
-            UnaryOp::Await => Some((place.base, MoveReason::AwaitTaskHandle)),
-            UnaryOp::Spawn => Some((place.base, MoveReason::SpawnTaskHandle)),
+            UnaryOp::Await => Some((local, MoveReason::AwaitTaskHandle)),
+            UnaryOp::Spawn => Some((local, MoveReason::SpawnTaskHandle)),
             UnaryOp::Neg => None,
         }
     }
@@ -659,22 +668,80 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
+    fn direct_task_handle_local(&self, local: MirLocalId) -> Option<MirLocalId> {
+        let operand_ty = self.local_ty(local)?;
+        if matches!(operand_ty, Ty::TaskHandle(_)) {
+            Some(local)
+        } else {
+            None
+        }
+    }
+
+    fn direct_task_handle_local_for_operand(&self, operand: &Operand) -> Option<MirLocalId> {
+        let Operand::Place(place) = operand else {
+            return None;
+        };
+        if !place.projections.is_empty() {
+            return None;
+        }
+        self.direct_task_handle_local(place.base)
+    }
+
+    fn direct_task_handle_local_for_expr(&self, expr_id: hir::ExprId) -> Option<MirLocalId> {
+        let local = self.direct_local_for_expr(expr_id)?;
+        self.direct_task_handle_local(local)
+    }
+
     fn classify_task_handle_unary_expr(
         &self,
         op: UnaryOp,
         expr_id: hir::ExprId,
     ) -> Option<(MirLocalId, MoveReason)> {
-        let local = self.direct_local_for_expr(expr_id)?;
-        let operand_ty = self.local_ty(local)?;
-        if !matches!(operand_ty, Ty::TaskHandle(_)) {
-            return None;
-        }
+        let local = self.direct_task_handle_local_for_expr(expr_id)?;
 
         match op {
             UnaryOp::Await => Some((local, MoveReason::AwaitTaskHandle)),
             UnaryOp::Spawn => Some((local, MoveReason::SpawnTaskHandle)),
             UnaryOp::Neg => None,
         }
+    }
+
+    fn task_handle_call_arg_should_consume(
+        &self,
+        call_span: ql_span::Span,
+        arg_index: usize,
+    ) -> bool {
+        self.task_handle_call_plans
+            .get(&call_span)
+            .and_then(|plan| plan.get(arg_index))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn classify_task_handle_call_argument_operand(
+        &self,
+        call_span: ql_span::Span,
+        arg_index: usize,
+        operand: &Operand,
+    ) -> Option<(MirLocalId, MoveReason)> {
+        if !self.task_handle_call_arg_should_consume(call_span, arg_index) {
+            return None;
+        }
+        let local = self.direct_task_handle_local_for_operand(operand)?;
+        Some((local, MoveReason::CallTaskHandleArgument))
+    }
+
+    fn classify_task_handle_call_argument_expr(
+        &self,
+        call_span: ql_span::Span,
+        arg_index: usize,
+        expr_id: hir::ExprId,
+    ) -> Option<(MirLocalId, MoveReason)> {
+        if !self.task_handle_call_arg_should_consume(call_span, arg_index) {
+            return None;
+        }
+        let local = self.direct_task_handle_local_for_expr(expr_id)?;
+        Some((local, MoveReason::CallTaskHandleArgument))
     }
 
     fn analyze_closure_facts(&self) -> Vec<ClosureFacts> {
@@ -1094,16 +1161,35 @@ impl<'a> BodyAnalyzer<'a> {
                     }
                     states = callee_eval.states;
                 }
-                for arg in args {
+                for (index, arg) in args.iter().enumerate() {
                     let value = match arg {
                         hir::CallArg::Positional(value) => *value,
                         hir::CallArg::Named { value, .. } => *value,
                     };
+                    let value_span = self.hir.expr(value).span;
+                    if let Some((local, reason)) =
+                        self.classify_task_handle_call_argument_expr(expr.span, index, value)
+                    {
+                        self.check_moved_use(
+                            &states,
+                            local,
+                            use_site.with_span(value_span),
+                            reporter.as_deref_mut(),
+                        );
+                        self.apply_consume(
+                            &mut states,
+                            local,
+                            value_span,
+                            reason,
+                            reporter.as_deref_mut(),
+                        );
+                        continue;
+                    }
                     let arg_eval = self.eval_cleanup_expr(
                         states,
                         value,
                         reporter.as_deref_mut(),
-                        use_site.with_span(self.hir.expr(value).span),
+                        use_site.with_span(value_span),
                     );
                     if !arg_eval.continues {
                         return arg_eval;
@@ -1678,7 +1764,328 @@ fn render_move_origin(origin: &MoveOrigin) -> String {
         MoveReason::MoveClosureCapture => "captured here by `move` closure".to_owned(),
         MoveReason::AwaitTaskHandle => "consumed here by `await`".to_owned(),
         MoveReason::SpawnTaskHandle => "consumed here by `spawn`".to_owned(),
+        MoveReason::CallTaskHandleArgument => {
+            "consumed here by a `Task[...]` call argument".to_owned()
+        }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CallSignatureParam {
+    name: Option<String>,
+    consumes_task_handle: bool,
+}
+
+fn collect_task_handle_call_plans(
+    hir: &hir::Module,
+    resolution: &ResolutionMap,
+    typeck: &TypeckResult,
+    function: &Function,
+) -> HashMap<ql_span::Span, Vec<bool>> {
+    // Precompute which source-order call arguments consume a direct-local Task[T].
+    // Both MIR block transfer and deferred-cleanup evaluation reuse this plan.
+    let mut plans = HashMap::new();
+    let Some(body) = function.body else {
+        return plans;
+    };
+    collect_task_handle_call_plans_in_block(hir, resolution, typeck, body, &mut plans);
+    plans
+}
+
+fn collect_task_handle_call_plans_in_block(
+    hir: &hir::Module,
+    resolution: &ResolutionMap,
+    typeck: &TypeckResult,
+    block_id: hir::BlockId,
+    plans: &mut HashMap<ql_span::Span, Vec<bool>>,
+) {
+    let block = hir.block(block_id);
+    for stmt_id in &block.statements {
+        collect_task_handle_call_plans_in_stmt(hir, resolution, typeck, *stmt_id, plans);
+    }
+    if let Some(tail) = block.tail {
+        collect_task_handle_call_plans_in_expr(hir, resolution, typeck, tail, plans);
+    }
+}
+
+fn collect_task_handle_call_plans_in_stmt(
+    hir: &hir::Module,
+    resolution: &ResolutionMap,
+    typeck: &TypeckResult,
+    stmt_id: hir::StmtId,
+    plans: &mut HashMap<ql_span::Span, Vec<bool>>,
+) {
+    match &hir.stmt(stmt_id).kind {
+        hir::StmtKind::Let { value, .. } | hir::StmtKind::Defer(value) => {
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *value, plans);
+        }
+        hir::StmtKind::Return(value) => {
+            if let Some(value) = value {
+                collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *value, plans);
+            }
+        }
+        hir::StmtKind::While { condition, body } => {
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *condition, plans);
+            collect_task_handle_call_plans_in_block(hir, resolution, typeck, *body, plans);
+        }
+        hir::StmtKind::Loop { body } => {
+            collect_task_handle_call_plans_in_block(hir, resolution, typeck, *body, plans);
+        }
+        hir::StmtKind::For { iterable, body, .. } => {
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *iterable, plans);
+            collect_task_handle_call_plans_in_block(hir, resolution, typeck, *body, plans);
+        }
+        hir::StmtKind::Expr { expr, .. } => {
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *expr, plans);
+        }
+        hir::StmtKind::Break | hir::StmtKind::Continue => {}
+    }
+}
+
+fn collect_task_handle_call_plans_in_expr(
+    hir: &hir::Module,
+    resolution: &ResolutionMap,
+    typeck: &TypeckResult,
+    expr_id: hir::ExprId,
+    plans: &mut HashMap<ql_span::Span, Vec<bool>>,
+) {
+    let expr = hir.expr(expr_id);
+    match &expr.kind {
+        hir::ExprKind::Name(_)
+        | hir::ExprKind::Integer(_)
+        | hir::ExprKind::String { .. }
+        | hir::ExprKind::Bool(_)
+        | hir::ExprKind::NoneLiteral => {}
+        hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => {
+            for item in items {
+                collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *item, plans);
+            }
+        }
+        hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+            collect_task_handle_call_plans_in_block(hir, resolution, typeck, *block, plans);
+        }
+        hir::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *condition, plans);
+            collect_task_handle_call_plans_in_block(hir, resolution, typeck, *then_branch, plans);
+            if let Some(else_expr) = else_branch {
+                collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *else_expr, plans);
+            }
+        }
+        hir::ExprKind::Match { value, arms } => {
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *value, plans);
+            for arm in arms {
+                if let Some(guard) = arm.guard {
+                    collect_task_handle_call_plans_in_expr(hir, resolution, typeck, guard, plans);
+                }
+                collect_task_handle_call_plans_in_expr(hir, resolution, typeck, arm.body, plans);
+            }
+        }
+        hir::ExprKind::Closure { .. } => {}
+        hir::ExprKind::Call { callee, args } => {
+            plans.insert(
+                expr.span,
+                task_handle_call_plan_for_expr(hir, resolution, typeck, *callee, args),
+            );
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *callee, plans);
+            for arg in args {
+                let value = match arg {
+                    hir::CallArg::Positional(value) => *value,
+                    hir::CallArg::Named { value, .. } => *value,
+                };
+                collect_task_handle_call_plans_in_expr(hir, resolution, typeck, value, plans);
+            }
+        }
+        hir::ExprKind::Member { object, .. } => {
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *object, plans);
+        }
+        hir::ExprKind::Bracket { target, items } => {
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *target, plans);
+            for item in items {
+                collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *item, plans);
+            }
+        }
+        hir::ExprKind::StructLiteral { fields, .. } => {
+            for field in fields {
+                collect_task_handle_call_plans_in_expr(hir, resolution, typeck, field.value, plans);
+            }
+        }
+        hir::ExprKind::Binary { left, right, .. } => {
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *left, plans);
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *right, plans);
+        }
+        hir::ExprKind::Unary { expr, .. } | hir::ExprKind::Question(expr) => {
+            collect_task_handle_call_plans_in_expr(hir, resolution, typeck, *expr, plans);
+        }
+    }
+}
+
+fn task_handle_call_plan_for_expr(
+    hir: &hir::Module,
+    resolution: &ResolutionMap,
+    typeck: &TypeckResult,
+    callee: hir::ExprId,
+    args: &[hir::CallArg],
+) -> Vec<bool> {
+    let Some(signature) = call_signature_params(hir, resolution, typeck, callee) else {
+        return vec![false; args.len()];
+    };
+
+    let named = args
+        .iter()
+        .any(|arg| matches!(arg, hir::CallArg::Named { .. }));
+    if !named {
+        return args
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                signature
+                    .get(index)
+                    .is_some_and(|param| param.consumes_task_handle)
+            })
+            .collect();
+    }
+
+    args.iter()
+        .map(|arg| match arg {
+            hir::CallArg::Positional(_) => false,
+            hir::CallArg::Named { name, .. } => signature
+                .iter()
+                .find(|param| param.name.as_deref() == Some(name.as_str()))
+                .is_some_and(|param| param.consumes_task_handle),
+        })
+        .collect()
+}
+
+fn call_signature_params(
+    hir: &hir::Module,
+    resolution: &ResolutionMap,
+    typeck: &TypeckResult,
+    callee: hir::ExprId,
+) -> Option<Vec<CallSignatureParam>> {
+    if matches!(hir.expr(callee).kind, hir::ExprKind::Name(_))
+        && let Some(value_resolution) = resolution.expr_resolution(callee)
+    {
+        match value_resolution {
+            ValueResolution::Function(function_ref) => {
+                return Some(signature_params_from_function(
+                    hir,
+                    resolution,
+                    hir.function(*function_ref),
+                ));
+            }
+            ValueResolution::Item(_) | ValueResolution::Import(_) => {
+                if let Some(item_id) = item_id_for_value_resolution(hir, value_resolution)
+                    && let Some(params) = value_item_signature_params(hir, resolution, item_id)
+                {
+                    return Some(params);
+                }
+            }
+            ValueResolution::Local(_) | ValueResolution::Param(_) | ValueResolution::SelfValue => {}
+        }
+    }
+
+    if let Some(MemberTarget::Method(target)) = typeck.member_target(callee) {
+        return Some(signature_params_from_function(
+            hir,
+            resolution,
+            method_function(hir, target),
+        ));
+    }
+
+    match typeck.expr_ty(callee)? {
+        Ty::Callable { params, .. } => Some(
+            params
+                .iter()
+                .map(|ty| CallSignatureParam {
+                    name: None,
+                    consumes_task_handle: matches!(ty, Ty::TaskHandle(_)),
+                })
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+fn signature_params_from_function(
+    hir: &hir::Module,
+    resolution: &ResolutionMap,
+    function: &Function,
+) -> Vec<CallSignatureParam> {
+    function
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            Param::Regular(param) => Some(CallSignatureParam {
+                name: Some(param.name.clone()),
+                consumes_task_handle: matches!(
+                    lower_type(hir, resolution, param.ty),
+                    Ty::TaskHandle(_)
+                ),
+            }),
+            Param::Receiver(_) => None,
+        })
+        .collect()
+}
+
+fn value_item_signature_params(
+    hir: &hir::Module,
+    resolution: &ResolutionMap,
+    item_id: hir::ItemId,
+) -> Option<Vec<CallSignatureParam>> {
+    match &hir.item(item_id).kind {
+        ItemKind::Function(function) => {
+            Some(signature_params_from_function(hir, resolution, function))
+        }
+        _ => None,
+    }
+}
+
+fn method_function(hir: &hir::Module, target: MethodTarget) -> &Function {
+    match &hir.item(target.item_id).kind {
+        ItemKind::Trait(trait_decl) => &trait_decl.methods[target.method_index],
+        ItemKind::Impl(impl_block) => &impl_block.methods[target.method_index],
+        ItemKind::Extend(extend_block) => &extend_block.methods[target.method_index],
+        other => panic!("expected method-bearing item, got {other:?}"),
+    }
+}
+
+fn item_id_for_value_resolution(
+    hir: &hir::Module,
+    resolution: &ValueResolution,
+) -> Option<hir::ItemId> {
+    match resolution {
+        ValueResolution::Item(item_id) => Some(*item_id),
+        ValueResolution::Import(import_binding) => {
+            local_item_for_import_binding(hir, import_binding)
+        }
+        _ => None,
+    }
+}
+
+fn local_item_for_import_binding(
+    hir: &hir::Module,
+    import_binding: &ql_resolve::ImportBinding,
+) -> Option<hir::ItemId> {
+    let [name] = import_binding.path.segments.as_slice() else {
+        return None;
+    };
+
+    hir.items
+        .iter()
+        .copied()
+        .find(|item_id| match &hir.item(*item_id).kind {
+            ItemKind::Function(function) => function.name == *name,
+            ItemKind::Const(global) | ItemKind::Static(global) => global.name == *name,
+            ItemKind::Struct(struct_decl) => struct_decl.name == *name,
+            ItemKind::Enum(enum_decl) => enum_decl.name == *name,
+            ItemKind::Trait(trait_decl) => trait_decl.name == *name,
+            ItemKind::TypeAlias(alias) => alias.name == *name,
+            ItemKind::Impl(_) | ItemKind::Extend(_) | ItemKind::ExternBlock(_) => false,
+        })
 }
 
 fn render_closure_escape_sort_key(kind: &ClosureEscapeKind) -> String {

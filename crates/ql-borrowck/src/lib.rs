@@ -113,4 +113,5 @@ pub enum MoveReason {
     MoveClosureCapture,
     AwaitTaskHandle,
     SpawnTaskHandle,
+    CallTaskHandleArgument,
 }
