@@ -90,6 +90,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - lexical visibility filtering refresh
 - diagnostics severity / label fallback bridge parity
 - UTF-16 / CRLF position-range bridge parity
+- semantic-token UTF-16 / CRLF column parity
 
 ## 当前架构收益
 

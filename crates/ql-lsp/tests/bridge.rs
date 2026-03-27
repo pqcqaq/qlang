@@ -5975,6 +5975,32 @@ impl Counter {
 }
 
 #[test]
+fn semantic_tokens_bridge_uses_utf16_columns_on_crlf_lines_with_multibyte_prefixes() {
+    let source = "fn main() -> String {\r\n    let suffix = \"x\"\r\n    let text = \"😀\" + suffix\r\n    return text\r\n}\r\n";
+    let analysis = analyze_source(source).expect("source should analyze");
+    let SemanticTokensResult::Tokens(tokens) = semantic_tokens_for_analysis(source, &analysis)
+    else {
+        panic!("expected full semantic tokens");
+    };
+    let decoded = decode_semantic_tokens(&tokens.data);
+    let legend = semantic_tokens_legend();
+    let variable_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::VARIABLE)
+        .expect("variable legend entry should exist") as u32;
+    let expected_suffix_start = "    let text = \"😀\" + ".encode_utf16().count() as u32;
+    assert_eq!(expected_suffix_start, 22);
+    assert!(decoded.contains(&(
+        2,
+        expected_suffix_start,
+        "suffix".len() as u32,
+        variable_type,
+    )));
+    assert!(!decoded.contains(&(2, 24, "suffix".len() as u32, variable_type)));
+}
+
+#[test]
 fn semantic_tokens_bridge_maps_import_alias_surface() {
     let source = r#"
 use std.collections.HashMap as Map
