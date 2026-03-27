@@ -12,7 +12,7 @@ use ql_mir::{
     TerminatorKind,
 };
 use ql_resolve::{BuiltinType, ResolutionMap};
-use ql_runtime::RuntimeHookSignature;
+use ql_runtime::{RuntimeHook, RuntimeHookSignature};
 use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, lower_type};
 
@@ -44,10 +44,14 @@ struct FunctionSignature {
     name: String,
     llvm_name: String,
     span: Span,
+    body_return_ty: Ty,
+    body_return_llvm_ty: String,
     return_ty: Ty,
     return_llvm_ty: String,
     params: Vec<ParamSignature>,
     body_style: FunctionBodyStyle,
+    is_async: bool,
+    async_body_llvm_name: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -249,12 +253,6 @@ impl<'a> ModuleEmitter<'a> {
                 "LLVM IR backend foundation does not support generic functions yet",
             ));
         }
-        if function.is_async {
-            diagnostics.push(unsupported(
-                function.span,
-                "LLVM IR backend foundation does not support `async fn` yet",
-            ));
-        }
         if function.is_unsafe && body_style == FunctionBodyStyle::Definition {
             diagnostics.push(unsupported(
                 function.span,
@@ -305,17 +303,65 @@ impl<'a> ModuleEmitter<'a> {
             }
         }
 
-        let return_ty = function
+        let llvm_name = match body_style {
+            FunctionBodyStyle::Definition => match function.abi.as_deref() {
+                Some("c") => sanitize_symbol(&function.name),
+                _ => llvm_symbol_name(
+                    self.input.hir.function_owner_item(function_ref),
+                    &function.name,
+                ),
+            },
+            FunctionBodyStyle::Declaration => sanitize_symbol(&function.name),
+        };
+
+        let body_return_ty = function
             .return_type
             .map(|type_id| lower_type(self.input.hir, self.input.resolution, type_id))
             .unwrap_or_else(void_ty);
-        let return_llvm_ty = match lower_llvm_type(&return_ty, function.span, "return type") {
-            Ok(llvm_ty) => llvm_ty,
-            Err(error) => {
-                diagnostics.push(error);
-                String::new()
+        let body_return_llvm_ty =
+            match lower_llvm_type(&body_return_ty, function.span, "return type") {
+                Ok(llvm_ty) => llvm_ty,
+                Err(error) => {
+                    diagnostics.push(error);
+                    String::new()
+                }
+            };
+        let mut return_ty = body_return_ty.clone();
+        let mut return_llvm_ty = body_return_llvm_ty.clone();
+        let mut async_body_llvm_name = None;
+
+        if function.is_async {
+            match body_style {
+                FunctionBodyStyle::Definition => {
+                    if is_entry {
+                        diagnostics.push(unsupported(
+                            function.span,
+                            "LLVM IR backend foundation does not support `async fn main` yet",
+                        ));
+                    }
+                    if !params.is_empty() {
+                        diagnostics.push(unsupported(
+                            function.span,
+                            "LLVM IR backend foundation does not support `async fn` parameters before async frame lowering exists",
+                        ));
+                    }
+                    if !self.has_runtime_hook(RuntimeHook::AsyncTaskCreate) {
+                        diagnostics.push(unsupported(
+                            function.span,
+                            "LLVM IR backend foundation requires the `async-task-create` runtime hook before lowering `async fn` bodies",
+                        ));
+                    }
+
+                    return_ty = Ty::Unknown;
+                    return_llvm_ty = "ptr".to_owned();
+                    async_body_llvm_name = Some(format!("{llvm_name}__async_body"));
+                }
+                FunctionBodyStyle::Declaration => diagnostics.push(unsupported(
+                    function.span,
+                    "LLVM IR backend foundation does not support `async fn` declarations yet",
+                )),
             }
-        };
+        }
 
         if is_entry {
             if body_style != FunctionBodyStyle::Definition {
@@ -341,7 +387,7 @@ impl<'a> ModuleEmitter<'a> {
                 .with_note("use a separate `extern \"c\"` helper when you need a stable exported C symbol"));
             }
             if !matches!(
-                return_ty,
+                body_return_ty,
                 Ty::Builtin(BuiltinType::Int) | Ty::Builtin(BuiltinType::Void)
             ) {
                 diagnostics.push(Diagnostic::error(
@@ -358,21 +404,16 @@ impl<'a> ModuleEmitter<'a> {
         Ok(FunctionSignature {
             function_ref,
             name: function.name.clone(),
-            llvm_name: match body_style {
-                FunctionBodyStyle::Definition => match function.abi.as_deref() {
-                    Some("c") => sanitize_symbol(&function.name),
-                    _ => llvm_symbol_name(
-                        self.input.hir.function_owner_item(function_ref),
-                        &function.name,
-                    ),
-                },
-                FunctionBodyStyle::Declaration => sanitize_symbol(&function.name),
-            },
+            llvm_name,
             span: function.span,
+            body_return_ty,
+            body_return_llvm_ty,
             return_ty,
             return_llvm_ty,
             params,
             body_style,
+            is_async: function.is_async,
+            async_body_llvm_name,
         })
     }
 
@@ -527,7 +568,7 @@ impl<'a> ModuleEmitter<'a> {
         for local_id in body.local_ids() {
             let local = body.local(local_id);
             let ty = match &local.origin {
-                LocalOrigin::ReturnSlot => Some(signature.return_ty.clone()),
+                LocalOrigin::ReturnSlot => Some(signature.body_return_ty.clone()),
                 LocalOrigin::Param { index } => {
                     signature.params.get(*index).map(|param| param.ty.clone())
                 }
@@ -944,6 +985,21 @@ impl<'a> ModuleEmitter<'a> {
         }
     }
 
+    fn has_runtime_hook(&self, hook: RuntimeHook) -> bool {
+        self.input
+            .runtime_hooks
+            .iter()
+            .any(|signature| signature.hook == hook)
+    }
+
+    fn runtime_hook_signature(&self, hook: RuntimeHook) -> Option<RuntimeHookSignature> {
+        self.input
+            .runtime_hooks
+            .iter()
+            .copied()
+            .find(|signature| signature.hook == hook)
+    }
+
     fn render_declaration(&self, output: &mut String, function: &FunctionSignature) {
         let params = function
             .params
@@ -959,6 +1015,68 @@ impl<'a> ModuleEmitter<'a> {
     }
 
     fn render_function(&self, output: &mut String, function: &PreparedFunction) {
+        if function.signature.is_async {
+            self.render_async_function(output, function);
+            return;
+        }
+        self.render_function_body(output, function, &function.signature.llvm_name);
+    }
+
+    fn render_async_function(&self, output: &mut String, function: &PreparedFunction) {
+        let body_name = function
+            .signature
+            .async_body_llvm_name
+            .as_deref()
+            .expect("async functions should have a dedicated body symbol");
+        self.render_function_body(output, function, body_name);
+        output.push('\n');
+        self.render_async_task_wrapper(output, function, body_name);
+    }
+
+    fn render_async_task_wrapper(
+        &self,
+        output: &mut String,
+        function: &PreparedFunction,
+        body_name: &str,
+    ) {
+        let hook = self
+            .runtime_hook_signature(RuntimeHook::AsyncTaskCreate)
+            .expect("async body lowering should require the async-task-create runtime hook");
+        let params = function
+            .signature
+            .params
+            .iter()
+            .enumerate()
+            .map(|(index, param)| {
+                let _ = &param.name;
+                format!("{} %arg{index}", param.llvm_ty)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(
+            output,
+            "define {} @{}({params}) {{",
+            function.signature.return_llvm_ty, function.signature.llvm_name
+        );
+        output.push_str("entry:\n");
+        let temp = "%async_task0";
+        let _ = writeln!(
+            output,
+            "  {temp} = call {} @{}(ptr @{}, ptr null)",
+            hook.return_type.llvm_ir(),
+            hook.hook.symbol_name(),
+            body_name
+        );
+        let _ = writeln!(output, "  ret {} {temp}", function.signature.return_llvm_ty);
+        output.push_str("}\n");
+    }
+
+    fn render_function_body(
+        &self,
+        output: &mut String,
+        function: &PreparedFunction,
+        llvm_name: &str,
+    ) {
         let body = self
             .input
             .mir
@@ -982,7 +1100,7 @@ impl<'a> ModuleEmitter<'a> {
         let _ = writeln!(
             output,
             "define {} @{}({params}) {{",
-            function.signature.return_llvm_ty, function.signature.llvm_name
+            function.signature.body_return_llvm_ty, llvm_name
         );
         output.push_str("entry:\n");
 
@@ -1120,7 +1238,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 );
             }
             TerminatorKind::Return => {
-                if is_void_ty(&self.prepared.signature.return_ty) {
+                if is_void_ty(&self.prepared.signature.body_return_ty) {
                     output.push_str("  ret void\n");
                 } else {
                     let temp = self.fresh_temp();
@@ -1128,12 +1246,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     let _ = writeln!(
                         output,
                         "  {temp} = load {}, ptr {}",
-                        self.prepared.signature.return_llvm_ty, slot
+                        self.prepared.signature.body_return_llvm_ty, slot
                     );
                     let _ = writeln!(
                         output,
                         "  ret {} {temp}",
-                        self.prepared.signature.return_llvm_ty
+                        self.prepared.signature.body_return_llvm_ty
                     );
                 }
             }
@@ -1577,6 +1695,14 @@ mod tests {
     }
 
     fn emit_error(source: &str) -> Vec<String> {
+        emit_error_with_runtime_hooks(source, CodegenMode::Program, &[])
+    }
+
+    fn emit_error_with_runtime_hooks(
+        source: &str,
+        mode: CodegenMode,
+        runtime_hooks: &[RuntimeHookSignature],
+    ) -> Vec<String> {
         let analysis = analyze_source(source).expect("source should analyze");
         assert!(
             !analysis.has_errors(),
@@ -1585,12 +1711,12 @@ mod tests {
 
         emit_module(CodegenInput {
             module_name: "test_module",
-            mode: CodegenMode::Program,
+            mode,
             hir: analysis.hir(),
             mir: analysis.mir(),
             resolution: analysis.resolution(),
             typeck: analysis.typeck(),
-            runtime_hooks: &[],
+            runtime_hooks,
         })
         .expect_err("codegen should fail")
         .into_diagnostics()
@@ -1731,6 +1857,68 @@ fn main() -> Int {
                     .find(entry_definition)
                     .expect("entry function should exist")
         );
+    }
+
+    #[test]
+    fn emits_async_task_create_wrapper_for_parameterless_async_body() {
+        let runtime_hooks =
+            collect_runtime_hook_signatures([RuntimeCapability::AsyncFunctionBodies]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("declare ptr @qlrt_async_task_create(ptr, ptr)"));
+        assert!(rendered.contains("define i64 @ql_0_worker__async_body()"));
+        assert!(rendered.contains("define ptr @ql_0_worker()"));
+        assert!(
+            rendered.contains(
+                "call ptr @qlrt_async_task_create(ptr @ql_0_worker__async_body, ptr null)"
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_async_function_parameters_before_async_frame_lowering() {
+        let runtime_hooks =
+            collect_runtime_hook_signatures([RuntimeCapability::AsyncFunctionBodies]);
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message
+                == "LLVM IR backend foundation does not support `async fn` parameters before async frame lowering exists"
+        }));
+    }
+
+    #[test]
+    fn rejects_async_function_bodies_without_async_task_create_hook() {
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+"#,
+            CodegenMode::Library,
+            &[],
+        );
+
+        assert!(messages.iter().any(|message| {
+            message
+                == "LLVM IR backend foundation requires the `async-task-create` runtime hook before lowering `async fn` bodies"
+        }));
     }
 
     #[test]
