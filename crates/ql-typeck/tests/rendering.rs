@@ -95,6 +95,24 @@ async fn main() -> Int {
 }
 
 #[test]
+fn rendered_direct_async_call_diagnostics_anchor_to_the_call_expression() {
+    let source = r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn main() -> Int {
+    return worker()
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(rendered.contains(
+        "error: sample.ql:7:12: `async fn` calls currently must be consumed by `await` or `spawn`"
+    ));
+}
+
+#[test]
 fn rendered_assignment_immutability_diagnostics_anchor_to_the_target() {
     let source = r#"
 fn main() -> Int {

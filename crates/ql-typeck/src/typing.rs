@@ -115,6 +115,7 @@ struct Checker<'a> {
     self_is_mutable: bool,
     current_return: Option<Ty>,
     in_async_function: bool,
+    allow_async_call_operands: usize,
     loop_depth: usize,
 }
 
@@ -134,6 +135,7 @@ impl<'a> Checker<'a> {
             self_is_mutable: false,
             current_return: None,
             in_async_function: false,
+            allow_async_call_operands: 0,
             loop_depth: 0,
         }
     }
@@ -207,6 +209,7 @@ impl<'a> Checker<'a> {
         let old_self_is_mutable = self.self_is_mutable;
         let old_return = self.current_return.clone();
         let old_in_async_function = self.in_async_function;
+        let old_allow_async_call_operands = self.allow_async_call_operands;
         let old_loop_depth = self.loop_depth;
         let old_param_types = std::mem::take(&mut self.param_types);
 
@@ -228,6 +231,7 @@ impl<'a> Checker<'a> {
                 .unwrap_or_else(void_ty),
         );
         self.in_async_function = function.is_async;
+        self.allow_async_call_operands = 0;
         self.loop_depth = 0;
 
         if let Some(scope) = function_scope(function, self.resolution) {
@@ -244,7 +248,7 @@ impl<'a> Checker<'a> {
             let actual = self.check_block(body);
             let expected_return = self.current_return.clone();
             if let Some(expected) = &expected_return {
-                if self.block_guarantees_return(body) {
+                if self.block_flow(body).guarantees_return() {
                     // Explicit `return` statements inside the body are checked as
                     // they are encountered, so a body that guarantees return does
                     // not need a synthetic tail-based mismatch.
@@ -265,6 +269,7 @@ impl<'a> Checker<'a> {
         self.self_is_mutable = old_self_is_mutable;
         self.current_return = old_return;
         self.in_async_function = old_in_async_function;
+        self.allow_async_call_operands = old_allow_async_call_operands;
         self.loop_depth = old_loop_depth;
         self.param_types = old_param_types;
     }
@@ -422,10 +427,12 @@ impl<'a> Checker<'a> {
     }
 
     fn check_unary(&mut self, expr_id: ExprId, op: ql_ast::UnaryOp, operand: ExprId) -> Ty {
-        let operand_ty = self.check_expr(operand, None);
         match op {
-            ql_ast::UnaryOp::Neg => operand_ty,
+            ql_ast::UnaryOp::Neg => self.check_expr(operand, None),
             ql_ast::UnaryOp::Await => {
+                self.allow_async_call_operands += 1;
+                let operand_ty = self.check_expr(operand, None);
+                self.allow_async_call_operands -= 1;
                 if !self.in_async_function {
                     self.diagnostics.push(
                         Diagnostic::error("`await` is only allowed inside `async fn`".to_string())
@@ -465,6 +472,9 @@ impl<'a> Checker<'a> {
                 operand_ty
             }
             ql_ast::UnaryOp::Spawn => {
+                self.allow_async_call_operands += 1;
+                let _operand_ty = self.check_expr(operand, None);
+                self.allow_async_call_operands -= 1;
                 if !self.in_async_function {
                     self.diagnostics.push(
                         Diagnostic::error("`spawn` is only allowed inside `async fn`".to_string())
@@ -729,17 +739,20 @@ impl<'a> Checker<'a> {
         };
         let old_return = self.current_return.clone();
         let old_in_async_function = self.in_async_function;
+        let old_allow_async_call_operands = self.allow_async_call_operands;
         let old_loop_depth = self.loop_depth;
         // Closures are not `async` today, so their bodies must not inherit an outer
         // function's async context or loop-control statements.
         self.current_return = expected_ret.cloned();
         self.in_async_function = false;
+        self.allow_async_call_operands = 0;
         self.loop_depth = 0;
         let body_ty = self.check_expr(body, expected_ret);
         self.current_return = old_return;
         self.in_async_function = old_in_async_function;
+        self.allow_async_call_operands = old_allow_async_call_operands;
         self.loop_depth = old_loop_depth;
-        let body_guarantees_return = self.expr_guarantees_return(body);
+        let body_guarantees_return = self.expr_flow(body).guarantees_return();
         let closure_ret = match expected_ret {
             // Explicit `return` statements are checked against the callable
             // signature rather than the block tail type.
@@ -787,10 +800,6 @@ impl<'a> Checker<'a> {
                 .collect(),
             ret: Box::new(closure_ret),
         }
-    }
-
-    fn expr_guarantees_return(&self, expr_id: ExprId) -> bool {
-        self.expr_flow(expr_id).guarantees_return()
     }
 
     fn expr_flow(&self, expr_id: ExprId) -> ControlFlowSummary {
@@ -891,10 +900,6 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn block_guarantees_return(&self, block_id: BlockId) -> bool {
-        self.block_flow(block_id).guarantees_return()
-    }
-
     fn block_flow(&self, block_id: BlockId) -> ControlFlowSummary {
         let block = self.module.block(block_id);
         let mut flow = ControlFlowSummary::normal();
@@ -918,7 +923,7 @@ impl<'a> Checker<'a> {
                 let body_flow = self.block_flow(*body);
                 let loop_flow = match self.bool_literal(*condition) {
                     Some(true) => ControlFlowSummary {
-                        falls_through: body_flow.breaks,
+                        falls_through: body_flow.breaks || body_flow.continues,
                         returns: body_flow.returns,
                         ..ControlFlowSummary::default()
                     },
@@ -934,7 +939,7 @@ impl<'a> Checker<'a> {
             StmtKind::Loop { body } => {
                 let body_flow = self.block_flow(*body);
                 ControlFlowSummary {
-                    falls_through: body_flow.breaks,
+                    falls_through: body_flow.breaks || body_flow.continues,
                     returns: body_flow.returns,
                     ..ControlFlowSummary::default()
                 }
@@ -1234,6 +1239,17 @@ impl<'a> Checker<'a> {
         };
 
         self.check_call_args(expr_id, &signature, args);
+        if signature.is_async && self.allow_async_call_operands == 0 {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "`async fn` calls currently must be consumed by `await` or `spawn`".to_string(),
+                )
+                .with_label(
+                    Label::new(self.module.expr(expr_id).span)
+                        .with_message("direct `async fn` call used here"),
+                ),
+            );
+        }
         signature.ret
     }
 

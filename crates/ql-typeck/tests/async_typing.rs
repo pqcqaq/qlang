@@ -64,6 +64,57 @@ async fn main() -> Int {
             .all(|message| !message.contains("only allowed inside `async fn`")),
         "did not expect async-boundary diagnostics in async function, got {diagnostics:?}"
     );
+    assert!(
+        diagnostics.iter().all(|message| {
+            !message.contains("`async fn` calls currently must be consumed by `await` or `spawn`")
+        }),
+        "did not expect direct async-call diagnostics for await/spawn operands, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_direct_async_calls_outside_await_or_spawn() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn main() -> Int {
+    return worker()
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"`async fn` calls currently must be consumed by `await` or `spawn`".to_string()
+        ),
+        "expected direct async-call diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_direct_async_calls_inside_async_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = worker()
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"`async fn` calls currently must be consumed by `await` or `spawn`".to_string()
+        ),
+        "expected direct async-call diagnostic, got {diagnostics:?}"
+    );
 }
 
 #[test]

@@ -1561,6 +1561,36 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_direct_async_call_semantic_diagnostics_before_codegen() {
+        let dir = TestDir::new("ql-driver-direct-async-call-semantic");
+        let source = dir.write(
+            "direct_async_call.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn main() -> Int {
+    return worker()
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("semantic async-call rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message
+                == "`async fn` calls currently must be consumed by `await` or `spawn`"
+        }));
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.message != "LLVM IR backend foundation does not support `async fn` yet"
+        }));
+    }
+
+    #[test]
     fn build_file_dedupes_runtime_and_codegen_async_diagnostics() {
         let dir = TestDir::new("ql-driver-async-diagnostic-dedupe");
         let source = dir.write(

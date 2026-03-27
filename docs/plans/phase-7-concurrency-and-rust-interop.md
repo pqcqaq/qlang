@@ -60,8 +60,10 @@
 - `ql-driver` 已开始保守消费这份 runtime requirement surface：当前会把 `async-function-bodies`、`task-spawn`、`task-await`、`async-iteration` 映射成稳定的 build-time unsupported 诊断，并与 backend 同类 unsupported diagnostics 做去重合并
 - 已在 `ql-codegen-llvm` 接入共享 runtime hook ABI contract：`CodegenInput` 当前可携带 dedupe 后的 `RuntimeHookSignature` 列表，后端会直接复用 `ql-runtime` 的声明文本渲染 runtime hook declarations，而不是在 backend 内重复维护符号名或 ABI 字符串
 - 已在 `ql-codegen-llvm` 增补 parameterless `async fn` body scaffold：当前 body-bearing `async fn` 会拆成一个真实 body symbol（`__async_body`）加一个公开 wrapper，wrapper 只调用 `qlrt_async_task_create(entry, null)` 并返回 opaque `ptr`，用于冻结最小 IR 结构
+- 已在 `ql-typeck` 收紧 direct async call 语义：`async fn` 调用当前只能作为 `await <call>` 或 `spawn <call>` 的直接 operand 使用，独立使用 async call 结果会给出显式诊断，避免在 task/result ABI 未冻结前把 async 调用误当成同步返回值
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
+- 当前 direct `async fn` call 也不提供独立任务/handle 类型；在完整 task/result surface 落地前，编译器只允许通过 `await` / `spawn` 这两个显式边界消费 async 调用
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前 hook ABI skeleton 已冻结第一版 LLVM-facing contract string，但仍只使用 `ptr` 级 opaque 形态；真实内存布局、结果传递协议和更细粒度调用约定仍未冻结
 - 当前 backend 对这些 hook 已进入“declaration + parameterless async body wrapper”阶段，但仍不代表 async lowering、frame 布局、参数捕获、`await` / `spawn` / `for await` lowering、任务结果协议或调度语义已经进入可执行阶段
