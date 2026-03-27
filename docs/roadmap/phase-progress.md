@@ -713,11 +713,14 @@ P6 当前仍刻意未完成：
 - `ql-typeck` 已新增函数级 async 上下文
 - `await` / `spawn` 在非 `async fn` 内使用会给出显式 diagnostics
 - 新增 `crates/ql-typeck/tests/async_typing.rs`，锁住边界行为
+- `ql-resolve` 新增 async 语义查询契约：`expr_is_in_async_function` / `scope_is_in_async_function`
+- `ql-analysis` 新增 `async_context_at`（`await` / `spawn` -> 是否处于 async 函数上下文）
+- 新增 `ql-analysis` async 查询回归测试，锁住查询语义
 
 ### 下一步（P7.1 延续）
 
-- 在 `ql-resolve` / `ql-analysis` 补 async 语义查询契约
-- 细化 `await` / `spawn` 与后续 MIR/runtime 接口的类型约束
+- 细化 `await` / `spawn` 与后续 MIR/runtime 接口的类型约束（仍保持 conservative）
+- 将 async 查询语义桥接到 LSP 侧（先做最小只读能力，不扩展协议面）
 - 在不扩大 surface 的前提下继续按切片补回归
 
 ## 阶段状态表

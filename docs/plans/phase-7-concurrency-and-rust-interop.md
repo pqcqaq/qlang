@@ -17,6 +17,9 @@
 
 - 已在 `ql-typeck` 落地 `await` / `spawn` 的 async 上下文约束：在非 `async fn` 内使用会给出显式诊断
 - 已补充 `crates/ql-typeck/tests/async_typing.rs`，锁住 `await` / `spawn` 边界与 async 函数内允许路径
+- 已在 `ql-resolve` 增加 async 上下文查询契约（`expr_is_in_async_function` / `scope_is_in_async_function`）
+- 已在 `ql-analysis` 暴露 `async_context_at`，可查询 `await` / `spawn` 在当前位置是否位于 `async fn` 内
+- 已补充 `crates/ql-analysis/tests/queries.rs` 的 async 查询回归
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 
 ## 分阶段实现建议
