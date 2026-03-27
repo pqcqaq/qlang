@@ -553,7 +553,18 @@ impl<'a> Checker<'a> {
                     .insert(expr_id, MemberTarget::Method(target));
                 Ty::Unknown
             }
-            SelectedMember::AmbiguousMethod => Ty::Unknown,
+            SelectedMember::AmbiguousMethod => {
+                self.diagnostics.push(
+                    Diagnostic::error(format!(
+                        "ambiguous method `{field}` on type `{object_ty}`; multiple matching methods found"
+                    ))
+                    .with_label(
+                        Label::new(self.module.expr(expr_id).span)
+                            .with_message("member access here"),
+                    ),
+                );
+                Ty::Unknown
+            }
             SelectedMember::Missing => {
                 self.diagnostics.push(
                     Diagnostic::error(format!("unknown member `{field}` on type `{object_ty}`"))

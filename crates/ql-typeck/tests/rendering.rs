@@ -94,3 +94,33 @@ fn main() -> Int {
         "error: sample.ql:8:5: assignment through member access is not supported yet; only bare mutable bindings can be assigned"
     ));
 }
+
+#[test]
+fn rendered_ambiguous_method_diagnostics_anchor_to_the_member_access() {
+    let source = r#"
+struct Counter {
+    value: Int,
+}
+
+extend Counter {
+    fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+extend Counter {
+    fn ping(self, delta: Int) -> Int {
+        return self.value + delta
+    }
+}
+
+fn main(counter: Counter) -> Int {
+    return counter.ping()
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(rendered.contains(
+        "error: sample.ql:19:12: ambiguous method `ping` on type `Counter`; multiple matching methods found"
+    ));
+}

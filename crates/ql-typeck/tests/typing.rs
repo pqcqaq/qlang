@@ -605,6 +605,78 @@ fn main() -> Int {
 }
 
 #[test]
+fn reports_ambiguous_impl_method_selection() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+impl Counter {
+    fn ping(self, delta: Int) -> Int {
+        return self.value + delta
+    }
+}
+
+fn main(counter: Counter) -> Int {
+    return counter.ping()
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"ambiguous method `ping` on type `Counter`; multiple matching methods found".to_string()
+    ));
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|message| message.contains("cannot call value of type"))
+    );
+}
+
+#[test]
+fn reports_ambiguous_extend_method_selection() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+extend Counter {
+    fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+extend Counter {
+    fn ping(self, delta: Int) -> Int {
+        return self.value + delta
+    }
+}
+
+fn main(counter: Counter) -> Int {
+    return counter.ping()
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"ambiguous method `ping` on type `Counter`; multiple matching methods found".to_string()
+    ));
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|message| message.contains("cannot call value of type"))
+    );
+}
+
+#[test]
 fn accepts_method_selection_without_field_false_positives() {
     let diagnostics = diagnostic_messages(
         r#"

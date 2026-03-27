@@ -1,0 +1,3 @@
+error: tests/ui/type_ambiguous_method.ql:18:12: ambiguous method `ping` on type `Counter`; multiple matching methods found
+      return counter.ping()
+             ^^^^^^^^ member access here
