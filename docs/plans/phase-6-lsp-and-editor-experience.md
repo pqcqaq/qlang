@@ -41,6 +41,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - lexical rename parity
 - type-namespace rename coverage
 - root value item rename parity
+- deeper variant-like member chains stay deliberately closed for rename
 
 ### 3. Completion surface
 
@@ -66,6 +67,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - type-namespace semantic-token parity
 - import alias semantic-token parity
 - lexical semantic-symbol parity
+- deeper variant-like member chains stay deliberately closed for semantic tokens
 
 ### 5. Aggregate hardening
 

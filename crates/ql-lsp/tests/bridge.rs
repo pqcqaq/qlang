@@ -4875,6 +4875,52 @@ fn build(flag: Bool) -> Command {
 }
 
 #[test]
+fn semantic_tokens_bridge_keeps_deeper_variant_like_member_paths_closed() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Stop,
+}
+
+fn main() -> Int {
+    let direct = Command.Retry.Stop
+    let alias = Cmd.Retry.Stop
+    return 0
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let SemanticTokensResult::Tokens(tokens) = semantic_tokens_for_analysis(source, &analysis)
+    else {
+        panic!("expected full semantic tokens");
+    };
+    let decoded = decode_semantic_tokens(&tokens.data);
+    let legend = semantic_tokens_legend();
+    let enum_member_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::ENUM_MEMBER)
+        .expect("enum member legend entry should exist") as u32;
+
+    let direct_use_range = span_to_range(source, nth_span(source, "Stop", 2));
+    let alias_use_range = span_to_range(source, nth_span(source, "Stop", 3));
+
+    assert!(!decoded.contains(&(
+        direct_use_range.start.line,
+        direct_use_range.start.character,
+        "Stop".len() as u32,
+        enum_member_type,
+    )));
+    assert!(!decoded.contains(&(
+        alias_use_range.start.line,
+        alias_use_range.start.character,
+        "Stop".len() as u32,
+        enum_member_type,
+    )));
+}
+
+#[test]
 fn semantic_tokens_bridge_maps_import_alias_struct_field_surface() {
     let source = r#"
 use Point as P
@@ -6515,6 +6561,46 @@ fn read(command: Command) -> Int {
     );
 
     assert_eq!(edit, WorkspaceEdit::new(expected_changes));
+}
+
+#[test]
+fn rename_bridge_keeps_deeper_variant_like_member_paths_closed() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Stop,
+}
+
+fn main() -> Int {
+    let direct = Command.Retry.Stop
+    let alias = Cmd.Retry.Stop
+    return 0
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let direct_use = span_to_range(source, nth_span(source, "Stop", 2)).start;
+    let alias_use = span_to_range(source, nth_span(source, "Stop", 3)).start;
+
+    assert_eq!(
+        prepare_rename_for_analysis(source, &analysis, direct_use),
+        None
+    );
+    assert_eq!(
+        rename_for_analysis(&uri, source, &analysis, direct_use, "Halt"),
+        Ok(None)
+    );
+
+    assert_eq!(
+        prepare_rename_for_analysis(source, &analysis, alias_use),
+        None
+    );
+    assert_eq!(
+        rename_for_analysis(&uri, source, &analysis, alias_use, "Halt"),
+        Ok(None)
+    );
 }
 
 #[test]

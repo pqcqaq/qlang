@@ -3205,6 +3205,34 @@ fn read(command: Command) -> Int {
 }
 
 #[test]
+fn rename_queries_keep_deeper_variant_like_member_paths_closed() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Stop,
+}
+
+fn main() -> Int {
+    let direct = Command.Retry.Stop
+    let alias = Cmd.Retry.Stop
+    return 0
+}
+"#;
+
+    let analysis = analyzed(source);
+    let direct_use = nth_offset(source, "Stop", 2);
+    let alias_use = nth_offset(source, "Stop", 3);
+
+    assert_eq!(analysis.prepare_rename_at(direct_use), None);
+    assert_eq!(analysis.rename_at(direct_use, "Halt"), Ok(None));
+
+    assert_eq!(analysis.prepare_rename_at(alias_use), None);
+    assert_eq!(analysis.rename_at(alias_use, "Halt"), Ok(None));
+}
+
+#[test]
 fn rename_queries_follow_unique_method_symbols() {
     let source = r#"
 struct Counter {
@@ -5317,6 +5345,36 @@ fn build(flag: Bool) -> Command {
     }));
     assert!(tokens.contains(&ql_analysis::SemanticTokenOccurrence {
         span: Span::new(config_use, config_use + "Config".len()),
+        kind: SymbolKind::Variant,
+    }));
+}
+
+#[test]
+fn semantic_tokens_keep_deeper_variant_like_member_paths_closed() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Stop,
+}
+
+fn main() -> Int {
+    let direct = Command.Retry.Stop
+    let alias = Cmd.Retry.Stop
+    return 0
+}
+"#;
+
+    let analysis = analyzed(source);
+    let tokens = analysis.semantic_tokens();
+
+    assert!(!tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: nth_span(source, "Stop", 2),
+        kind: SymbolKind::Variant,
+    }));
+    assert!(!tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: nth_span(source, "Stop", 3),
         kind: SymbolKind::Variant,
     }));
 }
