@@ -724,6 +724,7 @@ P6 当前仍刻意未完成：
 - 新增 `ql-typeck` 的 `for await` 边界回归测试
 - `ql-typeck` 新增 `await` / `spawn` 操作数形态约束：当前要求操作数必须是 call expression
 - 新增 `ql-typeck` 的 `await` / `spawn` 非调用操作数回归测试
+- `ql-resolve` / `ql-typeck` / `ql-analysis` / `ql-lsp` 新增 closure async 边界回归：closure body 当前不会继承外层 `async fn` 语义上下文
 - `ql-driver` 新增 async backend 拒绝路径回归：语义层通过后，codegen 仍会稳定给出 `async fn` unsupported 诊断
 - `ql-cli` codegen 黑盒快照新增 `unsupported_async_fn_build`：锁住终端侧 async backend 拒绝输出
 - `ql-driver` / `ql-cli` 进一步补齐 `dylib` async 拒绝回归：即使存在合法导出，也会优先返回 `async fn` unsupported 诊断
