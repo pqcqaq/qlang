@@ -38,7 +38,7 @@ features:
 当前实现已经推进到 P4 backend foundation，并在 P5 上落地了最小可用的 C 互操作闭环：稳定 `extern "c"` 导出、真实 C 宿主集成 harness、`ql ffi header` 头文件生成、library build sidecar header，以及受约束的 `ql build --emit dylib` 共享库输出。建议先看：
 
 - [编译器、术语与生态入门](/getting-started/compiler-primer)
-- [P1-P4 阶段总览](/roadmap/phase-progress)
+- [P1-P6 阶段总览](/roadmap/phase-progress)
 - [开发计划](/roadmap/development-plan)
 - [实现算法与分层边界](/architecture/implementation-algorithms)
 

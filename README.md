@@ -12,12 +12,17 @@ Current scope:
 - landed Phase 2 semantic foundation, name resolution, and diagnostics hardening
 - landed Phase 3 MIR and ownership-analysis foundation
 - landed Phase 4 LLVM backend and native-artifact foundation
+- landed Phase 5 C FFI, header projection, and host-integration foundation
+- landed Phase 6 query, rename, completion, and semantic-token editor foundation
 
 Documentation lives in the VitePress subproject under [`docs/`](./docs).
+Merged phase plans live under [`docs/plans/`](./docs/plans/), and raw dated slice notes are archived under [`docs/plans/archive/`](./docs/plans/archive/).
 
 Phase summary:
 
 - [`docs/roadmap/phase-progress.md`](./docs/roadmap/phase-progress.md)
+- [`docs/plans/index.md`](./docs/plans/index.md)
+- [`docs/plans/archive/index.md`](./docs/plans/archive/index.md)
 
 ## Docs
 
@@ -43,8 +48,8 @@ Current Rust workspace status:
 - `crates/ql-parser`: modular parser for the current Phase 1 slice
 - `crates/ql-fmt`: formatter for the current frontend slice
 - `crates/ql-diagnostics`: shared semantic and parser diagnostics model plus text renderer
-- `crates/ql-analysis`: shared parse/HIR/resolve/typeck analysis entry plus same-file query/rename scaffolding for CLI and LSP
-- `crates/ql-lsp`: minimal `qlsp` server for hover, go-to-definition, same-file find-references, conservative same-file rename, and diagnostics over stdio
+- `crates/ql-analysis`: shared parse/HIR/resolve/typeck analysis entry plus same-file query, completion, rename, and semantic-token scaffolding for CLI and LSP
+- `crates/ql-lsp`: minimal `qlsp` server for hover, go-to-definition, same-file find-references, conservative same-file completion/rename, semantic tokens, and diagnostics over stdio
 - `crates/ql-hir`: AST -> HIR lowering with stable IDs and semantic normalization
 - `crates/ql-mir`: Phase 3 structural MIR with explicit CFG, cleanup actions, and textual dumps
 - `crates/ql-borrowck`: Phase 3 ownership facts and explicit `move self` consumption diagnostics
@@ -74,12 +79,60 @@ Current semantic baseline in `ql check`:
 - `ql-analysis` now centralizes parse -> HIR -> resolve -> typeck orchestration
 - `ql-analysis` now also lowers structural MIR after resolution so later ownership and codegen passes share one stable mid-level snapshot
 - `ql-analysis` now also runs the first ownership-facts pass and exposes rendered ownership state for CLI and future IDE tooling
-- `ql-analysis` now also exposes minimal position-based semantic queries for symbol lookup, hover, go-to-definition, same-file find-references, and conservative same-file rename style tooling
+- `ql-analysis` now also exposes minimal position-based semantic queries for symbol lookup, hover, go-to-definition, same-file find-references, conservative same-file completion/rename style tooling, and source-backed semantic tokens
+- local import aliases that point at same-file enum items now also forward variant-token hover / definition / references / completion / same-file rename / semantic tokens through that shared query layer, without pretending that a real module graph already exists
+- local import aliases that point at same-file struct items now also forward struct-literal field checking plus explicit/shorthand field-label query and rename follow-through through the shared type/query layers, while same-file struct or enum pattern roots also canonicalize those aliases back to the underlying local item when that is semantically safe
 - member-name spans and method declaration spans now stay precise through AST -> HIR, so methods inside the same trait/impl/extend block no longer collapse onto one shared query scope anchor
 - named-path segment spans now also stay precise through parser -> resolver -> query indexing, so enum variant uses in patterns and constructors can anchor to the variant token itself instead of collapsing onto the enum root
-- explicit struct literal and struct pattern field labels now also participate in the shared field query surface; shorthand field tokens intentionally stay bound to the local/binding symbol on that token, but same-file field rename now rewrites those shorthand sites into explicit labels when a source-backed field symbol is renamed
-- import aliases now resolve as source-backed bindings with precise declaration spans, so hover / definition / same-file references / same-file rename all reuse the same semantic identity instead of a string-only pseudo symbol
-- same-file rename now reuses that shared `QueryIndex`, validates new identifier text against lexer rules, and currently only enables symbol kinds whose reference surface is already considered stable enough to edit safely, including source-backed import aliases
+- explicit struct literal and struct pattern field labels now also participate in the shared field query surface; shorthand field tokens intentionally stay bound to the local/binding symbol on that token, and same-file rename now rewrites those shorthand sites into explicit labels both for source-backed field renames and for binding renames launched from the shorthand token itself when the underlying symbol is renameable, including local / parameter / import / function / const / static item-value cases
+- free-function shorthand binding rename is now also explicit on the LSP side, so a shorthand literal token like `Ops { add_one }` keeps preserving the field label while renaming the bound function declaration and call sites instead of relying only on analysis-side coverage
+- same-file rename for type-namespace items is now also regression-locked end to end: `type`, `opaque type`, `struct`, `enum`, and `trait` continue to reuse the same shared query surface in both analysis and LSP without introducing cross-file or module-graph behavior
+- same-file rename for root function/const/static symbols is now also regression-locked end to end: direct call/use sites keep reusing the same shared query surface in both analysis and LSP prepare-rename/rename instead of only being covered through aggregate analysis tests or shorthand-binding regressions
+- the same type-namespace item surface now also has explicit references / semantic-token parity coverage, so `type`, `opaque type`, `struct`, `enum`, and `trait` continue to resolve through one same-file truth source instead of drifting between query and editor highlighting behavior
+- hover / definition parity for that same type-namespace item surface is now also regression-locked, so `type`, `opaque type`, `struct`, `enum`, and `trait` keep one same-file identity across navigation, references, rename, and semantic highlighting
+- same-file type-namespace item parity is now also aggregate-regression-locked, so `type`, `opaque type`, `struct`, `enum`, and `trait` keep matching one ordered truth surface across hover / definition / references / semantic-token projection instead of relying on isolated per-kind tests
+- same-file global value items now also have explicit query parity coverage: `const` and `static` keep one shared `QueryIndex` identity across hover / definition / references / semantic tokens in both analysis and LSP, instead of letting item definitions and value uses drift apart
+- `extern` callable surfaces now also have explicit same-file parity coverage: `extern` block members, top-level `extern "c"` declarations, and top-level `extern "c"` function definitions all keep one shared `Function` identity across hover / definition / references / rename / semantic tokens in both analysis and LSP
+- extern callable value completion now also has explicit parity coverage across analysis and LSP, so `extern` block members, top-level `extern "c"` declarations, and top-level `extern "c"` function definitions continue to surface as `FUNCTION` completion items with stable detail and text-edit mapping instead of only being covered through ordinary free-function completion
+- ordinary free functions now also have explicit same-file query parity coverage: direct call sites keep one shared `Function` identity across hover / definition / references in both analysis and LSP, instead of only being covered through completion, rename, or aggregate root-binding tests
+- ordinary free functions now also have explicit same-file semantic-token parity coverage: declarations and direct call sites keep matching the shared function-token surface in both analysis and LSP, instead of only being covered through aggregate semantic-token snapshots
+- same-file callable surface parity is now also aggregate-regression-locked, so `extern` block callables, top-level `extern "c"` declarations, top-level `extern "c"` definitions, and ordinary free functions keep matching one ordered callable truth surface across hover / definition / references / semantic-token projection instead of only being covered by isolated per-kind tests
+- lexical semantic symbols now also have explicit same-file parity coverage: `generic`, `parameter`, `local`, `receiver self`, and `builtin type` keep one stable behavior split across analysis and LSP; builtin types intentionally remain non-source-backed, so they expose hover / references / semantic tokens but still have no definition or rename surface
+- lexical rename behavior is now also regression-locked end to end: `generic`, `parameter`, and `local` keep their existing same-file rename surface in both analysis and LSP, while `receiver self` and `builtin type` remain deliberately closed for rename
+- import aliases now resolve as source-backed bindings with precise declaration spans, so hover / definition / same-file references / same-file rename / semantic tokens all reuse the same semantic identity instead of a string-only pseudo symbol
+- plain import alias symbols now also have explicit same-file parity coverage across analysis and LSP for hover / definition / references / semantic tokens, which keeps source-backed import bindings aligned with editor navigation and highlighting behavior
+- plain import alias type-context completion now also has explicit parity coverage across analysis and LSP, so lexical type completion continues to surface `import` candidates and the LSP bridge keeps mapping them to `MODULE` completion items with stable text edits
+- free function lexical value completion now also has explicit parity coverage across analysis and LSP, so same-file value completion continues to surface callable declarations and the LSP bridge keeps mapping them to `FUNCTION` completion items with stable text edits
+- plain import alias lexical value completion now also has explicit parity coverage across analysis and LSP, so same-file value completion continues to surface source-backed `import` bindings and the LSP bridge keeps mapping them to `MODULE` completion items with stable text edits
+- builtin type and local struct type-context completion now also have explicit parity coverage across analysis and LSP, so same-file type completion keeps surfacing source-backed type candidates while the LSP bridge preserves the expected `CLASS`/`STRUCT` completion item mappings
+- same-file type alias type-context completion now also has explicit parity coverage across analysis and LSP, so `QueryIndex` continues to surface `type alias` candidates while the LSP bridge preserves the expected `CLASS` completion item mapping and stable text edits
+- same-file `opaque type` type-context completion now also has explicit parity coverage across analysis and LSP, so `TypeAlias`-backed opaque aliases continue to surface `opaque type ...` detail while the LSP bridge preserves the existing `CLASS` completion item mapping and stable text edits
+- same-file generic type-context completion now also has explicit parity coverage across analysis and LSP, so lexical type completion continues to surface generic candidates while the LSP bridge preserves the expected `TYPE_PARAMETER` completion item mapping, detail rendering, and stable text edits
+- same-file enum type-context completion now also has explicit parity coverage across analysis and LSP, so lexical type completion continues to surface enum candidates while the LSP bridge preserves the expected `ENUM` completion item mapping, detail rendering, and stable text edits
+- same-file trait type-context completion now also has explicit parity coverage across analysis and LSP, so lexical type completion continues to surface trait candidates while the LSP bridge preserves the expected `INTERFACE` completion item mapping, detail rendering, and stable text edits
+- stable receiver field completion now also has explicit parity coverage across analysis and LSP, so same-file member completion continues to surface field candidates while the LSP bridge preserves the expected `FIELD` completion item mapping, detail rendering, and stable text edits
+- stable receiver unique-method completion now also has explicit parity coverage across analysis and LSP, so same-file member completion continues to surface unique method candidates while the LSP bridge preserves the expected `FUNCTION` completion item mapping, detail rendering, and stable text edits
+- same-file const and static value completion now also has explicit parity coverage across analysis and LSP, so lexical value completion continues to surface these item candidates while the LSP bridge preserves the expected `CONSTANT` completion item mapping, detail rendering, and stable text edits
+- same-file local value completion now also has explicit parity coverage across analysis and LSP, so lexical value completion continues to surface `local` candidates while the LSP bridge preserves the expected `VARIABLE` completion item mapping, detail rendering, and stable text edits
+- same-file parameter value completion now also has explicit parity coverage across analysis and LSP, so lexical value completion continues to surface parameter candidates while the LSP bridge preserves the expected `VARIABLE` completion item mapping, detail rendering, and stable text edits
+- same-file lexical value candidate-list parity is now also explicit on both sides, so import / const / static / extern callable / free function / local / parameter candidates keep matching the ordered `QueryIndex` value list, detail rendering, and replacement text-edit projection instead of only being covered through scattered per-kind checks
+- same-file enum variant completion now also has explicit parity coverage across analysis and LSP, so parsed enum path completion continues to surface `variant` candidates while the LSP bridge preserves the expected `ENUM_MEMBER` completion item mapping, detail rendering, and stable text edits
+- same-file import-alias variant completion now also has explicit parity coverage across analysis and LSP, so local import aliases that point at same-file enum items continue to surface `variant` candidates while the LSP bridge preserves the expected `ENUM_MEMBER` completion item mapping, detail rendering, and stable text edits
+- same-file import-alias struct-variant completion now also has explicit parity coverage across analysis and LSP, so local import aliases that point at same-file enum items continue to surface struct-style `variant` candidates while the LSP bridge preserves the expected `ENUM_MEMBER` completion item mapping, detail rendering, and stable text edits
+- remaining same-file variant-path completion contexts now also have explicit parity coverage across analysis and LSP, so direct struct-literal paths plus direct/import-alias pattern paths continue to surface existing `variant` candidates with stable `ENUM_MEMBER` mapping, detail rendering, and text edits
+- same-file variant-path candidate-list parity is now also explicit on both sides, so enum-root / struct-literal / pattern paths and their same-file import-alias mirrors keep matching the ordered `variant` candidate list, detail rendering, and replacement text-edit projection already implied by `QueryIndex`
+- same-file completion filtering parity is now also explicit on the LSP side, so lexical shadowing/visibility and impl-preferred member completion keep matching the already-locked analysis behavior instead of only being covered indirectly through single-candidate prefix tests; the lexical value visibility aggregate now also locks import/function/local detail and replacement text-edit projection, and the impl-preferred member aggregate now also locks the surviving candidate count plus stable detail/text-edit projection
+- same-file completion candidate-list parity is now also explicit on the LSP side, so full type-context and stable-member candidate lists keep matching the already-locked analysis ordering and namespace boundaries instead of only being covered through per-item mapping tests; the type-context matrix is regression-locked across builtin/import/struct/type alias/opaque type/enum/trait/generic candidates, and the stable-member aggregate list now also locks method/field detail plus replacement text-edit projection
+- shorthand struct field token query parity is now also explicit on the LSP side, so editor-facing hover/definition keeps matching the intentionally conservative analysis rule that shorthand tokens stay on the local binding surface instead of silently drifting onto the field surface
+- direct same-file variant/field-label query parity is now also explicit on the LSP side, so direct enum variant tokens and direct explicit struct field labels keep matching the already-locked analysis definition/reference surface instead of only being covered through import-alias follow-through tests
+- direct same-file variant/field-label semantic-token parity is now also explicit on both the analysis and LSP sides, so direct enum variant tokens and direct explicit struct field labels keep matching the existing occurrence-based highlighting surface instead of only being covered through aggregate or import-alias semantic-token tests
+- same-file direct symbol surface parity is now also aggregate-regression-locked, so direct enum variant tokens and direct explicit struct field labels keep matching one ordered truth surface across hover / definition / references / semantic-token projection instead of relying on isolated per-kind tests
+- direct stable-member query parity is now also explicit on the LSP side, so direct field members and unique method members keep matching the already-locked analysis hover/definition/reference surface instead of only being covered through hover-only or import-alias-style tests
+- direct stable-member semantic-token parity is now also explicit on both the analysis and LSP sides, so direct field members and unique method members keep matching the existing occurrence-based highlighting surface instead of only being covered through aggregate semantic-token tests
+- same-file direct member surface parity is now also aggregate-regression-locked, so direct field members and unique method members keep matching one ordered truth surface across hover / definition / references / semantic-token projection instead of relying on isolated per-kind tests
+- impl-preferred member query parity is now also explicit on the analysis and LSP sides, so direct member queries that intentionally choose an `impl` method over an `extend` method keep matching the already-locked hover/definition/reference surface instead of drifting at the bridge layer
+- same-file rename now reuses that shared `QueryIndex`, validates new identifier text against lexer rules, and currently only enables symbol kinds whose reference surface is already considered stable enough to edit safely, including source-backed import aliases, local struct fields, and unique method symbols
+- same-file completion now also distinguishes semantic labels from source insert text, so escaped identifiers like `` `type` `` continue to round-trip as legal edits instead of inserting raw keyword text
 - Phase 4 has now started with a backend foundation slice:
   - `ql-driver` keeps build orchestration out of `ql-cli`
   - `ql-codegen-llvm` lowers a controlled MIR subset into textual LLVM IR, with explicit program-mode and library-mode entry behavior
@@ -108,7 +161,7 @@ Current semantic baseline in `ql check`:
   - `ql build <file> --emit dylib|staticlib` now also supports build-side header sidecars through `--header`, `--header-surface`, and `--header-output`; when no header output is specified, the header is written next to the built library artifact but keeps the source stem, for example `libffi_export.so` + `--header` -> `ffi_export.h`
   - build-side header generation reuses the same analysis snapshot as codegen, is rejected for non-library emits, rejects primary-artifact/header path collisions up front, and removes the just-built library artifact if sidecar generation fails so the CLI does not leave a half-success state behind
   - `crates/ql-cli/tests/ffi_header.rs` now locks export/import/both header surfaces plus failing-signature and invalid-surface regressions with black-box snapshots
-- `qlsp` now consumes that shared analysis layer to provide LSP hover, go-to-definition, same-file find-references, same-file prepare/rename, and live diagnostics for open documents
+- `qlsp` now consumes that shared analysis layer to provide LSP hover, go-to-definition, same-file find-references, same-file completion, same-file semantic tokens, same-file prepare/rename, and live diagnostics for open documents
 - Phase 3 has started with a structural MIR slice:
   - function bodies lower into explicit basic blocks, statements, terminators, locals, scopes, and cleanup actions
   - `defer` is now represented as registered cleanup plus explicit run-cleanup steps on scope exits
@@ -131,7 +184,7 @@ Current semantic baseline in `ql check`:
 - scope graph construction now covers module, callable, block, closure, match-arm, and for-loop scopes
 - best-effort resolution now covers locals, params, generics, imports, builtin types, struct literal roots, and pattern path roots
 - resolver now records item/function scopes so semantic queries can map bindings back to declaration sites without re-walking resolution order
-- conservative resolution diagnostics currently add `self` misuse detection without eagerly rejecting unresolved globals or types
+- conservative resolution diagnostics now cover `self` misuse plus clearly bare single-segment unresolved value/type roots; multi-segment import/module/prelude unresolved strictness is still deferred
 - first-pass typing now covers:
   - return-value checking
   - bool conditions in `if` / `while` / match guards
@@ -139,11 +192,16 @@ Current semantic baseline in `ql check`:
   - unique impl / extend method call argument-type checking through member selection
   - tuple-based multi-return destructuring
   - direct closure checking against expected callable types
-  - struct literal field checking and missing-field validation
+  - struct and enum struct-variant literal field checking and missing-field validation, including same-file local import alias paths that canonicalize back to local enum items
+  - source-level fixed array type expressions `[T; N]`, including lexer-style length literals that lower to semantic lengths
+  - homogeneous array-literal inference plus expected fixed-array context guidance for first-pass array item type checking
+  - conservative tuple/array indexing: array element projection, constant tuple indexing with lexer-style integer literals, array-index type checks, and tuple out-of-bounds diagnostics
   - positional-after-named call ordering diagnostics
   - equality-operand compatibility checks
+  - comparison-operand compatible-numeric checks
   - struct member existence checks
   - pattern root / literal compatibility checks in destructuring and `match`
+  - unknown struct-pattern field diagnostics, including same-file local import alias paths that canonicalize back to local items
 - duplicate checks currently cover:
   - top-level definitions
   - generic parameters
@@ -157,9 +215,10 @@ Current semantic baseline in `ql check`:
 Current intentional gap:
 
 - default parameters are part of the language design docs, but they are not lowered into AST/HIR or checked yet
-- import / module / prelude unresolved-name strictness is still intentionally deferred
-- semantic queries are still intentionally conservative: they now cover root bindings plus struct-field / unique method member tokens and enum variant tokens, but not full module-path or ambiguous method semantics yet
-- `qlsp` is intentionally minimal in P2/P6: hover / definition / same-file references / same-file rename / diagnostics are live, but completion, semantic tokens, method rename, rename from shorthand-field tokens themselves, and cross-file rename are still future work
+- multi-segment import / module / prelude unresolved-name strictness is still intentionally deferred
+- general index-protocol semantics are still intentionally deferred: source-level fixed arrays, inferred arrays, and constant tuple indexing are typed today, but a broader index protocol is not
+- semantic queries are still intentionally conservative: they now cover root bindings plus struct-field / unique method member tokens and enum variant tokens, including local import aliases that point at same-file enum items or same-file struct items, but not full module-path or ambiguous method semantics yet
+- `qlsp` is intentionally minimal in P2/P6: hover / definition / same-file references / same-file rename / same-file lexical-scope completion / parsed member-token completion / same-file parsed enum variant-path completion / same-file semantic tokens / diagnostics are live, and local import aliases to same-file enum items now also participate in variant-path query / completion / rename / semantic-token projection while local import aliases to same-file struct items now also participate in explicit/shorthand struct-field query and rename follow-through; completion now also preserves escaped-identifier insert text for keyword-named symbols, and same-file binding renames launched from shorthand struct tokens now preserve field semantics by expanding to explicit labels, while ambiguous-member completion, parse-error-tolerant dot-trigger completion, import-graph/module-path deeper completion, ambiguous method rename, field-symbol rename semantics from shorthand-field tokens themselves, and cross-file rename are still future work
 - Phase 3 ownership is intentionally narrow in this slice: direct-local `move self` consumption and direct-local `move` closure capture are diagnosed today; general call contracts, place-sensitive moves, borrow/escape analysis, and drop elaboration are still future passes on top of the current MIR foundation
 - cleanup-aware ownership is still intentionally partial: nested `defer` runtime modeling and projection-sensitive cleanup effects are future work
 - closure ownership is still intentionally partial: MIR capture facts, stable closure IDs, and conservative may-escape facts exist, but closure environment lowering and full escape graph construction are still future work
@@ -172,18 +231,16 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test
 cargo test -p ql-cli --test ffi
 cargo test -p ql-cli --test ffi_header
-cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql
+cargo run -p ql-cli -- check fixtures/codegen/pass/minimal_build.ql
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir
 cargo run -p ql-cli -- build fixtures/codegen/pass/extern_c_build.ql --emit llvm-ir
 cargo run -p ql-cli -- ffi header tests/ffi/pass/extern_c_export.ql
 cargo run -p ql-cli -- ffi header tests/ffi/header/extern_c_surface.ql --surface imports
 cargo run -p ql-cli -- fmt fixtures/parser/pass/basic.ql
-cargo run -p ql-cli -- mir fixtures/parser/pass/basic.ql
-cargo run -p ql-cli -- ownership fixtures/parser/pass/basic.ql
-cargo run -p ql-cli -- check fixtures/parser/pass/control_flow.ql
-cargo run -p ql-cli -- check fixtures/parser/pass/phase1_declarations.ql
 cargo run -p ql-lsp --bin qlsp
 ```
+
+Parser fixtures under `fixtures/parser/pass/` remain the parser/formatter regression surface. Some of them intentionally keep placeholder symbols such as `tick`, `IoError`, or `parse_int`, so they are not all semantic-clean inputs for the current `ql check` pipeline.
 
 When clang is available:
 

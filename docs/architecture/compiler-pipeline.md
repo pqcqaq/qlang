@@ -80,8 +80,8 @@ source
 - `ql check` 流水线现在是 parser -> HIR lowering -> resolve -> semantic checks
 - scope graph 已覆盖 module、callable、block、closure、match arm、for-loop binding scope
 - 当前已支持 best-effort 解析：local binding、regular param、receiver `self`、generic param、top-level item、import alias、builtin type、struct literal root、pattern path root
-- 当前 diagnostics 采取保守策略，只落地绝对可靠的一条语义错误：method receiver 作用域外非法使用 `self`
-- 对 unresolved global / unresolved type 的系统性报错刻意延后，直到 import / module / prelude 语义稳定，否则会把现有 fixture 误判成失败
+- 当前 diagnostics 采取保守策略，只落地绝对可靠的语义错误：method receiver 作用域外非法使用 `self`，以及 bare single-segment value/type root 的 unresolved 诊断
+- multi-segment unresolved global / unresolved type 的系统性报错仍刻意延后，直到 import / module / prelude 语义稳定，否则会把现有 fixture 误判成失败
 
 ### Type Checking
 
@@ -98,15 +98,22 @@ source
 - 新增 top-level `const` / `static` 值引用的声明类型传播
 - 新增 tuple-based multi-return destructuring 的第一层约束
 - 新增 direct closure against expected callable type 的 first-pass checking
-- 新增 struct literal 的 field / missing-field 检查
+- 新增 struct 与 enum struct-variant literal 的 field / missing-field 检查，并复用 same-file local import alias -> local item 的 canonicalization
+- 新增源码层 fixed array type expr `[T; N]`，并把 lexer-style length literal lowering 成统一的语义长度
+- 新增 homogeneous array literal inference，并在 expected fixed-array context 下复用声明元素类型收紧 literal item checking
+- 新增保守 tuple / array indexing：array element projection、支持 lexer-style integer literal 的 constant tuple indexing、array index type checking、tuple out-of-bounds diagnostics
 - 新增 equality operand compatibility checking
+- 新增 comparison operand compatible-numeric checking
+- 新增 bare mutable binding assignment diagnostics：`=` 现在会约束 `var` local / `var self`，并继续把 member/index place assignment 留给后续 place-sensitive 语义
 - 新增 struct member existence checking
 - 新增 pattern root / literal compatibility checking
+- 新增 struct pattern unknown-field checking，并复用 same-file local import alias -> local item 的 canonicalization
 
 当前依然保守的边界：
 
-- 未解析成员调用、索引协议、import prelude 细节时，表达式类型会主动退化为 `unknown`
-- unresolved global / unresolved type diagnostics 仍然延后
+- 未解析成员调用、通用索引协议、import prelude 细节时，表达式类型会主动退化为 `unknown`；当前只对源码层 fixed array、inferred array 和 constant tuple index 开放一层 typing
+- `=` 当前只对 bare mutable binding 做可写性校验，不提前宣称 field/index 写入已经有完整 place 语义
+- bare single-segment unresolved diagnostics 已落地，但 multi-segment unresolved global / unresolved type diagnostics 仍然延后
 - 完整 trait solving、泛型实参推断、effect checking 和 flow-sensitive narrowing 还未开始
 - 默认参数仍停留在语言设计稿，没有进入当前 AST / HIR / type checker 的实现边界
 
@@ -121,6 +128,8 @@ source
   - 聚合后的 diagnostics
   - `expr` / `pattern` / `local` 的第一层类型查询
   - 基于源码 offset 的 `symbol_at` / `hover_at` / `definition_at` / `references_at` / `prepare_rename_at` / `rename_at`
+  - 基于源码 offset 的 `completions_at`
+  - 基于源码文件快照的 `semantic_tokens`
 - 当前位置语义查询已覆盖：
   - top-level item name
   - local binding
@@ -131,18 +140,67 @@ source
   - struct field member token
   - unique impl / extend method member token
   - named type root、pattern path root、struct literal root
-  - import alias 的 source-backed hover / definition / 同文件 reference / 同文件 rename，以及 builtin type 的 hover 级信息
+  - import alias 的 source-backed hover / definition / 同文件 reference / 同文件 rename / semantic-token 信息，以及 builtin type 的 hover / references / semantic-token 信息（但 builtin 仍无 source-backed definition / rename）
 - `ql-resolve` 现在额外保留 item scope 和 function scope，`ql-analysis` 不再需要靠“重放 resolver 遍历顺序”去回推参数和泛型的声明位置
 - receiver parameter 的精确 span 也已从 AST 打通到 HIR，查询和 diagnostics 会锚定 `self` / `var self` / `move self` 本身，而不是整个函数 span
 - function / method declaration span 现在也保持精确，trait / impl / extend 里的多个方法会各自拥有独立 function scope，而不是共享整个块的 span
 - named path 现在也会保留 segment span，因此 `Command.Config` / `Command.Retry(...)` 这类 variant use 可以锚定到尾段 token，而不是退回整个 path 或 enum root
 - 显式 struct literal / struct pattern 字段标签现在也会进入 field query surface；但 shorthand `Point { x }` 这类双义 token 仍故意保守，让该 token 继续落在 local/binding 语义上
 - import alias 现在也会先在 resolver 中固化成 source-backed `ImportBinding`，再被 query index 作为真实符号索引定义点与引用点
-- same-file rename 现在也复用这套 query index，并且会先复用 lexer 的 identifier 规则校验新名字；裸关键字会被拒绝，确实要用关键字时必须显式写成转义标识符；当前 import alias 和 local struct field 也已经进入这组可安全 rename 的符号集，其中 field rename 会把 shorthand field site 自动扩写成显式标签
+- 当同文件 local import alias 的原始路径恰好是单段、且命中本地 root struct item 时，显式 struct literal / struct pattern 字段标签与 field-driven shorthand rename 现在也会继续映射回原 struct field；同一条 canonicalization 也会服务 struct literal 字段检查与 struct/variant pattern root type checking
+- same-file rename 现在也复用这套 query index，并且会先复用 lexer 的 identifier 规则校验新名字；裸关键字会被拒绝，确实要用关键字时必须显式写成转义标识符；当前 import alias、local struct field 与唯一 method symbol 都已经进入这组可安全 rename 的符号集，其中 field rename 会把 shorthand field site 自动扩写成显式标签，而从 shorthand token 上发起的 renameable binding rename 现在也会保持这条展开逻辑，避免把字段标签一起改坏；这条保真回归现在也已经锁住了 local / parameter / import / function / const / static 这类 item-value / binding 场景；ambiguous method surface 仍保持关闭
+- 其中 free-function shorthand binding rename 现在也已经有显式 LSP parity 回归：`Ops { add_one }` 这类 shorthand token 会继续保留 field label，并把 rename 只落到绑定的 function declaration / use 上，而不是让桥接层退化成普通字段或局部变量改名
+- plain import alias symbol 现在也有显式 same-file parity 回归：analysis / LSP 两层都会继续锁住 `import` binding 的 hover / definition / references / semantic-token 一致性，而不是让 source-backed import binding 与编辑器高亮、导航行为再度漂移
+- 同一套 same-file rename truth surface 现在也已经有显式回归覆盖去锁住 type-namespace item：`type`、`opaque type`、`struct`、`enum`、`trait` 在 analysis / LSP 两层都会继续共享同一份 item identity，而不是在协议层各自做特判
+- 同一套 same-file rename truth surface 现在也已经有显式回归覆盖去锁住 root value item：`function`、`const`、`static` 在 analysis / LSP 两层都会继续共享同一份 rename identity，而不是只在聚合 analysis 测试或 shorthand-binding 回归里被间接覆盖
+- 这组 type-namespace item 现在也有 references / semantic-token parity 回归：`type`、`opaque type`、`struct`、`enum`、`trait` 的同文件 definition / references / semantic tokens 会继续复用同一份 `QueryIndex` occurrence，而不是在 LSP bridge 上额外猜测
+- 同一组 type-namespace item 现在也有 hover / definition parity 回归：`type`、`opaque type`、`struct`、`enum`、`trait` 在 analysis 与 LSP 两层都会继续映射回同一份 item definition span
+- same-file type-namespace item surface 现在也有显式聚合回归：`type`、`opaque type`、`struct`、`enum`、`trait` 会继续共享同一组 item truth surface，因此 hover / definition / references / semantic tokens 的 editor-facing 契约不会只靠分散的单类用例间接维持
+- global value item 现在也有显式 query parity 回归：`const`、`static` 的定义点与 value-use 会继续复用同一份 `QueryIndex` symbol identity，因此 hover / definition / references / semantic tokens 在 analysis 与 LSP 两层都会一起收敛，而不是在 bridge 层做二次推断
+- `extern` callable surface 现在也有显式 same-file parity 回归：无论是 `extern` block 成员、顶层 `extern "c"` 声明，还是带 body 的顶层 `extern "c"` 函数定义，定义点与 call site 都会继续复用同一份 `Function` identity，因此 hover / definition / references / rename / semantic tokens 在 analysis 与 LSP 两层都会一起收敛，而不是把 extern callable 当成特殊字符串表面处理
+- extern callable value completion 现在也有显式 parity 回归：这三类 extern callable 会继续作为 value-context 下的 `Function` completion candidate 暴露给 analysis，并由 LSP bridge 稳定投影成 `FUNCTION` completion item，而不是只靠 ordinary free-function completion 用例间接覆盖
+- ordinary free function 现在也有显式 same-file query parity 回归：direct call site 会继续复用同一份 `Function` identity，因此 hover / definition / references 在 analysis 与 LSP 两层都会一起收敛，而不是只靠 completion / rename 或 root-binding 聚合测试间接覆盖
+- ordinary free function 现在也有显式 same-file semantic-token parity 回归：declaration 与 direct call site 会继续复用同一份 `Function` token surface，因此 analysis occurrence 与 LSP semantic tokens 不会再只靠聚合快照间接覆盖
+- same-file callable surface 现在也有显式聚合回归：`extern` block callable、顶层 `extern "c"` 声明、顶层 `extern "c"` 定义与 ordinary free function 会继续共享同一组 callable truth surface，因此 hover / definition / references / semantic tokens 的 editor-facing 契约不会只靠分散的单类用例间接维持
+- lexical semantic symbol 现在也有显式 same-file parity 回归：`generic`、`parameter`、`local`、`receiver self` 与 `builtin type` 在 analysis 与 LSP 两层都会继续复用同一套 lexical truth surface；其中 builtin type 仍然不是 source-backed declaration，因此保留 hover / references / semantic tokens，但不开放 definition / rename
+- lexical rename surface 现在也有显式回归覆盖：`generic`、`parameter`、`local` 会继续共享同一套 same-file rename truth surface，而 `receiver self` 与 `builtin type` 会继续保持关闭，避免把没有 source-backed declaration 的 lexical surface 误开放成可编辑符号
+- same-file completion 现在也复用同一份 query index：`ql-analysis` 会先把 value/type 位置映射到 resolver scope，再沿 parent scope 链聚合可见 symbol data；对于已经成功解析、且 receiver type 稳定的 member token，会提供保守 member completion；对于 same-file enum item root 的 parsed variant path，以及指向同文件根 enum item 的 local import alias path，也会直接补出 variant completion；同一条 follow-through 也会继续服务 hover / definition / references / same-file rename / semantic tokens；completion candidate 现在还会区分语义 label 与源码 insert text，因此 escaped identifier 不会在 LSP text edit 中退化成非法 keyword 文本；LSP 只负责把候选映射成协议 completion item 并按当前源码前缀过滤
+- plain import alias 的 type-context completion 现在也有显式 parity 回归：analysis 会继续把 `import` binding 作为 type 候选产出，LSP bridge 会继续把它映射成 `MODULE` completion item，并保持稳定 text edit，而不是把 source-backed import candidate 在协议层退化成普通字符串候选
+- free function 的 lexical value completion 现在也有显式 parity 回归：analysis 会继续把 callable declaration 作为 value 候选产出，LSP bridge 会继续把它映射成 `FUNCTION` completion item，并保持稳定 text edit，而不是让 lexical completion 与协议投影的 callable surface 再次漂移
+- plain import alias 的 lexical value completion 现在也有显式 parity 回归：analysis 会继续把 source-backed `import` binding 作为 value 候选产出，LSP bridge 会继续把它映射成 `MODULE` completion item，并保持稳定 text edit，而不是让 value completion 与既有 import symbol identity 再次漂移
+- builtin type 与 local struct item 的 type-context completion 现在也有显式 parity 回归：analysis 会继续把它们作为 type 候选产出，LSP bridge 会继续分别映射成 `CLASS` / `STRUCT` completion item，并保持稳定 text edit，而不是让 type completion 的 editor-facing 投影再次与 `QueryIndex` 脱节
+- same-file type alias 的 type-context completion 现在也有显式 parity 回归：analysis 会继续把 `type alias` 作为 type 候选产出，LSP bridge 会继续把它映射成 `CLASS` completion item，并保持稳定 text edit，而不是让 source-backed alias candidate 在 editor-facing 投影中再次漂移
+- same-file `opaque type` 的 type-context completion 现在也有显式 parity 回归：analysis 会继续把 `TypeAlias`-backed opaque alias 作为 type 候选产出，LSP bridge 会继续把它映射成 `CLASS` completion item，并保持 `opaque type ...` detail 与稳定 text edit，而不是让 opaque alias candidate 在 editor-facing 投影中再次漂移
+- same-file generic 的 type-context completion 现在也有显式 parity 回归：analysis 会继续把 `generic` 作为 type 候选产出，LSP bridge 会继续把它映射成 `TYPE_PARAMETER` completion item，并保持稳定 detail 与 text edit，而不是让 lexical generic candidate 在 editor-facing 投影中再次漂移
+- same-file enum 的 type-context completion 现在也有显式 parity 回归：analysis 会继续把 `enum` 作为 type 候选产出，LSP bridge 会继续把它映射成 `ENUM` completion item，并保持稳定 detail 与 text edit，而不是让 enum candidate 在 editor-facing 投影中再次漂移
+- same-file trait 的 type-context completion 现在也有显式 parity 回归：analysis 会继续把 `trait` 作为 type 候选产出，LSP bridge 会继续把它映射成 `INTERFACE` completion item，并保持稳定 detail 与 text edit，而不是让 trait candidate 在 editor-facing 投影中再次漂移
+- stable receiver field completion 现在也有显式 parity 回归：analysis 会继续把 `field` 作为 member 候选产出，LSP bridge 会继续把它映射成 `FIELD` completion item，并保持稳定 detail 与 text edit，而不是让 field candidate 在 editor-facing 投影中再次漂移
+- stable receiver unique-method completion 现在也有显式 parity 回归：analysis 会继续把唯一 `method` candidate 作为 member 候选产出，LSP bridge 会继续把它映射成 `FUNCTION` completion item，并保持稳定 detail 与 text edit，而不是让稳定 receiver member surface 的 method 投影再次漂移
+- same-file const / static 的 value completion 现在也有显式 parity 回归：analysis 会继续把 `const` / `static` 作为 value 候选产出，LSP bridge 会继续把它们映射成 `CONSTANT` completion item，并保持稳定 detail 与 text edit，而不是让这些 item-value candidate 在 editor-facing 投影中再次漂移
+- same-file local 的 value completion 现在也有显式 parity 回归：analysis 会继续把 `local` 作为 value 候选产出，LSP bridge 会继续把它映射成 `VARIABLE` completion item，并保持稳定 detail 与 text edit，而不是让 lexical local candidate 在 editor-facing 投影中再次漂移
+- same-file parameter 的 value completion 现在也有显式 parity 回归：analysis 会继续把 `parameter` 作为 value 候选产出，LSP bridge 会继续把它映射成 `VARIABLE` completion item，并保持稳定 detail 与 text edit，而不是让 parameter candidate 在 editor-facing 投影中再次漂移
+- same-file lexical value candidate-list parity 现在也有显式回归：analysis / LSP 会继续让 import / const / static / extern callable / free function / local / parameter 这些 already-supported value surface 维持同一份有序候选列表、detail 渲染与 replacement text-edit 投影，而不是只靠分散的单类 completion 用例间接覆盖
+- same-file enum variant completion 现在也有显式 parity 回归：analysis 会继续把 parsed enum path 上的 `variant` candidate 作为 completion 候选产出，LSP bridge 会继续把它映射成 `ENUM_MEMBER` completion item，并保持稳定 detail 与 text edit，而不是让 variant completion 的 editor-facing 投影再次漂移
+- same-file import alias variant completion 现在也有显式 parity 回归：analysis 会继续让指向同文件根 enum item 的 local import alias path 产出 `variant` candidate，LSP bridge 会继续把它映射成 `ENUM_MEMBER` completion item，并保持稳定 detail 与 text edit，而不是让这条 alias follow-through 的 editor-facing 投影再次漂移
+- same-file import alias struct-variant completion 现在也有显式 parity 回归：analysis 会继续让指向同文件根 enum item 的 local import alias struct-literal path 产出 struct-style `variant` candidate，LSP bridge 会继续把它映射成 `ENUM_MEMBER` completion item，并保持稳定 detail 与 text edit，而不是让这条 struct-variant alias follow-through 的 editor-facing 投影再次漂移
+- remaining same-file variant-path completion contexts 现在也有显式 parity 回归：analysis / LSP 会继续锁住 direct struct-literal path 以及 direct/local-import-alias pattern path 上既有的 `variant` candidate 形态、detail 与 text edit，而不是让 constructor / pattern 上下文里的 editor-facing 投影再次漂移
+- same-file variant-path candidate-list parity 现在也有显式回归：analysis / LSP 会继续让 enum-root / struct-literal / pattern path 及其 same-file import-alias 镜像上下文维持同一份有序 `variant` 候选列表、detail 渲染与 replacement text-edit 投影，而不是让这组 editor-facing 契约只靠单个候选测试间接覆盖
+- same-file completion filtering parity 现在也有显式回归：analysis 已经锁住的 lexical scope visibility/shadowing 与 impl-preferred member filtering 行为，会继续原样投影到 LSP，而不是只通过单个 prefix 命中结果被间接覆盖；其中 lexical value visibility 的聚合回归现在也已经显式覆盖 import / function / local 的 detail 与 text edit 投影，而 impl-preferred member 聚合回归现在也已经显式覆盖 surviving candidate count 以及稳定 detail / text edit 投影
+- same-file completion candidate-list parity 现在也有显式回归：analysis 已经锁住的 type-context 与 stable-member 完整候选列表，会继续原样投影到 LSP，而不是只覆盖单个 item 映射却放过排序、命名空间边界和完整成员集合；其中 type-context 总表现在已经显式覆盖 builtin / import / struct / `type` / `opaque type` / `enum` / `trait` / generic，而 stable-member 总表也已经显式覆盖 method / field 的 detail 与 text edit 投影
+- shorthand struct field token query parity 现在也有显式回归：analysis 已经锁住的“shorthand token 继续落在 local/binding surface，而不是 field surface”这条边界，会继续原样投影到 LSP hover / definition，而不是在编辑器侧悄悄把 shorthand token 提升成 field symbol
+- direct same-file variant / explicit field-label query parity 现在也有显式回归：analysis 已经锁住的 direct enum variant token 与 direct explicit struct field label 的 definition / references 行为，会继续原样投影到 LSP，而不是只有 import-alias 路径才被端到端覆盖
+- direct same-file variant / explicit field-label semantic-token parity 现在也有显式回归：analysis 已经锁住的 direct enum variant token 与 direct explicit struct field label 的 occurrence-based highlighting，会继续原样投影到 LSP semantic tokens，而不是只有 import-alias 路径或总表测试在间接覆盖
+- same-file direct symbol surface 现在也有显式聚合回归：direct enum variant token 与 direct explicit struct field label 会继续共享同一组 direct-symbol truth surface，因此 hover / definition / references / semantic tokens 的 editor-facing 契约不会只靠分散的单类用例间接维持
+- direct stable-member query parity 现在也有显式回归：analysis 已经锁住的 direct field member 与唯一 method member 的 hover / definition / references，会继续原样投影到 LSP，而不是只剩 hover markdown 或其他间接覆盖
+- direct stable-member semantic-token parity 现在也有显式回归：analysis 已经锁住的 direct field member 与唯一 method member 的 occurrence-based highlighting，会继续原样投影到 LSP semantic tokens，而不是只靠总表 semantic-token 测试间接覆盖
+- same-file direct member surface 现在也有显式聚合回归：direct field member 与唯一 method member 会继续共享同一组 direct-member truth surface，因此 hover / definition / references / semantic tokens 的 editor-facing 契约不会只靠分散的单类用例间接维持
+- impl-preferred member query parity 现在也有显式回归：analysis 已经锁住的“同名成员里优先选择 `impl` 方法而不是 `extend` 方法”这条 direct member query 边界，会继续原样投影到 LSP hover / definition / references，而不是在桥接层重新漂移
+  - same-file semantic tokens 现在也复用同一份 query index：`ql-analysis` 直接从 source-backed occurrence 提取 token span 与 symbol kind，LSP 只负责按协议 legend 编码；没有稳定语义 identity 的 token 不会被伪装成高亮结果
 - 这层边界先服务 CLI，并为后续 LSP 的 hover / definition / references / rename 打稳定地基
+- 这层边界现在也开始服务 completion / semantic tokens；completion 当前覆盖同文件 lexical scope + parsed member token + parsed enum variant path（含 local import alias -> local enum item 的 follow-through），而 semantic tokens 也仍只覆盖已经进入统一 query surface 的 source-backed symbol；同文件 rename / references / definition 也会沿用同一份 variant / field symbol identity，并在 local import alias -> local struct item 时继续跟进显式字段标签与 field-driven shorthand rewrite
 - 现在 `ql-lsp` 已经成为这层边界的第一个真实消费者，而不只是“未来会用到”
-- 当前 rename 也仍刻意保守：目前只开放 function / const / static / struct / enum / variant / trait / type alias / local / parameter / generic / import / field 的同文件重命名；method / receiver / builtin type、从 shorthand field token 本身发起的 rename 以及 cross-file rename 仍需更完整查询面后再开放
-- 当前仍刻意不宣称完整 member / module-path 查询：目前只覆盖 struct field、唯一 method candidate、enum variant token；ambiguous method、module-path deeper semantics 以及更广义的 payload/member-like query 仍需后续补齐
+- 当前 rename 也仍刻意保守：目前只开放 function / const / static / struct / enum / variant / trait / type alias / field / method（仅唯一 candidate）/ local / parameter / generic / import 的同文件重命名；ambiguous method / receiver / builtin type、从 shorthand field token 本身发起的 field-symbol rename 以及 cross-file rename 仍需更完整查询面后再开放
+- 当前仍刻意不宣称完整 member / module-path 查询：目前只覆盖 struct field、唯一 method candidate、enum variant token，以及稳定 receiver type 的 parsed member completion / enum item-root variant completion / local import alias 到 local enum item 的 variant follow-through / local import alias 到 local struct item 的 field/typeck follow-through / same-file semantic tokens / same-file rename；ambiguous method、import-graph/module-path deeper semantics、foreign import alias variant semantics、parse-error tolerant member completion，以及更广义的 payload/member-like query 仍需后续补齐
 
 ### MIR
 

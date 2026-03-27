@@ -1,6 +1,6 @@
 # Phase 5 Minimal C Header Generation
 
-> 更新（2026-03-26 后续）：这里记录的是 export-surface 头文件生成的首个切片。后续已经补上 import/both surface 投影，见 [P5 Import Surface Header Projection](/plans/2026-03-26-phase5-import-surface-header-projection)。
+> 更新（2026-03-26 后续）：这里记录的是 export-surface 头文件生成的首个切片。后续已经补上 import/both surface 投影，见 [P5 Import Surface Header Projection](/plans/archive/phase-5/2026-03-26-phase5-import-surface-header-projection)。
 
 ## 为什么现在做这一刀
 

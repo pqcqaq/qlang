@@ -207,8 +207,8 @@
 
 当前保守策略：
 
-- 只对绝对可靠的语义错误给诊断，例如 method receiver 作用域外非法使用 `self`
-- unresolved global / unresolved type 暂不全面报错，避免 import / module / prelude 规则未定前制造假阳性
+- 只对绝对可靠的语义错误给诊断，例如 method receiver 作用域外非法使用 `self`，以及 bare single-segment value/type root 的 unresolved
+- multi-segment unresolved global / unresolved type 暂不全面报错，避免 import / module / prelude 规则未定前制造假阳性
 
 为什么这个边界必须单独存在：
 
@@ -240,7 +240,11 @@
 - tuple destructuring arity 检查
 - direct closure 对 expected callable type 的 first-pass 检查
 - struct literal 字段存在性、缺失字段、字段类型检查
+- 源码层 fixed array type expr `[T; N]`：保留长度源码文本用于 formatter，同时 lowering 成统一语义长度供 HIR / typeck / query 使用
+- homogeneous array literal inference，与 expected fixed-array context 下的元素类型约束
+- 保守 tuple / array indexing：array element projection、支持 lexer-style integer literal 的 constant tuple indexing、array index type 检查、tuple out-of-bounds 检查
 - equality operand compatibility
+- bare mutable binding assignment diagnostics：只对 `var` local / `var self` 做 assignment target 可写性检查
 - struct member existence
 - pattern root / literal compatibility
 - calling non-callable values
@@ -248,6 +252,7 @@
 关键设计取舍：
 
 - `unknown` 不是偷懒，而是明确的退化阀门
+- assignment target 先只接管已有稳定语义身份的 binding，不把 member/index 写入提前伪装成完整 place system
 - 还没建立完整 import/module/member/索引协议前，不把每个未知都提前升级成硬错误
 
 ### Unified Analysis And Query Index
@@ -286,6 +291,8 @@
 - `hover_at`
 - `definition_at`
 - `references_at`
+- `completions_at`
+- `semantic_tokens`
 - `prepare_rename_at`
 - `rename_at`
 
@@ -304,7 +311,7 @@
 - named type root
 - pattern path root
 - struct literal root
-- import alias 的 source-backed hover / definition / references / rename，以及 builtin type 的 hover 级信息
+- import alias 的 source-backed hover / definition / references / rename / semantic-token 信息，以及 builtin type 的 hover / references / semantic-token 信息（builtin 仍无 source-backed definition / rename）
 
 当前 rename 算法也直接建立在这套 occurrence 分组之上：
 
@@ -314,14 +321,197 @@
 4. 裸关键字直接拒绝；确实要用关键字时，要求用户显式传入转义标识符
 5. 再复用同一个 `SymbolKey` 收集同文件 occurrence，按源码顺序输出 text edits
 6. 如果目标是 local struct field，还会额外把 shorthand struct literal / struct pattern site 重写成显式标签，例如 `x` -> `coord_x: x`
+7. 如果 rename 是从 shorthand token 上发起，且该 token 绑定到 renameable symbol（例如 local / parameter / import / function / const / static），同样会把该 site 改写成 `field_label: new_name`，避免把字段标签一起改坏
+
+当前已经有显式 shorthand-binding rename parity coverage 的 root value-item：
+
+- `function`
 
 当前刻意保守不开放 rename 的对象：
 
-- method
+- ambiguous method/member surface
 - receiver `self`
 - builtin type
-- 从 shorthand struct field token 本身发起的 rename
+- 从 shorthand struct field token 本身发起的 field-symbol rename
 - cross-file symbol
+
+当前已经有显式 regression coverage 的 renameable item-kind：
+
+- `type alias`
+- `struct`
+- `enum`
+- `trait`
+- `function`
+- `const`
+- `static`
+- `variant`
+- `field`
+- `method`（仅唯一 candidate）
+- `local` / `parameter` / `generic` / `import`
+
+当前已经有显式 root value-item rename parity coverage：
+
+- `function`
+- `const`
+- `static`
+
+当前已经有显式 references / semantic-token parity coverage 的 type-namespace item：
+
+- `type`
+- `opaque type`
+- `struct`
+- `enum`
+- `trait`
+
+当前已经有显式 hover / definition parity coverage 的 type-namespace item：
+
+- `type`
+- `opaque type`
+- `struct`
+- `enum`
+- `trait`
+
+当前已经有显式完整 query parity coverage 的 global value item：
+
+- `const`
+- `static`
+
+当前已经有显式完整 parity coverage 的 extern callable surface：
+
+- `extern` block function declaration / call site
+- top-level `extern "c"` declaration / call site
+- top-level `extern "c"` function definition / call site
+
+当前已经有显式完整 completion parity coverage 的 extern callable value surface：
+
+- `extern` block function declaration
+- top-level `extern "c"` declaration
+- top-level `extern "c"` function definition
+
+当前已经有显式完整 query parity coverage 的 ordinary free function surface：
+
+- free function declaration / direct call site
+
+当前已经有显式 semantic-token parity coverage 的 ordinary free function surface：
+
+- free function declaration / direct call site
+
+当前已经有显式完整 parity coverage 的 lexical semantic symbol surface：
+
+- `generic`
+- `parameter`
+- `local`
+- `receiver self`
+- `builtin type`（仅 hover / references / semantic tokens；无 definition / rename）
+
+当前已经有显式 rename parity coverage 的 lexical surface：
+
+- `generic`
+- `parameter`
+- `local`
+
+当前已经有显式 type-context completion parity coverage 的 type surface：
+
+- `builtin type`
+- `struct`
+- `type`
+- `opaque type`
+- `trait`
+- `generic`
+- `enum`
+- `receiver self`（刻意关闭）
+
+当前已经有显式 direct semantic-token parity coverage 的 same-file surface：
+
+- enum variant token（definition + direct use）
+- explicit struct field label（definition + literal/pattern/member uses）
+
+当前已经有显式 direct query parity coverage 的 stable-member surface：
+
+- struct field member token
+- unique method member token
+- impl-preferred method member token
+
+其中 `impl-preferred method member token` 当前也显式锁住了 references：
+
+- 同名成员冲突时继续选择 `impl` 方法 declaration
+- 同文件 references 继续只聚合该 `impl` 方法 declaration + use
+- 不会把同名 `extend` 方法 declaration 误并入同一组 query result
+
+当前已经有显式 direct semantic-token parity coverage 的 stable-member surface：
+
+- struct field member token
+- unique method member token
+
+当前 lexical-scope completion 也直接建立在同一套 query / scope 数据之上：
+
+1. 遍历 item / function / block / pattern / expr / type，记录 `CompletionSite { span, scope, namespace }`
+2. 记录 site 时，把对应 `ScopeId` 的 value/type bindings 预先映射成可复用的 `SymbolData`
+3. 查询 `completions_at(offset)` 时，先选出“覆盖当前位置的最窄 site”
+4. 按 site 的 namespace 决定走 value 还是 type completion
+5. 沿 parent scope 向外收集可见 binding，并用名字去重，保证 shadowing 语义正确
+6. completion candidate 同时保留语义 label 和源码 insert text；如果 symbol 名字本身是 keyword，就把 insert text 转成 escaped identifier，避免协议层写回非法源码
+7. LSP bridge 再把这些候选转成协议层 `CompletionItem`，并只在桥接层做源码前缀过滤与 text edit range 生成
+
+当前 completion 也刻意保守：
+
+- 只覆盖同文件 lexical scope + parsed member token + parsed enum variant path
+- lexical-scope 部分只覆盖已经进入 HIR / resolver 的 value/type 位置
+- 不宣称 ambiguous member completion 已完成
+- 不尝试为 parse error / incomplete member token 伪造语义结果
+- 不做 cross-file / package-indexed completion
+
+当前 parsed member-token completion 进一步复用同一套 `SymbolData`：
+
+1. 只在已经成功解析的 `ExprKind::Member` 上记录 member completion site
+2. 先读取 receiver 的 `Ty`
+3. 只有 receiver 是稳定的 `Ty::Item` 时才继续
+4. impl method 先收集；同名多个 candidate 直接视为 ambiguous，不产生 completion
+5. extend method 再收集；若名称已被 impl method 占用，则不覆盖
+6. struct field 最后补入；若与 method 同名，则按现有 member 选择优先级继续让 method 胜出
+7. 最终候选仍走统一的 LSP 前缀过滤和 text edit 生成
+
+当前 enum item-root variant completion 进一步复用同一条 variant truth surface：
+
+1. 仍然只在已经成功解析的 `ExprKind::Member` 上工作
+2. 如果对象表达式没有稳定 receiver `Ty`，再回退看对象表达式本身是否解析成 `ValueResolution::Item`
+3. 只有该 item 确实是 enum，才暴露 variant completion items
+4. imported alias / deeper module graph / foreign enum 不会被伪装成“已经支持”
+
+当前同文件 local import alias variant follow-through 继续复用这条 truth surface：
+
+1. 不改 resolver 的 root-binding 语义，也不引入 module graph
+2. 只在 import alias 的原始路径恰好是单段、且该单段命中同文件根 enum item 时继续跟进
+3. root token 仍然保持 import alias 自身的 source-backed symbol identity
+4. 只有尾段 variant token / completion / rename occurrence / semantic token 才继续复用 enum variant truth surface
+5. foreign import alias、multi-segment import path、deeper module graph 仍明确不支持
+
+也就是说，当前这块能力只是“在稳定 receiver type、same-file enum item root，以及同文件 local import alias -> local enum item 上复用已有 member/variant semantics”，并继续服务 query / completion / same-file rename / semantic tokens；它仍然不是“完整编辑器智能补全”。
+
+当前同文件 local import alias struct-item follow-through 则继续复用现有 field/type truth surface：
+
+1. 仍然不改 resolver 的 root-binding 语义，也不引入 module graph
+2. `ql-typeck` 只在 `TypeResolution::Import` / `ValueResolution::Import` 的原始路径恰好是单段、且该单段命中同文件 root item 时，才把 alias 规范化回本地 item
+3. struct literal 的字段检查（现在也包括 enum struct-variant literal）与 struct/variant pattern root 检查都复用这条 canonicalization，不额外引入第二套 alias 解释器
+4. `ql-analysis` 里的显式 struct literal / struct pattern 字段标签与 field-driven shorthand rename，也只在 canonicalized item 确实是 struct 时才继续映射回原 struct field
+5. foreign import alias、multi-segment import path、deeper module graph，以及 query-side enum variant field symbol 建模，仍明确不支持
+
+也就是说，当前这块能力只是“在同文件单段 local import alias -> local struct item / local enum item 时，补齐原本已经存在的 struct-field / enum-variant-literal / pattern-root truth surface”，而不是把 import alias 升级成了完整 module-path 语义。
+
+当前 semantic tokens 也建立在同一套 occurrence / symbol kind 数据之上：
+
+1. 直接复用 `QueryIndex` 已有的 source-backed occurrence
+2. 把 occurrence 的 `span + SymbolKind` 投影成 `SemanticTokenOccurrence`
+3. 按源码起点排序，并按 `(span, kind)` 去重，避免 definition/use 或多条索引路径产生重复 token
+4. LSP bridge 再把 `SymbolKind` 映射到固定 legend，例如 type / class / enum / enumMember / parameter / variable / property / function / method
+5. 最终按 LSP 语义高亮协议编码为 delta line / delta start 序列
+
+当前 semantic tokens 也刻意保守：
+
+- 只覆盖已经进入统一 query surface 的 source-backed symbol
+- 不为 unresolved / ambiguous / parse-error token 伪造语义高亮
+- 不在 LSP 层重跑一遍 ad-hoc 语义判断
+- 不宣称跨文件或 project-indexed semantic classification 已完成
 
 ## 中层表示与所有权分析
 
@@ -595,7 +785,7 @@
 - `Position <-> byte offset`
 - `Span -> Range`
 - 编译器 diagnostics -> LSP diagnostics
-- compiler hover / definition / references / rename -> LSP response
+- compiler hover / definition / references / completion / semantic tokens / rename -> LSP response
 
 为什么这样设计：
 
