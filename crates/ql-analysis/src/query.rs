@@ -1929,7 +1929,7 @@ impl<'a> QueryIndexBuilder<'a> {
     }
 
     fn record_variant_path_completion_site(&mut self, path: &Path, item_id: ItemId) {
-        if path.segments.len() < 2 {
+        if path.segments.len() != 2 {
             return;
         }
         let Some(span) = path.last_segment_span() else {
@@ -2265,15 +2265,15 @@ impl<'a> QueryIndexBuilder<'a> {
         let Some(item_id) = self.enum_item_for_value_resolution(resolution) else {
             return;
         };
+        if path.segments.len() != 2 {
+            return;
+        }
         let Some(variant_name) = path.segments.last() else {
             return;
         };
         let Some(variant_span) = path.last_segment_span() else {
             return;
         };
-        if path.segments.len() < 2 {
-            return;
-        }
         if let Some(target) = self.variant_target_for_enum_item(item_id, variant_name)
             && let Some(symbol) = self.symbol_for_variant_target(target)
         {
@@ -2285,15 +2285,15 @@ impl<'a> QueryIndexBuilder<'a> {
         let Some(item_id) = self.enum_item_for_type_resolution(resolution) else {
             return;
         };
+        if path.segments.len() != 2 {
+            return;
+        }
         let Some(variant_name) = path.segments.last() else {
             return;
         };
         let Some(variant_span) = path.last_segment_span() else {
             return;
         };
-        if path.segments.len() < 2 {
-            return;
-        }
         if let Some(target) = self.variant_target_for_enum_item(item_id, variant_name)
             && let Some(symbol) = self.symbol_for_variant_target(target)
         {

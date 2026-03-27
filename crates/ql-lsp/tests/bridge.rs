@@ -1917,6 +1917,47 @@ fn main() -> Int {
 }
 
 #[test]
+fn definition_bridge_stays_empty_on_deeper_struct_literal_and_pattern_variant_paths() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Config { value: Int },
+    Stop,
+}
+
+fn build() -> Int {
+    let direct = Command.Scope.Config { value: 1 }
+    let alias = Cmd.Scope.Config { value: 2 }
+    return 0
+}
+
+fn read(command: Command) -> Int {
+    return match command {
+        Command.Scope.Retry(value) => value,
+        Cmd.Scope.Retry(value) => value,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for position in [
+        span_to_range(source, nth_span(source, "Config", 2)).start,
+        span_to_range(source, nth_span(source, "Config", 3)).start,
+        span_to_range(source, nth_span(source, "Retry", 2)).start,
+        span_to_range(source, nth_span(source, "Retry", 3)).start,
+    ] {
+        assert_eq!(
+            definition_for_analysis(&uri, source, &analysis, position),
+            None
+        );
+    }
+}
+
+#[test]
 fn references_bridge_respects_include_declaration() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
@@ -4111,6 +4152,80 @@ fn main() -> Command {
 }
 
 #[test]
+fn completion_bridge_does_not_offer_variant_candidates_on_deeper_struct_literal_and_pattern_paths()
+{
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Config { value: Int },
+    Stop,
+    Reset,
+}
+
+fn build() -> Int {
+    let direct = Command.Scope.Con { value: 1 }
+    let alias = Cmd.Scope.Con { value: 2 }
+    return 0
+}
+
+fn read(command: Command) -> Int {
+    return match command {
+        Command.Scope.Re(value) => value,
+        Cmd.Scope.Re(value) => value,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for (offset, width) in [
+        (
+            source
+                .find("Command.Scope.Con {")
+                .map(|value| value + "Command.Scope.".len())
+                .expect("direct deeper struct-literal path should exist"),
+            3usize,
+        ),
+        (
+            source
+                .find("Cmd.Scope.Con {")
+                .map(|value| value + "Cmd.Scope.".len())
+                .expect("alias deeper struct-literal path should exist"),
+            3usize,
+        ),
+        (
+            source
+                .find("Command.Scope.Re(")
+                .map(|value| value + "Command.Scope.".len())
+                .expect("direct deeper pattern path should exist"),
+            2usize,
+        ),
+        (
+            source
+                .find("Cmd.Scope.Re(")
+                .map(|value| value + "Cmd.Scope.".len())
+                .expect("alias deeper pattern path should exist"),
+            2usize,
+        ),
+    ] {
+        let range = span_to_range(source, Span::new(offset, offset + width));
+        let position = Position::new(range.start.line, range.start.character + 1);
+        let Some(CompletionResponse::Array(items)) =
+            completion_for_analysis(source, &analysis, position)
+        else {
+            panic!("expected array completion response");
+        };
+        assert!(
+            items
+                .iter()
+                .all(|item| item.kind != Some(CompletionItemKind::ENUM_MEMBER))
+        );
+    }
+}
+
+#[test]
 fn completion_bridge_stays_empty_on_deeper_variant_like_member_paths() {
     let source = r#"
 use Command as Cmd
@@ -4872,6 +4987,59 @@ fn build(flag: Bool) -> Command {
         "Config".len() as u32,
         enum_member_type,
     )));
+}
+
+#[test]
+fn semantic_tokens_bridge_keeps_deeper_struct_literal_and_pattern_variant_paths_closed() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Config { value: Int },
+    Stop,
+}
+
+fn build() -> Int {
+    let direct = Command.Scope.Config { value: 1 }
+    let alias = Cmd.Scope.Config { value: 2 }
+    return 0
+}
+
+fn read(command: Command) -> Int {
+    return match command {
+        Command.Scope.Retry(value) => value,
+        Cmd.Scope.Retry(value) => value,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let SemanticTokensResult::Tokens(tokens) = semantic_tokens_for_analysis(source, &analysis)
+    else {
+        panic!("expected full semantic tokens");
+    };
+    let decoded = decode_semantic_tokens(&tokens.data);
+    let legend = semantic_tokens_legend();
+    let enum_member_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::ENUM_MEMBER)
+        .expect("enum member legend entry should exist") as u32;
+
+    for range in [
+        span_to_range(source, nth_span(source, "Config", 2)),
+        span_to_range(source, nth_span(source, "Config", 3)),
+        span_to_range(source, nth_span(source, "Retry", 2)),
+        span_to_range(source, nth_span(source, "Retry", 3)),
+    ] {
+        assert!(!decoded.contains(&(
+            range.start.line,
+            range.start.character,
+            range.end.character - range.start.character,
+            enum_member_type,
+        )));
+    }
 }
 
 #[test]

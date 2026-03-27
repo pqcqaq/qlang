@@ -4645,6 +4645,110 @@ fn build() -> Command {
 }
 
 #[test]
+fn deeper_variant_like_struct_literal_and_pattern_paths_do_not_reuse_root_variant_queries() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Config { value: Int },
+    Stop,
+}
+
+fn build() -> Int {
+    let direct = Command.Scope.Config { value: 1 }
+    let alias = Cmd.Scope.Config { value: 2 }
+    return 0
+}
+
+fn read(command: Command) -> Int {
+    return match command {
+        Command.Scope.Retry(value) => value,
+        Cmd.Scope.Retry(value) => value,
+        _ => 0,
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+    let direct_struct_use = nth_offset(source, "Config", 2);
+    let alias_struct_use = nth_offset(source, "Config", 3);
+    let direct_pattern_use = nth_offset(source, "Retry", 2);
+    let alias_pattern_use = nth_offset(source, "Retry", 3);
+
+    for offset in [
+        direct_struct_use,
+        alias_struct_use,
+        direct_pattern_use,
+        alias_pattern_use,
+    ] {
+        assert_eq!(analysis.hover_at(offset), None);
+        assert_eq!(analysis.definition_at(offset), None);
+        assert_eq!(analysis.references_at(offset), None);
+        assert_eq!(analysis.prepare_rename_at(offset), None);
+        assert_eq!(analysis.rename_at(offset, "Closed"), Ok(None));
+    }
+}
+
+#[test]
+fn completion_queries_do_not_offer_variant_candidates_on_deeper_struct_literal_and_pattern_paths() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Config { value: Int },
+    Stop,
+    Reset,
+}
+
+fn build() -> Int {
+    let direct = Command.Scope.Con { value: 1 }
+    let alias = Cmd.Scope.Con { value: 2 }
+    return 0
+}
+
+fn read(command: Command) -> Int {
+    return match command {
+        Command.Scope.Re(value) => value,
+        Cmd.Scope.Re(value) => value,
+        _ => 0,
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+    let direct_struct_use = source
+        .find("Command.Scope.Con {")
+        .map(|offset| offset + "Command.Scope.".len())
+        .expect("direct deeper struct-literal path should exist");
+    let alias_struct_use = source
+        .find("Cmd.Scope.Con {")
+        .map(|offset| offset + "Cmd.Scope.".len())
+        .expect("alias deeper struct-literal path should exist");
+    let direct_pattern_use = source
+        .find("Command.Scope.Re(")
+        .map(|offset| offset + "Command.Scope.".len())
+        .expect("direct deeper pattern path should exist");
+    let alias_pattern_use = source
+        .find("Cmd.Scope.Re(")
+        .map(|offset| offset + "Cmd.Scope.".len())
+        .expect("alias deeper pattern path should exist");
+
+    for offset in [
+        direct_struct_use,
+        alias_struct_use,
+        direct_pattern_use,
+        alias_pattern_use,
+    ] {
+        let items = analysis
+            .completions_at(offset)
+            .expect("lexical completion site should still exist");
+        assert!(items.iter().all(|item| item.kind != SymbolKind::Variant));
+    }
+}
+
+#[test]
 fn completion_queries_surface_variant_candidates_in_import_alias_struct_literal_paths() {
     let source = r#"
 use Command as Cmd
@@ -5345,6 +5449,53 @@ fn build(flag: Bool) -> Command {
     }));
     assert!(tokens.contains(&ql_analysis::SemanticTokenOccurrence {
         span: Span::new(config_use, config_use + "Config".len()),
+        kind: SymbolKind::Variant,
+    }));
+}
+
+#[test]
+fn semantic_tokens_keep_deeper_struct_literal_and_pattern_variant_paths_closed() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Config { value: Int },
+    Stop,
+}
+
+fn build() -> Int {
+    let direct = Command.Scope.Config { value: 1 }
+    let alias = Cmd.Scope.Config { value: 2 }
+    return 0
+}
+
+fn read(command: Command) -> Int {
+    return match command {
+        Command.Scope.Retry(value) => value,
+        Cmd.Scope.Retry(value) => value,
+        _ => 0,
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+    let tokens = analysis.semantic_tokens();
+
+    assert!(!tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: nth_span(source, "Config", 2),
+        kind: SymbolKind::Variant,
+    }));
+    assert!(!tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: nth_span(source, "Config", 3),
+        kind: SymbolKind::Variant,
+    }));
+    assert!(!tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: nth_span(source, "Retry", 2),
+        kind: SymbolKind::Variant,
+    }));
+    assert!(!tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: nth_span(source, "Retry", 3),
         kind: SymbolKind::Variant,
     }));
 }

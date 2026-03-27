@@ -498,6 +498,14 @@
 4. deeper variant-like member chain 不会继续复用 root enum truth；`Command.Retry.more` 这类 case 只保留上层 lexical completion fallback，不再伪造 variant completion / query identity
 5. imported alias / deeper module graph / foreign enum 不会被伪装成“已经支持”
 
+当前 struct-literal / pattern variant path 也沿用同一个保守边界：
+
+1. 只有严格两段 `Root.Variant` path 才继续复用 enum variant truth surface
+2. `Command.Config { ... }`、`Cmd.Retry(...)`、`Command.Stop` 这类两段 path 继续保留既有 variant query / completion / rename / semantic-token 能力
+3. `Command.Scope.Config { ... }`、`Cmd.Scope.Retry(...)` 这类更深 path 不会继续从 root enum/import alias 偷出 variant identity
+4. 这类更深 path 只保留上层 lexical fallback，不伪造 variant occurrence 或 `ENUM_MEMBER` completion
+5. deeper module graph / foreign enum 仍明确不支持
+
 当前同文件 local import alias variant follow-through 继续复用这条 truth surface：
 
 1. 不改 resolver 的 root-binding 语义，也不引入 module graph
