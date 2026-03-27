@@ -59,6 +59,7 @@ Phase 2 的目标不是一次做完完整类型系统，而是建立统一语义
 - tuple / array indexing
 - equality / comparison operand compatibility
 - member existence
+- invalid pattern-root shape diagnostics
 - pattern root / literal compatibility
 - bare mutable binding assignment diagnostics
 
@@ -67,6 +68,7 @@ Phase 2 的目标不是一次做完完整类型系统，而是建立统一语义
 - `Ty::Unknown` 是明确的退化阀门，不是“暂时没做”
 - source text 与 semantic normalized value 分层保存
 - 只在已有稳定语义身份处收紧规则，不提前宣称完整 place/index protocol
+- pattern root shape 也只在“已解析且已知必错”时显式报错；missing variant / path-pattern semantics / deeper module-path 继续保守
 
 ### 4. 同文件查询与最小 LSP
 

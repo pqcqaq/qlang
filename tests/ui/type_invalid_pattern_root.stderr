@@ -1,0 +1,12 @@
+error: tests/ui/type_invalid_pattern_root.ql:16:9: tuple-struct pattern syntax is not supported for `Point`
+      let Point(value) = point;
+          ^^^^^^^^ pattern here
+error: tests/ui/type_invalid_pattern_root.ql:17:9: tuple-struct pattern syntax is not supported for `P`
+      let P(alias_value) = point;
+          ^^^^^^^^ pattern here
+error: tests/ui/type_invalid_pattern_root.ql:18:9: struct pattern syntax is not supported for `Result.Value`
+      let Result.Value { value: tuple_value } = result;
+          ^^^^^^^^ pattern here
+error: tests/ui/type_invalid_pattern_root.ql:19:9: struct pattern syntax is not supported for `Res`
+      let Res { value: root_value } = result;
+          ^^^^^^^^ pattern here

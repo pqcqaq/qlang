@@ -1221,6 +1221,96 @@ fn main(point: Point) -> Int {
 }
 
 #[test]
+fn reports_invalid_pattern_roots() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Point {
+    x: Int,
+}
+
+enum Result {
+    Named {
+        value: Int,
+    },
+    Value(Int),
+    Empty,
+}
+
+fn main(point: Point, result: Result) -> Int {
+    let Point(x) = point
+    let Result.Named(named_value) = result
+    let Result.Value { value: tuple_value } = result
+    let Result { value: root_value } = result
+    let Result.Empty { value: empty_value } = result
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"tuple-struct pattern syntax is not supported for `Point`".to_string())
+    );
+    assert!(
+        diagnostics.contains(
+            &"tuple-struct pattern syntax is not supported for `Result.Named`".to_string()
+        )
+    );
+    assert!(
+        diagnostics
+            .contains(&"struct pattern syntax is not supported for `Result.Value`".to_string())
+    );
+    assert!(
+        diagnostics.contains(&"struct pattern syntax is not supported for `Result`".to_string())
+    );
+    assert!(
+        diagnostics
+            .contains(&"struct pattern syntax is not supported for `Result.Empty`".to_string())
+    );
+}
+
+#[test]
+fn reports_invalid_pattern_roots_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Point as P
+use Result as Res
+
+struct Point {
+    x: Int,
+}
+
+enum Result {
+    Named {
+        value: Int,
+    },
+    Value(Int),
+}
+
+fn main(point: Point, result: Result) -> Int {
+    let P(x) = point
+    let Res.Named(named_value) = result
+    let Res.Value { value: tuple_value } = result
+    let Res { value: root_value } = result
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"tuple-struct pattern syntax is not supported for `P`".to_string())
+    );
+    assert!(
+        diagnostics
+            .contains(&"tuple-struct pattern syntax is not supported for `Res.Named`".to_string())
+    );
+    assert!(
+        diagnostics.contains(&"struct pattern syntax is not supported for `Res.Value`".to_string())
+    );
+    assert!(diagnostics.contains(&"struct pattern syntax is not supported for `Res`".to_string()));
+}
+
+#[test]
 fn reports_variant_pattern_type_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"

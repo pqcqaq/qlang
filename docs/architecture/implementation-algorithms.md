@@ -251,6 +251,7 @@
 - ambiguous method member diagnostics
 - invalid projection receiver diagnostics
 - invalid struct-literal root diagnostics
+- invalid pattern-root shape diagnostics
 - pattern root / literal compatibility
 - calling non-callable values
 
@@ -262,6 +263,7 @@
 - ambiguous method 先只升级成显式 type diagnostics，不提前宣称 completion / rename / query 已经具备模糊候选真值模型
 - projection receiver diagnostics 也先只覆盖“已知必错”的类型，不拿 generic / unresolved / module-path deferred case 冒进报错
 - struct-literal root diagnostics 也先只覆盖“root 已解析成功且构造形状已知必错”的 case，不把 missing variant / deeper module-path 误升级成过早硬错误
+- pattern-root shape diagnostics 也先只覆盖“pattern root 已解析成功且构造形状已知必错”的 case，不把 missing variant / path-pattern semantics / deeper module-path 误升级成过早硬错误
 - 还没建立完整 import/module/member/索引协议前，不把每个未知都提前升级成硬错误
 
 ### Unified Analysis And Query Index

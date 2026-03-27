@@ -1282,7 +1282,11 @@ impl<'a> Checker<'a> {
                 }
             }
             PatternKind::TupleStruct { items, .. } => {
-                self.check_pattern_root(pattern_id, expected, "tuple-struct pattern");
+                let invalid_root_message =
+                    self.invalid_tuple_struct_pattern_root_message(pattern_id);
+                if invalid_root_message.is_none() {
+                    self.check_pattern_root(pattern_id, expected, "tuple-struct pattern");
+                }
                 let expected_items = self.tuple_struct_pattern_items(pattern_id);
                 if let Some(expected_items) = expected_items {
                     if expected_items.len() != items.len() {
@@ -1302,14 +1306,31 @@ impl<'a> Checker<'a> {
                         self.bind_pattern(item, &Ty::Unknown);
                     }
                 } else {
+                    if let Some(message) = invalid_root_message {
+                        self.diagnostics.push(
+                            Diagnostic::error(message)
+                                .with_label(Label::new(pattern.span).with_message("pattern here")),
+                        );
+                    }
                     for &item in items {
                         self.bind_pattern(item, &Ty::Unknown);
                     }
                 }
             }
             PatternKind::Struct { fields, .. } => {
-                self.check_pattern_root(pattern_id, expected, "struct pattern");
+                let invalid_root_message = self.invalid_struct_pattern_root_message(pattern_id);
+                if invalid_root_message.is_none() {
+                    self.check_pattern_root(pattern_id, expected, "struct pattern");
+                }
                 let field_types = self.struct_pattern_fields(pattern_id);
+                if field_types.is_none()
+                    && let Some(message) = invalid_root_message
+                {
+                    self.diagnostics.push(
+                        Diagnostic::error(message)
+                            .with_label(Label::new(pattern.span).with_message("pattern here")),
+                    );
+                }
                 for field in fields {
                     let field_ty = if let Some(field_types) = field_types.as_ref() {
                         if let Some(info) = field_types.iter().find(|info| info.name == field.name)
@@ -1404,6 +1425,123 @@ impl<'a> Checker<'a> {
                 Label::new(self.module.pattern(pattern_id).span).with_message("pattern here"),
             ),
         );
+    }
+
+    fn invalid_tuple_struct_pattern_root_message(&self, pattern_id: PatternId) -> Option<String> {
+        let pattern = self.module.pattern(pattern_id);
+        let PatternKind::TupleStruct { path, .. } = &pattern.kind else {
+            return None;
+        };
+        let resolution = self.resolution.pattern_resolution(pattern_id)?;
+        match resolution {
+            ValueResolution::Import(import_binding) => {
+                local_item_for_import_binding(self.module, import_binding).and_then(|item_id| {
+                    self.invalid_tuple_struct_pattern_item_path_message(item_id, path)
+                })
+            }
+            ValueResolution::Item(item_id) => {
+                self.invalid_tuple_struct_pattern_item_path_message(*item_id, path)
+            }
+            ValueResolution::Local(_)
+            | ValueResolution::Param(_)
+            | ValueResolution::SelfValue
+            | ValueResolution::Function(_) => None,
+        }
+    }
+
+    fn invalid_tuple_struct_pattern_item_path_message(
+        &self,
+        item_id: ItemId,
+        path: &ql_ast::Path,
+    ) -> Option<String> {
+        let path_text = path.segments.join(".");
+        match &self.module.item(item_id).kind {
+            ItemKind::Enum(enum_decl) if path.segments.len() >= 2 => {
+                let variant_name = path.segments.last()?;
+                let variant = enum_decl
+                    .variants
+                    .iter()
+                    .find(|variant| &variant.name == variant_name)?;
+                match &variant.fields {
+                    VariantFields::Tuple(_) => None,
+                    VariantFields::Struct(_) | VariantFields::Unit => Some(format!(
+                        "tuple-struct pattern syntax is not supported for `{path_text}`"
+                    )),
+                }
+            }
+            ItemKind::Struct(_)
+            | ItemKind::Enum(_)
+            | ItemKind::Function(_)
+            | ItemKind::Const(_)
+            | ItemKind::Static(_)
+            | ItemKind::Trait(_)
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Impl(_)
+            | ItemKind::Extend(_)
+            | ItemKind::ExternBlock(_) => Some(format!(
+                "tuple-struct pattern syntax is not supported for `{path_text}`"
+            )),
+        }
+    }
+
+    fn invalid_struct_pattern_root_message(&self, pattern_id: PatternId) -> Option<String> {
+        let pattern = self.module.pattern(pattern_id);
+        let PatternKind::Struct { path, .. } = &pattern.kind else {
+            return None;
+        };
+        let resolution = self.resolution.pattern_resolution(pattern_id)?;
+        match resolution {
+            ValueResolution::Import(import_binding) => {
+                local_item_for_import_binding(self.module, import_binding).and_then(|item_id| {
+                    self.invalid_struct_pattern_item_path_message(item_id, path)
+                })
+            }
+            ValueResolution::Item(item_id) => {
+                self.invalid_struct_pattern_item_path_message(*item_id, path)
+            }
+            ValueResolution::Local(_)
+            | ValueResolution::Param(_)
+            | ValueResolution::SelfValue
+            | ValueResolution::Function(_) => None,
+        }
+    }
+
+    fn invalid_struct_pattern_item_path_message(
+        &self,
+        item_id: ItemId,
+        path: &ql_ast::Path,
+    ) -> Option<String> {
+        let path_text = path.segments.join(".");
+        match &self.module.item(item_id).kind {
+            ItemKind::Struct(_) if path.segments.len() == 1 => None,
+            ItemKind::Struct(_) => Some(format!(
+                "struct pattern syntax is not supported for `{path_text}`"
+            )),
+            ItemKind::Enum(enum_decl) if path.segments.len() >= 2 => {
+                let variant_name = path.segments.last()?;
+                let variant = enum_decl
+                    .variants
+                    .iter()
+                    .find(|variant| &variant.name == variant_name)?;
+                match &variant.fields {
+                    VariantFields::Struct(_) => None,
+                    VariantFields::Tuple(_) | VariantFields::Unit => Some(format!(
+                        "struct pattern syntax is not supported for `{path_text}`"
+                    )),
+                }
+            }
+            ItemKind::Enum(_)
+            | ItemKind::Function(_)
+            | ItemKind::Const(_)
+            | ItemKind::Static(_)
+            | ItemKind::Trait(_)
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Impl(_)
+            | ItemKind::Extend(_)
+            | ItemKind::ExternBlock(_) => Some(format!(
+                "struct pattern syntax is not supported for `{path_text}`"
+            )),
+        }
     }
 
     fn check_literal_pattern(
