@@ -17,6 +17,7 @@
 - [Phase 4 LLVM 后端与原生产物地基](/plans/phase-4-backend-and-artifacts)
 - [Phase 5 C FFI 与宿主互操作地基](/plans/phase-5-ffi-and-c-abi)
 - [Phase 6 LSP 与编辑器语义收口](/plans/phase-6-lsp-and-editor-experience)
+- [Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop)
 
 ## 如何使用
 
