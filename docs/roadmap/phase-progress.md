@@ -728,6 +728,7 @@ P6 当前仍刻意未完成：
 - `ql-typeck` 新增 closure block 显式 `return` 回归：当 closure 有期望 callable 返回类型时，显式 `return` 会按 callable 签名检查；内层 nested closure 的 `return` 不会污染外层 closure 返回推断
 - `ql-typeck` 新增保守 return-path 收口：函数与 closure body 现在会拒绝“部分路径 `return`、部分路径 fallthrough”的情形；`if` 与最小穷尽性 `match`（`_`、`Bool true/false`、enum 全 variant）已进入 all-path return 推断，guarded arm 不计入覆盖
 - `ql-typeck` 新增 loop-control 语义约束：`break` / `continue` 在非 loop body 中会给出显式诊断；closure body 不会继承外层 loop-control 上下文
+- `ql-typeck` 已把 must-return 收口提升到有序控制流摘要：`loop { return ... }` 现在会被接受；`break; return ...` 与“无 break 的 loop 之后再写 return”这类不可达路径不会再被误判成保证返回；更深层表达式子节点也按求值顺序参与保守 return 分析
 - `ql-driver` 新增 async backend 拒绝路径回归：语义层通过后，codegen 仍会稳定给出 `async fn` unsupported 诊断
 - `ql-cli` codegen 黑盒快照新增 `unsupported_async_fn_build`：锁住终端侧 async backend 拒绝输出
 - `ql-driver` / `ql-cli` 进一步补齐 `dylib` async 拒绝回归：即使存在合法导出，也会优先返回 `async fn` unsupported 诊断
@@ -738,9 +739,9 @@ P6 当前仍刻意未完成：
 
 - 把 `await` / `spawn` 的当前 call-expression 约束继续下沉到 MIR/runtime 接口契约（仍保持 conservative）
 - 评估是否将 async 上下文桥接能力通过受控实验接口暴露给 editor（保持协议低风险）
-- 在不引入完整控制流分析的前提下，继续补 closure / async / return-path 的保守语义回归
+- 在不引入完整 CFG 的前提下，继续补 closure / async / return-path 的保守语义回归
 - 若后续需要补 `break` / `continue` 的 query/editor surface，建议单独走 loop-control 查询切片，而不是塞进当前 typeck helper
-- 若后续需要支持 `loop { return ... }`、更深层表达式求值顺序或更完整的 `match` 穷尽性驱动 must-return，应单独设计 CFG/exhaustiveness slice
+- 若后续需要把 must-return 扩展到 `while` / `for` 的更强迭代推理、guard-sensitive `match` 或完整 unreachable/CFG 收口，应单独设计 CFG/exhaustiveness slice
 - 在不扩大 surface 的前提下继续按切片补回归
 
 ## 阶段状态表
