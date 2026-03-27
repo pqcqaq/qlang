@@ -23,6 +23,87 @@ fn main() -> Int {
 }
 
 #[test]
+fn accepts_block_closures_with_explicit_return_when_callable_return_matches() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn apply(f: () -> Int) -> Int {
+    return f()
+}
+
+fn main() -> Int {
+    return apply(() => {
+        return 1
+    })
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn closure_block_returns_are_checked_against_callable_return_type() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn apply(f: () -> String) -> String {
+    return f()
+}
+
+fn main() -> Int {
+    let value = apply(() => {
+        return 1
+    })
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"return value has type mismatch: expected `String`, found `Int`".to_string()
+        ),
+        "expected closure return mismatch diagnostic, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.contains(
+            &"closure body has type mismatch: expected `String`, found `Void`".to_string()
+        ),
+        "did not expect fallback closure-body void mismatch, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn nested_closure_returns_do_not_force_outer_closure_callable_return() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn apply(f: () -> Int) -> Int {
+    return f()
+}
+
+fn main() -> Int {
+    let value = apply(() => {
+        let inner = () => {
+            return 1
+        }
+    })
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"call argument has type mismatch: expected `() -> Int`, found `() -> Void`"
+                .to_string()
+        ),
+        "expected outer closure callable mismatch, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_tuple_multi_return_destructuring() {
     let diagnostics = diagnostic_messages(
         r#"

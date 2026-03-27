@@ -589,14 +589,32 @@ impl<'a> Checker<'a> {
             Some(Ty::Callable { ret, .. }) => Some(ret.as_ref()),
             _ => None,
         };
+        let old_return = self.current_return.clone();
         let old_in_async_function = self.in_async_function;
         // Closures are not `async` today, so their bodies must not inherit an outer
         // function's async context.
+        self.current_return = expected_ret.cloned();
         self.in_async_function = false;
         let body_ty = self.check_expr(body, expected_ret);
+        self.current_return = old_return;
         self.in_async_function = old_in_async_function;
+        let closure_ret = match expected_ret {
+            // Explicit `return` statements are checked against the callable
+            // signature rather than the block tail type.
+            Some(expected_ret) if self.expr_contains_explicit_return(body) => expected_ret.clone(),
+            _ => body_ty.clone(),
+        };
         if let Some(expected_ret) = expected_ret {
-            self.report_type_mismatch(body, expected_ret, &body_ty, "closure body");
+            match &self.module.expr(body).kind {
+                ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self
+                    .report_type_mismatch_expr(
+                        self.module.block(*block_id).tail,
+                        expected_ret,
+                        &body_ty,
+                        "closure body",
+                    ),
+                _ => self.report_type_mismatch(body, expected_ret, &body_ty, "closure body"),
+            }
         }
 
         Ty::Callable {
@@ -609,8 +627,99 @@ impl<'a> Checker<'a> {
                         .unwrap_or(Ty::Unknown)
                 })
                 .collect(),
-            ret: Box::new(body_ty),
+            ret: Box::new(closure_ret),
         }
+    }
+
+    fn expr_contains_explicit_return(&self, expr_id: ExprId) -> bool {
+        match &self.module.expr(expr_id).kind {
+            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
+                self.block_contains_explicit_return(*block_id)
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.expr_contains_explicit_return(*condition)
+                    || self.block_contains_explicit_return(*then_branch)
+                    || else_branch
+                        .is_some_and(|expr_id| self.expr_contains_explicit_return(expr_id))
+            }
+            ExprKind::Match { value, arms } => {
+                self.expr_contains_explicit_return(*value)
+                    || arms.iter().any(|arm| {
+                        arm.guard
+                            .is_some_and(|expr_id| self.expr_contains_explicit_return(expr_id))
+                            || self.expr_contains_explicit_return(arm.body)
+                    })
+            }
+            ExprKind::Tuple(items) | ExprKind::Array(items) => items
+                .iter()
+                .copied()
+                .any(|expr_id| self.expr_contains_explicit_return(expr_id)),
+            ExprKind::Call { callee, args } => {
+                self.expr_contains_explicit_return(*callee)
+                    || args.iter().any(|arg| match arg {
+                        CallArg::Positional(expr_id) => {
+                            self.expr_contains_explicit_return(*expr_id)
+                        }
+                        CallArg::Named { value, .. } => self.expr_contains_explicit_return(*value),
+                    })
+            }
+            ExprKind::Member { object, .. } => self.expr_contains_explicit_return(*object),
+            ExprKind::Bracket { target, items } => {
+                self.expr_contains_explicit_return(*target)
+                    || items
+                        .iter()
+                        .copied()
+                        .any(|expr_id| self.expr_contains_explicit_return(expr_id))
+            }
+            ExprKind::StructLiteral { fields, .. } => fields
+                .iter()
+                .any(|field| self.expr_contains_explicit_return(field.value)),
+            ExprKind::Binary { left, right, .. } => {
+                self.expr_contains_explicit_return(*left)
+                    || self.expr_contains_explicit_return(*right)
+            }
+            ExprKind::Unary { expr, .. } | ExprKind::Question(expr) => {
+                self.expr_contains_explicit_return(*expr)
+            }
+            ExprKind::Closure { .. }
+            | ExprKind::Name(_)
+            | ExprKind::Integer(_)
+            | ExprKind::String { .. }
+            | ExprKind::Bool(_)
+            | ExprKind::NoneLiteral => false,
+        }
+    }
+
+    fn block_contains_explicit_return(&self, block_id: BlockId) -> bool {
+        let block = self.module.block(block_id);
+        block
+            .statements
+            .iter()
+            .copied()
+            .any(|stmt_id| match &self.module.stmt(stmt_id).kind {
+                StmtKind::Return(_) => true,
+                StmtKind::Let { value, .. } | StmtKind::Defer(value) => {
+                    self.expr_contains_explicit_return(*value)
+                }
+                StmtKind::While { condition, body } => {
+                    self.expr_contains_explicit_return(*condition)
+                        || self.block_contains_explicit_return(*body)
+                }
+                StmtKind::Loop { body } => self.block_contains_explicit_return(*body),
+                StmtKind::For { iterable, body, .. } => {
+                    self.expr_contains_explicit_return(*iterable)
+                        || self.block_contains_explicit_return(*body)
+                }
+                StmtKind::Expr { expr, .. } => self.expr_contains_explicit_return(*expr),
+                StmtKind::Break | StmtKind::Continue => false,
+            })
+            || block
+                .tail
+                .is_some_and(|expr_id| self.expr_contains_explicit_return(expr_id))
     }
 
     fn check_call(&mut self, expr_id: ExprId, callee: ExprId, args: &[CallArg]) -> Ty {
