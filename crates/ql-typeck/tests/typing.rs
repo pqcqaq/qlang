@@ -143,6 +143,63 @@ fn choose(flag: Bool) -> Int {
 }
 
 #[test]
+fn accepts_function_bodies_with_if_true_statements_that_return_on_all_paths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose() -> Int {
+    if true {
+        return 1
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_function_bodies_with_if_false_else_paths_that_return_on_all_paths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose() -> Int {
+    if false {
+        return 1
+    } else {
+        return 2
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_if_false_then_only_bodies_as_non_returning() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose() -> Int {
+    if false {
+        return 1
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"function body has type mismatch: expected `Int`, found `Void`".to_string()),
+        "expected missing function return diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_function_matches_with_catch_all_returning_on_all_paths() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -524,6 +581,28 @@ fn main() -> Int {
     } else {
         return 2
     }, true)
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_closure_bodies_with_if_true_statements_that_return_on_all_paths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn apply(f: () -> Int) -> Int {
+    return f()
+}
+
+fn main() -> Int {
+    return apply(() => if true {
+        return 1
+    })
 }
 "#,
     );

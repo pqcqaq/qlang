@@ -776,11 +776,15 @@ impl<'a> Checker<'a> {
                 else_branch,
                 ..
             } => {
-                let branch_flow = self.block_flow(*then_branch).union(
-                    else_branch
-                        .map(|expr_id| self.expr_flow(expr_id))
-                        .unwrap_or_else(ControlFlowSummary::normal),
-                );
+                let then_flow = self.block_flow(*then_branch);
+                let else_flow = else_branch
+                    .map(|expr_id| self.expr_flow(expr_id))
+                    .unwrap_or_else(ControlFlowSummary::normal);
+                let branch_flow = match self.bool_literal(*condition) {
+                    Some(true) => then_flow,
+                    Some(false) => else_flow,
+                    None => then_flow.union(else_flow),
+                };
                 self.expr_flow(*condition).then(branch_flow)
             }
             ExprKind::Match { value, arms } => {
