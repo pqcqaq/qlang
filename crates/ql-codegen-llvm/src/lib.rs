@@ -107,7 +107,7 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         if !diagnostics.is_empty() {
-            return Err(CodegenError::new(diagnostics));
+            return Err(CodegenError::new(dedupe_diagnostics(diagnostics)));
         }
 
         let mut prepared = Vec::new();
@@ -126,7 +126,7 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         if !diagnostics.is_empty() {
-            return Err(CodegenError::new(diagnostics));
+            return Err(CodegenError::new(dedupe_diagnostics(diagnostics)));
         }
 
         Ok(self.render_module(&reachable, &prepared, entry))
@@ -508,7 +508,7 @@ impl<'a> ModuleEmitter<'a> {
                 local_types,
             })
         } else {
-            Err(diagnostics)
+            Err(dedupe_diagnostics(diagnostics))
         }
     }
 
@@ -1460,6 +1460,16 @@ fn unsupported(span: Span, message: impl Into<String>) -> Diagnostic {
     Diagnostic::error(message).with_label(Label::new(span))
 }
 
+fn dedupe_diagnostics(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    let mut unique = Vec::with_capacity(diagnostics.len());
+    for diagnostic in diagnostics {
+        if !unique.contains(&diagnostic) {
+            unique.push(diagnostic);
+        }
+    }
+    unique
+}
+
 fn default_target_triple() -> &'static str {
     match (ARCH, OS) {
         ("x86_64", "windows") => "x86_64-pc-windows-msvc",
@@ -1855,5 +1865,30 @@ fn main() -> Int {
         assert!(messages.iter().any(|message| {
             message == "LLVM IR backend foundation does not support `for` lowering yet"
         }));
+    }
+
+    #[test]
+    fn dedupes_cleanup_lowering_diagnostics() {
+        let messages = emit_error(
+            r#"
+extern "c" fn first()
+
+fn main() -> Int {
+    defer first()
+    return 0
+}
+"#,
+        );
+
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    message.as_str()
+                        == "LLVM IR backend foundation does not support cleanup lowering yet"
+                })
+                .count(),
+            1
+        );
     }
 }

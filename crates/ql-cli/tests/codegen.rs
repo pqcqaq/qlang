@@ -186,6 +186,13 @@ fn codegen_snapshots_match() {
             extra_args: &[],
         },
         FailCase {
+            name: "unsupported_cleanup_build",
+            source_relative: "tests/codegen/fail/unsupported_cleanup_build.ql",
+            emit: "llvm-ir",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_cleanup_build.stderr",
+            extra_args: &[],
+        },
+        FailCase {
             name: "unsupported_async_fn_build",
             source_relative: "tests/codegen/fail/unsupported_async_fn_build.ql",
             emit: "llvm-ir",

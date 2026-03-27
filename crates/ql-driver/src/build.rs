@@ -1639,6 +1639,38 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_cleanup_lowering_diagnostics_once() {
+        let dir = TestDir::new("ql-driver-cleanup-unsupported");
+        let source = dir.write(
+            "cleanup_main.ql",
+            r#"
+extern "c" fn first()
+
+fn main() -> Int {
+    defer first()
+    return 0
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("cleanup codegen rejection should return diagnostics");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support cleanup lowering yet"
+                })
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn build_file_rejects_dynamic_libraries_without_public_extern_c_exports() {
         let dir = TestDir::new("ql-driver-dylib-no-exports");
         let source = dir.write(
