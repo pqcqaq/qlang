@@ -221,6 +221,13 @@ fn codegen_snapshots_match() {
             extra_args: &[],
         },
         FailCase {
+            name: "unsupported_async_spawn_build",
+            source_relative: "tests/codegen/fail/unsupported_async_spawn_build.ql",
+            emit: "llvm-ir",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_async_spawn_build.stderr",
+            extra_args: &[],
+        },
+        FailCase {
             name: "unsupported_deferred_multi_segment_type_build",
             source_relative: "tests/codegen/fail/unsupported_deferred_multi_segment_type_build.ql",
             emit: "dylib",

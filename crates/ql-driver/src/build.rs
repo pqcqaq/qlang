@@ -326,14 +326,22 @@ fn runtime_requirement_diagnostics(analysis: &ql_analysis::Analysis) -> Vec<Diag
 fn runtime_requirement_diagnostic(
     requirement: &ql_analysis::RuntimeRequirement,
 ) -> Option<Diagnostic> {
-    match requirement.capability {
-        RuntimeCapability::AsyncFunctionBodies => Some(
-            Diagnostic::error("LLVM IR backend foundation does not support `async fn` yet")
-                .with_label(Label::new(requirement.span)),
-        ),
-        RuntimeCapability::TaskSpawn
-        | RuntimeCapability::TaskAwait
-        | RuntimeCapability::AsyncIteration => None,
+    runtime_requirement_message(requirement.capability)
+        .map(|message| Diagnostic::error(message).with_label(Label::new(requirement.span)))
+}
+
+fn runtime_requirement_message(capability: RuntimeCapability) -> Option<&'static str> {
+    match capability {
+        RuntimeCapability::AsyncFunctionBodies => {
+            Some("LLVM IR backend foundation does not support `async fn` yet")
+        }
+        RuntimeCapability::TaskSpawn => {
+            Some("LLVM IR backend foundation does not support `spawn` yet")
+        }
+        RuntimeCapability::TaskAwait => {
+            Some("LLVM IR backend foundation does not support `await` yet")
+        }
+        RuntimeCapability::AsyncIteration => None,
     }
 }
 
@@ -1566,6 +1574,39 @@ async fn main() -> Int {
             async_count, 2,
             "expected one async rejection per async function body without driver/codegen duplicates, got {diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn build_file_surfaces_async_runtime_operator_diagnostics() {
+        let dir = TestDir::new("ql-driver-async-runtime-operators");
+        let source = dir.write(
+            "async_runtime_ops.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = spawn worker()
+    return await worker()
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("async runtime operator rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
+        }));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "LLVM IR backend foundation does not support `spawn` yet"
+        }));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "LLVM IR backend foundation does not support `await` yet"
+        }));
     }
 
     #[test]

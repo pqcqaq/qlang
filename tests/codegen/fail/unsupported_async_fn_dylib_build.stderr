@@ -4,3 +4,6 @@ error: tests/codegen/fail/unsupported_async_fn_dylib_build.ql:5:7: LLVM IR backe
 error: tests/codegen/fail/unsupported_async_fn_dylib_build.ql:9:7: LLVM IR backend foundation does not support `async fn` yet
   async fn helper() -> Int {
         ^^^^^^^^
+error: tests/codegen/fail/unsupported_async_fn_dylib_build.ql:10:12: LLVM IR backend foundation does not support `await` yet
+      return await worker()
+             ^^^^^

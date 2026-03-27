@@ -756,9 +756,9 @@ P6 当前仍刻意未完成：
 - `crates/ql-runtime` 已固定第一批稳定 capability 名称：`async-function-bodies`、`task-spawn`、`task-await`、`async-iteration`
 - `ql-analysis` 已暴露 `runtime_requirements()`，按源码顺序枚举当前 async surface 对应的 runtime 需求，并补上 operator span / declaration-vs-definition 边界回归
 - `ql-cli` 已新增 `ql runtime <file>`，可直接输出当前文件的 runtime capability 需求，作为后续 runtime/codegen 接线前的开发者可见检查面
-- `ql-driver` 已开始保守消费这份 runtime requirement surface：当前仅把 `async-function-bodies` 映射成稳定的 build-time unsupported 诊断，并与 backend 现有 `async fn` diagnostics 去重，锁住 driver/codegen 边界的拒绝合同
+- `ql-driver` 已开始保守消费这份 runtime requirement surface：当前会把 `async-function-bodies`、`task-spawn`、`task-await` 映射成稳定的 build-time unsupported 诊断，并与 backend 同类 diagnostics 去重，锁住 driver/codegen 边界的拒绝合同
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
-- 当前 `task-spawn` / `task-await` / `async-iteration` capability 仍未在 driver 层前移成公开 build 诊断，继续保持 conservative runtime/codegen contract 边界
+- 当前 `async-iteration` capability 仍未在 driver 层前移成公开 build 诊断，继续保持 conservative runtime/codegen contract 边界，避免过早把 `for await` 与通用 `for` lowering 拒绝面绑死
 
 ### 下一步（P7.1 延续）
 
