@@ -2352,6 +2352,48 @@ fn read(value: Int) -> Int {
 }
 
 #[test]
+fn hover_and_definition_bridge_keep_deeper_struct_like_pattern_shorthand_tokens_on_local_symbols() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(point: Point) -> Int {
+    return match point {
+        Point.Scope.Config { x } => x,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let shorthand = source
+        .find("{ x }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct pattern field should exist");
+    let shorthand_position =
+        span_to_range(source, Span::new(shorthand, shorthand + "x".len())).start;
+
+    let hover = hover_for_analysis(source, &analysis, shorthand_position)
+        .expect("deeper shorthand pattern token hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown content");
+    };
+    assert!(markup.value.contains("**local** `x`"));
+
+    let definition = definition_for_analysis(&uri, source, &analysis, shorthand_position)
+        .expect("deeper shorthand pattern token definition should exist");
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("expected scalar definition location");
+    };
+    assert_eq!(location.uri, uri);
+    assert_eq!(
+        location.range,
+        span_to_range(source, Span::new(shorthand, shorthand + "x".len()))
+    );
+}
+
+#[test]
 fn hover_and_definition_bridge_keep_deeper_struct_like_shorthand_tokens_on_import_alias_symbols() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
@@ -2447,6 +2489,66 @@ fn read(value: Int) -> Int {
             ),
             TextEdit::new(
                 span_to_range(source, nth_span(source, "x", 4)),
+                "coord_x".to_owned(),
+            ),
+        ],
+    );
+
+    assert_eq!(edit, WorkspaceEdit::new(expected_changes));
+}
+
+#[test]
+fn rename_bridge_keeps_deeper_struct_like_pattern_shorthand_binding_edits_raw() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(point: Point) -> Int {
+    return match point {
+        Point.Scope.Config { x } => x,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let shorthand = source
+        .find("{ x }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct pattern field should exist");
+    let arm_use = source
+        .rfind("=> x")
+        .map(|offset| offset + "=> ".len())
+        .expect("match arm use should exist");
+    let shorthand_position =
+        span_to_range(source, Span::new(shorthand, shorthand + "x".len())).start;
+
+    let prepare = prepare_rename_for_analysis(source, &analysis, shorthand_position)
+        .expect("deeper shorthand pattern prepare rename should exist");
+    let PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } = prepare else {
+        panic!("expected range plus placeholder");
+    };
+    assert_eq!(
+        range,
+        span_to_range(source, Span::new(shorthand, shorthand + "x".len()))
+    );
+    assert_eq!(placeholder, "x");
+
+    let edit = rename_for_analysis(&uri, source, &analysis, shorthand_position, "coord_x")
+        .expect("rename should validate")
+        .expect("rename should produce edits");
+
+    let mut expected_changes = HashMap::new();
+    expected_changes.insert(
+        uri,
+        vec![
+            TextEdit::new(
+                span_to_range(source, Span::new(shorthand, shorthand + "x".len())),
+                "coord_x".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(source, Span::new(arm_use, arm_use + "x".len())),
                 "coord_x".to_owned(),
             ),
         ],
@@ -2576,6 +2678,62 @@ fn read(value: Int) -> Int {
                 span_to_range(source, nth_span(source, "x", 4)),
             ),
         ]
+    );
+}
+
+#[test]
+fn references_bridge_keeps_deeper_struct_like_pattern_shorthand_tokens_on_local_symbols() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(point: Point) -> Int {
+    return match point {
+        Point.Scope.Config { x } => x,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let shorthand = source
+        .find("{ x }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct pattern field should exist");
+    let arm_use = source
+        .rfind("=> x")
+        .map(|offset| offset + "=> ".len())
+        .expect("match arm use should exist");
+    let shorthand_position =
+        span_to_range(source, Span::new(shorthand, shorthand + "x".len())).start;
+
+    let with_declaration =
+        references_for_analysis(&uri, source, &analysis, shorthand_position, true)
+            .expect("references should exist");
+    let without_declaration =
+        references_for_analysis(&uri, source, &analysis, shorthand_position, false)
+            .expect("references should exist");
+
+    assert_eq!(
+        with_declaration,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(source, Span::new(shorthand, shorthand + "x".len())),
+            ),
+            Location::new(
+                uri,
+                span_to_range(source, Span::new(arm_use, arm_use + "x".len()))
+            ),
+        ]
+    );
+    assert_eq!(
+        without_declaration,
+        vec![Location::new(
+            Url::parse("file:///sample.ql").expect("URI should parse"),
+            span_to_range(source, Span::new(arm_use, arm_use + "x".len())),
+        )]
     );
 }
 
