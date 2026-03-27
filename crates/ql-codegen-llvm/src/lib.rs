@@ -2994,6 +2994,33 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn emits_await_lowering_for_bound_direct_async_handles() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    let task = worker()
+    return await task
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @ql_0_worker()"));
+        assert!(rendered.contains("store ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load i64, ptr %t"));
+    }
+
+    #[test]
     fn emits_await_lowering_for_task_handle_helpers() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,

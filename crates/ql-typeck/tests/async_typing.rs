@@ -65,9 +65,9 @@ async fn main() -> Int {
         "did not expect async-boundary diagnostics in async function, got {diagnostics:?}"
     );
     assert!(
-        diagnostics.iter().all(|message| {
-            !message.contains("`async fn` calls currently must be consumed by `await` or `spawn`")
-        }),
+        diagnostics
+            .iter()
+            .all(|message| !message.contains("must be consumed by `await` or `spawn`")),
         "did not expect direct async-call diagnostics for await/spawn operands, got {diagnostics:?}"
     );
 }
@@ -94,7 +94,28 @@ async fn main() -> Int {
 }
 
 #[test]
-fn reports_direct_async_calls_outside_await_or_spawn() {
+fn allows_binding_direct_async_call_handles_before_awaiting() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = worker()
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected direct async-call handles to be bindable before await, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_direct_async_calls_as_task_handle_type_mismatches_when_not_awaited() {
     let diagnostics = diagnostic_messages(
         r#"
 async fn worker() -> Int {
@@ -109,32 +130,9 @@ fn main() -> Int {
 
     assert!(
         diagnostics.contains(
-            &"`async fn` calls currently must be consumed by `await` or `spawn`".to_string()
+            &"return value has type mismatch: expected `Int`, found `Task[Int]`".to_string()
         ),
-        "expected direct async-call diagnostic, got {diagnostics:?}"
-    );
-}
-
-#[test]
-fn reports_direct_async_calls_inside_async_functions() {
-    let diagnostics = diagnostic_messages(
-        r#"
-async fn worker() -> Int {
-    return 1
-}
-
-async fn main() -> Int {
-    let task = worker()
-    return 0
-}
-"#,
-    );
-
-    assert!(
-        diagnostics.contains(
-            &"`async fn` calls currently must be consumed by `await` or `spawn`".to_string()
-        ),
-        "expected direct async-call diagnostic, got {diagnostics:?}"
+        "expected direct async-call to surface as task-handle mismatch, got {diagnostics:?}"
     );
 }
 

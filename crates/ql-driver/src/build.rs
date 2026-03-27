@@ -1872,33 +1872,46 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_direct_async_call_semantic_diagnostics_before_codegen() {
-        let dir = TestDir::new("ql-driver-direct-async-call-semantic");
+    fn build_file_writes_static_library_with_direct_async_call_handles() {
+        let dir = TestDir::new("ql-driver-staticlib-direct-async-handle");
         let source = dir.write(
-            "direct_async_call.ql",
+            "direct_async_handle.ql",
             r#"
 async fn worker() -> Int {
     return 1
 }
 
-fn main() -> Int {
-    return worker()
+async fn helper() -> Int {
+    let task = worker()
+    return await task
 }
 "#,
         );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/direct_async_handle.lib"
+        } else {
+            "artifacts/libdirect_async_handle.a"
+        });
 
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("semantic async-call rejection should return diagnostics");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with direct async handles should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
 
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message
-                == "`async fn` calls currently must be consumed by `await` or `spawn`"
-        }));
-        assert!(diagnostics.iter().all(|diagnostic| {
-            diagnostic.message != "LLVM IR backend foundation does not support `async fn` yet"
-        }));
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
     }
 
     #[test]

@@ -767,11 +767,10 @@ P6 当前仍刻意未完成：
 - `ql-codegen-llvm` 已打开首个真实 `await` lowering：当前在 backend 内支持 `Void` / scalar builtin / pure-scalar tuple async 结果，并把 `await` 降成 `qlrt_task_await` + load payload + `qlrt_task_result_release` 的最小链路
 - `ql-codegen-llvm` 已打开首个真实 `spawn` lowering 子集：当前 backend 支持把 `spawn <async-call>` 降成 `qlrt_executor_spawn(ptr null, task)`，并返回可继续 `await` 的 task handle；statement-position fire-and-forget 只是丢弃该返回句柄的特例
 - `ql-driver` 已开放第一条 public async build 子集：`staticlib` 现在允许已被 backend 支持的 async library body、scalar/tuple/void `await`、以及可绑定后再 `await` 的 `spawn` task handle 通过，`for await` 在 staticlib 上也不再额外泄露 `async fn` runtime 噪声
-- `ql-resolve` / `ql-typeck` 已开放首个显式 task-handle 类型面：`Task[T]` 现在作为保留类型根被接受，不再触发 unresolved-type 诊断，并映射到内部 task-handle 语义
-- `ql-typeck` 已把 direct async call 放宽到显式 `Task[T]` 期望上下文：helper 返回值、参数传递和 `await schedule()` 这类 sync wrapper 路径现在都可保守通过，而无明确 `Task[T]` 期望的裸 async call 仍保持显式诊断
+- `ql-resolve` / `ql-typeck` 已开放首个显式 task-handle 类型面：`Task[T]` 现在作为保留类型根被接受，不再触发 unresolved-type 诊断，并映射到内部 task-handle 语义；direct async call、spawned task 与 sync helper 返回值现在都复用同一条句柄值模型
+- `ql-typeck` 已移除 direct async call 的“必须立刻 `await` / `spawn`”限制：`let task = worker(); await task`、helper 参数传递、`return worker()` 到 `Task[T]` wrapper 等路径现在都可保守通过；当 direct async call 最终流入非 `Task[T]` 上下文时，会自然退化成普通类型不匹配，而不再依赖单独的特判诊断
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已补充 task-handle helper 回归：`fn schedule() -> Task[Int] { return worker() }` 加 `await schedule()` 的 staticlib 路径已被单测、driver 回归和黑盒快照锁住
 - `ql-driver` / `ql-cli` 已补上 async staticlib mixed-surface 回归：带内部 async helper 的库现在也锁住了 `extern "c"` export header sidecar 路径，确保公开 C header surface 不会被 async implementation details 污染
-- `ql-typeck` 已把 direct async call 语义收紧到显式边界：当前 `async fn` 调用只能被 `await` 或 `spawn` 直接消费，独立使用 async call 结果会给出稳定诊断，避免语义层继续把 async 调用伪装成同步返回值
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前共享 hook ABI 已冻结第一版 LLVM-facing contract string，但真实内存布局、结果传递协议和更细粒度调用约定仍未冻结
 - 当前 backend/driver 虽已具备 declaration + async body wrapper/frame scaffold，并已打通 scalar/tuple/void `await` lowering、`spawn` task-handle lowering 与 `staticlib` 子集开放，但 `for await` lowering、更广义的任务结果协议、frame 生命周期管理和更广义的布局协议仍未开放

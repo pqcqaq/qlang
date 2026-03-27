@@ -95,7 +95,7 @@ async fn main() -> Int {
 }
 
 #[test]
-fn rendered_direct_async_call_diagnostics_anchor_to_the_call_expression() {
+fn rendered_direct_async_call_task_mismatches_anchor_to_the_return_expression() {
     let source = r#"
 async fn worker() -> Int {
     return 1
@@ -108,7 +108,7 @@ fn main() -> Int {
     let rendered = rendered_diagnostics(source);
 
     assert!(rendered.contains(
-        "error: sample.ql:7:12: `async fn` calls currently must be consumed by `await` or `spawn`"
+        "error: sample.ql:7:5: return value has type mismatch: expected `Int`, found `Task[Int]`"
     ));
 }
 
