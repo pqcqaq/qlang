@@ -33,6 +33,7 @@
 - 已在 `ql-typeck` 增补保守的 all-path return 分析：函数与 closure body 会拒绝“部分路径 `return`、部分路径 fallthrough”的情形；当前已覆盖 `if` 与最小穷尽性 `match`（`_`、`Bool true/false`、enum 全 variant），guarded arm 不计入覆盖
 - 已在 `ql-typeck` 增补 loop-control 上下文约束：`break` / `continue` 在非 loop body 中会给出显式诊断；closure body 不会继承外层 loop-control 语义
 - 已在 `ql-typeck` 把 must-return 收口重构为有序控制流摘要：`loop { return ... }` 与 closure 中同构写法现在会被接受；`break; return ...` 和“无 break 的 loop 之后追加 return”不会再被误判成保证返回；更深层表达式子节点也会按求值顺序参与保守 return 分析
+- 已在 `ql-typeck` 把显式常量条件的 `while` 纳入 must-return 收口：`while true { return ... }` 与 closure 中同构写法现在会被接受；`while true` 中的 `break; return ...` 和 `while false { return ... }` 仍不会被误判成保证返回
 - 已在 `ql-analysis` / `ql-lsp` 增补 loop-control 只读查询桥接：`break` / `continue` 现在可查询当前位置是否位于 loop body；`impl` / `extend` / `trait` 方法和 closure loop-boundary 也有回归覆盖
 - 已在 `ql-driver` 补充 async backend 边界回归：当语义层允许 `async fn` 时，构建流程会在 codegen 阶段稳定返回 `async fn` unsupported 诊断
 - 已在 `ql-cli` codegen 黑盒快照中补充 `unsupported_async_fn_build` 用例，锁住用户侧 `ql build` 的 async backend 拒绝输出
@@ -40,7 +41,7 @@
 - 已补充 `async + generic` 并存场景回归，锁住 backend 同阶段多条 unsupported 诊断聚合行为
 - 已补充 `async + unsafe fn body` 并存场景回归，锁住 backend 对函数签名级多条 unsupported 诊断的聚合与输出顺序
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
-- 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、`loop { return ... }` 与 break-sensitive loop body 纳入 conservative 收口，`while` / `for` 的更强迭代推理、guard-sensitive `match` 与 unreachable 细化仍待后续切片
+- 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、guard-sensitive `match` 与 unreachable 细化仍待后续切片
 - 当前 loop-control 已具备 analysis/LSP 的只读桥接，但还未扩展到公开 editor 协议 capability；继续保持低风险桥接策略
 
 ## 分阶段实现建议
