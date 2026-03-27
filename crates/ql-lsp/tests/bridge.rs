@@ -1917,6 +1917,32 @@ fn main() -> Int {
 }
 
 #[test]
+fn hover_bridge_stays_empty_on_deeper_variant_like_member_paths() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Stop,
+}
+
+fn main() -> Int {
+    let direct = Command.Retry.Stop
+    let alias = Cmd.Retry.Stop
+    return 0
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for position in [
+        span_to_range(source, nth_span(source, "Stop", 2)).start,
+        span_to_range(source, nth_span(source, "Stop", 3)).start,
+    ] {
+        assert_eq!(hover_for_analysis(source, &analysis, position), None);
+    }
+}
+
+#[test]
 fn references_bridge_stays_empty_on_deeper_variant_like_member_paths() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
