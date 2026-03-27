@@ -314,6 +314,23 @@ fn diagnostics_conversion_preserves_secondary_label_order_and_message_fallback()
 }
 
 #[test]
+fn diagnostics_conversion_sets_source_and_omits_related_information_for_unlabeled_diagnostics() {
+    let diagnostics = diagnostics_to_lsp(
+        &Url::parse("file:///sample.ql").expect("URI should parse"),
+        "fn main() {}\n",
+        &[
+            CompilerDiagnostic::warning("semantic warning"),
+            CompilerDiagnostic::note("semantic note"),
+        ],
+    );
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0].source.as_deref(), Some("ql"));
+    assert_eq!(diagnostics[0].related_information, None);
+    assert_eq!(diagnostics[1].source.as_deref(), Some("ql"));
+    assert_eq!(diagnostics[1].related_information, None);
+}
+
+#[test]
 fn hover_bridge_renders_markdown_for_semantic_symbols() {
     let source = r#"
 fn id[T](value: T) -> T {
