@@ -30,6 +30,7 @@ pub enum Ty {
         inner: Box<Ty>,
     },
     Tuple(Vec<Ty>),
+    TaskHandle(Box<Ty>),
     Callable {
         params: Vec<Ty>,
         ret: Box<Ty>,
@@ -65,6 +66,13 @@ impl Ty {
                     | BuiltinType::F64
             )
         )
+    }
+
+    pub fn task_output(&self) -> Option<&Ty> {
+        match self {
+            Self::TaskHandle(output) => Some(output),
+            _ => None,
+        }
     }
 
     pub fn compatible_with(&self, actual: &Ty) -> bool {
@@ -145,6 +153,7 @@ impl Ty {
                         .zip(right_items)
                         .all(|(left, right)| left.compatible_with(right))
             }
+            (Ty::TaskHandle(left), Ty::TaskHandle(right)) => left.compatible_with(right),
             (
                 Ty::Callable {
                     params: left_params,
@@ -223,6 +232,7 @@ impl fmt::Display for Ty {
                 }
                 f.write_str(")")
             }
+            Ty::TaskHandle(output) => write!(f, "Task[{output}]"),
             Ty::Callable { params, ret } => {
                 f.write_str("(")?;
                 for (index, param) in params.iter().enumerate() {

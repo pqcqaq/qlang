@@ -520,27 +520,12 @@ impl<'a> ModuleEmitter<'a> {
         let mut local_types = self.seed_local_types(body, &signature, &mut diagnostics);
         let async_task_handles = self.collect_async_task_handles(body);
         let unsupported_for_iterable_locals = collect_unsupported_for_iterable_locals(body);
-        let fire_and_forget_spawn_locals = collect_fire_and_forget_spawn_locals(body);
 
         for block in body.blocks() {
             for statement_id in &block.statements {
                 let statement = body.statement(*statement_id);
                 match &statement.kind {
                     StatementKind::Assign { place, value } => {
-                        if matches!(
-                            value,
-                            Rvalue::Unary {
-                                op: UnaryOp::Spawn,
-                                ..
-                            }
-                        ) && !fire_and_forget_spawn_locals.contains(&place.base)
-                        {
-                            diagnostics.push(unsupported(
-                                statement.span,
-                                "LLVM IR backend foundation currently only supports `spawn` in statement position",
-                            ));
-                            continue;
-                        }
                         self.require_direct_place(statement.span, place, &mut diagnostics);
                         if unsupported_for_iterable_locals.contains(&place.base) {
                             continue;
@@ -740,6 +725,33 @@ impl<'a> ModuleEmitter<'a> {
         handles
     }
 
+    fn resolve_task_handle_info(
+        &self,
+        local_id: mir::LocalId,
+        local_types: &HashMap<mir::LocalId, Ty>,
+        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
+        diagnostics: &mut Vec<Diagnostic>,
+        span: Span,
+    ) -> Option<AsyncTaskHandleInfo> {
+        if let Some(handle) = async_task_handles.get(&local_id) {
+            return Some(handle.clone());
+        }
+
+        let Some(Ty::TaskHandle(result_ty)) = local_types.get(&local_id) else {
+            return None;
+        };
+        match build_async_task_result_layout(result_ty, span) {
+            Ok(result_layout) => Some(AsyncTaskHandleInfo {
+                result_ty: (**result_ty).clone(),
+                result_layout,
+            }),
+            Err(error) => {
+                diagnostics.push(error);
+                None
+            }
+        }
+    }
+
     fn infer_rvalue_type(
         &self,
         body: &mir::MirBody,
@@ -862,16 +874,21 @@ impl<'a> ModuleEmitter<'a> {
                     };
                     self.require_direct_place(span, place, diagnostics);
 
-                    async_task_handles
-                            .get(&place.base)
-                            .map(|handle| handle.result_ty.clone())
-                            .or_else(|| {
-                                diagnostics.push(unsupported(
-                                    span,
-                                    "LLVM IR backend foundation could not resolve the async task handle consumed by `await`",
-                                ));
-                                None
-                            })
+                    self.resolve_task_handle_info(
+                        place.base,
+                        local_types,
+                        async_task_handles,
+                        diagnostics,
+                        span,
+                    )
+                    .map(|handle| handle.result_ty)
+                    .or_else(|| {
+                        diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation could not resolve the async task handle consumed by `await`",
+                        ));
+                        None
+                    })
                 }
                 UnaryOp::Spawn => {
                     if !self.has_runtime_hook(RuntimeHook::ExecutorSpawn) {
@@ -891,16 +908,21 @@ impl<'a> ModuleEmitter<'a> {
                     };
                     self.require_direct_place(span, place, diagnostics);
 
-                    async_task_handles
-                        .get(&place.base)
-                        .map(|_| void_ty())
-                        .or_else(|| {
-                            diagnostics.push(unsupported(
-                                span,
-                                "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`",
-                            ));
-                            None
-                        })
+                    self.resolve_task_handle_info(
+                        place.base,
+                        local_types,
+                        async_task_handles,
+                        diagnostics,
+                        span,
+                    )
+                    .map(|handle| Ty::TaskHandle(Box::new(handle.result_ty)))
+                    .or_else(|| {
+                        diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`",
+                        ));
+                        None
+                    })
                 }
             },
             Rvalue::Tuple(items) => {
@@ -968,8 +990,8 @@ impl<'a> ModuleEmitter<'a> {
             Operand::Place(place) => {
                 self.require_direct_place(span, place, diagnostics);
                 local_types.get(&place.base).cloned().or_else(|| {
-                    if async_task_handles.contains_key(&place.base) {
-                        return Some(Ty::Unknown);
+                    if let Some(handle) = async_task_handles.get(&place.base) {
+                        return Some(Ty::TaskHandle(Box::new(handle.result_ty.clone())));
                     }
                     if diagnostics.is_empty() {
                         diagnostics.push(
@@ -1710,6 +1732,26 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         })
     }
 
+    fn task_handle_info_for_local(
+        &self,
+        local_id: mir::LocalId,
+        span: Span,
+    ) -> AsyncTaskHandleInfo {
+        if let Some(handle) = self.prepared.async_task_handles.get(&local_id) {
+            return handle.clone();
+        }
+
+        match self.prepared.local_types.get(&local_id) {
+            Some(Ty::TaskHandle(result_ty)) => AsyncTaskHandleInfo {
+                result_ty: (**result_ty).clone(),
+                result_layout: build_async_task_result_layout(result_ty, span).unwrap_or_else(
+                    |_| panic!("prepared task-handle local at {span:?} should have a loadable async result layout"),
+                ),
+            },
+            _ => panic!("prepared local at {span:?} should be an async task handle"),
+        }
+    }
+
     fn render_await(
         &mut self,
         output: &mut String,
@@ -1727,13 +1769,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         let Operand::Place(place) = operand else {
             panic!("prepared await operands should lower through task-handle places");
         };
-        let handle_info = self
-            .prepared
-            .async_task_handles
-            .get(&place.base)
-            .unwrap_or_else(|| {
-                panic!("prepared await operand at {span:?} should be a task handle")
-            });
+        let handle_info = self.task_handle_info_for_local(place.base, span);
         let handle = self.render_operand(output, operand, span);
         let result_ptr = self.fresh_temp();
         let _ = writeln!(
@@ -1790,12 +1826,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         let Operand::Place(place) = operand else {
             panic!("prepared spawn operands should lower through task-handle places");
         };
-        self.prepared
-            .async_task_handles
-            .get(&place.base)
-            .unwrap_or_else(|| {
-                panic!("prepared spawn operand at {span:?} should be a task handle")
-            });
+        let handle_info = self.task_handle_info_for_local(place.base, span);
         let task = self.render_operand(output, operand, span);
         let submitted = self.fresh_temp();
         // `null` is the current placeholder for the ambient/default executor contract.
@@ -1808,9 +1839,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             task.repr
         );
         Some(LoweredValue {
-            ty: void_ty(),
-            llvm_ty: "void".to_owned(),
-            repr: "void".to_owned(),
+            ty: Ty::TaskHandle(Box::new(handle_info.result_ty)),
+            llvm_ty: "ptr".to_owned(),
+            repr: submitted,
         })
     }
 
@@ -1968,6 +1999,7 @@ fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnos
         Ty::Builtin(BuiltinType::ISize) | Ty::Builtin(BuiltinType::USize) => Ok("i64".to_owned()),
         Ty::Builtin(BuiltinType::F32) => Ok("float".to_owned()),
         Ty::Builtin(BuiltinType::F64) => Ok("double".to_owned()),
+        Ty::TaskHandle(_) => Ok("ptr".to_owned()),
         Ty::Tuple(items) => {
             if items.iter().any(is_void_ty) {
                 return Err(Diagnostic::error(format!(
@@ -2090,7 +2122,8 @@ fn scalar_abi_layout(ty: &Ty, span: Span, context: &str) -> Result<ScalarAbiLayo
         | Ty::Builtin(BuiltinType::U64)
         | Ty::Builtin(BuiltinType::ISize)
         | Ty::Builtin(BuiltinType::USize)
-        | Ty::Builtin(BuiltinType::F64) => Ok(ScalarAbiLayout { size: 8, align: 8 }),
+        | Ty::Builtin(BuiltinType::F64)
+        | Ty::TaskHandle(_) => Ok(ScalarAbiLayout { size: 8, align: 8 }),
         _ => Err(Diagnostic::error(format!(
             "LLVM IR backend foundation does not support {context} `{ty}` yet"
         ))
@@ -2119,95 +2152,6 @@ fn collect_unsupported_for_iterable_locals(body: &mir::MirBody) -> HashSet<mir::
         }
     }
     locals
-}
-
-fn collect_fire_and_forget_spawn_locals(body: &mir::MirBody) -> HashSet<mir::LocalId> {
-    let mut spawn_locals = HashSet::new();
-    let mut used_locals = HashSet::new();
-
-    for block in body.blocks() {
-        for statement_id in &block.statements {
-            let statement = body.statement(*statement_id);
-            match &statement.kind {
-                StatementKind::Assign { place, value }
-                    if matches!(
-                        value,
-                        Rvalue::Unary {
-                            op: UnaryOp::Spawn,
-                            ..
-                        }
-                    ) && place.projections.is_empty() =>
-                {
-                    spawn_locals.insert(place.base);
-                }
-                StatementKind::Assign { value, .. } | StatementKind::Eval { value } => {
-                    collect_rvalue_operand_locals(value, &mut used_locals);
-                }
-                StatementKind::BindPattern { source, .. } => {
-                    collect_operand_locals(source, &mut used_locals);
-                }
-                _ => {}
-            }
-        }
-
-        match &block.terminator.kind {
-            TerminatorKind::Branch { condition, .. } => {
-                collect_operand_locals(condition, &mut used_locals);
-            }
-            TerminatorKind::Match { scrutinee, .. } => {
-                collect_operand_locals(scrutinee, &mut used_locals);
-            }
-            TerminatorKind::ForLoop { iterable, .. } => {
-                collect_operand_locals(iterable, &mut used_locals);
-            }
-            TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Terminate => {}
-        }
-    }
-
-    spawn_locals
-        .into_iter()
-        .filter(|local| !used_locals.contains(local))
-        .collect()
-}
-
-fn collect_rvalue_operand_locals(value: &Rvalue, locals: &mut HashSet<mir::LocalId>) {
-    match value {
-        Rvalue::Use(operand) | Rvalue::Unary { operand, .. } | Rvalue::Question(operand) => {
-            collect_operand_locals(operand, locals);
-        }
-        Rvalue::Tuple(items) | Rvalue::Array(items) => {
-            for item in items {
-                collect_operand_locals(item, locals);
-            }
-        }
-        Rvalue::Call { callee, args } => {
-            collect_operand_locals(callee, locals);
-            for arg in args {
-                collect_operand_locals(&arg.value, locals);
-            }
-        }
-        Rvalue::Binary { left, right, .. } => {
-            collect_operand_locals(left, locals);
-            collect_operand_locals(right, locals);
-        }
-        Rvalue::AggregateStruct { fields, .. } => {
-            for field in fields {
-                collect_operand_locals(&field.value, locals);
-            }
-        }
-        Rvalue::Closure { .. } | Rvalue::OpaqueExpr(_) => {}
-    }
-}
-
-fn collect_operand_locals(operand: &Operand, locals: &mut HashSet<mir::LocalId>) {
-    if let Operand::Place(place) = operand {
-        locals.insert(place.base);
-        for projection in &place.projections {
-            if let mir::ProjectionElem::Index(index) = projection {
-                collect_operand_locals(index, locals);
-            }
-        }
-    }
 }
 
 fn arithmetic_opcode(op: BinaryOp, ty: &Ty) -> &'static str {
@@ -3153,12 +3097,13 @@ async fn helper() -> Int {
     }
 
     #[test]
-    fn rejects_spawn_value_lowering_in_async_library_body() {
+    fn emits_spawn_handle_lowering_and_awaits_spawned_task_in_async_library_body() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
             RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
         ]);
-        let messages = emit_error_with_runtime_hooks(
+        let rendered = emit_with_runtime_hooks(
             r#"
 async fn worker() -> Int {
     return 1
@@ -3166,21 +3111,17 @@ async fn worker() -> Int {
 
 async fn helper() -> Int {
     let task = spawn worker()
-    return 0
+    return await task
 }
 "#,
             CodegenMode::Library,
             &runtime_hooks,
         );
 
-        assert!(messages.iter().any(|message| {
-            message
-                == "LLVM IR backend foundation currently only supports `spawn` in statement position"
-        }));
-        assert!(messages.iter().all(|message| {
-            !message.contains("could not resolve LLVM type for local")
-                && !message.contains("could not infer LLVM type for MIR local")
-        }));
+        assert!(rendered.contains("declare ptr @qlrt_executor_spawn(ptr, ptr)"));
+        assert!(rendered.contains("declare ptr @qlrt_task_await(ptr)"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
     }
 
     #[test]

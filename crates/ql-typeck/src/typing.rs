@@ -443,37 +443,34 @@ impl<'a> Checker<'a> {
                     );
                     return Ty::Unknown;
                 }
-                if !matches!(&self.module.expr(operand).kind, ExprKind::Call { .. }) {
-                    self.diagnostics.push(
-                        Diagnostic::error(
-                            "`await` currently requires a call expression operand".to_string(),
-                        )
-                        .with_label(
-                            Label::new(self.module.expr(expr_id).span)
-                                .with_message("`await` used with a non-call operand"),
-                        ),
-                    );
-                    return Ty::Unknown;
+                if let Some(result_ty) = operand_ty.task_output() {
+                    return result_ty.clone();
                 }
 
-                if !self.call_operand_is_async(operand) {
-                    self.diagnostics.push(
-                        Diagnostic::error(
-                            "`await` currently requires calling an `async fn`".to_string(),
-                        )
-                        .with_label(
-                            Label::new(self.module.expr(expr_id).span)
-                                .with_message("`await` used with a non-async call"),
-                        ),
-                    );
-                    return Ty::Unknown;
-                }
-
-                operand_ty
+                let diagnostic = if matches!(&self.module.expr(operand).kind, ExprKind::Call { .. })
+                {
+                    Diagnostic::error(
+                        "`await` currently requires calling an `async fn`".to_string(),
+                    )
+                    .with_label(
+                        Label::new(self.module.expr(expr_id).span)
+                            .with_message("`await` used with a non-async call"),
+                    )
+                } else {
+                    Diagnostic::error(
+                        "`await` currently requires an async task handle operand".to_string(),
+                    )
+                    .with_label(
+                        Label::new(self.module.expr(expr_id).span)
+                            .with_message("`await` used with a non-task operand"),
+                    )
+                };
+                self.diagnostics.push(diagnostic);
+                Ty::Unknown
             }
             ql_ast::UnaryOp::Spawn => {
                 self.allow_async_call_operands += 1;
-                let _operand_ty = self.check_expr(operand, None);
+                let operand_ty = self.check_expr(operand, None);
                 self.allow_async_call_operands -= 1;
                 if !self.in_async_function {
                     self.diagnostics.push(
@@ -512,7 +509,11 @@ impl<'a> Checker<'a> {
                     return Ty::Unknown;
                 }
 
-                Ty::Unknown
+                if let Some(result_ty) = operand_ty.task_output() {
+                    Ty::TaskHandle(Box::new(result_ty.clone()))
+                } else {
+                    Ty::Unknown
+                }
             }
         }
     }
@@ -1250,7 +1251,11 @@ impl<'a> Checker<'a> {
                 ),
             );
         }
-        signature.ret
+        if signature.is_async {
+            Ty::TaskHandle(Box::new(signature.ret))
+        } else {
+            signature.ret
+        }
     }
 
     fn check_member(&mut self, expr_id: ExprId, object: ExprId, field: &str) -> Ty {

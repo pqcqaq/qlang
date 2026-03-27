@@ -73,6 +73,27 @@ async fn main() -> Int {
 }
 
 #[test]
+fn allows_awaiting_spawned_task_handles_inside_async_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = spawn worker()
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected awaiting a spawned task handle to succeed, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_direct_async_calls_outside_await_or_spawn() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -174,8 +195,9 @@ async fn main() -> Int {
     );
 
     assert!(
-        diagnostics.contains(&"`await` currently requires a call expression operand".to_string()),
-        "expected await operand-shape diagnostic, got {diagnostics:?}"
+        diagnostics
+            .contains(&"`await` currently requires an async task handle operand".to_string()),
+        "expected await task-handle diagnostic, got {diagnostics:?}"
     );
 }
 
@@ -215,6 +237,29 @@ async fn main() -> Int {
     assert!(
         diagnostics.contains(&"`await` currently requires calling an `async fn`".to_string()),
         "expected closure await async-call-target diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn renders_spawned_task_handle_types_in_return_mismatches() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = spawn worker()
+    return task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"return value has type mismatch: expected `Int`, found `Task[Int]`".to_string()
+        ),
+        "expected spawned task handle type in mismatch, got {diagnostics:?}"
     );
 }
 

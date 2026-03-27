@@ -131,6 +131,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "async_library_spawn_handle_staticlib",
+            source_relative: "fixtures/codegen/pass/async_library_spawn_handle.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "ffi_export_async_staticlib_with_header",
             source_relative: "fixtures/codegen/pass/ffi_export_async.ql",
             emit: "staticlib",
@@ -283,13 +294,6 @@ fn codegen_snapshots_match() {
             source_relative: "tests/codegen/fail/unsupported_async_for_await_library_build.ql",
             emit: "staticlib",
             expected_stderr_relative: "tests/codegen/fail/unsupported_async_for_await_library_build.stderr",
-            extra_args: &[],
-        },
-        FailCase {
-            name: "unsupported_async_spawn_value_library_build",
-            source_relative: "tests/codegen/fail/unsupported_async_spawn_value_library_build.ql",
-            emit: "staticlib",
-            expected_stderr_relative: "tests/codegen/fail/unsupported_async_spawn_value_library_build.stderr",
             extra_args: &[],
         },
         FailCase {

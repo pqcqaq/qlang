@@ -2058,8 +2058,8 @@ async fn worker() -> Pair {
     }
 
     #[test]
-    fn build_file_surfaces_spawn_value_diagnostics_without_runtime_noise() {
-        let dir = TestDir::new("ql-driver-async-library-spawn-value");
+    fn build_file_writes_static_library_with_spawn_handle_awaits() {
+        let dir = TestDir::new("ql-driver-staticlib-async-spawn-handle");
         let source = dir.write(
             "async_spawn_value_library.ql",
             r#"
@@ -2069,7 +2069,7 @@ async fn worker() -> Int {
 
 async fn helper() -> Int {
     let task = spawn worker()
-    return 0
+    return await task
 }
 "#,
         );
@@ -2079,29 +2079,24 @@ async fn helper() -> Int {
             "artifacts/libasync_spawn_value_library.a"
         });
 
-        let error = build_file(
+        build_file(
             &source,
             &BuildOptions {
                 emit: BuildEmit::StaticLibrary,
                 profile: BuildProfile::Debug,
-                output: Some(output),
+                output: Some(output.clone()),
                 c_header: None,
-                toolchain: ToolchainOptions::default(),
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
             },
         )
-        .expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("async spawn value rejection should return diagnostics");
+        .expect("static library build with spawned task handles should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
 
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message
-                == "LLVM IR backend foundation currently only supports `spawn` in statement position"
-        }));
-        assert!(diagnostics.iter().all(|diagnostic| {
-            diagnostic.message != "LLVM IR backend foundation does not support `async fn` yet"
-                && diagnostic.message != "LLVM IR backend foundation does not support `spawn` yet"
-        }));
+        assert_eq!(rendered, "mock-staticlib");
     }
 
     #[test]

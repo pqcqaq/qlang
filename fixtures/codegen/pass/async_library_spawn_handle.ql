@@ -4,5 +4,5 @@ async fn worker() -> Int {
 
 async fn helper() -> Int {
     let task = spawn worker()
-    return 0
+    return await task
 }
