@@ -30,6 +30,7 @@
 - 已在 `ql-driver` 补充 async backend 边界回归：当语义层允许 `async fn` 时，构建流程会在 codegen 阶段稳定返回 `async fn` unsupported 诊断
 - 已在 `ql-cli` codegen 黑盒快照中补充 `unsupported_async_fn_build` 用例，锁住用户侧 `ql build` 的 async backend 拒绝输出
 - 已补充 `dylib` 路径上的 async backend 回归（含合法 `extern "c"` 导出存在时仍拒绝 `async fn`），锁住边界校验优先级
+- 已补充 `async + generic` 并存场景回归，锁住 backend 同阶段多条 unsupported 诊断聚合行为
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 
 ## 分阶段实现建议
