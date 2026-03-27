@@ -198,3 +198,22 @@ fn main(point: Point) -> Int {
         "error: sample.ql:7:9: tuple-struct pattern syntax is not supported for `Point`"
     ));
 }
+
+#[test]
+fn rendered_invalid_path_pattern_root_diagnostics_anchor_to_the_pattern() {
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn main(point: Point) -> Int {
+    let Point = point
+    return 0
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(
+        rendered.contains("error: sample.ql:7:9: path pattern syntax is not supported for `Point`")
+    );
+}

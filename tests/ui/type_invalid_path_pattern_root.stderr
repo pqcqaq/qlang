@@ -1,0 +1,12 @@
+error: tests/ui/type_invalid_path_pattern_root.ql:17:9: path pattern syntax is not supported for `Point`
+      let Point = point;
+          ^^^^^ pattern here
+error: tests/ui/type_invalid_path_pattern_root.ql:18:9: path pattern syntax is not supported for `P`
+      let P = point;
+          ^ pattern here
+error: tests/ui/type_invalid_path_pattern_root.ql:19:9: path pattern syntax is not supported for `Result.Value`
+      let Result.Value = result;
+          ^^^^^^^^ pattern here
+error: tests/ui/type_invalid_path_pattern_root.ql:20:9: path pattern syntax is not supported for `Res.Named`
+      let Res.Named = result;
+          ^^^^^^^^ pattern here

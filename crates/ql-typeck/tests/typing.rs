@@ -1311,6 +1311,133 @@ fn main(point: Point, result: Result) -> Int {
 }
 
 #[test]
+fn accepts_unit_variant_path_patterns() {
+    let diagnostics = diagnostic_messages(
+        r#"
+enum Command {
+    Quit,
+    Value(Int),
+}
+
+fn main(command: Command) -> Int {
+    match command {
+        Command.Quit => 1,
+        _ => 0,
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_unit_variant_path_patterns_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Command as Cmd
+
+enum Command {
+    Quit,
+    Value(Int),
+}
+
+fn main(command: Command) -> Int {
+    match command {
+        Cmd.Quit => 1,
+        _ => 0,
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_invalid_path_pattern_roots() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Point {
+    x: Int,
+}
+
+enum Result {
+    Empty,
+    Value(Int),
+    Named {
+        value: Int,
+    },
+}
+
+fn main(point: Point, result: Result) -> Int {
+    let Point = point
+    let Result = result
+    let Result.Value = result
+    let Result.Named = result
+    return 0
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"path pattern syntax is not supported for `Point`".to_string()));
+    assert!(diagnostics.contains(&"path pattern syntax is not supported for `Result`".to_string()));
+    assert!(
+        diagnostics
+            .contains(&"path pattern syntax is not supported for `Result.Value`".to_string())
+    );
+    assert!(
+        diagnostics
+            .contains(&"path pattern syntax is not supported for `Result.Named`".to_string())
+    );
+}
+
+#[test]
+fn reports_invalid_path_pattern_roots_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Point as P
+use Result as Res
+
+struct Point {
+    x: Int,
+}
+
+enum Result {
+    Empty,
+    Value(Int),
+    Named {
+        value: Int,
+    },
+}
+
+fn main(point: Point, result: Result) -> Int {
+    let P = point
+    let Res = result
+    let Res.Value = result
+    let Res.Named = result
+    return 0
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"path pattern syntax is not supported for `P`".to_string()));
+    assert!(diagnostics.contains(&"path pattern syntax is not supported for `Res`".to_string()));
+    assert!(
+        diagnostics.contains(&"path pattern syntax is not supported for `Res.Value`".to_string())
+    );
+    assert!(
+        diagnostics.contains(&"path pattern syntax is not supported for `Res.Named`".to_string())
+    );
+}
+
+#[test]
 fn reports_variant_pattern_type_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"

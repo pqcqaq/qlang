@@ -1353,7 +1353,14 @@ impl<'a> Checker<'a> {
                 }
             }
             PatternKind::Path(_) => {
-                self.check_pattern_root(pattern_id, expected, "path pattern");
+                if let Some(message) = self.invalid_path_pattern_root_message(pattern_id) {
+                    self.diagnostics.push(
+                        Diagnostic::error(message)
+                            .with_label(Label::new(pattern.span).with_message("pattern here")),
+                    );
+                } else {
+                    self.check_pattern_root(pattern_id, expected, "path pattern");
+                }
             }
             PatternKind::Integer(_) => {
                 self.check_literal_pattern(
@@ -1446,6 +1453,62 @@ impl<'a> Checker<'a> {
             | ValueResolution::Param(_)
             | ValueResolution::SelfValue
             | ValueResolution::Function(_) => None,
+        }
+    }
+
+    fn invalid_path_pattern_root_message(&self, pattern_id: PatternId) -> Option<String> {
+        let pattern = self.module.pattern(pattern_id);
+        let PatternKind::Path(path) = &pattern.kind else {
+            return None;
+        };
+        let resolution = self.resolution.pattern_resolution(pattern_id)?;
+        match resolution {
+            ValueResolution::Import(import_binding) => {
+                local_item_for_import_binding(self.module, import_binding)
+                    .and_then(|item_id| self.invalid_path_pattern_item_path_message(item_id, path))
+            }
+            ValueResolution::Item(item_id) => {
+                self.invalid_path_pattern_item_path_message(*item_id, path)
+            }
+            ValueResolution::Local(_)
+            | ValueResolution::Param(_)
+            | ValueResolution::SelfValue
+            | ValueResolution::Function(_) => None,
+        }
+    }
+
+    fn invalid_path_pattern_item_path_message(
+        &self,
+        item_id: ItemId,
+        path: &ql_ast::Path,
+    ) -> Option<String> {
+        let path_text = path.segments.join(".");
+        match &self.module.item(item_id).kind {
+            ItemKind::Enum(enum_decl) if path.segments.len() >= 2 => {
+                let variant_name = path.segments.last()?;
+                let variant = enum_decl
+                    .variants
+                    .iter()
+                    .find(|variant| &variant.name == variant_name)?;
+                match &variant.fields {
+                    VariantFields::Unit => None,
+                    VariantFields::Tuple(_) | VariantFields::Struct(_) => Some(format!(
+                        "path pattern syntax is not supported for `{path_text}`"
+                    )),
+                }
+            }
+            ItemKind::Struct(_) | ItemKind::Enum(_) => Some(format!(
+                "path pattern syntax is not supported for `{path_text}`"
+            )),
+            ItemKind::Function(_)
+            | ItemKind::Trait(_)
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Impl(_)
+            | ItemKind::Extend(_)
+            | ItemKind::ExternBlock(_) => Some(format!(
+                "path pattern syntax is not supported for `{path_text}`"
+            )),
+            ItemKind::Const(_) | ItemKind::Static(_) => None,
         }
     }
 

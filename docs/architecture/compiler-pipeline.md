@@ -112,6 +112,7 @@ source
 - 新增 invalid projection receiver diagnostics：已知不支持 member/index 语义的接收者现在会显式报错，而不是静默退化成 `unknown`
 - 新增 invalid struct-literal root diagnostics：已知不支持 struct-style field construction 的 root 现在会显式报错，而不是静默退化成 `unknown`
 - 新增 invalid pattern-root shape diagnostics：已解析成功但 struct/tuple pattern 构造形状确定不匹配的 root 现在会显式报错，而不是静默退化成 `unknown`
+- 新增 invalid path-pattern root diagnostics：已解析成功但 bare path pattern 构造形状确定不匹配的 root 现在会显式报错，而不是静默退化成 `unknown`
 - 新增 pattern root / literal compatibility checking
 - 新增 struct pattern unknown-field checking，并复用 same-file local import alias -> local item 的 canonicalization
 
@@ -123,6 +124,7 @@ source
 - invalid projection receiver diagnostics 当前也只在“类型已知且明确不支持当前语义”时触发；`unknown` / generic / deeper import-module 相关场景仍保持保守，不提前下结论
 - invalid struct-literal root diagnostics 当前也只在“root 已解析成功且明确不支持 struct-style 字段构造”时触发；未知 variant / deeper module-path case 仍保持保守，不提前下结论
 - invalid pattern-root shape diagnostics 当前也只在“pattern root 已解析成功且构造形状已知必错”时触发；missing variant / path pattern shape / deeper module-path case 仍保持保守，不提前下结论
+- invalid path-pattern root diagnostics 当前也只在“path pattern root 已解析成功且 bare path 形状已知必错”时触发；unit variant 仍允许，const/static path 语义与 missing variant / deeper module-path case 仍保持保守，不提前下结论
 - ambiguous method 的 type diagnostics 已开放，但 query / completion / rename 仍只接受唯一 candidate，不提前伪造模糊成员 truth surface
 - bare single-segment unresolved diagnostics 已落地，但 multi-segment unresolved global / unresolved type diagnostics 仍然延后
 - 完整 trait solving、泛型实参推断、effect checking 和 flow-sensitive narrowing 还未开始
