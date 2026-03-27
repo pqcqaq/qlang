@@ -100,6 +100,7 @@ impl AsyncTaskResultLayout {
 struct PreparedFunction {
     signature: FunctionSignature,
     local_types: HashMap<mir::LocalId, Ty>,
+    async_task_handles: HashMap<mir::LocalId, AsyncTaskHandleInfo>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,6 +120,12 @@ struct LoweredValue {
 struct ScalarAbiLayout {
     size: u64,
     align: u64,
+}
+
+#[derive(Clone, Debug)]
+struct AsyncTaskHandleInfo {
+    result_ty: Ty,
+    result_layout: AsyncTaskResultLayout,
 }
 
 struct ModuleEmitter<'a> {
@@ -505,6 +512,7 @@ impl<'a> ModuleEmitter<'a> {
 
         let mut diagnostics = Vec::new();
         let mut local_types = self.seed_local_types(body, &signature, &mut diagnostics);
+        let async_task_handles = self.collect_async_task_handles(body);
         let unsupported_for_iterable_locals = collect_unsupported_for_iterable_locals(body);
 
         for block in body.blocks() {
@@ -520,6 +528,7 @@ impl<'a> ModuleEmitter<'a> {
                             body,
                             value,
                             &local_types,
+                            &async_task_handles,
                             &mut diagnostics,
                             statement.span,
                         ) {
@@ -534,6 +543,7 @@ impl<'a> ModuleEmitter<'a> {
                             body,
                             source,
                             &local_types,
+                            &async_task_handles,
                             &mut diagnostics,
                             statement.span,
                         );
@@ -543,6 +553,7 @@ impl<'a> ModuleEmitter<'a> {
                             body,
                             value,
                             &local_types,
+                            &async_task_handles,
                             &mut diagnostics,
                             statement.span,
                         );
@@ -566,6 +577,7 @@ impl<'a> ModuleEmitter<'a> {
                         body,
                         condition,
                         &local_types,
+                        &async_task_handles,
                         &mut diagnostics,
                         block.terminator.span,
                     ) else {
@@ -595,6 +607,9 @@ impl<'a> ModuleEmitter<'a> {
 
         let should_validate_local_types = diagnostics.is_empty();
         for local_id in body.local_ids() {
+            if async_task_handles.contains_key(&local_id) {
+                continue;
+            }
             let Some(ty) = local_types.get(&local_id) else {
                 if diagnostics.is_empty() {
                     diagnostics.push(Diagnostic::error(format!(
@@ -619,6 +634,7 @@ impl<'a> ModuleEmitter<'a> {
             Ok(PreparedFunction {
                 signature,
                 local_types,
+                async_task_handles,
             })
         } else {
             Err(dedupe_diagnostics(diagnostics))
@@ -659,18 +675,68 @@ impl<'a> ModuleEmitter<'a> {
         local_types
     }
 
+    fn collect_async_task_handles(
+        &self,
+        body: &mir::MirBody,
+    ) -> HashMap<mir::LocalId, AsyncTaskHandleInfo> {
+        let mut handles = HashMap::new();
+
+        for block in body.blocks() {
+            for statement_id in &block.statements {
+                let statement = body.statement(*statement_id);
+                let StatementKind::Assign { place, value } = &statement.kind else {
+                    continue;
+                };
+                if !place.projections.is_empty() {
+                    continue;
+                }
+                let Rvalue::Call { callee, .. } = value else {
+                    continue;
+                };
+                let Operand::Constant(Constant::Function { function, .. }) = callee else {
+                    continue;
+                };
+                let Some(signature) = self.signatures.get(function) else {
+                    continue;
+                };
+                if !signature.is_async {
+                    continue;
+                }
+                let Some(result_layout) = signature.async_result_layout.clone() else {
+                    continue;
+                };
+
+                handles.insert(
+                    place.base,
+                    AsyncTaskHandleInfo {
+                        result_ty: signature.body_return_ty.clone(),
+                        result_layout,
+                    },
+                );
+            }
+        }
+
+        handles
+    }
+
     fn infer_rvalue_type(
         &self,
         body: &mir::MirBody,
         value: &Rvalue,
         local_types: &HashMap<mir::LocalId, Ty>,
+        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
         diagnostics: &mut Vec<Diagnostic>,
         span: Span,
     ) -> Option<Ty> {
         match value {
-            Rvalue::Use(operand) => {
-                self.infer_operand_type(body, operand, local_types, diagnostics, span)
-            }
+            Rvalue::Use(operand) => self.infer_operand_type(
+                body,
+                operand,
+                local_types,
+                async_task_handles,
+                diagnostics,
+                span,
+            ),
             Rvalue::Call { callee, args } => {
                 for arg in args {
                     if arg.name.is_some() {
@@ -679,8 +745,14 @@ impl<'a> ModuleEmitter<'a> {
                             "LLVM IR backend foundation does not support named call arguments yet",
                         ));
                     }
-                    let _ =
-                        self.infer_operand_type(body, &arg.value, local_types, diagnostics, span);
+                    let _ = self.infer_operand_type(
+                        body,
+                        &arg.value,
+                        local_types,
+                        async_task_handles,
+                        diagnostics,
+                        span,
+                    );
                 }
 
                 let Operand::Constant(Constant::Function { function, .. }) = callee else {
@@ -691,55 +763,103 @@ impl<'a> ModuleEmitter<'a> {
                     return None;
                 };
 
-                self.signatures
-                    .get(function)
-                    .map(|signature| signature.return_ty.clone())
-                    .or_else(|| {
-                        diagnostics.push(unsupported(
+                let Some(signature) = self.signatures.get(function) else {
+                    diagnostics.push(unsupported(
                         span,
                         "LLVM IR backend foundation could not resolve the direct callee declaration",
                     ));
-                        None
-                    })
+                    return None;
+                };
+
+                if signature.is_async {
+                    None
+                } else {
+                    Some(signature.return_ty.clone())
+                }
             }
             Rvalue::Binary { left, op, right } => {
-                let left_ty =
-                    self.infer_operand_type(body, left, local_types, diagnostics, span)?;
-                let right_ty =
-                    self.infer_operand_type(body, right, local_types, diagnostics, span)?;
+                let left_ty = self.infer_operand_type(
+                    body,
+                    left,
+                    local_types,
+                    async_task_handles,
+                    diagnostics,
+                    span,
+                )?;
+                let right_ty = self.infer_operand_type(
+                    body,
+                    right,
+                    local_types,
+                    async_task_handles,
+                    diagnostics,
+                    span,
+                )?;
                 self.validate_binary_operands(*op, &left_ty, &right_ty, span, diagnostics)
             }
-            Rvalue::Unary { op, operand } => {
-                let operand_ty =
-                    self.infer_operand_type(body, operand, local_types, diagnostics, span)?;
-                match op {
-                    UnaryOp::Neg => {
-                        if is_numeric_ty(&operand_ty) {
-                            Some(operand_ty)
-                        } else {
-                            diagnostics.push(unsupported(
-                                span,
-                                "LLVM IR backend foundation only supports numeric negation",
-                            ));
-                            None
-                        }
-                    }
-                    UnaryOp::Await => {
+            Rvalue::Unary { op, operand } => match op {
+                UnaryOp::Neg => {
+                    let operand_ty = self.infer_operand_type(
+                        body,
+                        operand,
+                        local_types,
+                        async_task_handles,
+                        diagnostics,
+                        span,
+                    )?;
+                    if is_numeric_ty(&operand_ty) {
+                        Some(operand_ty)
+                    } else {
                         diagnostics.push(unsupported(
                             span,
-                            "LLVM IR backend foundation does not support `await` yet",
-                        ));
-                        None
-                    }
-                    UnaryOp::Spawn => {
-                        diagnostics.push(unsupported(
-                            span,
-                            "LLVM IR backend foundation does not support `spawn` yet",
+                            "LLVM IR backend foundation only supports numeric negation",
                         ));
                         None
                     }
                 }
-            }
+                UnaryOp::Await => {
+                    if !self.has_runtime_hook(RuntimeHook::TaskAwait) {
+                        diagnostics.push(unsupported(
+                                span,
+                                "LLVM IR backend foundation requires the `task-await` runtime hook before lowering `await` expressions",
+                            ));
+                        return None;
+                    }
+                    if !self.has_runtime_hook(RuntimeHook::TaskResultRelease) {
+                        diagnostics.push(unsupported(
+                                span,
+                                "LLVM IR backend foundation requires the `task-result-release` runtime hook before lowering `await` expressions",
+                            ));
+                        return None;
+                    }
+
+                    let Operand::Place(place) = operand else {
+                        diagnostics.push(unsupported(
+                                span,
+                                "LLVM IR backend foundation currently requires `await` operands to lower through a task-handle place",
+                            ));
+                        return None;
+                    };
+                    self.require_direct_place(span, place, diagnostics);
+
+                    async_task_handles
+                            .get(&place.base)
+                            .map(|handle| handle.result_ty.clone())
+                            .or_else(|| {
+                                diagnostics.push(unsupported(
+                                    span,
+                                    "LLVM IR backend foundation could not resolve the async task handle consumed by `await`",
+                                ));
+                                None
+                            })
+                }
+                UnaryOp::Spawn => {
+                    diagnostics.push(unsupported(
+                        span,
+                        "LLVM IR backend foundation does not support `spawn` yet",
+                    ));
+                    None
+                }
+            },
             Rvalue::Tuple(_) => {
                 diagnostics.push(unsupported(
                     span,
@@ -790,6 +910,7 @@ impl<'a> ModuleEmitter<'a> {
         body: &mir::MirBody,
         operand: &Operand,
         local_types: &HashMap<mir::LocalId, Ty>,
+        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
         diagnostics: &mut Vec<Diagnostic>,
         span: Span,
     ) -> Option<Ty> {
@@ -797,6 +918,9 @@ impl<'a> ModuleEmitter<'a> {
             Operand::Place(place) => {
                 self.require_direct_place(span, place, diagnostics);
                 local_types.get(&place.base).cloned().or_else(|| {
+                    if async_task_handles.contains_key(&place.base) {
+                        return Some(Ty::Unknown);
+                    }
                     if diagnostics.is_empty() {
                         diagnostics.push(
                             Diagnostic::error(format!(
@@ -1221,6 +1345,10 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         for local_id in body.local_ids() {
+            if function.async_task_handles.contains_key(&local_id) {
+                let _ = writeln!(output, "  {} = alloca ptr", llvm_slot_name(body, local_id));
+                continue;
+            }
             let ty = function
                 .local_types
                 .get(&local_id)
@@ -1455,35 +1583,34 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 let right = self.render_operand(output, right, span);
                 self.render_binary(output, *op, left, right)
             }
-            Rvalue::Unary { op, operand } => {
-                let operand = self.render_operand(output, operand, span);
-                match op {
-                    UnaryOp::Neg => {
-                        let temp = self.fresh_temp();
-                        if is_float_ty(&operand.ty) {
-                            let _ = writeln!(
-                                output,
-                                "  {temp} = fneg {} {}",
-                                operand.llvm_ty, operand.repr
-                            );
-                        } else {
-                            let _ = writeln!(
-                                output,
-                                "  {temp} = sub {} 0, {}",
-                                operand.llvm_ty, operand.repr
-                            );
-                        }
-                        Some(LoweredValue {
-                            ty: operand.ty,
-                            llvm_ty: operand.llvm_ty,
-                            repr: temp,
-                        })
+            Rvalue::Unary { op, operand } => match op {
+                UnaryOp::Neg => {
+                    let operand = self.render_operand(output, operand, span);
+                    let temp = self.fresh_temp();
+                    if is_float_ty(&operand.ty) {
+                        let _ = writeln!(
+                            output,
+                            "  {temp} = fneg {} {}",
+                            operand.llvm_ty, operand.repr
+                        );
+                    } else {
+                        let _ = writeln!(
+                            output,
+                            "  {temp} = sub {} 0, {}",
+                            operand.llvm_ty, operand.repr
+                        );
                     }
-                    UnaryOp::Await | UnaryOp::Spawn => {
-                        panic!("prepared functions should not contain unsupported unary ops")
-                    }
+                    Some(LoweredValue {
+                        ty: operand.ty,
+                        llvm_ty: operand.llvm_ty,
+                        repr: temp,
+                    })
                 }
-            }
+                UnaryOp::Await => self.render_await(output, operand, span),
+                UnaryOp::Spawn => {
+                    panic!("prepared functions should not contain unsupported unary ops")
+                }
+            },
             Rvalue::Tuple(_)
             | Rvalue::Array(_)
             | Rvalue::AggregateStruct { .. }
@@ -1491,6 +1618,73 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             | Rvalue::Question(_)
             | Rvalue::OpaqueExpr(_) => {
                 panic!("prepared functions should not contain unsupported rvalues")
+            }
+        }
+    }
+
+    fn render_await(
+        &mut self,
+        output: &mut String,
+        operand: &Operand,
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let await_hook = self
+            .emitter
+            .runtime_hook_signature(RuntimeHook::TaskAwait)
+            .expect("prepared await lowering should require the task-await runtime hook");
+        let release_hook = self
+            .emitter
+            .runtime_hook_signature(RuntimeHook::TaskResultRelease)
+            .expect("prepared await lowering should require the task-result-release runtime hook");
+        let Operand::Place(place) = operand else {
+            panic!("prepared await operands should lower through task-handle places");
+        };
+        let handle_info = self
+            .prepared
+            .async_task_handles
+            .get(&place.base)
+            .unwrap_or_else(|| {
+                panic!("prepared await operand at {span:?} should be a task handle")
+            });
+        let handle = self.render_operand(output, operand, span);
+        let result_ptr = self.fresh_temp();
+        let _ = writeln!(
+            output,
+            "  {result_ptr} = call {} @{}({} {})",
+            await_hook.return_type.llvm_ir(),
+            await_hook.hook.symbol_name(),
+            handle.llvm_ty,
+            handle.repr
+        );
+
+        match &handle_info.result_layout {
+            AsyncTaskResultLayout::Void => {
+                let _ = writeln!(
+                    output,
+                    "  call {} @{}(ptr {result_ptr})",
+                    release_hook.return_type.llvm_ir(),
+                    release_hook.hook.symbol_name()
+                );
+                Some(LoweredValue {
+                    ty: void_ty(),
+                    llvm_ty: "void".to_owned(),
+                    repr: "void".to_owned(),
+                })
+            }
+            AsyncTaskResultLayout::Scalar { llvm_ty, .. } => {
+                let loaded = self.fresh_temp();
+                let _ = writeln!(output, "  {loaded} = load {llvm_ty}, ptr {result_ptr}");
+                let _ = writeln!(
+                    output,
+                    "  call {} @{}(ptr {result_ptr})",
+                    release_hook.return_type.llvm_ir(),
+                    release_hook.hook.symbol_name()
+                );
+                Some(LoweredValue {
+                    ty: handle_info.result_ty.clone(),
+                    llvm_ty: llvm_ty.clone(),
+                    repr: loaded,
+                })
             }
         }
     }
@@ -1550,6 +1744,20 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
     ) -> LoweredValue {
         match operand {
             Operand::Place(place) => {
+                if self.prepared.async_task_handles.contains_key(&place.base) {
+                    let temp = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {temp} = load ptr, ptr {}",
+                        llvm_slot_name(self.body, place.base)
+                    );
+                    return LoweredValue {
+                        ty: Ty::Unknown,
+                        llvm_ty: "ptr".to_owned(),
+                        repr: temp,
+                    };
+                }
+
                 let ty = self
                     .prepared
                     .local_types
@@ -2500,12 +2708,12 @@ fn main() -> Int {
     }
 
     #[test]
-    fn rejects_unsupported_await_lowering_in_async_library_body() {
+    fn emits_await_lowering_for_scalar_async_results() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
             RuntimeCapability::TaskAwait,
         ]);
-        let messages = emit_error_with_runtime_hooks(
+        let rendered = emit_with_runtime_hooks(
             r#"
 async fn worker() -> Int {
     return 1
@@ -2519,12 +2727,63 @@ async fn helper() -> Int {
             &runtime_hooks,
         );
 
+        assert!(rendered.contains("declare ptr @qlrt_task_await(ptr)"));
+        assert!(rendered.contains("declare void @qlrt_task_result_release(ptr)"));
+        assert!(rendered.contains("define i64 @ql_1_helper__async_body(ptr %frame)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load i64, ptr %t"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %t"));
+    }
+
+    #[test]
+    fn emits_await_lowering_for_void_async_results() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Void {
+    return
+}
+
+async fn helper() -> Void {
+    await worker()
+    return
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define void @ql_1_helper__async_body(ptr %frame)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %t"));
+        assert!(!rendered.contains("load void"));
+    }
+
+    #[test]
+    fn rejects_await_lowering_without_task_result_release_hook() {
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    return await worker()
+}
+"#,
+            CodegenMode::Library,
+            &[
+                runtime_hook_signature(RuntimeHook::AsyncTaskCreate),
+                runtime_hook_signature(RuntimeHook::TaskAwait),
+            ],
+        );
+
         assert!(messages.iter().any(|message| {
-            message == "LLVM IR backend foundation does not support `await` yet"
-        }));
-        assert!(messages.iter().all(|message| {
-            !message.contains("could not resolve LLVM type for local")
-                && !message.contains("could not infer LLVM type for MIR local")
+            message
+                == "LLVM IR backend foundation requires the `task-result-release` runtime hook before lowering `await` expressions"
         }));
     }
 

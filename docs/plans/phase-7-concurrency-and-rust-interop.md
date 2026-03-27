@@ -60,16 +60,17 @@
 - `ql-driver` 已开始保守消费这份 runtime requirement surface：当前会把 `async-function-bodies`、`task-spawn`、`task-await`、`async-iteration` 映射成稳定的 build-time unsupported 诊断，并与 backend 同类 unsupported diagnostics 做去重合并
 - 已在 `ql-codegen-llvm` 接入共享 runtime hook ABI contract：`CodegenInput` 当前可携带 dedupe 后的 `RuntimeHookSignature` 列表，后端会直接复用 `ql-runtime` 的声明文本渲染 runtime hook declarations，而不是在 backend 内重复维护符号名或 ABI 字符串
 - 已在 `ql-codegen-llvm` 增补最小 async frame scaffold：当前 body-bearing `async fn` 会拆成一个统一接收 `ptr frame` 的真实 body symbol（`__async_body`）加一个公开 wrapper；parameterless wrapper 继续调用 `qlrt_async_task_create(entry, null)`，带参数 wrapper 会先通过 `qlrt_async_frame_alloc(size, align)` 构造最小 heap frame、写入参数，再调用 `qlrt_async_task_create(entry, frame)`，用于冻结最小 IR 结构
-- 已在 `ql-codegen-llvm` / `ql-driver` / `ql-cli` 补上 library-mode async unsupported 回归：非 entry async body 中的 `await` / `spawn` / `for await` 现在也有独立 backend/driver/CLI 覆盖，`for await` 不再额外泄露泛化的 ``for`` lowering 或 iterable 预物化噪声
+- 已在 `ql-codegen-llvm` / `ql-driver` / `ql-cli` 补上 library-mode async 边界回归：当前 `spawn` / `for await` 在非 entry async body 中仍有独立 backend/driver/CLI unsupported 覆盖，`await` 则保留缺失 hook / 不支持结果布局等边界回归，且 `for await` 不再额外泄露泛化的 ``for`` lowering 或 iterable 预物化噪声
 - 已在 `crates/ql-runtime` / `ql-cli` / `ql-codegen-llvm` 增补 task-result transport 的第一条共享 ABI 合同：`task-await` 当前会同时暴露 `qlrt_task_await(join_handle: ptr) -> ptr` 与 `qlrt_task_result_release(result: ptr) -> void`，先冻结 result payload 的“返回”和“释放”边界，再延后 typed extraction / await lowering 的细节
 - 已在 `ql-codegen-llvm` 增补 `AsyncTaskResultLayout` 内部抽象：当前先把 async 返回值限制在 `Void` 或已支持的 scalar builtin 上，提前冻结“`qlrt_task_await` 返回的 opaque ptr 指向原生标量 payload，取值后再调用 `qlrt_task_result_release`”这条 backend 内部假设；聚合类型仍保持未开放，避免过早承诺结果布局
+- 已在 `ql-codegen-llvm` 打开首个真实 `await` lowering：当前在 backend 内仅支持 `Void` / scalar builtin async 结果，把 `await <async-call>` 降成“读取 task handle -> `qlrt_task_await` -> 如有标量则 load -> `qlrt_task_result_release`”；仍不开放 `spawn` lowering、`for await` lowering、聚合结果 payload 或对外 async build 入口
 - 已在 `ql-typeck` 收紧 direct async call 语义：`async fn` 调用当前只能作为 `await <call>` 或 `spawn <call>` 的直接 operand 使用，独立使用 async call 结果会给出显式诊断，避免在 task/result ABI 未冻结前把 async 调用误当成同步返回值
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
 - 当前 direct `async fn` call 也不提供独立任务/handle 类型；在完整 task/result surface 落地前，编译器只允许通过 `await` / `spawn` 这两个显式边界消费 async 调用
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前 hook ABI skeleton 已冻结第一版 LLVM-facing contract string，但仍只使用 `ptr` 级 opaque 形态；真实内存布局、结果传递协议和更细粒度调用约定仍未冻结
-- 当前 backend 对这些 hook 已进入“declaration + async body wrapper + conservative frame hydration”阶段，但仍不代表 `await` / `spawn` / `for await` lowering、任务结果协议、frame 生命周期管理或调度语义已经进入可执行阶段
+- 当前 backend 对这些 hook 已进入“declaration + async body wrapper + frame hydration + 首个 scalar/void await lowering”阶段，但这仍不代表 `spawn` / `for await` lowering、更广义的任务结果协议、frame 生命周期管理或调度语义已经进入可执行阶段
 - 当前 parameterless `async fn` wrapper 仍只依赖 `async-task-create` hook；带参数的 `async fn` 现在还会显式要求 `async-frame-alloc` hook 已接入，但这仍只是最小 heap-frame scaffold，不代表更完整的 frame/capture/result 设计已经冻结
 - 当前 `async-iteration` 已在 driver 层前移成公开 build 诊断，但仍只固定失败合同，不代表 `for await` lowering、runtime hook 或调度语义已经设计完成
 - 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、显式字面量 `if true` / `if false`、显式字面量 `match true/false`、非字面量 `Bool` / enum `match` 上的字面量 guard、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、更广义的常量传播、更一般的 guard-sensitive `match` 与 unreachable 细化仍待后续切片

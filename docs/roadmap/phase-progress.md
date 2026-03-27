@@ -761,18 +761,19 @@ P6 当前仍刻意未完成：
 - `ql-driver` 已开始保守消费这份 runtime requirement surface：当前会把 `async-function-bodies`、`task-spawn`、`task-await`、`async-iteration` 映射成稳定的 build-time unsupported 诊断，并与 backend 同类 diagnostics 去重，锁住 driver/codegen 边界的拒绝合同
 - `ql-codegen-llvm` 已开始直接消费共享 runtime hook ABI signatures：后端输入现在可携带 dedupe 后的 hook 列表，并渲染稳定的 LLVM `declare` 语句，避免 backend 自己复制 hook 名称或 ABI 字符串
 - `ql-codegen-llvm` 现已把 body-bearing `async fn` 推进一步：backend 会统一生成 `ptr frame` 形态的真实 body symbol，并在 wrapper 中为带参数的 `async fn` 通过 `qlrt_async_frame_alloc` materialize 最小 heap frame，再交给 `qlrt_async_task_create`，先冻结 async body / wrapper / frame hydration 三层结构
-- `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已补上 library-mode async unsupported 合同回归：`await` / `spawn` / `for await` 在非 entry async body 中现在也有稳定回归覆盖，`for await` 不再额外泄露泛化的 ``for`` lowering 或 iterable 预物化噪声诊断
+- `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已补上 library-mode async 边界回归：`spawn` / `for await` 在非 entry async body 中仍保持稳定 unsupported 覆盖，`await` 则补上缺失 hook / 不支持结果布局等边界回归，而 `for await` 不再额外泄露泛化的 ``for`` lowering 或 iterable 预物化噪声诊断
 - `ql-runtime` / `ql-cli` / `ql-codegen-llvm` 已补上 task-result transport 的第一条 ABI skeleton：`task-await` capability 现在会同时暴露 `qlrt_task_await` 与 `qlrt_task_result_release`，先把“等待得到 opaque result ptr”与“释放 result payload”这两个动作拆开冻结合同，再决定后续 typed extraction lowering
 - `ql-codegen-llvm` 已补上 `AsyncTaskResultLayout` 内部抽象：当前 async 结果先只接受 `Void` 和已支持的 scalar builtin，并在 signature 阶段就锁定 payload 的 LLVM type/size/align，避免后续 `await` lowering 再反过来重写 async wrapper/result 合同
+- `ql-codegen-llvm` 已打开首个真实 `await` lowering：当前在 backend 内仅支持 `Void` / scalar builtin async 结果，并把 `await` 降成 `qlrt_task_await` + optional scalar load + `qlrt_task_result_release` 的最小链路
 - `ql-typeck` 已把 direct async call 语义收紧到显式边界：当前 `async fn` 调用只能被 `await` 或 `spawn` 直接消费，独立使用 async call 结果会给出稳定诊断，避免语义层继续把 async 调用伪装成同步返回值
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前共享 hook ABI 已冻结第一版 LLVM-facing contract string，但真实内存布局、结果传递协议和更细粒度调用约定仍未冻结
-- 当前 backend 虽已具备 declaration + async body wrapper/frame scaffold，但真正的 `await` / `spawn` / `for await` lowering、任务结果协议、frame 生命周期管理和更广义的布局协议仍未开放
+- 当前 backend 虽已具备 declaration + async body wrapper/frame scaffold，并已打通首个 scalar/void `await` lowering，但 `spawn` / `for await` lowering、更广义的任务结果协议、frame 生命周期管理和更广义的布局协议仍未开放
 - 当前 `async-iteration` 已在 driver 层有公开 build 诊断，但仍只作为保守的失败合同存在；这还不代表 `for await` 已进入 lowering/runtime hook 设计
 
 ### 下一步（P7.1 延续）
 
-- 在现有 shared hook ABI + async body wrapper/frame scaffold 基础上，优先设计 task result / await join 的第一条结果传递约定，再决定 `await` / `spawn` 的最小 call-site IR 切片
+- 在现有 shared hook ABI + async body wrapper/frame scaffold + scalar/void `await` lowering 基础上，优先扩展 task result / await join 协议到更广义 payload，并决定是否推进 `spawn` 的首个 call-site IR 切片
 - 评估是否将 async 上下文桥接能力通过受控实验接口暴露给 editor（保持协议低风险）
 - 在不引入完整 CFG 的前提下，继续补 closure / async / return-path 的保守语义回归
 - 若后续需要把 must-return 从显式字面量 `if` 扩展到更一般的常量传播或 branch pruning，应单独设计常量/CFG 规则边界
