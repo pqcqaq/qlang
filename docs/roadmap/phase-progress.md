@@ -741,6 +741,7 @@ P6 当前仍刻意未完成：
 - `ql-driver` / `ql-cli` 进一步补齐 `dylib` async 拒绝回归：即使存在合法导出，也会优先返回 `async fn` unsupported 诊断
 - `ql-driver` / `ql-cli` 新增 `async + generic` 并存回归：锁住多条 backend unsupported 诊断的聚合稳定性
 - `ql-driver` / `ql-cli` 新增 `async + unsafe fn body` 并存回归：锁住签名级多条 backend unsupported 诊断的聚合稳定性与终端输出
+- `ql-codegen-llvm` / `ql-driver` / `ql-cli` 新增结构化 MIR terminator 的 backend 拒绝回归：`match` lowering unsupported 与 `for` lowering unsupported 现在都有后端单测、driver 回归和 CLI 失败快照覆盖
 - `ql-mir` 新增 async operator lowering 回归：`await` / `spawn` 当前会作为显式 unary rvalue 保留在 MIR 中，并消费前面物化出来的 call 结果；same-file import alias 的 async call 也会继续保留 `Import` callee，而不是退化成 opaque/unresolved operand
 
 ### 下一步（P7.1 延续）
