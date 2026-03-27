@@ -397,6 +397,36 @@ fn main(value: Cmd.Scope.Config) -> Cmd.Scope.Config {
 }
 
 #[test]
+fn hover_bridge_renders_markdown_for_array_typed_functions() {
+    let source = r#"
+fn take(values: [Int; 3]) -> [Int; 3] {
+    return values
+}
+
+fn main() -> Int {
+    return take([1, 2, 3])[0]
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let hover = hover_for_analysis(
+        source,
+        &analysis,
+        span_to_range(source, nth_span(source, "take", 2)).start,
+    )
+    .expect("array-typed function use should hover");
+
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown content");
+    };
+    assert!(markup.value.contains("**function** `take`"));
+    assert!(
+        markup
+            .value
+            .contains("fn take(values: [Int; 3]) -> [Int; 3]")
+    );
+}
+
+#[test]
 fn hover_bridge_renders_markdown_for_member_symbols() {
     let source = r#"
 struct Counter {
