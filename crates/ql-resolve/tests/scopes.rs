@@ -184,3 +184,132 @@ impl Counter {
     assert_ne!(impl_block.methods[0].span, impl_block.methods[1].span);
     assert_ne!(get_scope, read_scope);
 }
+
+#[test]
+fn async_method_scopes_propagate_through_impl_and_extend_bodies() {
+    let (module, resolution) = resolved(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+fn worker() -> Int {
+    return 1
+}
+
+impl Counter {
+    fn sync_run(self) -> Int {
+        let value = await worker()
+        return value
+    }
+
+    async fn async_run(self) -> Int {
+        let value = await worker()
+        return value
+    }
+}
+
+extend Counter {
+    fn sync_stream(self) -> Int {
+        spawn worker()
+        return 0
+    }
+
+    async fn async_stream(self) -> Int {
+        spawn worker()
+        return 0
+    }
+}
+"#,
+    );
+
+    let impl_block = module
+        .items
+        .iter()
+        .find_map(|&item_id| match &module.item(item_id).kind {
+            ql_hir::ItemKind::Impl(impl_block) => Some(impl_block),
+            _ => None,
+        })
+        .expect("impl block should exist");
+    let extend_block = module
+        .items
+        .iter()
+        .find_map(|&item_id| match &module.item(item_id).kind {
+            ql_hir::ItemKind::Extend(extend_block) => Some(extend_block),
+            _ => None,
+        })
+        .expect("extend block should exist");
+
+    let sync_impl_scope = resolution
+        .function_scope(impl_block.methods[0].span)
+        .expect("sync impl method should have a scope");
+    let async_impl_scope = resolution
+        .function_scope(impl_block.methods[1].span)
+        .expect("async impl method should have a scope");
+    let sync_extend_scope = resolution
+        .function_scope(extend_block.methods[0].span)
+        .expect("sync extend method should have a scope");
+    let async_extend_scope = resolution
+        .function_scope(extend_block.methods[1].span)
+        .expect("async extend method should have a scope");
+
+    assert!(!resolution.scope_is_in_async_function(sync_impl_scope));
+    assert!(resolution.scope_is_in_async_function(async_impl_scope));
+    assert!(!resolution.scope_is_in_async_function(sync_extend_scope));
+    assert!(resolution.scope_is_in_async_function(async_extend_scope));
+
+    let sync_impl_body = module.block(
+        impl_block.methods[0]
+            .body
+            .expect("sync impl method should have a body"),
+    );
+    let async_impl_body = module.block(
+        impl_block.methods[1]
+            .body
+            .expect("async impl method should have a body"),
+    );
+    let sync_extend_body = module.block(
+        extend_block.methods[0]
+            .body
+            .expect("sync extend method should have a body"),
+    );
+    let async_extend_body = module.block(
+        extend_block.methods[1]
+            .body
+            .expect("async extend method should have a body"),
+    );
+
+    let StmtKind::Let {
+        value: sync_impl_await,
+        ..
+    } = &module.stmt(sync_impl_body.statements[0]).kind
+    else {
+        panic!("sync impl method should start with a let binding");
+    };
+    let StmtKind::Let {
+        value: async_impl_await,
+        ..
+    } = &module.stmt(async_impl_body.statements[0]).kind
+    else {
+        panic!("async impl method should start with a let binding");
+    };
+    let StmtKind::Expr {
+        expr: sync_extend_spawn,
+        ..
+    } = &module.stmt(sync_extend_body.statements[0]).kind
+    else {
+        panic!("sync extend method should start with a spawn expression");
+    };
+    let StmtKind::Expr {
+        expr: async_extend_spawn,
+        ..
+    } = &module.stmt(async_extend_body.statements[0]).kind
+    else {
+        panic!("async extend method should start with a spawn expression");
+    };
+
+    assert!(!resolution.expr_is_in_async_function(*sync_impl_await));
+    assert!(resolution.expr_is_in_async_function(*async_impl_await));
+    assert!(!resolution.expr_is_in_async_function(*sync_extend_spawn));
+    assert!(resolution.expr_is_in_async_function(*async_extend_spawn));
+}

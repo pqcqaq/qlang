@@ -9161,3 +9161,106 @@ fn main() -> Int {
         None
     );
 }
+
+#[test]
+fn async_context_bridge_covers_impl_and_extend_methods() {
+    let source = r#"
+struct Counter {
+    value: Int,
+}
+
+fn worker() -> Int {
+    return 1
+}
+
+impl Counter {
+    fn sync_run(self) -> Int {
+        spawn worker()
+        return await worker()
+    }
+
+    async fn async_run(self) -> Int {
+        spawn worker()
+        return await worker()
+    }
+}
+
+extend Counter {
+    fn sync_stream(self) -> Int {
+        for await value in [1, 2, 3] {
+            let current = value
+        }
+        return 0
+    }
+
+    async fn async_stream(self) -> Int {
+        for await value in [1, 2, 3] {
+            let current = value
+        }
+        return 0
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let sync_spawn_position = span_to_range(source, nth_span(source, "spawn", 1)).start;
+    let sync_await_position = span_to_range(source, nth_span(source, "await", 1)).start;
+    let async_spawn_position = span_to_range(source, nth_span(source, "spawn", 2)).start;
+    let async_await_position = span_to_range(source, nth_span(source, "await", 2)).start;
+    let sync_for_await_position = span_to_range(source, nth_span(source, "await", 3)).start;
+    let async_for_await_position = span_to_range(source, nth_span(source, "await", 4)).start;
+
+    let sync_spawn = async_context_for_analysis(source, &analysis, sync_spawn_position)
+        .expect("sync impl spawn context should exist");
+    assert_eq!(
+        sync_spawn.range,
+        span_to_range(source, nth_span(source, "spawn", 1))
+    );
+    assert_eq!(sync_spawn.operator, AsyncOperatorKind::Spawn);
+    assert!(!sync_spawn.in_async_function);
+
+    let sync_await = async_context_for_analysis(source, &analysis, sync_await_position)
+        .expect("sync impl await context should exist");
+    assert_eq!(
+        sync_await.range,
+        span_to_range(source, nth_span(source, "await", 1))
+    );
+    assert_eq!(sync_await.operator, AsyncOperatorKind::Await);
+    assert!(!sync_await.in_async_function);
+
+    let async_spawn = async_context_for_analysis(source, &analysis, async_spawn_position)
+        .expect("async impl spawn context should exist");
+    assert_eq!(
+        async_spawn.range,
+        span_to_range(source, nth_span(source, "spawn", 2))
+    );
+    assert_eq!(async_spawn.operator, AsyncOperatorKind::Spawn);
+    assert!(async_spawn.in_async_function);
+
+    let async_await = async_context_for_analysis(source, &analysis, async_await_position)
+        .expect("async impl await context should exist");
+    assert_eq!(
+        async_await.range,
+        span_to_range(source, nth_span(source, "await", 2))
+    );
+    assert_eq!(async_await.operator, AsyncOperatorKind::Await);
+    assert!(async_await.in_async_function);
+
+    let sync_for_await = async_context_for_analysis(source, &analysis, sync_for_await_position)
+        .expect("sync extend for-await context should exist");
+    assert_eq!(
+        sync_for_await.range,
+        span_to_range(source, nth_span(source, "await", 3))
+    );
+    assert_eq!(sync_for_await.operator, AsyncOperatorKind::ForAwait);
+    assert!(!sync_for_await.in_async_function);
+
+    let async_for_await = async_context_for_analysis(source, &analysis, async_for_await_position)
+        .expect("async extend for-await context should exist");
+    assert_eq!(
+        async_for_await.range,
+        span_to_range(source, nth_span(source, "await", 4))
+    );
+    assert_eq!(async_for_await.operator, AsyncOperatorKind::ForAwait);
+    assert!(async_for_await.in_async_function);
+}
