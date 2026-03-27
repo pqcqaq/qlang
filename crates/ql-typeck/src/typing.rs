@@ -449,6 +449,19 @@ impl<'a> Checker<'a> {
                     return Ty::Unknown;
                 }
 
+                if !self.call_operand_is_async(operand) {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "`await` currently requires calling an `async fn`".to_string(),
+                        )
+                        .with_label(
+                            Label::new(self.module.expr(expr_id).span)
+                                .with_message("`await` used with a non-async call"),
+                        ),
+                    );
+                    return Ty::Unknown;
+                }
+
                 operand_ty
             }
             ql_ast::UnaryOp::Spawn => {
@@ -471,6 +484,19 @@ impl<'a> Checker<'a> {
                         .with_label(
                             Label::new(self.module.expr(expr_id).span)
                                 .with_message("`spawn` used with a non-call operand"),
+                        ),
+                    );
+                    return Ty::Unknown;
+                }
+
+                if !self.call_operand_is_async(operand) {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "`spawn` currently requires calling an `async fn`".to_string(),
+                        )
+                        .with_label(
+                            Label::new(self.module.expr(expr_id).span)
+                                .with_message("`spawn` used with a non-async call"),
                         ),
                     );
                     return Ty::Unknown;
@@ -940,6 +966,17 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn call_operand_is_async(&self, operand: ExprId) -> bool {
+        let ExprKind::Call { callee, .. } = &self.module.expr(operand).kind else {
+            return false;
+        };
+        let Some(callee_ty) = self.expr_types.get(callee) else {
+            return false;
+        };
+        self.call_signature(*callee, callee_ty)
+            .is_some_and(|signature| signature.is_async)
+    }
+
     fn ordered_match_flow<F>(&self, arms: &[MatchArm], mut pattern_matches: F) -> ControlFlowSummary
     where
         F: FnMut(&Self, PatternId) -> bool,
@@ -1400,6 +1437,7 @@ impl<'a> Checker<'a> {
 
         match callee_ty {
             Ty::Callable { params, ret } => Some(Signature {
+                is_async: false,
                 params: params
                     .iter()
                     .cloned()
@@ -2559,6 +2597,7 @@ enum AssignmentTargetPolicy {
 }
 
 struct Signature {
+    is_async: bool,
     params: Vec<SignatureParam>,
     ret: Ty,
 }
@@ -2566,6 +2605,7 @@ struct Signature {
 impl Signature {
     fn from_function(module: &Module, resolution: &ResolutionMap, function: &Function) -> Self {
         Self {
+            is_async: function.is_async,
             params: function
                 .params
                 .iter()
