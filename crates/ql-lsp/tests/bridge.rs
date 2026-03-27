@@ -3152,6 +3152,38 @@ fn id[T](value: T) -> T {
 }
 
 #[test]
+fn references_bridge_returns_empty_when_only_declaration_exists() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+fn helper() -> Int {
+    return 1
+}
+
+fn main() -> Int {
+    return 0
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let helper_position = span_to_range(source, nth_span(source, "helper", 1)).start;
+    let with_declaration = references_for_analysis(&uri, source, &analysis, helper_position, true)
+        .expect("helper symbol should resolve");
+    let without_declaration =
+        references_for_analysis(&uri, source, &analysis, helper_position, false)
+            .expect("helper symbol should resolve");
+    assert_eq!(
+        with_declaration,
+        vec![Location::new(
+            uri.clone(),
+            span_to_range(source, nth_span(source, "helper", 1))
+        )]
+    );
+    assert!(
+        without_declaration.is_empty(),
+        "excluding declaration should keep the symbol result but drop the sole declaration location"
+    );
+}
+
+#[test]
 fn definition_and_references_bridge_follow_explicit_struct_field_labels() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
