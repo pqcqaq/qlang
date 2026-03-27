@@ -304,6 +304,87 @@ fn main() -> Int {
 }
 
 #[test]
+fn accepts_function_bodies_with_loop_statements_that_return_on_all_paths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn run() -> Int {
+    loop {
+        return 1
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_loop_bodies_with_break_before_return_as_non_returning() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn run() -> Int {
+    loop {
+        break
+        return 1
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"function body has type mismatch: expected `Int`, found `Void`".to_string()),
+        "expected missing function return diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_returns_after_non_breaking_loops_as_non_returning() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn run() -> Int {
+    loop {
+    }
+    return 1
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"function body has type mismatch: expected `Int`, found `Void`".to_string()),
+        "expected unreachable trailing return to stay outside guaranteed-return analysis, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_closure_bodies_with_loop_statements_that_return_on_all_paths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn apply(f: () -> Int) -> Int {
+    return f()
+}
+
+fn main() -> Int {
+    return apply(() => {
+        loop {
+            return 1
+        }
+    })
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_closure_bodies_that_can_fall_through_without_returning() {
     let diagnostics = diagnostic_messages(
         r#"

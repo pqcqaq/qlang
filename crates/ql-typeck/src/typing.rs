@@ -20,6 +20,74 @@ pub(crate) struct TypingResult {
     pub member_targets: HashMap<ExprId, MemberTarget>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ControlFlowSummary {
+    falls_through: bool,
+    returns: bool,
+    breaks: bool,
+    continues: bool,
+}
+
+impl ControlFlowSummary {
+    fn diverges() -> Self {
+        Self::default()
+    }
+
+    fn normal() -> Self {
+        Self {
+            falls_through: true,
+            ..Self::default()
+        }
+    }
+
+    fn returns() -> Self {
+        Self {
+            returns: true,
+            ..Self::default()
+        }
+    }
+
+    fn breaks() -> Self {
+        Self {
+            breaks: true,
+            ..Self::default()
+        }
+    }
+
+    fn continues() -> Self {
+        Self {
+            continues: true,
+            ..Self::default()
+        }
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self {
+            falls_through: self.falls_through || other.falls_through,
+            returns: self.returns || other.returns,
+            breaks: self.breaks || other.breaks,
+            continues: self.continues || other.continues,
+        }
+    }
+
+    fn then(self, next: Self) -> Self {
+        if !self.falls_through {
+            return self;
+        }
+
+        Self {
+            falls_through: next.falls_through,
+            returns: self.returns || next.returns,
+            breaks: self.breaks || next.breaks,
+            continues: self.continues || next.continues,
+        }
+    }
+
+    fn guarantees_return(self) -> bool {
+        self.returns && !self.falls_through && !self.breaks && !self.continues
+    }
+}
+
 /// Run the first-pass typing checks over lowered HIR plus name-resolution data.
 pub(crate) fn analyze_module(module: &Module, resolution: &ResolutionMap) -> TypingResult {
     let mut checker = Checker::new(module, resolution);
@@ -696,72 +764,146 @@ impl<'a> Checker<'a> {
     }
 
     fn expr_guarantees_return(&self, expr_id: ExprId) -> bool {
-        // This is intentionally a conservative under-approximation of "all
-        // paths return". It should never claim a body is guaranteed to return
-        // unless the current front-end can prove that cheaply.
+        self.expr_flow(expr_id).guarantees_return()
+    }
+
+    fn expr_flow(&self, expr_id: ExprId) -> ControlFlowSummary {
         match &self.module.expr(expr_id).kind {
-            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
-                self.block_guarantees_return(*block_id)
-            }
+            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self.block_flow(*block_id),
             ExprKind::If {
+                condition,
                 then_branch,
                 else_branch,
                 ..
             } => {
-                self.block_guarantees_return(*then_branch)
-                    && else_branch.is_some_and(|expr_id| self.expr_guarantees_return(expr_id))
+                let branch_flow = self.block_flow(*then_branch).union(
+                    else_branch
+                        .map(|expr_id| self.expr_flow(expr_id))
+                        .unwrap_or_else(ControlFlowSummary::normal),
+                );
+                self.expr_flow(*condition).then(branch_flow)
             }
             ExprKind::Match { value, arms } => {
-                self.match_is_exhaustive(*value, arms)
-                    && arms.iter().all(|arm| self.expr_guarantees_return(arm.body))
-            }
-            ExprKind::Member { object, .. } => self.expr_guarantees_return(*object),
-            ExprKind::Call { callee, .. } => self.expr_guarantees_return(*callee),
-            ExprKind::Binary { left, .. } => self.expr_guarantees_return(*left),
-            ExprKind::Unary { expr, .. } | ExprKind::Question(expr) => {
-                self.expr_guarantees_return(*expr)
+                let arms_flow = arms
+                    .iter()
+                    .fold(ControlFlowSummary::diverges(), |flow, arm| {
+                        flow.union(self.match_arm_flow(arm))
+                    });
+                let match_flow = if self.match_is_exhaustive(*value, arms) {
+                    arms_flow
+                } else {
+                    arms_flow.union(ControlFlowSummary::normal())
+                };
+                self.expr_flow(*value).then(match_flow)
             }
             // Nested closures are independent callable bodies, so their `return`
             // statements must not satisfy the outer function/closure body.
-            ExprKind::Closure { .. }
-            | ExprKind::Name(_)
+            ExprKind::Closure { .. } => ControlFlowSummary::normal(),
+            ExprKind::Call { callee, args } => {
+                let mut flow = self.expr_flow(*callee);
+                for arg in args {
+                    flow = flow.then(self.call_arg_flow(arg));
+                }
+                flow
+            }
+            ExprKind::Member { object, .. } => self.expr_flow(*object),
+            ExprKind::Bracket { target, items } => {
+                let mut flow = self.expr_flow(*target);
+                for &item in items {
+                    flow = flow.then(self.expr_flow(item));
+                }
+                flow
+            }
+            ExprKind::StructLiteral { fields, .. } => {
+                let mut flow = ControlFlowSummary::normal();
+                for field in fields {
+                    flow = flow.then(self.expr_flow(field.value));
+                }
+                flow
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.expr_flow(*left).then(self.expr_flow(*right))
+            }
+            ExprKind::Unary { expr, .. } | ExprKind::Question(expr) => self.expr_flow(*expr),
+            ExprKind::Name(_)
             | ExprKind::Integer(_)
             | ExprKind::String { .. }
             | ExprKind::Bool(_)
-            | ExprKind::Tuple(_)
-            | ExprKind::Array(_)
-            | ExprKind::Bracket { .. }
-            | ExprKind::StructLiteral { .. }
-            | ExprKind::NoneLiteral => false,
+            | ExprKind::NoneLiteral => ControlFlowSummary::normal(),
+            ExprKind::Tuple(items) | ExprKind::Array(items) => {
+                let mut flow = ControlFlowSummary::normal();
+                for &item in items {
+                    flow = flow.then(self.expr_flow(item));
+                }
+                flow
+            }
         }
     }
 
     fn block_guarantees_return(&self, block_id: BlockId) -> bool {
-        let block = self.module.block(block_id);
-        block
-            .statements
-            .iter()
-            .copied()
-            .any(|stmt_id| self.stmt_guarantees_return(stmt_id))
-            || block
-                .tail
-                .is_some_and(|expr_id| self.expr_guarantees_return(expr_id))
+        self.block_flow(block_id).guarantees_return()
     }
 
-    fn stmt_guarantees_return(&self, stmt_id: StmtId) -> bool {
+    fn block_flow(&self, block_id: BlockId) -> ControlFlowSummary {
+        let block = self.module.block(block_id);
+        let mut flow = ControlFlowSummary::normal();
+        for &stmt_id in &block.statements {
+            flow = flow.then(self.stmt_flow(stmt_id));
+        }
+        if let Some(tail) = block.tail {
+            flow = flow.then(self.expr_flow(tail));
+        }
+        flow
+    }
+
+    fn stmt_flow(&self, stmt_id: StmtId) -> ControlFlowSummary {
         match &self.module.stmt(stmt_id).kind {
-            StmtKind::Return(_) => true,
-            StmtKind::Let { value, .. } | StmtKind::Defer(value) => {
-                self.expr_guarantees_return(*value)
+            StmtKind::Return(value) => value
+                .map(|expr_id| self.expr_flow(expr_id).then(ControlFlowSummary::returns()))
+                .unwrap_or_else(ControlFlowSummary::returns),
+            StmtKind::Let { value, .. } | StmtKind::Defer(value) => self.expr_flow(*value),
+            StmtKind::While { condition, body } => {
+                self.expr_flow(*condition).then(ControlFlowSummary {
+                    falls_through: true,
+                    returns: self.block_flow(*body).returns,
+                    ..ControlFlowSummary::default()
+                })
             }
-            StmtKind::While { condition, .. } => self.expr_guarantees_return(*condition),
-            // Loop bodies can still break or continue, so keep them outside the
-            // guaranteed-return surface until we have dedicated control-flow
-            // analysis for loop exits.
-            StmtKind::Loop { .. } => false,
-            StmtKind::For { iterable, .. } => self.expr_guarantees_return(*iterable),
-            StmtKind::Expr { expr, .. } => self.expr_guarantees_return(*expr),
-            StmtKind::Break | StmtKind::Continue => false,
+            StmtKind::Loop { body } => {
+                let body_flow = self.block_flow(*body);
+                ControlFlowSummary {
+                    falls_through: body_flow.breaks,
+                    returns: body_flow.returns,
+                    ..ControlFlowSummary::default()
+                }
+            }
+            StmtKind::For { iterable, body, .. } => {
+                self.expr_flow(*iterable).then(ControlFlowSummary {
+                    falls_through: true,
+                    returns: self.block_flow(*body).returns,
+                    ..ControlFlowSummary::default()
+                })
+            }
+            StmtKind::Expr { expr, .. } => self.expr_flow(*expr),
+            StmtKind::Break => ControlFlowSummary::breaks(),
+            StmtKind::Continue => ControlFlowSummary::continues(),
+        }
+    }
+
+    fn call_arg_flow(&self, arg: &CallArg) -> ControlFlowSummary {
+        match arg {
+            CallArg::Positional(expr_id) => self.expr_flow(*expr_id),
+            CallArg::Named { value, .. } => self.expr_flow(*value),
+        }
+    }
+
+    fn match_arm_flow(&self, arm: &MatchArm) -> ControlFlowSummary {
+        let body_flow = self.expr_flow(arm.body);
+        match arm.guard {
+            Some(guard) => self
+                .expr_flow(guard)
+                .then(body_flow.union(ControlFlowSummary::normal())),
+            None => body_flow,
         }
     }
 
