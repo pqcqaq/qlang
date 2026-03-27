@@ -91,6 +91,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - diagnostics severity / label fallback bridge parity
 - diagnostics primary-only label -> no related-information parity
 - diagnostics secondary-label order and message-fallback parity
+- diagnostics unlabeled source and empty related-information parity
 - UTF-16 / CRLF position-range bridge parity
 - semantic-token UTF-16 / CRLF column parity
 - references include-declaration empty-result parity
