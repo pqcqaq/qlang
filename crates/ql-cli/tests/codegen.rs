@@ -172,6 +172,13 @@ fn codegen_snapshots_match() {
             extra_args: &[],
         },
         FailCase {
+            name: "unsupported_deferred_multi_segment_type_build",
+            source_relative: "tests/codegen/fail/unsupported_deferred_multi_segment_type_build.ql",
+            emit: "dylib",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_deferred_multi_segment_type_build.stderr",
+            extra_args: &[],
+        },
+        FailCase {
             name: "dylib_requires_export_build",
             source_relative: "tests/codegen/fail/dylib_requires_export_build.ql",
             emit: "dylib",

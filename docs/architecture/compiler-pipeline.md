@@ -315,6 +315,7 @@ source
 - 顶层 `extern "c"` 函数定义现在也已经进入真实后端路径，并会使用稳定 C 符号名而不是内部 mangling
 - `ql-driver` 现在还会在 `dylib` 请求里先投影 exported C symbol 列表，再把这份符号集传给 toolchain；Windows 下会显式把它们转成 `/EXPORT:<symbol>` linker 参数
 - build-side header sidecar 只允许用于 `dylib` / `staticlib`，会提前拒绝与主 artifact 路径冲突的 `--header-output`，并在 sidecar 失败时回收刚生成的 library artifact，避免 pipeline 暴露半成功状态
+- backend / header unsupported diagnostics 现在也继续保留 deferred multi-segment source-backed type 文本，不会把 `Cmd.Scope.Config` 这类路径误折叠成 same-file `Command` 再报错
 - 当前仍然故意不把独立 linker family discovery、runtime startup object、任意 shared-library surface 和更完整平台差异一次性揉进同一刀实现里
 
 也就是说，P4 先固定“后端放在哪一层、如何失败、如何测试、如何贯通 artifact pipeline”，再继续补更完整的链接与运行时能力。
@@ -353,6 +354,9 @@ source
 - 黑盒 `ql build` snapshot 现在还额外锁住 library build sidecar header：
   - `tests/codegen/pass/extern_c_export.h`
   - `tests/codegen/pass/extern_c_library.imports.h`
+- 黑盒 backend / FFI unsupported 回归现在也锁住 deferred multi-segment source-backed type 文本：
+  - `tests/codegen/fail/unsupported_deferred_multi_segment_type_build.ql`
+  - `crates/ql-cli/tests/ffi_header.rs`
 - 黑盒 `ql build` snapshot 现在也锁住 build-side `both` header 在 imported-host library 上的输出：
   - `tests/codegen/pass/extern_c_import_top_level.ffi.h`
 - 真实 FFI smoke harness 现在不再手写 prototype，并且已经改成在同一次 `ql build --header-output` 中同时拿到 library artifact 与 C header，再让宿主消费生成的 header

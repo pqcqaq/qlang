@@ -1,0 +1,3 @@
+error: tests/codegen/fail/unsupported_deferred_multi_segment_type_build.ql:7:28: LLVM IR backend foundation does not support parameter type `Cmd.Scope.Config` yet
+  extern "c" pub fn q_accept(value: Cmd.Scope.Config) -> Int {
+                             ^^^^^

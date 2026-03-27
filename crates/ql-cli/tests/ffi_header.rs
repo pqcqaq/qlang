@@ -109,6 +109,58 @@ extern "c" pub fn q_print(message: String) -> Void {
     );
 }
 
+#[test]
+fn ffi_header_preserves_deferred_multi_segment_type_paths_in_unsupported_diagnostics() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-ffi-header-deferred-type");
+    let source = temp.write(
+        "unsupported_deferred_type.ql",
+        r#"
+use Command as Cmd
+
+struct Command {
+    value: Int,
+}
+
+extern "c" pub fn q_accept(value: Cmd.Scope.Config) -> Int {
+    return 0
+}
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ql"))
+        .current_dir(&workspace_root)
+        .args(["ffi", "header", &source.to_string_lossy()])
+        .output()
+        .expect("run `ql ffi header` on deferred multi-segment type signature");
+    let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
+    let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected exit code 1\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.trim().is_empty(),
+        "expected no stdout for failing header generation\nstdout:\n{}",
+        stdout
+    );
+    assert!(
+        stderr
+            .contains("C header generation does not support parameter type `Cmd.Scope.Config` yet"),
+        "expected deferred source-backed type diagnostic in stderr\nstderr:\n{}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("parameter type `Command`"),
+        "expected deferred path to stay source-backed instead of collapsing to `Command`\nstderr:\n{}",
+        stderr
+    );
+}
+
 struct TempDir {
     path: PathBuf,
 }

@@ -160,6 +160,7 @@ Current semantic baseline in `ql check`:
   - program-mode entry `main` is still required to use the default Qlang ABI; exported C ABI entrypoints must use a separate helper function
   - unsupported first-class function values now fail with structured diagnostics instead of panicking the backend
   - unsupported backend features currently fail with structured diagnostics instead of silent partial lowering
+  - deferred multi-segment source-backed types now also stay preserved in backend and FFI unsupported diagnostics, so codegen/header errors report `Cmd.Scope.Config` instead of collapsing that path to a fake same-file concrete type like `Command`
   - native artifact emission currently requires clang on PATH or an explicit `QLANG_CLANG` override
   - static library emission currently requires an archive tool on PATH or an explicit `QLANG_AR` override
   - on Windows, `QLANG_CLANG` should point to an invocable binary or `.cmd` wrapper rather than a raw `.ps1` script path
@@ -172,7 +173,7 @@ Current semantic baseline in `ql check`:
   - `ql ffi header <file>` now emits deterministic C headers for exported, imported, or combined `extern "c"` surfaces; exports remain the default and still write `target/ql/ffi/<stem>.h`, while imports and combined surfaces default to `target/ql/ffi/<stem>.imports.h` and `target/ql/ffi/<stem>.ffi.h`
   - `ql build <file> --emit dylib|staticlib` now also supports build-side header sidecars through `--header`, `--header-surface`, and `--header-output`; when no header output is specified, the header is written next to the built library artifact but keeps the source stem, for example `libffi_export.so` + `--header` -> `ffi_export.h`
   - build-side header generation reuses the same analysis snapshot as codegen, is rejected for non-library emits, rejects primary-artifact/header path collisions up front, and removes the just-built library artifact if sidecar generation fails so the CLI does not leave a half-success state behind
-  - `crates/ql-cli/tests/ffi_header.rs` now locks export/import/both header surfaces plus failing-signature and invalid-surface regressions with black-box snapshots
+  - `crates/ql-cli/tests/ffi_header.rs` now locks export/import/both header surfaces plus failing-signature and invalid-surface regressions with black-box snapshots, including source-backed deferred multi-segment type names in unsupported signature diagnostics
 - `qlsp` now consumes that shared analysis layer to provide LSP hover, go-to-definition, same-file find-references, same-file completion, same-file semantic tokens, same-file prepare/rename, and live diagnostics for open documents
 - Phase 3 has started with a structural MIR slice:
   - function bodies lower into explicit basic blocks, statements, terminators, locals, scopes, and cleanup actions

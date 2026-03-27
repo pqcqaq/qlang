@@ -651,6 +651,7 @@
 
 - 后端遇到未支持能力时返回结构化 diagnostics，而不是 panic
 - first-class function value 当前明确返回 unsupported diagnostic
+- deferred multi-segment source-backed type 当前也会在 backend / header unsupported diagnostics 中保留原始路径文本，不把 `Cmd.Scope.Config` 误折叠成 same-file concrete type
 - program-mode 入口 `main` 当前明确拒绝显式 ABI，避免和宿主 `@main` wrapper 冲突
 
 这层边界的核心纪律：
