@@ -2201,6 +2201,52 @@ async fn helper() -> [Int; 3] {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_async_recursive_aggregate_results() {
+        let dir = TestDir::new("ql-driver-staticlib-async-recursive-aggregate");
+        let source = dir.write(
+            "async_recursive_aggregate_library.ql",
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+async fn worker() -> (Pair, [Int; 2]) {
+    return (Pair { left: 1, right: 2 }, [3, 4])
+}
+
+async fn helper() -> (Pair, [Int; 2]) {
+    return await worker()
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_recursive_aggregate_library.lib"
+        } else {
+            "artifacts/libasync_recursive_aggregate_library.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with recursive aggregate async results should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_spawn_handle_awaits() {
         let dir = TestDir::new("ql-driver-staticlib-async-spawn-handle");
         let source = dir.write(

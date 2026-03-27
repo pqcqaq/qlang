@@ -1923,6 +1923,8 @@ impl<'a> ModuleEmitter<'a> {
                 })
             }
             Ty::Item { .. } => {
+                // Keep struct layout recursive so async payloads and projected reads share one
+                // aggregate contract instead of growing per-shape special cases.
                 let mut size = 0;
                 let mut align = 1;
                 for field in self.struct_field_lowerings(ty, span, context)? {
@@ -2684,6 +2686,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             .unwrap_or_else(|| panic!("prepared place at {span:?} should have a type"));
 
         for projection in &place.projections {
+            // Project through the slot pointer directly so nested struct/tuple/array reads all
+            // reuse one lowering path and we do not have to materialize intermediate aggregates.
             let aggregate_llvm_ty = self
                 .emitter
                 .lower_llvm_type(&current_ty, span, "projection base type")
@@ -3583,6 +3587,36 @@ fn pick(values: [Int; 3], index: Int) -> Int {
     }
 
     #[test]
+    fn emits_nested_projection_reads_through_recursive_aggregates() {
+        let rendered = emit_library(
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+struct Outer {
+    pair: Pair,
+    values: [Int; 2],
+}
+
+fn pick_pair(outer: Outer) -> Int {
+    return outer.pair.right
+}
+
+fn pick_array(outer: Outer, index: Int) -> Int {
+    return outer.values[index]
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @ql_2_pick_pair({ { i64, i64 }, [2 x i64] } %arg0)"));
+        assert!(rendered.contains("getelementptr inbounds { { i64, i64 }, [2 x i64] }, ptr"));
+        assert!(rendered.contains("getelementptr inbounds { i64, i64 }, ptr"));
+        assert!(rendered.contains("getelementptr inbounds [2 x i64], ptr"));
+    }
+
+    #[test]
     fn rejects_parameterized_async_function_bodies_without_async_frame_alloc_hook() {
         let messages = emit_error_with_runtime_hooks(
             r#"
@@ -3679,6 +3713,47 @@ async fn helper() -> [Int; 3] {
         assert!(rendered.contains("define [3 x i64] @ql_1_helper__async_body(ptr %frame)"));
         assert!(rendered.contains("call ptr @qlrt_task_await(ptr"));
         assert!(rendered.contains("load [3 x i64], ptr"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr"));
+    }
+
+    #[test]
+    fn emits_async_recursive_aggregate_task_result_lowering() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+async fn worker() -> (Pair, [Int; 2]) {
+    return (Pair { left: 1, right: 2 }, [3, 4])
+}
+
+async fn helper() -> (Pair, [Int; 2]) {
+    return await worker()
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(
+            rendered.contains(
+                "define { { i64, i64 }, [2 x i64] } @ql_1_worker__async_body(ptr %frame)"
+            )
+        );
+        assert!(rendered.contains("insertvalue { i64, i64 } undef, i64 1, 0"));
+        assert!(rendered.contains("insertvalue [2 x i64] undef, i64 3, 0"));
+        assert!(
+            rendered.contains(
+                "define { { i64, i64 }, [2 x i64] } @ql_2_helper__async_body(ptr %frame)"
+            )
+        );
+        assert!(rendered.contains("load { { i64, i64 }, [2 x i64] }, ptr"));
         assert!(rendered.contains("call void @qlrt_task_result_release(ptr"));
     }
 
