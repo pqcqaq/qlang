@@ -955,6 +955,20 @@ fn main() -> Int {
 }
 
 #[test]
+fn reports_invalid_generic_struct_literal_roots() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn build[T]() -> Int {
+    let value = T { field: 1 }
+    return 0
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"struct literal syntax is not supported for `T`".to_string()));
+}
+
+#[test]
 fn accepts_struct_literals_through_same_file_import_aliases() {
     let diagnostics = diagnostic_messages(
         r#"

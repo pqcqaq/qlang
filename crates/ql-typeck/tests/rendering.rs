@@ -181,6 +181,21 @@ fn main() -> Int {
 }
 
 #[test]
+fn rendered_invalid_generic_struct_literal_root_diagnostics_anchor_to_the_literal() {
+    let source = r#"
+fn build[T]() -> Int {
+    let value = T { field: 1 }
+    return 0
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(
+        rendered.contains("error: sample.ql:3:17: struct literal syntax is not supported for `T`")
+    );
+}
+
+#[test]
 fn rendered_invalid_pattern_root_diagnostics_anchor_to_the_pattern() {
     let source = r#"
 struct Point {

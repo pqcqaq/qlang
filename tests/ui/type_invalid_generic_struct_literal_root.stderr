@@ -1,0 +1,3 @@
+error: tests/ui/type_invalid_generic_struct_literal_root.ql:2:17: struct literal syntax is not supported for `T`
+      let value = T { field: 1 };
+                  ^^^^^^^^ struct literal here
