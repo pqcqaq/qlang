@@ -38,6 +38,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - shorthand binding rename
 - shorthand field rewrite
 - item shorthand rename coverage
+- deeper struct-like shorthand tokens keep lexical rename fallback without field-label expansion
 - lexical rename parity
 - type-namespace rename coverage
 - root value item rename parity
@@ -55,6 +56,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - deeper variant-like member chains stay deliberately closed
 - deeper struct-literal / pattern variant-like paths stay deliberately closed
 - deeper struct-like field-label paths stay deliberately closed
+- deeper struct-like shorthand tokens keep lexical fallback
 - escaped identifier completion 保真
 - candidate-list parity
 - filtering parity
@@ -72,6 +74,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - deeper variant-like member chains stay deliberately closed for semantic tokens
 - deeper struct-literal / pattern variant-like paths stay deliberately closed for rename / semantic tokens
 - deeper struct-like field-label paths stay deliberately closed for query / rename / semantic tokens
+- deeper struct-like shorthand tokens still project lexical local / binding / import identity
 
 ### 5. Aggregate hardening
 

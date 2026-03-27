@@ -4773,6 +4773,278 @@ fn read(point: Point) -> Int {
 }
 
 #[test]
+fn deeper_struct_like_literal_shorthand_tokens_stay_on_local_symbols() {
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(value: Int) -> Int {
+    let x = value
+    let built = Point.Scope.Config { x }
+    return x
+}
+"#;
+
+    let analysis = analyzed(source);
+    let shorthand = source
+        .find("{ x }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct literal field should exist");
+
+    let hover = analysis
+        .hover_at(shorthand)
+        .expect("deeper shorthand literal token should still resolve");
+    assert_eq!(hover.kind, SymbolKind::Local);
+    assert_eq!(hover.name, "x");
+    assert_eq!(hover.definition_span, Some(nth_span(source, "x", 2)));
+    assert_eq!(
+        analysis.definition_at(shorthand),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Local,
+            name: "x".to_owned(),
+            span: nth_span(source, "x", 2),
+        })
+    );
+    assert_eq!(
+        analysis.references_at(shorthand),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Local,
+                name: "x".to_owned(),
+                span: nth_span(source, "x", 2),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Local,
+                name: "x".to_owned(),
+                span: Span::new(shorthand, shorthand + "x".len()),
+                is_definition: false,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Local,
+                name: "x".to_owned(),
+                span: nth_span(source, "x", 4),
+                is_definition: false,
+            },
+        ])
+    );
+    assert_eq!(
+        analysis.prepare_rename_at(shorthand),
+        Some(ql_analysis::RenameTarget {
+            kind: SymbolKind::Local,
+            name: "x".to_owned(),
+            span: Span::new(shorthand, shorthand + "x".len()),
+        })
+    );
+    assert_eq!(
+        analysis.rename_at(shorthand, "coord_x"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Local,
+            old_name: "x".to_owned(),
+            new_name: "coord_x".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 2),
+                    replacement: "coord_x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: Span::new(shorthand, shorthand + "x".len()),
+                    replacement: "coord_x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 4),
+                    replacement: "coord_x".to_owned(),
+                },
+            ],
+        }))
+    );
+}
+
+#[test]
+fn deeper_struct_like_literal_shorthand_tokens_stay_on_import_alias_symbols() {
+    let source = r#"
+use source_value as source
+
+struct Point {
+    source: Int,
+}
+
+const source_value: Int = 1
+
+fn read() -> Int {
+    let built = Point.Scope.Config { source }
+    return source
+}
+"#;
+
+    let analysis = analyzed(source);
+    let shorthand = source
+        .find("{ source }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct literal field should exist");
+    let return_source = source
+        .rfind("return source")
+        .map(|offset| offset + "return ".len())
+        .expect("return source use should exist");
+
+    let hover = analysis
+        .hover_at(shorthand)
+        .expect("deeper shorthand literal token should still resolve");
+    assert_eq!(hover.kind, SymbolKind::Import);
+    assert_eq!(hover.name, "source");
+    assert_eq!(hover.definition_span, Some(alias_span(source, "source")));
+    assert_eq!(
+        analysis.definition_at(shorthand),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Import,
+            name: "source".to_owned(),
+            span: alias_span(source, "source"),
+        })
+    );
+    assert_eq!(
+        analysis.references_at(shorthand),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Import,
+                name: "source".to_owned(),
+                span: alias_span(source, "source"),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Import,
+                name: "source".to_owned(),
+                span: Span::new(shorthand, shorthand + "source".len()),
+                is_definition: false,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Import,
+                name: "source".to_owned(),
+                span: Span::new(return_source, return_source + "source".len()),
+                is_definition: false,
+            },
+        ])
+    );
+    assert_eq!(
+        analysis.prepare_rename_at(shorthand),
+        Some(ql_analysis::RenameTarget {
+            kind: SymbolKind::Import,
+            name: "source".to_owned(),
+            span: Span::new(shorthand, shorthand + "source".len()),
+        })
+    );
+    assert_eq!(
+        analysis.rename_at(shorthand, "feed"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Import,
+            old_name: "source".to_owned(),
+            new_name: "feed".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: alias_span(source, "source"),
+                    replacement: "feed".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: Span::new(shorthand, shorthand + "source".len()),
+                    replacement: "feed".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: Span::new(return_source, return_source + "source".len()),
+                    replacement: "feed".to_owned(),
+                },
+            ],
+        }))
+    );
+}
+
+#[test]
+fn deeper_struct_like_pattern_shorthand_tokens_stay_on_local_symbols() {
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(point: Point) -> Int {
+    return match point {
+        Point.Scope.Config { x } => x,
+        _ => 0,
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+    let shorthand = source
+        .find("{ x }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct pattern field should exist");
+    let arm_use = source
+        .rfind("=> x")
+        .map(|offset| offset + "=> ".len())
+        .expect("match arm use should exist");
+
+    let hover = analysis
+        .hover_at(shorthand)
+        .expect("deeper shorthand pattern token should still resolve");
+    assert_eq!(hover.kind, SymbolKind::Local);
+    assert_eq!(hover.name, "x");
+    assert_eq!(
+        hover.definition_span,
+        Some(Span::new(shorthand, shorthand + "x".len()))
+    );
+    assert_eq!(
+        analysis.definition_at(shorthand),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Local,
+            name: "x".to_owned(),
+            span: Span::new(shorthand, shorthand + "x".len()),
+        })
+    );
+    assert_eq!(
+        analysis.references_at(shorthand),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Local,
+                name: "x".to_owned(),
+                span: Span::new(shorthand, shorthand + "x".len()),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Local,
+                name: "x".to_owned(),
+                span: Span::new(arm_use, arm_use + "x".len()),
+                is_definition: false,
+            },
+        ])
+    );
+    assert_eq!(
+        analysis.prepare_rename_at(shorthand),
+        Some(ql_analysis::RenameTarget {
+            kind: SymbolKind::Local,
+            name: "x".to_owned(),
+            span: Span::new(shorthand, shorthand + "x".len()),
+        })
+    );
+    assert_eq!(
+        analysis.rename_at(shorthand, "coord_x"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Local,
+            old_name: "x".to_owned(),
+            new_name: "coord_x".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: Span::new(shorthand, shorthand + "x".len()),
+                    replacement: "coord_x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: Span::new(arm_use, arm_use + "x".len()),
+                    replacement: "coord_x".to_owned(),
+                },
+            ],
+        }))
+    );
+}
+
+#[test]
 fn completion_queries_do_not_offer_variant_candidates_on_deeper_struct_literal_and_pattern_paths() {
     let source = r#"
 use Command as Cmd

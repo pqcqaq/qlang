@@ -2042,6 +2042,177 @@ fn read(point: Point) -> Int {
 }
 
 #[test]
+fn hover_and_definition_bridge_keep_deeper_struct_like_shorthand_tokens_on_local_symbols() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(value: Int) -> Int {
+    let x = value
+    let built = Point.Scope.Config { x }
+    return x
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let shorthand = source
+        .find("{ x }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct literal field should exist");
+    let shorthand_position =
+        span_to_range(source, Span::new(shorthand, shorthand + "x".len())).start;
+
+    let hover = hover_for_analysis(source, &analysis, shorthand_position)
+        .expect("deeper shorthand token hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown content");
+    };
+    assert!(markup.value.contains("**local** `x`"));
+    assert!(markup.value.contains("local x: Int"));
+    assert!(markup.value.contains("Type: `Int`"));
+
+    let definition = definition_for_analysis(&uri, source, &analysis, shorthand_position)
+        .expect("deeper shorthand token definition should exist");
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("expected scalar definition location");
+    };
+    assert_eq!(location.uri, uri);
+    assert_eq!(
+        location.range,
+        span_to_range(source, nth_span(source, "x", 2))
+    );
+}
+
+#[test]
+fn rename_bridge_keeps_deeper_struct_like_shorthand_binding_edits_raw() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+struct Point {
+    x: Int,
+}
+
+fn read(value: Int) -> Int {
+    let x = value
+    let built = Point.Scope.Config { x }
+    return x
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let shorthand = source
+        .find("{ x }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct literal field should exist");
+    let shorthand_position =
+        span_to_range(source, Span::new(shorthand, shorthand + "x".len())).start;
+
+    let prepare = prepare_rename_for_analysis(source, &analysis, shorthand_position)
+        .expect("deeper shorthand prepare rename should exist");
+    let PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } = prepare else {
+        panic!("expected range plus placeholder");
+    };
+    assert_eq!(
+        range,
+        span_to_range(source, Span::new(shorthand, shorthand + "x".len()))
+    );
+    assert_eq!(placeholder, "x");
+
+    let edit = rename_for_analysis(&uri, source, &analysis, shorthand_position, "coord_x")
+        .expect("rename should validate")
+        .expect("rename should produce edits");
+
+    let mut expected_changes = HashMap::new();
+    expected_changes.insert(
+        uri,
+        vec![
+            TextEdit::new(
+                span_to_range(source, nth_span(source, "x", 2)),
+                "coord_x".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(source, Span::new(shorthand, shorthand + "x".len())),
+                "coord_x".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(source, nth_span(source, "x", 4)),
+                "coord_x".to_owned(),
+            ),
+        ],
+    );
+
+    assert_eq!(edit, WorkspaceEdit::new(expected_changes));
+}
+
+#[test]
+fn rename_bridge_keeps_deeper_struct_like_import_shorthand_binding_edits_raw() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use source_value as source
+
+struct Point {
+    source: Int,
+}
+
+const source_value: Int = 1
+
+fn read() -> Int {
+    let built = Point.Scope.Config { source }
+    return source
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let shorthand = source
+        .find("{ source }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct literal field should exist");
+    let return_source = source
+        .rfind("return source")
+        .map(|offset| offset + "return ".len())
+        .expect("return source use should exist");
+    let shorthand_position =
+        span_to_range(source, Span::new(shorthand, shorthand + "source".len())).start;
+
+    let prepare = prepare_rename_for_analysis(source, &analysis, shorthand_position)
+        .expect("deeper import shorthand prepare rename should exist");
+    let PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } = prepare else {
+        panic!("expected range plus placeholder");
+    };
+    assert_eq!(
+        range,
+        span_to_range(source, Span::new(shorthand, shorthand + "source".len()))
+    );
+    assert_eq!(placeholder, "source");
+
+    let edit = rename_for_analysis(&uri, source, &analysis, shorthand_position, "feed")
+        .expect("rename should validate")
+        .expect("rename should produce edits");
+
+    let mut expected_changes = HashMap::new();
+    expected_changes.insert(
+        uri,
+        vec![
+            TextEdit::new(
+                span_to_range(source, alias_span(source, "source")),
+                "feed".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(source, Span::new(shorthand, shorthand + "source".len())),
+                "feed".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(
+                    source,
+                    Span::new(return_source, return_source + "source".len()),
+                ),
+                "feed".to_owned(),
+            ),
+        ],
+    );
+
+    assert_eq!(edit, WorkspaceEdit::new(expected_changes));
+}
+
+#[test]
 fn references_bridge_respects_include_declaration() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
