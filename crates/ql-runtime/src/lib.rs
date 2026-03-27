@@ -3,6 +3,36 @@
 /// This intentionally models run-to-completion work instead of committing the
 /// compiler to a concrete Rust `Future` representation before the Qlang async
 /// runtime/effect surface is frozen.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum RuntimeCapability {
+    AsyncFunctionBodies,
+    TaskSpawn,
+    TaskAwait,
+    AsyncIteration,
+}
+
+impl RuntimeCapability {
+    pub const fn stable_name(self) -> &'static str {
+        match self {
+            Self::AsyncFunctionBodies => "async-function-bodies",
+            Self::TaskSpawn => "task-spawn",
+            Self::TaskAwait => "task-await",
+            Self::AsyncIteration => "async-iteration",
+        }
+    }
+
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::AsyncFunctionBodies => {
+                "lowering and executing body-bearing `async fn` definitions"
+            }
+            Self::TaskSpawn => "spawning asynchronous tasks",
+            Self::TaskAwait => "awaiting asynchronous task results",
+            Self::AsyncIteration => "driving `for await` iteration",
+        }
+    }
+}
+
 pub trait Task {
     type Output;
 

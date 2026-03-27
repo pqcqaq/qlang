@@ -1,7 +1,30 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ql_runtime::{Executor, InlineExecutor};
+use ql_runtime::{Executor, InlineExecutor, RuntimeCapability};
+
+#[test]
+fn runtime_capabilities_expose_stable_names() {
+    let capabilities = [
+        RuntimeCapability::AsyncFunctionBodies,
+        RuntimeCapability::TaskSpawn,
+        RuntimeCapability::TaskAwait,
+        RuntimeCapability::AsyncIteration,
+    ];
+
+    assert_eq!(
+        capabilities
+            .into_iter()
+            .map(RuntimeCapability::stable_name)
+            .collect::<Vec<_>>(),
+        vec![
+            "async-function-bodies",
+            "task-spawn",
+            "task-await",
+            "async-iteration",
+        ]
+    );
+}
 
 #[test]
 fn inline_executor_runs_spawned_tasks_to_completion() {

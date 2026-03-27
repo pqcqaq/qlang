@@ -1,4 +1,5 @@
 mod query;
+mod runtime;
 
 use std::path::Path;
 
@@ -17,6 +18,7 @@ pub use query::{
     LoopControlContextInfo, LoopControlKind, ReferenceTarget, RenameEdit, RenameError,
     RenameResult, RenameTarget, SemanticTokenOccurrence, SymbolKind,
 };
+pub use runtime::RuntimeRequirement;
 
 /// Parsed-and-lowered semantic analysis snapshot shared by CLI and future LSP work.
 #[derive(Clone, Debug)]
@@ -28,6 +30,7 @@ pub struct Analysis {
     typeck: TypeckResult,
     borrowck: BorrowckResult,
     index: QueryIndex,
+    runtime_requirements: Vec<RuntimeRequirement>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -58,6 +61,14 @@ impl Analysis {
 
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
+    }
+
+    /// Return the runtime capabilities currently required by this module.
+    ///
+    /// This is a conservative source-ordered summary of the async/runtime surface
+    /// already present in HIR, intended for future driver/codegen/runtime wiring.
+    pub fn runtime_requirements(&self) -> &[RuntimeRequirement] {
+        &self.runtime_requirements
     }
 
     pub fn has_errors(&self) -> bool {
@@ -173,6 +184,7 @@ pub fn analyze_source(source: &str) -> Result<Analysis, Vec<Diagnostic>> {
     let typeck = analyze_types(&hir, &resolution);
     let borrowck = analyze_borrowck(&hir, &resolution, &typeck, &mir);
     let index = QueryIndex::build(source, &hir, &resolution, &typeck);
+    let runtime_requirements = runtime::collect_runtime_requirements(source, &hir);
     let mut diagnostics = resolution.diagnostics.clone();
     diagnostics.extend(typeck.diagnostics().iter().cloned());
     diagnostics.extend(borrowck.diagnostics().iter().cloned());
@@ -185,6 +197,7 @@ pub fn analyze_source(source: &str) -> Result<Analysis, Vec<Diagnostic>> {
         typeck,
         borrowck,
         index,
+        runtime_requirements,
         diagnostics,
     })
 }

@@ -3,6 +3,7 @@ mod support;
 use ql_analysis::{
     AsyncContextInfo, AsyncOperatorKind, LoopControlContextInfo, LoopControlKind, SymbolKind,
 };
+use ql_runtime::RuntimeCapability;
 use ql_span::Span;
 
 use support::{analyzed, nth_offset, nth_span};
@@ -7233,6 +7234,89 @@ async fn main() -> Int {
             in_async_function: false,
         })
     );
+}
+
+#[test]
+fn runtime_requirements_capture_async_capabilities_in_source_order() {
+    let source = r#"
+fn helper() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let runner = () => {
+        let inner_task = spawn helper()
+        let inner_value = await helper()
+        return inner_value
+    }
+    for await value in [1, 2, 3] {
+        let current = value
+    }
+    spawn helper()
+    return await helper()
+}
+"#;
+
+    let analysis = analyzed(source);
+    let requirements = analysis.runtime_requirements();
+
+    assert_eq!(
+        requirements
+            .iter()
+            .map(|requirement| requirement.capability)
+            .collect::<Vec<_>>(),
+        vec![
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]
+    );
+    assert_eq!(requirements[1].span, nth_span(source, "spawn", 1));
+    assert_eq!(requirements[2].span, nth_span(source, "await", 1));
+    assert_eq!(requirements[3].span, nth_span(source, "await", 2));
+    assert_eq!(requirements[4].span, nth_span(source, "spawn", 2));
+    assert_eq!(requirements[5].span, nth_span(source, "await", 3));
+}
+
+#[test]
+fn runtime_requirements_skip_async_declarations_without_bodies() {
+    let source = r#"
+trait Runner {
+    async fn declared(self) -> Int
+
+    async fn provided(self) -> Int {
+        return 1
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert_eq!(
+        analysis
+            .runtime_requirements()
+            .iter()
+            .map(|requirement| requirement.capability)
+            .collect::<Vec<_>>(),
+        vec![RuntimeCapability::AsyncFunctionBodies]
+    );
+}
+
+#[test]
+fn runtime_requirements_return_empty_when_runtime_surface_is_absent() {
+    let source = r#"
+fn main() -> Int {
+    let value = 1
+    return value
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert!(analysis.runtime_requirements().is_empty());
 }
 
 #[test]

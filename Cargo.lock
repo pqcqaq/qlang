@@ -398,6 +398,7 @@ dependencies = [
  "ql-mir",
  "ql-parser",
  "ql-resolve",
+ "ql-runtime",
  "ql-span",
  "ql-typeck",
 ]
