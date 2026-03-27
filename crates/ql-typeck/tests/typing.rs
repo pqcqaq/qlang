@@ -1438,6 +1438,51 @@ fn main(point: Point, result: Result) -> Int {
 }
 
 #[test]
+fn reports_unsupported_const_static_path_patterns() {
+    let diagnostics = diagnostic_messages(
+        r#"
+const LIMIT: Int = 1
+static TOTAL: Int = 2
+
+fn main(value: Int) -> Int {
+    match value {
+        LIMIT => 1,
+        TOTAL => 2,
+        _ => 0,
+    }
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"path pattern syntax is not supported for `LIMIT`".to_string()));
+    assert!(diagnostics.contains(&"path pattern syntax is not supported for `TOTAL`".to_string()));
+}
+
+#[test]
+fn reports_unsupported_const_static_path_patterns_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use LIMIT as Bound
+use TOTAL as Count
+
+const LIMIT: Int = 1
+static TOTAL: Int = 2
+
+fn main(value: Int) -> Int {
+    match value {
+        Bound => 1,
+        Count => 2,
+        _ => 0,
+    }
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"path pattern syntax is not supported for `Bound`".to_string()));
+    assert!(diagnostics.contains(&"path pattern syntax is not supported for `Count`".to_string()));
+}
+
+#[test]
 fn reports_variant_pattern_type_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"

@@ -253,6 +253,7 @@
 - invalid struct-literal root diagnostics
 - invalid pattern-root shape diagnostics
 - invalid path-pattern root diagnostics
+- unsupported const/static path-pattern diagnostics
 - pattern root / literal compatibility
 - calling non-callable values
 
@@ -266,6 +267,7 @@
 - struct-literal root diagnostics 也先只覆盖“root 已解析成功且构造形状已知必错”的 case，不把 missing variant / deeper module-path 误升级成过早硬错误
 - pattern-root shape diagnostics 也先只覆盖“pattern root 已解析成功且构造形状已知必错”的 case，不把 missing variant / path-pattern semantics / deeper module-path 误升级成过早硬错误
 - bare path-pattern diagnostics 也先只覆盖“path root 已解析成功且 bare path 形状已知必错”的 case；unit variant 保持允许，const/static pattern 语义先继续保守
+- const/static bare path-pattern diagnostics 也先只覆盖 same-file root 与 same-file local import alias，不把 cross-file constant semantics 误写成已完成
 - 还没建立完整 import/module/member/索引协议前，不把每个未知都提前升级成硬错误
 
 ### Unified Analysis And Query Index

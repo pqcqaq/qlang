@@ -1500,7 +1500,9 @@ impl<'a> Checker<'a> {
             ItemKind::Struct(_) | ItemKind::Enum(_) => Some(format!(
                 "path pattern syntax is not supported for `{path_text}`"
             )),
-            ItemKind::Function(_)
+            ItemKind::Const(_)
+            | ItemKind::Static(_)
+            | ItemKind::Function(_)
             | ItemKind::Trait(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Impl(_)
@@ -1508,7 +1510,6 @@ impl<'a> Checker<'a> {
             | ItemKind::ExternBlock(_) => Some(format!(
                 "path pattern syntax is not supported for `{path_text}`"
             )),
-            ItemKind::Const(_) | ItemKind::Static(_) => None,
         }
     }
 

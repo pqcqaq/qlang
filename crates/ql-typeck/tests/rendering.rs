@@ -217,3 +217,22 @@ fn main(point: Point) -> Int {
         rendered.contains("error: sample.ql:7:9: path pattern syntax is not supported for `Point`")
     );
 }
+
+#[test]
+fn rendered_unsupported_const_path_pattern_diagnostics_anchor_to_the_pattern() {
+    let source = r#"
+const LIMIT: Int = 1
+
+fn main(value: Int) -> Int {
+    match value {
+        LIMIT => 1,
+        _ => 0,
+    }
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(
+        rendered.contains("error: sample.ql:6:9: path pattern syntax is not supported for `LIMIT`")
+    );
+}
