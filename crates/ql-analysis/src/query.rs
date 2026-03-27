@@ -1449,7 +1449,7 @@ impl<'a> QueryIndexBuilder<'a> {
                             self.resolution
                                 .pattern_resolution(pattern_id)
                                 .and_then(|resolution| {
-                                    self.struct_item_for_value_resolution(resolution)
+                                    self.struct_item_for_root_value_path(path, resolution)
                                 });
                         for field in fields {
                             if let Some(item_id) = field_owner
@@ -1567,7 +1567,7 @@ impl<'a> QueryIndexBuilder<'a> {
                 let field_owner = self
                     .resolution
                     .struct_literal_resolution(expr_id)
-                    .and_then(|resolution| self.struct_item_for_type_resolution(resolution));
+                    .and_then(|resolution| self.struct_item_for_root_type_path(path, resolution));
                 if let Some(resolution) = self.resolution.struct_literal_resolution(expr_id)
                     && let Some(symbol) = self.symbol_for_type_resolution(resolution)
                 {
@@ -1984,6 +1984,17 @@ impl<'a> QueryIndexBuilder<'a> {
         }
     }
 
+    fn struct_item_for_root_value_path(
+        &self,
+        path: &Path,
+        resolution: &ValueResolution,
+    ) -> Option<ItemId> {
+        if path.segments.len() != 1 {
+            return None;
+        }
+        self.struct_item_for_value_resolution(resolution)
+    }
+
     fn struct_item_for_type_resolution(&self, resolution: &TypeResolution) -> Option<ItemId> {
         match resolution {
             TypeResolution::Item(item_id)
@@ -1994,6 +2005,17 @@ impl<'a> QueryIndexBuilder<'a> {
             TypeResolution::Import(binding) => self.local_struct_item_for_import_binding(binding),
             _ => None,
         }
+    }
+
+    fn struct_item_for_root_type_path(
+        &self,
+        path: &Path,
+        resolution: &TypeResolution,
+    ) -> Option<ItemId> {
+        if path.segments.len() != 1 {
+            return None;
+        }
+        self.struct_item_for_type_resolution(resolution)
     }
 
     fn local_enum_item_for_import_binding(&self, binding: &ImportBinding) -> Option<ItemId> {

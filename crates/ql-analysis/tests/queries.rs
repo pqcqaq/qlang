@@ -4691,6 +4691,88 @@ fn read(command: Command) -> Int {
 }
 
 #[test]
+fn deeper_struct_like_paths_do_not_reuse_root_field_queries() {
+    let source = r#"
+use Point as P
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+fn build(value: Int) -> Int {
+    let direct = Point.Scope.Config { x: value, y: 1 }
+    let alias = P.Scope.Config { x: value, y: 2 }
+    return 0
+}
+
+fn read(point: Point) -> Int {
+    return match point {
+        Point.Scope.Config { x: current, y: 3 } => current,
+        P.Scope.Config { x: other, y: 4 } => other,
+        _ => 0,
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    for offset in [
+        nth_offset(source, "x", 2),
+        nth_offset(source, "x", 3),
+        nth_offset(source, "x", 4),
+        nth_offset(source, "x", 5),
+    ] {
+        assert_eq!(analysis.hover_at(offset), None);
+        assert_eq!(analysis.definition_at(offset), None);
+        assert_eq!(analysis.references_at(offset), None);
+        assert_eq!(analysis.prepare_rename_at(offset), None);
+        assert_eq!(analysis.rename_at(offset, "coord_x"), Ok(None));
+    }
+}
+
+#[test]
+fn semantic_tokens_keep_deeper_struct_like_field_paths_closed() {
+    let source = r#"
+use Point as P
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+fn build(value: Int) -> Int {
+    let direct = Point.Scope.Config { x: value, y: 1 }
+    let alias = P.Scope.Config { x: value, y: 2 }
+    return 0
+}
+
+fn read(point: Point) -> Int {
+    return match point {
+        Point.Scope.Config { x: current, y: 3 } => current,
+        P.Scope.Config { x: other, y: 4 } => other,
+        _ => 0,
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+    let tokens = analysis.semantic_tokens();
+
+    for span in [
+        nth_span(source, "x", 2),
+        nth_span(source, "x", 3),
+        nth_span(source, "x", 4),
+        nth_span(source, "x", 5),
+    ] {
+        assert!(!tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+            span,
+            kind: SymbolKind::Field,
+        }));
+    }
+}
+
+#[test]
 fn completion_queries_do_not_offer_variant_candidates_on_deeper_struct_literal_and_pattern_paths() {
     let source = r#"
 use Command as Cmd

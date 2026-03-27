@@ -506,6 +506,14 @@
 4. 这类更深 path 只保留上层 lexical fallback，不伪造 variant occurrence 或 `ENUM_MEMBER` completion
 5. deeper module graph / foreign enum 仍明确不支持
 
+当前 struct field truth surface 也沿用同样的 root-path 边界：
+
+1. 只有严格 root struct path 才允许把显式字段标签接进 field query / rename / semantic-token surface
+2. `Point { x: value }`、`P { x: value }` 这类 root struct path 继续保留既有字段标签语义
+3. `Point.Scope.Config { x: value }`、`P.Scope.Config { x: value }` 这类更深 path 不会继续从 root struct 偷出 field identity
+4. 这类更深 path 只保留上层 lexical fallback，不伪造字段 occurrence
+5. 这仍然不是 module-path struct semantics；cross-file / deeper module graph 继续关闭
+
 当前同文件 local import alias variant follow-through 继续复用这条 truth surface：
 
 1. 不改 resolver 的 root-binding 语义，也不引入 module graph

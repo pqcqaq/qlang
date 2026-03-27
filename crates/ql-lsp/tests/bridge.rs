@@ -1958,6 +1958,90 @@ fn read(command: Command) -> Int {
 }
 
 #[test]
+fn definition_bridge_stays_empty_on_deeper_struct_like_field_paths() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use Point as P
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+fn build(value: Int) -> Int {
+    let direct = Point.Scope.Config { x: value, y: 1 }
+    let alias = P.Scope.Config { x: value, y: 2 }
+    return 0
+}
+
+fn read(point: Point) -> Int {
+    return match point {
+        Point.Scope.Config { x: current, y: 3 } => current,
+        P.Scope.Config { x: other, y: 4 } => other,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for position in [
+        span_to_range(source, nth_span(source, "x", 2)).start,
+        span_to_range(source, nth_span(source, "x", 3)).start,
+        span_to_range(source, nth_span(source, "x", 4)).start,
+        span_to_range(source, nth_span(source, "x", 5)).start,
+    ] {
+        assert_eq!(
+            definition_for_analysis(&uri, source, &analysis, position),
+            None
+        );
+    }
+}
+
+#[test]
+fn rename_bridge_keeps_deeper_struct_like_field_paths_closed() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use Point as P
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+fn build(value: Int) -> Int {
+    let direct = Point.Scope.Config { x: value, y: 1 }
+    let alias = P.Scope.Config { x: value, y: 2 }
+    return 0
+}
+
+fn read(point: Point) -> Int {
+    return match point {
+        Point.Scope.Config { x: current, y: 3 } => current,
+        P.Scope.Config { x: other, y: 4 } => other,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for position in [
+        span_to_range(source, nth_span(source, "x", 2)).start,
+        span_to_range(source, nth_span(source, "x", 3)).start,
+        span_to_range(source, nth_span(source, "x", 4)).start,
+        span_to_range(source, nth_span(source, "x", 5)).start,
+    ] {
+        assert_eq!(
+            prepare_rename_for_analysis(source, &analysis, position),
+            None
+        );
+        assert_eq!(
+            rename_for_analysis(&uri, source, &analysis, position, "coord_x"),
+            Ok(None)
+        );
+    }
+}
+
+#[test]
 fn references_bridge_respects_include_declaration() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
@@ -5038,6 +5122,58 @@ fn read(command: Command) -> Int {
             range.start.character,
             range.end.character - range.start.character,
             enum_member_type,
+        )));
+    }
+}
+
+#[test]
+fn semantic_tokens_bridge_keeps_deeper_struct_like_field_paths_closed() {
+    let source = r#"
+use Point as P
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+fn build(value: Int) -> Int {
+    let direct = Point.Scope.Config { x: value, y: 1 }
+    let alias = P.Scope.Config { x: value, y: 2 }
+    return 0
+}
+
+fn read(point: Point) -> Int {
+    return match point {
+        Point.Scope.Config { x: current, y: 3 } => current,
+        P.Scope.Config { x: other, y: 4 } => other,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let SemanticTokensResult::Tokens(tokens) = semantic_tokens_for_analysis(source, &analysis)
+    else {
+        panic!("expected full semantic tokens");
+    };
+    let decoded = decode_semantic_tokens(&tokens.data);
+    let legend = semantic_tokens_legend();
+    let property_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::PROPERTY)
+        .expect("property legend entry should exist") as u32;
+
+    for range in [
+        span_to_range(source, nth_span(source, "x", 2)),
+        span_to_range(source, nth_span(source, "x", 3)),
+        span_to_range(source, nth_span(source, "x", 4)),
+        span_to_range(source, nth_span(source, "x", 5)),
+    ] {
+        assert!(!decoded.contains(&(
+            range.start.line,
+            range.start.character,
+            range.end.character - range.start.character,
+            property_type,
         )));
     }
 }
