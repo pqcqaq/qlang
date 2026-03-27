@@ -33,6 +33,7 @@ fn runtime_capabilities_expose_stable_names() {
 #[test]
 fn runtime_hooks_expose_stable_names_and_symbols() {
     let hooks = [
+        RuntimeHook::AsyncFrameAlloc,
         RuntimeHook::AsyncTaskCreate,
         RuntimeHook::ExecutorSpawn,
         RuntimeHook::TaskAwait,
@@ -45,6 +46,7 @@ fn runtime_hooks_expose_stable_names_and_symbols() {
             .map(|hook| (hook.stable_name(), hook.symbol_name()))
             .collect::<Vec<_>>(),
         vec![
+            ("async-frame-alloc", "qlrt_async_frame_alloc"),
             ("async-task-create", "qlrt_async_task_create"),
             ("executor-spawn", "qlrt_executor_spawn"),
             ("task-await", "qlrt_task_await"),
@@ -55,6 +57,22 @@ fn runtime_hooks_expose_stable_names_and_symbols() {
 
 #[test]
 fn runtime_hook_signatures_expose_stable_contract_strings() {
+    let signature = runtime_hook_signature(RuntimeHook::AsyncFrameAlloc);
+
+    assert_eq!(signature.calling_convention(), "ccc");
+    assert_eq!(signature.return_type, RuntimeAbiType::Ptr);
+    assert_eq!(
+        signature.render_contract(),
+        "ccc qlrt_async_frame_alloc(size: i64, align: i64) -> ptr"
+    );
+    assert_eq!(
+        signature.render_llvm_declaration(),
+        "declare ptr @qlrt_async_frame_alloc(i64, i64)"
+    );
+}
+
+#[test]
+fn async_task_create_signature_keeps_entry_and_frame_contract() {
     let signature = runtime_hook_signature(RuntimeHook::AsyncTaskCreate);
 
     assert_eq!(signature.calling_convention(), "ccc");
@@ -84,6 +102,7 @@ fn collect_runtime_hook_signatures_preserves_sorted_hook_plan() {
             .map(|signature| signature.render_contract())
             .collect::<Vec<_>>(),
         vec![
+            "ccc qlrt_async_frame_alloc(size: i64, align: i64) -> ptr",
             "ccc qlrt_async_task_create(entry: ptr, frame: ptr) -> ptr",
             "ccc qlrt_executor_spawn(executor: ptr, task: ptr) -> ptr",
             "ccc qlrt_task_await(join_handle: ptr) -> ptr",
@@ -96,7 +115,7 @@ fn collect_runtime_hook_signatures_preserves_sorted_hook_plan() {
 fn runtime_capabilities_map_to_shared_hook_contracts() {
     assert_eq!(
         runtime_hooks_for_capability(RuntimeCapability::AsyncFunctionBodies),
-        &[RuntimeHook::AsyncTaskCreate]
+        &[RuntimeHook::AsyncFrameAlloc, RuntimeHook::AsyncTaskCreate]
     );
     assert_eq!(
         runtime_hooks_for_capability(RuntimeCapability::TaskSpawn),
@@ -125,6 +144,7 @@ fn collect_runtime_hooks_dedupes_and_orders_the_contract_surface() {
     assert_eq!(
         hooks,
         vec![
+            RuntimeHook::AsyncFrameAlloc,
             RuntimeHook::AsyncTaskCreate,
             RuntimeHook::ExecutorSpawn,
             RuntimeHook::TaskAwait,

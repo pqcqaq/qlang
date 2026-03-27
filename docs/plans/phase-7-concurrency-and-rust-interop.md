@@ -53,21 +53,21 @@
 - 已新增 `crates/ql-runtime`：当前仓库已有最小 runtime/executor 抽象地基，提供 `Task` / `JoinHandle` / `Executor` trait 和单线程 `InlineExecutor`
 - 已补充 `crates/ql-runtime/tests/executor.rs`：锁住 run-to-completion、`spawn` + `join`、`block_on` 以及单线程执行顺序
 - 已在 `crates/ql-runtime` 固定第一批稳定 capability 名称：`async-function-bodies`、`task-spawn`、`task-await`、`async-iteration`
-- 已在 `crates/ql-runtime` 起草第一版共享 runtime hook ABI skeleton：当前固定 `async-task-create`、`executor-spawn`、`task-await`、`async-iter-next` 的稳定符号名，并给出第一版 LLVM-facing contract string（当前统一走 `ccc` + opaque `ptr` 骨架）
+- 已在 `crates/ql-runtime` 起草第一版共享 runtime hook ABI skeleton：当前固定 `async-frame-alloc`、`async-task-create`、`executor-spawn`、`task-await`、`async-iter-next` 的稳定符号名，并给出第一版 LLVM-facing contract string（当前统一走 `ccc` + opaque `ptr` 骨架）
 - 已在 `ql-analysis` 暴露 `runtime_requirements()`：当前会按源码顺序枚举 `async fn`、`spawn`、`await`、`for await` 对应的 runtime 需求，为后续 driver/codegen 接线提供共享 truth surface
 - 已补充 `crates/ql-analysis/tests/queries.rs` 的 runtime requirement 回归：覆盖 capability 顺序、精确 operator span，以及“仅声明无 body 的 async method 不计入 lowering 需求”的边界
 - 已在 `ql-cli` 新增并扩展 `ql runtime <file>`：当前可直接输出该文件的 runtime requirements 与 dedupe 后的 runtime hook 计划，便于开发阶段检查 capability/hook contract 是否符合预期
 - `ql-driver` 已开始保守消费这份 runtime requirement surface：当前会把 `async-function-bodies`、`task-spawn`、`task-await`、`async-iteration` 映射成稳定的 build-time unsupported 诊断，并与 backend 同类 unsupported diagnostics 做去重合并
 - 已在 `ql-codegen-llvm` 接入共享 runtime hook ABI contract：`CodegenInput` 当前可携带 dedupe 后的 `RuntimeHookSignature` 列表，后端会直接复用 `ql-runtime` 的声明文本渲染 runtime hook declarations，而不是在 backend 内重复维护符号名或 ABI 字符串
-- 已在 `ql-codegen-llvm` 增补 parameterless `async fn` body scaffold：当前 body-bearing `async fn` 会拆成一个真实 body symbol（`__async_body`）加一个公开 wrapper，wrapper 只调用 `qlrt_async_task_create(entry, null)` 并返回 opaque `ptr`，用于冻结最小 IR 结构
+- 已在 `ql-codegen-llvm` 增补最小 async frame scaffold：当前 body-bearing `async fn` 会拆成一个统一接收 `ptr frame` 的真实 body symbol（`__async_body`）加一个公开 wrapper；parameterless wrapper 继续调用 `qlrt_async_task_create(entry, null)`，带参数 wrapper 会先通过 `qlrt_async_frame_alloc(size, align)` 构造最小 heap frame、写入参数，再调用 `qlrt_async_task_create(entry, frame)`，用于冻结最小 IR 结构
 - 已在 `ql-typeck` 收紧 direct async call 语义：`async fn` 调用当前只能作为 `await <call>` 或 `spawn <call>` 的直接 operand 使用，独立使用 async call 结果会给出显式诊断，避免在 task/result ABI 未冻结前把 async 调用误当成同步返回值
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
 - 当前 direct `async fn` call 也不提供独立任务/handle 类型；在完整 task/result surface 落地前，编译器只允许通过 `await` / `spawn` 这两个显式边界消费 async 调用
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前 hook ABI skeleton 已冻结第一版 LLVM-facing contract string，但仍只使用 `ptr` 级 opaque 形态；真实内存布局、结果传递协议和更细粒度调用约定仍未冻结
-- 当前 backend 对这些 hook 已进入“declaration + parameterless async body wrapper”阶段，但仍不代表 async lowering、frame 布局、参数捕获、`await` / `spawn` / `for await` lowering、任务结果协议或调度语义已经进入可执行阶段
-- 当前 parameterless `async fn` wrapper 仍显式要求 `async-task-create` hook 已接入；带参数的 `async fn` 继续保守拒绝，直到 async frame lowering 设计完成
+- 当前 backend 对这些 hook 已进入“declaration + async body wrapper + conservative frame hydration”阶段，但仍不代表 `await` / `spawn` / `for await` lowering、任务结果协议、frame 生命周期管理或调度语义已经进入可执行阶段
+- 当前 parameterless `async fn` wrapper 仍只依赖 `async-task-create` hook；带参数的 `async fn` 现在还会显式要求 `async-frame-alloc` hook 已接入，但这仍只是最小 heap-frame scaffold，不代表更完整的 frame/capture/result 设计已经冻结
 - 当前 `async-iteration` 已在 driver 层前移成公开 build 诊断，但仍只固定失败合同，不代表 `for await` lowering、runtime hook 或调度语义已经设计完成
 - 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、显式字面量 `if true` / `if false`、显式字面量 `match true/false`、非字面量 `Bool` / enum `match` 上的字面量 guard、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、更广义的常量传播、更一般的 guard-sensitive `match` 与 unreachable 细化仍待后续切片
 - 当前 loop-control 已具备 analysis/LSP 的只读桥接，但还未扩展到公开 editor 协议 capability；继续保持低风险桥接策略

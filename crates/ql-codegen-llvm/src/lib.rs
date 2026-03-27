@@ -52,12 +52,27 @@ struct FunctionSignature {
     body_style: FunctionBodyStyle,
     is_async: bool,
     async_body_llvm_name: Option<String>,
+    async_frame_layout: Option<AsyncFrameLayout>,
 }
 
 #[derive(Clone, Debug)]
 struct ParamSignature {
     name: String,
     ty: Ty,
+    llvm_ty: String,
+}
+
+#[derive(Clone, Debug)]
+struct AsyncFrameLayout {
+    llvm_ty: String,
+    size: u64,
+    align: u64,
+    fields: Vec<AsyncFrameField>,
+}
+
+#[derive(Clone, Debug)]
+struct AsyncFrameField {
+    param_index: usize,
     llvm_ty: String,
 }
 
@@ -78,6 +93,12 @@ struct LoweredValue {
     ty: Ty,
     llvm_ty: String,
     repr: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ScalarAbiLayout {
+    size: u64,
+    align: u64,
 }
 
 struct ModuleEmitter<'a> {
@@ -329,6 +350,7 @@ impl<'a> ModuleEmitter<'a> {
         let mut return_ty = body_return_ty.clone();
         let mut return_llvm_ty = body_return_llvm_ty.clone();
         let mut async_body_llvm_name = None;
+        let mut async_frame_layout = None;
 
         if function.is_async {
             match body_style {
@@ -339,17 +361,23 @@ impl<'a> ModuleEmitter<'a> {
                             "LLVM IR backend foundation does not support `async fn main` yet",
                         ));
                     }
-                    if !params.is_empty() {
-                        diagnostics.push(unsupported(
-                            function.span,
-                            "LLVM IR backend foundation does not support `async fn` parameters before async frame lowering exists",
-                        ));
-                    }
                     if !self.has_runtime_hook(RuntimeHook::AsyncTaskCreate) {
                         diagnostics.push(unsupported(
                             function.span,
                             "LLVM IR backend foundation requires the `async-task-create` runtime hook before lowering `async fn` bodies",
                         ));
+                    }
+                    if !params.is_empty() && !self.has_runtime_hook(RuntimeHook::AsyncFrameAlloc) {
+                        diagnostics.push(unsupported(
+                            function.span,
+                            "LLVM IR backend foundation requires the `async-frame-alloc` runtime hook before lowering parameterized `async fn` bodies",
+                        ));
+                    }
+                    if !params.is_empty() {
+                        match build_async_frame_layout(&params, function.span) {
+                            Ok(layout) => async_frame_layout = Some(layout),
+                            Err(error) => diagnostics.push(error),
+                        }
                     }
 
                     return_ty = Ty::Unknown;
@@ -414,6 +442,7 @@ impl<'a> ModuleEmitter<'a> {
             body_style,
             is_async: function.is_async,
             async_body_llvm_name,
+            async_frame_layout,
         })
     }
 
@@ -1039,7 +1068,7 @@ impl<'a> ModuleEmitter<'a> {
         function: &PreparedFunction,
         body_name: &str,
     ) {
-        let hook = self
+        let task_create_hook = self
             .runtime_hook_signature(RuntimeHook::AsyncTaskCreate)
             .expect("async body lowering should require the async-task-create runtime hook");
         let params = function
@@ -1059,12 +1088,39 @@ impl<'a> ModuleEmitter<'a> {
             function.signature.return_llvm_ty, function.signature.llvm_name
         );
         output.push_str("entry:\n");
-        let temp = "%async_task0";
+        let frame = if let Some(layout) = &function.signature.async_frame_layout {
+            let frame_alloc_hook = self
+                .runtime_hook_signature(RuntimeHook::AsyncFrameAlloc)
+                .expect(
+                    "parameterized async body lowering should require the async-frame-alloc runtime hook",
+                );
+            output.push_str(&format!(
+                "  %async_frame = call {} @{}(i64 {}, i64 {})\n",
+                frame_alloc_hook.return_type.llvm_ir(),
+                frame_alloc_hook.hook.symbol_name(),
+                layout.size,
+                layout.align
+            ));
+            for field in &layout.fields {
+                output.push_str(&format!(
+                    "  %async_frame_field{} = getelementptr inbounds {}, ptr %async_frame, i32 0, i32 {}\n",
+                    field.param_index, layout.llvm_ty, field.param_index
+                ));
+                output.push_str(&format!(
+                    "  store {} %arg{}, ptr %async_frame_field{}\n",
+                    field.llvm_ty, field.param_index, field.param_index
+                ));
+            }
+            "%async_frame"
+        } else {
+            "null"
+        };
+        let temp = "%async_task";
         let _ = writeln!(
             output,
-            "  {temp} = call {} @{}(ptr @{}, ptr null)",
-            hook.return_type.llvm_ir(),
-            hook.hook.symbol_name(),
+            "  {temp} = call {} @{}(ptr @{}, ptr {frame})",
+            task_create_hook.return_type.llvm_ir(),
+            task_create_hook.hook.symbol_name(),
             body_name
         );
         let _ = writeln!(output, "  ret {} {temp}", function.signature.return_llvm_ty);
@@ -1086,17 +1142,21 @@ impl<'a> ModuleEmitter<'a> {
                     .function_owner_item(function.signature.function_ref),
             ))
             .expect("prepared function should still have a MIR body");
-        let params = function
-            .signature
-            .params
-            .iter()
-            .enumerate()
-            .map(|(index, param)| {
-                let _ = &param.name;
-                format!("{} %arg{index}", param.llvm_ty)
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+        let params = if function.signature.is_async {
+            "ptr %frame".to_owned()
+        } else {
+            function
+                .signature
+                .params
+                .iter()
+                .enumerate()
+                .map(|(index, param)| {
+                    let _ = &param.name;
+                    format!("{} %arg{index}", param.llvm_ty)
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         let _ = writeln!(
             output,
             "define {} @{}({params}) {{",
@@ -1127,6 +1187,29 @@ impl<'a> ModuleEmitter<'a> {
             let LocalOrigin::Param { index } = local.origin else {
                 continue;
             };
+            if let Some(layout) = &function.signature.async_frame_layout {
+                let field = layout
+                    .fields
+                    .get(index)
+                    .expect("async frame layout should cover every lowered parameter");
+                let _ = writeln!(
+                    output,
+                    "  %async_body_frame_field{index} = getelementptr inbounds {}, ptr %frame, i32 0, i32 {}",
+                    layout.llvm_ty, field.param_index
+                );
+                let _ = writeln!(
+                    output,
+                    "  %async_body_frame_value{index} = load {}, ptr %async_body_frame_field{index}",
+                    field.llvm_ty
+                );
+                let _ = writeln!(
+                    output,
+                    "  store {} %async_body_frame_value{index}, ptr {}",
+                    field.llvm_ty,
+                    llvm_slot_name(body, local_id)
+                );
+                continue;
+            }
             let param = &function.signature.params[index];
             let _ = writeln!(
                 output,
@@ -1496,6 +1579,70 @@ fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnos
     }
 }
 
+fn build_async_frame_layout(
+    params: &[ParamSignature],
+    span: Span,
+) -> Result<AsyncFrameLayout, Diagnostic> {
+    let mut fields = Vec::with_capacity(params.len());
+    let mut field_types = Vec::with_capacity(params.len());
+    let mut size = 0;
+    let mut align = 1;
+
+    for (index, param) in params.iter().enumerate() {
+        let layout = scalar_abi_layout(&param.ty, span)?;
+        size = align_to(size, layout.align);
+        size += layout.size;
+        align = align.max(layout.align);
+        field_types.push(param.llvm_ty.clone());
+        fields.push(AsyncFrameField {
+            param_index: index,
+            llvm_ty: param.llvm_ty.clone(),
+        });
+    }
+
+    Ok(AsyncFrameLayout {
+        llvm_ty: format!("{{ {} }}", field_types.join(", ")),
+        size: align_to(size, align),
+        align,
+        fields,
+    })
+}
+
+fn scalar_abi_layout(ty: &Ty, span: Span) -> Result<ScalarAbiLayout, Diagnostic> {
+    match ty {
+        Ty::Builtin(BuiltinType::Bool)
+        | Ty::Builtin(BuiltinType::I8)
+        | Ty::Builtin(BuiltinType::U8) => Ok(ScalarAbiLayout { size: 1, align: 1 }),
+        Ty::Builtin(BuiltinType::I16) | Ty::Builtin(BuiltinType::U16) => {
+            Ok(ScalarAbiLayout { size: 2, align: 2 })
+        }
+        Ty::Builtin(BuiltinType::I32)
+        | Ty::Builtin(BuiltinType::U32)
+        | Ty::Builtin(BuiltinType::F32) => Ok(ScalarAbiLayout { size: 4, align: 4 }),
+        Ty::Builtin(BuiltinType::Int)
+        | Ty::Builtin(BuiltinType::UInt)
+        | Ty::Builtin(BuiltinType::I64)
+        | Ty::Builtin(BuiltinType::U64)
+        | Ty::Builtin(BuiltinType::ISize)
+        | Ty::Builtin(BuiltinType::USize)
+        | Ty::Builtin(BuiltinType::F64) => Ok(ScalarAbiLayout { size: 8, align: 8 }),
+        _ => Err(Diagnostic::error(format!(
+            "LLVM IR backend foundation does not support `async fn` frame field type `{ty}` yet"
+        ))
+        .with_label(Label::new(span))),
+    }
+}
+
+fn align_to(value: u64, align: u64) -> u64 {
+    debug_assert!(align > 0);
+    let remainder = value % align;
+    if remainder == 0 {
+        value
+    } else {
+        value + (align - remainder)
+    }
+}
+
 fn arithmetic_opcode(op: BinaryOp, ty: &Ty) -> &'static str {
     match (op, is_float_ty(ty), integer_signedness(ty)) {
         (BinaryOp::Add, true, _) => "fadd",
@@ -1655,7 +1802,10 @@ fn sanitize_symbol(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use ql_analysis::analyze_source;
-    use ql_runtime::{RuntimeCapability, RuntimeHookSignature, collect_runtime_hook_signatures};
+    use ql_runtime::{
+        RuntimeCapability, RuntimeHook, RuntimeHookSignature, collect_runtime_hook_signatures,
+        runtime_hook_signature,
+    };
 
     use super::{CodegenInput, CodegenMode, emit_module};
 
@@ -1835,12 +1985,22 @@ fn main() -> Int {
             &runtime_hooks,
         );
 
+        let async_frame_alloc = "declare ptr @qlrt_async_frame_alloc(i64, i64)";
         let async_task_create = "declare ptr @qlrt_async_task_create(ptr, ptr)";
         let executor_spawn = "declare ptr @qlrt_executor_spawn(ptr, ptr)";
         let entry_definition = "define i64 @ql_0_main()";
 
+        assert!(rendered.contains(async_frame_alloc));
         assert!(rendered.contains(async_task_create));
         assert!(rendered.contains(executor_spawn));
+        assert!(
+            rendered
+                .find(async_frame_alloc)
+                .expect("runtime declaration should exist")
+                < rendered
+                    .find(entry_definition)
+                    .expect("entry function should exist")
+        );
         assert!(
             rendered
                 .find(async_task_create)
@@ -1873,8 +2033,9 @@ async fn worker() -> Int {
             &runtime_hooks,
         );
 
+        assert!(rendered.contains("declare ptr @qlrt_async_frame_alloc(i64, i64)"));
         assert!(rendered.contains("declare ptr @qlrt_async_task_create(ptr, ptr)"));
-        assert!(rendered.contains("define i64 @ql_0_worker__async_body()"));
+        assert!(rendered.contains("define i64 @ql_0_worker__async_body(ptr %frame)"));
         assert!(rendered.contains("define ptr @ql_0_worker()"));
         assert!(
             rendered.contains(
@@ -1884,9 +2045,47 @@ async fn worker() -> Int {
     }
 
     #[test]
-    fn rejects_async_function_parameters_before_async_frame_lowering() {
+    fn emits_async_task_create_wrapper_with_heap_frame_for_parameterized_async_body() {
         let runtime_hooks =
             collect_runtime_hook_signatures([RuntimeCapability::AsyncFunctionBodies]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker(flag: Bool, value: Int) -> Int {
+    if flag {
+        return value
+    }
+    return 0
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("declare ptr @qlrt_async_frame_alloc(i64, i64)"));
+        assert!(rendered.contains("define i64 @ql_0_worker__async_body(ptr %frame)"));
+        assert!(rendered.contains("define ptr @ql_0_worker(i1 %arg0, i64 %arg1)"));
+        assert!(rendered.contains("call ptr @qlrt_async_frame_alloc(i64 16, i64 8)"));
+        assert!(
+            rendered.contains("getelementptr inbounds { i1, i64 }, ptr %async_frame, i32 0, i32 0")
+        );
+        assert!(
+            rendered.contains("getelementptr inbounds { i1, i64 }, ptr %async_frame, i32 0, i32 1")
+        );
+        assert!(rendered.contains("store i1 %arg0, ptr %async_frame_field0"));
+        assert!(rendered.contains("store i64 %arg1, ptr %async_frame_field1"));
+        assert!(rendered.contains(
+            "call ptr @qlrt_async_task_create(ptr @ql_0_worker__async_body, ptr %async_frame)"
+        ));
+        assert!(rendered.contains(
+            "%async_body_frame_field0 = getelementptr inbounds { i1, i64 }, ptr %frame, i32 0, i32 0"
+        ));
+        assert!(rendered.contains(
+            "%async_body_frame_field1 = getelementptr inbounds { i1, i64 }, ptr %frame, i32 0, i32 1"
+        ));
+    }
+
+    #[test]
+    fn rejects_parameterized_async_function_bodies_without_async_frame_alloc_hook() {
         let messages = emit_error_with_runtime_hooks(
             r#"
 async fn worker(value: Int) -> Int {
@@ -1894,12 +2093,12 @@ async fn worker(value: Int) -> Int {
 }
 "#,
             CodegenMode::Library,
-            &runtime_hooks,
+            &[runtime_hook_signature(RuntimeHook::AsyncTaskCreate)],
         );
 
         assert!(messages.iter().any(|message| {
             message
-                == "LLVM IR backend foundation does not support `async fn` parameters before async frame lowering exists"
+                == "LLVM IR backend foundation requires the `async-frame-alloc` runtime hook before lowering parameterized `async fn` bodies"
         }));
     }
 

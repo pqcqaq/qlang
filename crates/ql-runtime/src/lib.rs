@@ -40,6 +40,7 @@ impl RuntimeCapability {
 /// protocols before Phase 7 lowering is designed end to end.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum RuntimeHook {
+    AsyncFrameAlloc,
     AsyncTaskCreate,
     ExecutorSpawn,
     TaskAwait,
@@ -49,6 +50,7 @@ pub enum RuntimeHook {
 impl RuntimeHook {
     pub const fn stable_name(self) -> &'static str {
         match self {
+            Self::AsyncFrameAlloc => "async-frame-alloc",
             Self::AsyncTaskCreate => "async-task-create",
             Self::ExecutorSpawn => "executor-spawn",
             Self::TaskAwait => "task-await",
@@ -58,6 +60,7 @@ impl RuntimeHook {
 
     pub const fn symbol_name(self) -> &'static str {
         match self {
+            Self::AsyncFrameAlloc => "qlrt_async_frame_alloc",
             Self::AsyncTaskCreate => "qlrt_async_task_create",
             Self::ExecutorSpawn => "qlrt_executor_spawn",
             Self::TaskAwait => "qlrt_task_await",
@@ -67,6 +70,9 @@ impl RuntimeHook {
 
     pub const fn description(self) -> &'static str {
         match self {
+            Self::AsyncFrameAlloc => {
+                "allocating heap-backed async frames for `async fn` entry wrappers"
+            }
             Self::AsyncTaskCreate => "materializing an executable task from an `async fn` body",
             Self::ExecutorSpawn => "submitting a task to the configured runtime executor",
             Self::TaskAwait => "waiting for an asynchronous task result",
@@ -166,6 +172,16 @@ const ASYNC_TASK_CREATE_PARAMS: &[RuntimeHookParam] = &[
         ty: RuntimeAbiType::Ptr,
     },
 ];
+const ASYNC_FRAME_ALLOC_PARAMS: &[RuntimeHookParam] = &[
+    RuntimeHookParam {
+        name: "size",
+        ty: RuntimeAbiType::I64,
+    },
+    RuntimeHookParam {
+        name: "align",
+        ty: RuntimeAbiType::I64,
+    },
+];
 const EXECUTOR_SPAWN_PARAMS: &[RuntimeHookParam] = &[
     RuntimeHookParam {
         name: "executor",
@@ -185,7 +201,8 @@ const ASYNC_ITER_NEXT_PARAMS: &[RuntimeHookParam] = &[RuntimeHookParam {
     ty: RuntimeAbiType::Ptr,
 }];
 
-const ASYNC_FUNCTION_BODY_HOOKS: &[RuntimeHook] = &[RuntimeHook::AsyncTaskCreate];
+const ASYNC_FUNCTION_BODY_HOOKS: &[RuntimeHook] =
+    &[RuntimeHook::AsyncFrameAlloc, RuntimeHook::AsyncTaskCreate];
 const TASK_SPAWN_HOOKS: &[RuntimeHook] = &[RuntimeHook::ExecutorSpawn];
 const TASK_AWAIT_HOOKS: &[RuntimeHook] = &[RuntimeHook::TaskAwait];
 const ASYNC_ITERATION_HOOKS: &[RuntimeHook] = &[RuntimeHook::AsyncIterNext];
@@ -217,6 +234,11 @@ where
 
 pub const fn runtime_hook_signature(hook: RuntimeHook) -> RuntimeHookSignature {
     match hook {
+        RuntimeHook::AsyncFrameAlloc => RuntimeHookSignature {
+            hook,
+            return_type: RuntimeAbiType::Ptr,
+            params: ASYNC_FRAME_ALLOC_PARAMS,
+        },
         RuntimeHook::AsyncTaskCreate => RuntimeHookSignature {
             hook,
             return_type: RuntimeAbiType::Ptr,

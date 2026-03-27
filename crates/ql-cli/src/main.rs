@@ -792,10 +792,14 @@ async fn helper() -> Int {
         assert!(rendered.contains("runtime requirement: async-iteration @"));
         assert!(rendered.contains("runtime requirement: task-spawn @"));
         assert!(rendered.contains("runtime requirement: task-await @"));
+        assert!(rendered.contains("runtime hook: async-frame-alloc -> qlrt_async_frame_alloc"));
         assert!(rendered.contains("runtime hook: async-task-create -> qlrt_async_task_create"));
         assert!(rendered.contains("runtime hook: executor-spawn -> qlrt_executor_spawn"));
         assert!(rendered.contains("runtime hook: task-await -> qlrt_task_await"));
         assert!(rendered.contains("runtime hook: async-iter-next -> qlrt_async_iter_next"));
+        assert!(rendered.contains(
+            "runtime hook abi: async-frame-alloc ccc qlrt_async_frame_alloc(size: i64, align: i64) -> ptr"
+        ));
         assert!(rendered.contains(
             "runtime hook abi: async-task-create ccc qlrt_async_task_create(entry: ptr, frame: ptr) -> ptr"
         ));
