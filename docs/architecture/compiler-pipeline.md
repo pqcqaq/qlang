@@ -123,6 +123,7 @@ source
 - `=` 当前只对 bare mutable binding 开放真实可写语义；field/index 写入仍未开放，但已经有显式 unsupported diagnostics，不再静默伪装成“可能可用”
 - local import alias 的 value/callable typing 当前仍只限 same-file、single-segment、可规范化到本地 function / const / static item 的场景；foreign import 与更深 module graph 仍然延后
 - invalid projection receiver diagnostics 当前也只在“类型已知且明确不支持当前语义”时触发；`unknown` / generic / deeper import-module 相关场景仍保持保守，不提前下结论
+- invalid deeper path-like call 当前也不会继续复用 root callable truth surface：如果 receiver 已知必错，`ping.scope(true)` 这类 case 会停在 projection error，而不是再从 `ping` / import alias 根绑定偷出函数签名继续做参数类型检查
 - invalid struct-literal root diagnostics 当前也只在“root 已解析成功且明确不支持 struct-style 字段构造”时触发；same-file 已解析二段 enum variant path 的 unknown variant 现在也会显式报错，但 deeper module-path case 仍保持保守，不提前下结论
 - unsupported 或仍 deferred 的 struct literal root 当前也会直接回退成 `unknown`，不再把首段解析结果伪装成真实 item type 并继续污染 return/assignment diagnostics
 - deferred multi-segment type path 当前也保持 source-backed `Named` 表示，不再把首段解析出来的 same-file local item / import alias 过早伪装成真实 concrete type

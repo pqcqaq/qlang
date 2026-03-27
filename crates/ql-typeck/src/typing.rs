@@ -725,7 +725,9 @@ impl<'a> Checker<'a> {
     }
 
     fn call_signature(&self, callee: ExprId, callee_ty: &Ty) -> Option<Signature> {
-        if let Some(resolution) = self.resolution.expr_resolution(callee) {
+        if matches!(self.module.expr(callee).kind, ExprKind::Name(_))
+            && let Some(resolution) = self.resolution.expr_resolution(callee)
+        {
             match resolution {
                 ValueResolution::Function(function_ref) => {
                     let function = self.module.function(*function_ref);

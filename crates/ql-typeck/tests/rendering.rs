@@ -162,6 +162,36 @@ fn main() -> Int {
 }
 
 #[test]
+fn rendered_invalid_member_receiver_calls_do_not_cascade_into_argument_mismatches() {
+    let source = r#"
+use ping as Op
+
+fn ping(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    let direct = ping.scope(true)
+    let alias = Op.scope(true)
+    return 0
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert_eq!(
+        rendered
+            .matches("member access is not supported on type `(Int) -> Int`")
+            .count(),
+        2,
+        "expected both invalid member receiver calls to render as projection errors\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("call argument has type mismatch"),
+        "invalid member receiver calls should not reuse root function signatures\n{rendered}"
+    );
+}
+
+#[test]
 fn rendered_invalid_struct_literal_root_diagnostics_anchor_to_the_literal() {
     let source = r#"
 enum Command {

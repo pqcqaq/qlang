@@ -76,6 +76,7 @@ Phase 2 的目标不是一次做完完整类型系统，而是建立统一语义
 - unsupported 或仍 deferred 的 struct literal root 现在也回退成 `unknown`，避免继续制造级联 type mismatch
 - deferred multi-segment type path 现在也保持 source-backed `Named`，避免 same-file local item / import alias 的首段解析结果继续污染 type/query truth surface
 - deferred multi-segment `impl` / `extend` target 也不会被投影到 concrete local receiver surface；同文件 concrete item 的 member typing/completion 只继续接真实 receiver 自己的字段/方法，不把 `Counter.Scope.Config` 这类 deferred path 的方法伪装成 `Counter` 的能力
+- deeper path-like call 在 receiver 已知必错时也不会继续复用 root callable signature；像 `ping.scope(true)` 这类 case 现在会停在 projection error，而不是再额外制造伪造的 call-argument mismatch
 
 ### 4. 同文件查询与最小 LSP
 

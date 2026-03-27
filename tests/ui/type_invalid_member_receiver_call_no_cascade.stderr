@@ -1,0 +1,6 @@
+error: tests/ui/type_invalid_member_receiver_call_no_cascade.ql:8:18: member access is not supported on type `(Int) -> Int`
+      let direct = ping.scope(true)
+                   ^^^^^^^^ member access here
+error: tests/ui/type_invalid_member_receiver_call_no_cascade.ql:9:17: member access is not supported on type `(Int) -> Int`
+      let alias = Op.scope(true)
+                  ^^^^^^^^ member access here

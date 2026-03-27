@@ -264,6 +264,7 @@
 - import alias 的 value/callable typing 先只复用 same-file single-segment canonicalization，不把这条路径误写成完整 module graph / foreign import 语义
 - ambiguous method 先只升级成显式 type diagnostics，不提前宣称 completion / rename / query 已经具备模糊候选真值模型
 - projection receiver diagnostics 也先只覆盖“已知必错”的类型，不拿 generic / unresolved / module-path deferred case 冒进报错
+- deeper path-like call 在 receiver 已知必错时，也不能回头复用 root callable signature；如果 `callee` 不是 bare name，就只能走真实 member-target 或 value type，而不能从 `ping.scope` 的 root `ping` 偷出函数签名继续做 call checking
 - struct-literal root diagnostics 也先只覆盖“root 已解析成功且构造形状已知必错”的 case；same-file 已解析二段 enum variant path 的 unknown variant 现在也会升级成显式错误，但 deeper module-path 仍不提前下结论
 - unsupported 或仍 deferred 的 struct literal root 也直接回退成 `unknown`，避免把首段解析结果伪装成稳定 item type 后继续触发级联 type mismatch
 - deferred multi-segment type path 也保持 source-backed `Named`，不把 same-file local item / import alias 的首段解析结果误升级成稳定 concrete type

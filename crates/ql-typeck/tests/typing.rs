@@ -316,6 +316,42 @@ fn main() -> Int {
 }
 
 #[test]
+fn invalid_member_receivers_do_not_reuse_root_function_signatures_for_calls() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use ping as Op
+
+fn ping(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    let direct = ping.scope(true)
+    let alias = Op.scope(true)
+    return 0
+}
+"#,
+    );
+
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|message| {
+                message == &&"member access is not supported on type `(Int) -> Int`".to_string()
+            })
+            .count(),
+        2,
+        "expected both invalid member receivers to be diagnosed, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|message| message.contains("call argument has type mismatch")),
+        "invalid member receivers should not reuse root function signatures for deeper path calls, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_invalid_index_access_on_non_indexable_values() {
     let diagnostics = diagnostic_messages(
         r#"
