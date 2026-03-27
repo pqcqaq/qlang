@@ -60,6 +60,41 @@ fn main() -> Int {
 }
 
 #[test]
+fn rendered_await_async_call_target_diagnostics_anchor_to_the_await_expression() {
+    let source = r#"
+fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    return await worker()
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(
+        rendered
+            .contains("error: sample.ql:7:12: `await` currently requires calling an `async fn`")
+    );
+}
+
+#[test]
+fn rendered_spawn_async_call_target_diagnostics_anchor_to_the_spawn_expression() {
+    let source = r#"
+async fn main() -> Int {
+    let run = () => 1
+    spawn run()
+    return 0
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(
+        rendered.contains("error: sample.ql:4:5: `spawn` currently requires calling an `async fn`")
+    );
+}
+
+#[test]
 fn rendered_assignment_immutability_diagnostics_anchor_to_the_target() {
     let source = r#"
 fn main() -> Int {
