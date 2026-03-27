@@ -31,6 +31,7 @@
 - 已在 `ql-cli` codegen 黑盒快照中补充 `unsupported_async_fn_build` 用例，锁住用户侧 `ql build` 的 async backend 拒绝输出
 - 已补充 `dylib` 路径上的 async backend 回归（含合法 `extern "c"` 导出存在时仍拒绝 `async fn`），锁住边界校验优先级
 - 已补充 `async + generic` 并存场景回归，锁住 backend 同阶段多条 unsupported 诊断聚合行为
+- 已补充 `async + unsafe fn body` 并存场景回归，锁住 backend 对函数签名级多条 unsupported 诊断的聚合与输出顺序
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 
 ## 分阶段实现建议
