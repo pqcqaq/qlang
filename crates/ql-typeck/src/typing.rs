@@ -790,6 +790,23 @@ impl<'a> Checker<'a> {
             ExprKind::Match { value, arms } => {
                 let match_flow = if let Some(literal) = self.bool_literal(*value) {
                     self.literal_bool_match_flow(literal, arms)
+                } else if self.expr_types.get(value).is_some_and(Ty::is_bool) {
+                    self.bool_match_flow(arms)
+                } else if let Some(Ty::Item { item_id, .. }) = self.expr_types.get(value) {
+                    if matches!(self.module.item(*item_id).kind, ItemKind::Enum(_)) {
+                        self.enum_match_flow(*item_id, arms)
+                    } else {
+                        let arms_flow = arms
+                            .iter()
+                            .fold(ControlFlowSummary::diverges(), |flow, arm| {
+                                flow.union(self.match_arm_flow(arm))
+                            });
+                        if self.match_is_exhaustive(*value, arms) {
+                            arms_flow
+                        } else {
+                            arms_flow.union(ControlFlowSummary::normal())
+                        }
+                    }
                 } else {
                     let arms_flow = arms
                         .iter()
@@ -923,7 +940,10 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn literal_bool_match_flow(&self, value: bool, arms: &[MatchArm]) -> ControlFlowSummary {
+    fn ordered_match_flow<F>(&self, arms: &[MatchArm], mut pattern_matches: F) -> ControlFlowSummary
+    where
+        F: FnMut(&Self, PatternId) -> bool,
+    {
         let mut flow = ControlFlowSummary::diverges();
         let mut pending = true;
 
@@ -931,7 +951,7 @@ impl<'a> Checker<'a> {
             if !pending {
                 break;
             }
-            if !self.pattern_matches_bool_literal(arm.pattern, value) {
+            if !pattern_matches(self, arm.pattern) {
                 continue;
             }
 
@@ -954,7 +974,7 @@ impl<'a> Checker<'a> {
                         continue;
                     }
 
-                    match self.bool_literal(guard) {
+                    match self.arm_guard_literal(arm) {
                         Some(true) => {
                             flow = flow.union(body_flow);
                             pending = false;
@@ -975,6 +995,37 @@ impl<'a> Checker<'a> {
         flow
     }
 
+    fn bool_match_flow(&self, arms: &[MatchArm]) -> ControlFlowSummary {
+        self.literal_bool_match_flow(true, arms)
+            .union(self.literal_bool_match_flow(false, arms))
+    }
+
+    fn literal_bool_match_flow(&self, value: bool, arms: &[MatchArm]) -> ControlFlowSummary {
+        self.ordered_match_flow(arms, |this, pattern_id| {
+            this.pattern_matches_bool_literal(pattern_id, value)
+        })
+    }
+
+    fn enum_match_flow(&self, enum_item_id: ItemId, arms: &[MatchArm]) -> ControlFlowSummary {
+        let item = self.module.item(enum_item_id);
+        let ItemKind::Enum(enum_decl) = &item.kind else {
+            return ControlFlowSummary::normal();
+        };
+
+        enum_decl
+            .variants
+            .iter()
+            .fold(ControlFlowSummary::diverges(), |flow, variant| {
+                flow.union(self.ordered_match_flow(arms, |this, pattern_id| {
+                    this.pattern_matches_enum_variant(
+                        enum_item_id,
+                        pattern_id,
+                        variant.name.as_str(),
+                    )
+                }))
+            })
+    }
+
     fn pattern_matches_bool_literal(&self, pattern_id: PatternId, value: bool) -> bool {
         match &self.module.pattern(pattern_id).kind {
             PatternKind::Bool(pattern_value) => *pattern_value == value,
@@ -983,20 +1034,50 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn pattern_matches_enum_variant(
+        &self,
+        enum_item_id: ItemId,
+        pattern_id: PatternId,
+        variant_name: &str,
+    ) -> bool {
+        match &self.module.pattern(pattern_id).kind {
+            PatternKind::Wildcard => true,
+            _ => self
+                .enum_variant_name_for_pattern(enum_item_id, pattern_id)
+                .is_some_and(|name| name == variant_name),
+        }
+    }
+
+    fn arm_guard_literal(&self, arm: &MatchArm) -> Option<bool> {
+        arm.guard.and_then(|guard| self.bool_literal(guard))
+    }
+
+    fn arm_counts_for_exhaustiveness(&self, arm: &MatchArm) -> bool {
+        match arm.guard {
+            None => true,
+            Some(_) => matches!(self.arm_guard_literal(arm), Some(true)),
+        }
+    }
+
     fn match_arm_flow(&self, arm: &MatchArm) -> ControlFlowSummary {
         let body_flow = self.expr_flow(arm.body);
         match arm.guard {
-            Some(guard) => self
-                .expr_flow(guard)
-                .then(body_flow.union(ControlFlowSummary::normal())),
+            Some(guard) => {
+                let guard_flow = self.expr_flow(guard);
+                match self.arm_guard_literal(arm) {
+                    Some(true) => guard_flow.then(body_flow),
+                    Some(false) => guard_flow.then(ControlFlowSummary::normal()),
+                    None => guard_flow.then(body_flow.union(ControlFlowSummary::normal())),
+                }
+            }
             None => body_flow,
         }
     }
 
     fn match_has_catch_all_arm(&self, arms: &[MatchArm]) -> bool {
         arms.iter().any(|arm| {
-            arm.guard.is_none()
-                && matches!(self.module.pattern(arm.pattern).kind, PatternKind::Wildcard)
+            matches!(self.module.pattern(arm.pattern).kind, PatternKind::Wildcard)
+                && self.arm_counts_for_exhaustiveness(arm)
         })
     }
 
@@ -1025,7 +1106,7 @@ impl<'a> Checker<'a> {
         let mut saw_false = false;
 
         for arm in arms {
-            if arm.guard.is_some() {
+            if !self.arm_counts_for_exhaustiveness(arm) {
                 continue;
             }
             match &self.module.pattern(arm.pattern).kind {
@@ -1047,7 +1128,7 @@ impl<'a> Checker<'a> {
 
         let mut seen_variants = HashSet::new();
         for arm in arms {
-            if arm.guard.is_some() {
+            if !self.arm_counts_for_exhaustiveness(arm) {
                 continue;
             }
             if let Some(variant_name) =

@@ -352,6 +352,76 @@ fn choose(flag: Bool) -> Int {
 }
 
 #[test]
+fn accepts_bool_matches_with_literal_true_guards_as_exhaustive_for_function_returns() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose(flag: Bool) -> Int {
+    match flag {
+        true if true => {
+            return 1
+        }
+        false if true => {
+            return 0
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_guarded_catch_all_matches_with_literal_true_guards_as_exhaustive() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose(flag: Bool) -> Int {
+    match flag {
+        true if flag => {
+            return 1
+        }
+        _ if true => {
+            return 0
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_guarded_catch_all_matches_with_literal_false_guards_as_non_exhaustive() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose(flag: Bool) -> Int {
+    match flag {
+        true => {
+            return 1
+        }
+        _ if false => {
+            return 0
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"function body has type mismatch: expected `Int`, found `Void`".to_string()),
+        "expected missing function return diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_function_matches_over_enum_when_all_variants_return() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -373,6 +443,34 @@ fn run(command: Command) -> Int {
         }
         Command.Config { retries } => {
             return retries
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_function_matches_over_enum_with_literal_true_guards_as_exhaustive() {
+    let diagnostics = diagnostic_messages(
+        r#"
+enum Command {
+    Quit,
+    Value(Int),
+}
+
+fn run(command: Command) -> Int {
+    match command {
+        Command.Quit if true => {
+            return 0
+        }
+        Command.Value(value) if true => {
+            return value
         }
     }
 }
