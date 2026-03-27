@@ -81,6 +81,44 @@ fn ffi_exports_link_from_rust_static_harnesses() {
 }
 
 #[test]
+fn ffi_exports_link_from_rust_cargo_static_harnesses() {
+    let workspace_root = workspace_root();
+    let fixture_root = workspace_root.join("tests/ffi/pass");
+    let cases = collect_rust_static_ffi_cases(&fixture_root);
+    assert!(
+        !cases.is_empty(),
+        "expected at least one Rust static FFI fixture under `{}`",
+        fixture_root.display()
+    );
+
+    let Some(cargo) = resolve_program_from_env_or_path("CARGO", &cargo_candidates()) else {
+        eprintln!(
+            "skipping Cargo-based Rust FFI integration tests: no cargo found on PATH and `CARGO` is not set"
+        );
+        return;
+    };
+    if resolve_program_from_env_or_path("QLANG_AR", &archiver_candidates()).is_none() {
+        eprintln!(
+            "skipping Cargo-based Rust FFI integration tests: no archive tool found on PATH and `QLANG_AR` is not set"
+        );
+        return;
+    }
+
+    let mut failures = Vec::new();
+    for case in cases {
+        if let Err(message) = run_cargo_rust_ffi_case(&workspace_root, &cargo, &case) {
+            failures.push(message);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "Cargo-based Rust FFI integration regressions:\n\n{}",
+        failures.join("\n\n")
+    );
+}
+
+#[test]
 fn ffi_exports_load_from_c_dynamic_harnesses() {
     let workspace_root = workspace_root();
     let fixture_root = workspace_root.join("tests/ffi/pass");
@@ -537,6 +575,14 @@ fn rustc_candidates() -> Vec<&'static str> {
     }
 }
 
+fn cargo_candidates() -> Vec<&'static str> {
+    if cfg!(windows) {
+        vec!["cargo.exe", "cargo.cmd", "cargo.bat", "cargo"]
+    } else {
+        vec!["cargo"]
+    }
+}
+
 fn static_library_output_path(root: &Path, stem: &str) -> PathBuf {
     if cfg!(windows) {
         root.join(format!("{stem}.lib"))
@@ -581,6 +627,56 @@ fn rust_crate_name(stem: &str) -> String {
         }
     }
     name
+}
+
+fn write_rust_cargo_project(
+    project_root: &Path,
+    case: &FfiCase,
+    link_dir: &Path,
+) -> Result<(), String> {
+    let src_dir = project_root.join("src");
+    fs::create_dir_all(&src_dir).map_err(|error| {
+        format!(
+            "[{}] create Cargo host src dir `{}`: {error}",
+            case.name,
+            src_dir.display()
+        )
+    })?;
+    fs::copy(&case.harness_path, src_dir.join("main.rs")).map_err(|error| {
+        format!(
+            "[{}] copy Rust harness `{}` into Cargo project: {error}",
+            case.name,
+            case.harness_path.display()
+        )
+    })?;
+
+    let crate_name = rust_crate_name(&case.name);
+    fs::write(
+        project_root.join("Cargo.toml"),
+        format!("[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n"),
+    )
+    .map_err(|error| {
+        format!(
+            "[{}] write Cargo manifest `{}`: {error}",
+            case.name,
+            project_root.join("Cargo.toml").display()
+        )
+    })?;
+
+    let build_rs = format!(
+        "fn main() {{\n    let link_dir = {:?};\n    println!(\"cargo:rustc-link-search=native={{}}\", link_dir);\n    println!(\"cargo:rustc-link-lib=static={}\");\n}}\n",
+        link_dir.to_string_lossy().to_string(),
+        case.name
+    );
+    fs::write(project_root.join("build.rs"), build_rs).map_err(|error| {
+        format!(
+            "[{}] write Cargo build script `{}`: {error}",
+            case.name,
+            project_root.join("build.rs").display()
+        )
+    })?;
+
+    Ok(())
 }
 
 fn run_ql_build(
@@ -702,6 +798,62 @@ fn run_static_rust_ffi_case(
             run.status.code(),
             run_stdout,
             run_stderr
+        ));
+    }
+
+    Ok(())
+}
+
+fn run_cargo_rust_ffi_case(
+    workspace_root: &Path,
+    cargo: &Path,
+    case: &FfiCase,
+) -> Result<(), String> {
+    let temp = TempDir::new(&format!("ql-ffi-rust-cargo-{}", case.name));
+    let staticlib = static_library_output_path(temp.path(), &case.name);
+    let relative_ql = relative_ql_path(workspace_root, &case.ql_path);
+
+    run_ql_build(
+        workspace_root,
+        &case.name,
+        &relative_ql,
+        "staticlib",
+        &staticlib,
+        HeaderSurface::Exports,
+        None,
+    )?;
+    if !staticlib.is_file() {
+        return Err(format!(
+            "[{}] expected static library `{}` to exist after build",
+            case.name,
+            staticlib.display()
+        ));
+    }
+
+    let project_dir = temp.path().join("cargo-host");
+    write_rust_cargo_project(&project_dir, case, temp.path())?;
+
+    let cargo_run = Command::new(cargo)
+        .current_dir(&project_dir)
+        .env("CARGO_TARGET_DIR", project_dir.join("target"))
+        .args(["run", "--quiet"])
+        .output()
+        .unwrap_or_else(|_| {
+            panic!(
+                "run Cargo-based Rust FFI harness `{}` for `{}`",
+                cargo.display(),
+                case.name
+            )
+        });
+    let cargo_stdout = normalize(&String::from_utf8_lossy(&cargo_run.stdout));
+    let cargo_stderr = normalize(&String::from_utf8_lossy(&cargo_run.stderr));
+    if cargo_run.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[{}] expected Cargo-based Rust FFI harness to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            case.name,
+            cargo_run.status.code(),
+            cargo_stdout,
+            cargo_stderr
         ));
     }
 
