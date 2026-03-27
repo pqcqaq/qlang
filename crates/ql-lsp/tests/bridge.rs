@@ -1992,6 +1992,88 @@ fn read(command: Command) -> Int {
 }
 
 #[test]
+fn hover_bridge_stays_empty_on_deeper_struct_literal_and_pattern_variant_paths() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Config { value: Int },
+    Stop,
+}
+
+fn build() -> Int {
+    let direct = Command.Scope.Config { value: 1 }
+    let alias = Cmd.Scope.Config { value: 2 }
+    return 0
+}
+
+fn read(command: Command) -> Int {
+    return match command {
+        Command.Scope.Retry(value) => value,
+        Cmd.Scope.Retry(value) => value,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for position in [
+        span_to_range(source, nth_span(source, "Config", 2)).start,
+        span_to_range(source, nth_span(source, "Config", 3)).start,
+        span_to_range(source, nth_span(source, "Retry", 2)).start,
+        span_to_range(source, nth_span(source, "Retry", 3)).start,
+    ] {
+        assert_eq!(hover_for_analysis(source, &analysis, position), None);
+    }
+}
+
+#[test]
+fn references_bridge_stays_empty_on_deeper_struct_literal_and_pattern_variant_paths() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Config { value: Int },
+    Stop,
+}
+
+fn build() -> Int {
+    let direct = Command.Scope.Config { value: 1 }
+    let alias = Cmd.Scope.Config { value: 2 }
+    return 0
+}
+
+fn read(command: Command) -> Int {
+    return match command {
+        Command.Scope.Retry(value) => value,
+        Cmd.Scope.Retry(value) => value,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for position in [
+        span_to_range(source, nth_span(source, "Config", 2)).start,
+        span_to_range(source, nth_span(source, "Config", 3)).start,
+        span_to_range(source, nth_span(source, "Retry", 2)).start,
+        span_to_range(source, nth_span(source, "Retry", 3)).start,
+    ] {
+        assert_eq!(
+            references_for_analysis(&uri, source, &analysis, position, true),
+            None
+        );
+        assert_eq!(
+            references_for_analysis(&uri, source, &analysis, position, false),
+            None
+        );
+    }
+}
+
+#[test]
 fn definition_bridge_stays_empty_on_deeper_struct_like_field_paths() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
@@ -2026,6 +2108,86 @@ fn read(point: Point) -> Int {
     ] {
         assert_eq!(
             definition_for_analysis(&uri, source, &analysis, position),
+            None
+        );
+    }
+}
+
+#[test]
+fn hover_bridge_stays_empty_on_deeper_struct_like_field_paths() {
+    let source = r#"
+use Point as P
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+fn build(value: Int) -> Int {
+    let direct = Point.Scope.Config { x: value, y: 1 }
+    let alias = P.Scope.Config { x: value, y: 2 }
+    return 0
+}
+
+fn read(point: Point) -> Int {
+    return match point {
+        Point.Scope.Config { x: current, y: 3 } => current,
+        P.Scope.Config { x: other, y: 4 } => other,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for position in [
+        span_to_range(source, nth_span(source, "x", 2)).start,
+        span_to_range(source, nth_span(source, "x", 3)).start,
+        span_to_range(source, nth_span(source, "x", 4)).start,
+        span_to_range(source, nth_span(source, "x", 5)).start,
+    ] {
+        assert_eq!(hover_for_analysis(source, &analysis, position), None);
+    }
+}
+
+#[test]
+fn references_bridge_stays_empty_on_deeper_struct_like_field_paths() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use Point as P
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+fn build(value: Int) -> Int {
+    let direct = Point.Scope.Config { x: value, y: 1 }
+    let alias = P.Scope.Config { x: value, y: 2 }
+    return 0
+}
+
+fn read(point: Point) -> Int {
+    return match point {
+        Point.Scope.Config { x: current, y: 3 } => current,
+        P.Scope.Config { x: other, y: 4 } => other,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for position in [
+        span_to_range(source, nth_span(source, "x", 2)).start,
+        span_to_range(source, nth_span(source, "x", 3)).start,
+        span_to_range(source, nth_span(source, "x", 4)).start,
+        span_to_range(source, nth_span(source, "x", 5)).start,
+    ] {
+        assert_eq!(
+            references_for_analysis(&uri, source, &analysis, position, true),
+            None
+        );
+        assert_eq!(
+            references_for_analysis(&uri, source, &analysis, position, false),
             None
         );
     }
