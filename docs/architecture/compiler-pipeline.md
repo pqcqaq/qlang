@@ -124,6 +124,7 @@ source
 - local import alias 的 value/callable typing 当前仍只限 same-file、single-segment、可规范化到本地 function / const / static item 的场景；foreign import 与更深 module graph 仍然延后
 - invalid projection receiver diagnostics 当前也只在“类型已知且明确不支持当前语义”时触发；`unknown` / generic / deeper import-module 相关场景仍保持保守，不提前下结论
 - invalid struct-literal root diagnostics 当前也只在“root 已解析成功且明确不支持 struct-style 字段构造”时触发；same-file 已解析二段 enum variant path 的 unknown variant 现在也会显式报错，但 deeper module-path case 仍保持保守，不提前下结论
+- unsupported 或仍 deferred 的 struct literal root 当前也会直接回退成 `unknown`，不再把首段解析结果伪装成真实 item type 并继续污染 return/assignment diagnostics
 - invalid pattern-root shape diagnostics 当前也只在“pattern root 已解析成功且构造形状已知必错”时触发；same-file 已解析二段 enum variant path 的 unknown variant 现在也会显式报错，但 path pattern shape / deeper module-path case 仍保持保守，不提前下结论
 - invalid path-pattern root diagnostics 当前也只在“path pattern root 已解析成功且 bare path 形状已知必错”时触发；unit variant 仍允许，same-file 已解析二段 enum variant path 的 unknown variant 与 const/static path 语义现在也会给出显式诊断，但 deeper module-path case 仍保持保守，不提前下结论
 - const/static bare path pattern 现在也已经改成显式 unsupported diagnostics；但这仍然只覆盖 same-file root / same-file local import alias，cross-file / deeper module-path case 继续保守

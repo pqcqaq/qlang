@@ -1187,6 +1187,50 @@ fn main() -> Command {
 }
 
 #[test]
+fn invalid_struct_literal_roots_do_not_cascade_into_return_mismatches() {
+    let diagnostics = diagnostic_messages(
+        r#"
+enum Command {
+    Value(Int),
+}
+
+fn main() -> Bool {
+    return Command.Value { value: 1 }
+}
+"#,
+    );
+
+    assert_eq!(
+        diagnostics,
+        vec!["struct literal syntax is not supported for `Command.Value`".to_string()]
+    );
+}
+
+#[test]
+fn deferred_struct_literal_roots_do_not_cascade_into_return_mismatches() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Command as Cmd
+
+enum Command {
+    Config {
+        retries: Int,
+    },
+}
+
+fn main() -> Bool {
+    return Cmd.Scope.Config { retries: 1 }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "deferred struct literal roots should not force return mismatches, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_pattern_root_type_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"

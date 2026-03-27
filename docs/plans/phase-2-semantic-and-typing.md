@@ -73,6 +73,7 @@ Phase 2 的目标不是一次做完完整类型系统，而是建立统一语义
 - pattern root shape 也只在“已解析且已知必错”时显式报错；same-file 已解析二段 enum variant path 的 unknown variant 现在也显式报错，path-pattern semantics / deeper module-path 继续保守
 - bare path pattern 也只在“已解析且已知 bare path 形状必错”时显式报错；unit variant 保持允许
 - const/static bare path pattern 现在也显式报 unsupported，但只限 same-file root / same-file local import alias；更广义 constant-pattern 语义继续保守
+- unsupported 或仍 deferred 的 struct literal root 现在也回退成 `unknown`，避免继续制造级联 type mismatch
 
 ### 4. 同文件查询与最小 LSP
 

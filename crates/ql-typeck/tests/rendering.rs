@@ -181,6 +181,25 @@ fn main() -> Int {
 }
 
 #[test]
+fn rendered_invalid_struct_literal_roots_do_not_cascade_into_return_mismatches() {
+    let source = r#"
+enum Command {
+    Value(Int),
+}
+
+fn main() -> Bool {
+    return Command.Value { value: 1 }
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(rendered.contains(
+        "error: sample.ql:7:12: struct literal syntax is not supported for `Command.Value`"
+    ));
+    assert!(!rendered.contains("return value has type mismatch"));
+}
+
+#[test]
 fn rendered_invalid_generic_struct_literal_root_diagnostics_anchor_to_the_literal() {
     let source = r#"
 fn build[T]() -> Int {

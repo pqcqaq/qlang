@@ -1,0 +1,3 @@
+error: tests/ui/type_invalid_struct_literal_root_no_cascade.ql:6:12: struct literal syntax is not supported for `Command.Value`
+      return Command.Value { value: 1 };
+             ^^^^^^^^ struct literal here

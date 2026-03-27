@@ -887,39 +887,13 @@ impl<'a> Checker<'a> {
         let ExprKind::StructLiteral { path, fields } = &expr.kind else {
             return Ty::Unknown;
         };
-
-        let root_ty = if let Some(item_id) = self
+        let item_id = self
             .resolution
             .struct_literal_resolution(expr_id)
             .and_then(|resolution| self.item_id_for_type_resolution(resolution))
-        {
-            Ty::Item {
-                item_id,
-                name: item_display_name(self.module, item_id),
-                args: Vec::new(),
-            }
-        } else {
-            match self.resolution.struct_literal_resolution(expr_id) {
-                Some(TypeResolution::Import(import_binding)) => Ty::Import {
-                    path: import_binding.path.segments.join("."),
-                    args: Vec::new(),
-                },
-                Some(TypeResolution::Builtin(builtin)) => Ty::Builtin(*builtin),
-                Some(TypeResolution::Generic(_)) => Ty::Generic(path.segments.join(".")),
-                None => Ty::Named {
-                    path: path.segments.join("."),
-                    args: Vec::new(),
-                },
-                Some(TypeResolution::Item(_)) => unreachable!("local items are handled above"),
-            }
-        };
+            .filter(|&item_id| self.field_infos_for_item_path(item_id, path).is_some());
 
-        let Some(fields_info) = self
-            .resolution
-            .struct_literal_resolution(expr_id)
-            .and_then(|resolution| self.item_id_for_type_resolution(resolution))
-            .and_then(|item_id| self.field_infos_for_item_path(item_id, path))
-        else {
+        let Some(item_id) = item_id else {
             if let Some(message) = self.invalid_struct_literal_root_message(expr_id, path) {
                 self.diagnostics.push(
                     Diagnostic::error(message)
@@ -929,7 +903,15 @@ impl<'a> Checker<'a> {
             for field in fields {
                 self.check_expr(field.value, None);
             }
-            return root_ty;
+            return Ty::Unknown;
+        };
+        let fields_info = self
+            .field_infos_for_item_path(item_id, path)
+            .expect("supported struct literals should expose field information");
+        let root_ty = Ty::Item {
+            item_id,
+            name: item_display_name(self.module, item_id),
+            args: Vec::new(),
         };
 
         let mut seen = HashSet::new();
