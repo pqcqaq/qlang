@@ -903,6 +903,58 @@ fn main() -> User {
 }
 
 #[test]
+fn reports_invalid_struct_literal_roots() {
+    let diagnostics = diagnostic_messages(
+        r#"
+enum Command {
+    Config {
+        retries: Int,
+    },
+    Value(Int),
+}
+
+fn main() -> Int {
+    let builtin_value = Int { value: 1 }
+    let enum_value = Command { value: 1 }
+    let tuple_variant = Command.Value { value: 1 }
+    return 0
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"struct literal syntax is not supported for `Int`".to_string()));
+    assert!(
+        diagnostics.contains(&"struct literal syntax is not supported for `Command`".to_string())
+    );
+    assert!(
+        diagnostics
+            .contains(&"struct literal syntax is not supported for `Command.Value`".to_string())
+    );
+}
+
+#[test]
+fn reports_invalid_struct_literal_roots_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Command as Cmd
+
+enum Command {
+    Config {
+        retries: Int,
+    },
+}
+
+fn main() -> Int {
+    let value = Cmd { retries: 1 }
+    return 0
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"struct literal syntax is not supported for `Cmd`".to_string()));
+}
+
+#[test]
 fn accepts_struct_literals_through_same_file_import_aliases() {
     let diagnostics = diagnostic_messages(
         r#"

@@ -1,0 +1,9 @@
+error: tests/ui/type_invalid_struct_literal_root.ql:11:25: struct literal syntax is not supported for `Int`
+      let builtin_value = Int { value: 1 };
+                          ^^^^^^^^ struct literal here
+error: tests/ui/type_invalid_struct_literal_root.ql:12:22: struct literal syntax is not supported for `Cmd`
+      let enum_value = Cmd { retries: 1 };
+                       ^^^^^^^^ struct literal here
+error: tests/ui/type_invalid_struct_literal_root.ql:13:25: struct literal syntax is not supported for `Command.Value`
+      let tuple_variant = Command.Value { value: 1 };
+                          ^^^^^^^^ struct literal here

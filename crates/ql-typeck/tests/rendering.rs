@@ -160,3 +160,22 @@ fn main() -> Int {
         "error: sample.ql:5:5: indexing is not supported on type `Int`; only arrays and tuples are indexable"
     ));
 }
+
+#[test]
+fn rendered_invalid_struct_literal_root_diagnostics_anchor_to_the_literal() {
+    let source = r#"
+enum Command {
+    Value(Int),
+}
+
+fn main() -> Int {
+    let value = Command.Value { field: 1 }
+    return 0
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(rendered.contains(
+        "error: sample.ql:7:17: struct literal syntax is not supported for `Command.Value`"
+    ));
+}

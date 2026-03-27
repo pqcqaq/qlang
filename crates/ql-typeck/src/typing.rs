@@ -920,6 +920,12 @@ impl<'a> Checker<'a> {
             .and_then(|resolution| self.item_id_for_type_resolution(resolution))
             .and_then(|item_id| self.field_infos_for_item_path(item_id, path))
         else {
+            if let Some(message) = self.invalid_struct_literal_root_message(expr_id, path) {
+                self.diagnostics.push(
+                    Diagnostic::error(message)
+                        .with_label(Label::new(expr.span).with_message("struct literal here")),
+                );
+            }
             for field in fields {
                 self.check_expr(field.value, None);
             }
@@ -955,6 +961,66 @@ impl<'a> Checker<'a> {
         }
 
         root_ty
+    }
+
+    fn invalid_struct_literal_root_message(
+        &self,
+        expr_id: ExprId,
+        path: &ql_ast::Path,
+    ) -> Option<String> {
+        let path_text = path.segments.join(".");
+        let resolution = self.resolution.struct_literal_resolution(expr_id)?;
+        match resolution {
+            TypeResolution::Builtin(_) | TypeResolution::Generic(_) => Some(format!(
+                "struct literal syntax is not supported for `{path_text}`"
+            )),
+            TypeResolution::Import(import_binding) => {
+                local_item_for_import_binding(self.module, import_binding).and_then(|item_id| {
+                    self.invalid_struct_literal_item_path_message(item_id, path)
+                })
+            }
+            TypeResolution::Item(item_id) => {
+                self.invalid_struct_literal_item_path_message(*item_id, path)
+            }
+        }
+    }
+
+    fn invalid_struct_literal_item_path_message(
+        &self,
+        item_id: ItemId,
+        path: &ql_ast::Path,
+    ) -> Option<String> {
+        let path_text = path.segments.join(".");
+        match &self.module.item(item_id).kind {
+            ItemKind::Struct(_) if path.segments.len() == 1 => None,
+            ItemKind::Struct(_) => Some(format!(
+                "struct literal syntax is not supported for `{path_text}`"
+            )),
+            ItemKind::Enum(enum_decl) if path.segments.len() >= 2 => {
+                let variant_name = path.segments.last()?;
+                let variant = enum_decl
+                    .variants
+                    .iter()
+                    .find(|variant| &variant.name == variant_name)?;
+                match &variant.fields {
+                    VariantFields::Struct(_) => None,
+                    VariantFields::Tuple(_) | VariantFields::Unit => Some(format!(
+                        "struct literal syntax is not supported for `{path_text}`"
+                    )),
+                }
+            }
+            ItemKind::Enum(_)
+            | ItemKind::Function(_)
+            | ItemKind::Const(_)
+            | ItemKind::Static(_)
+            | ItemKind::Trait(_)
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Impl(_)
+            | ItemKind::Extend(_)
+            | ItemKind::ExternBlock(_) => Some(format!(
+                "struct literal syntax is not supported for `{path_text}`"
+            )),
+        }
     }
 
     fn check_binary(&mut self, expr_id: ExprId, left: ExprId, op: BinaryOp, right: ExprId) -> Ty {
