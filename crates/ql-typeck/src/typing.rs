@@ -4,7 +4,7 @@ use ql_ast::BinaryOp;
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{
     BlockId, CallArg, EnumVariant, ExprId, ExprKind, Function, ItemId, ItemKind, LocalId, MatchArm,
-    Module, Param, PatternId, PatternKind, StmtKind, VariantFields,
+    Module, Param, PatternId, PatternKind, StmtId, StmtKind, VariantFields,
 };
 use ql_resolve::{ParamBinding, ResolutionMap, TypeResolution, ValueResolution};
 
@@ -172,12 +172,20 @@ impl<'a> Checker<'a> {
             let actual = self.check_block(body);
             let expected_return = self.current_return.clone();
             if let Some(expected) = &expected_return {
-                self.report_type_mismatch_expr(
-                    self.module.block(body).tail,
-                    expected,
-                    &actual,
-                    "function body",
-                );
+                if self.block_guarantees_return(body) {
+                    // Explicit `return` statements inside the body are checked as
+                    // they are encountered, so a body that guarantees return does
+                    // not need a synthetic tail-based mismatch.
+                } else if self.module.block(body).tail.is_some() {
+                    self.report_type_mismatch_expr(
+                        self.module.block(body).tail,
+                        expected,
+                        &actual,
+                        "function body",
+                    );
+                } else {
+                    self.report_type_mismatch_block(body, expected, &actual, "function body");
+                }
             }
         }
 
@@ -598,22 +606,39 @@ impl<'a> Checker<'a> {
         let body_ty = self.check_expr(body, expected_ret);
         self.current_return = old_return;
         self.in_async_function = old_in_async_function;
+        let body_guarantees_return = self.expr_guarantees_return(body);
         let closure_ret = match expected_ret {
             // Explicit `return` statements are checked against the callable
             // signature rather than the block tail type.
-            Some(expected_ret) if self.expr_contains_explicit_return(body) => expected_ret.clone(),
+            Some(expected_ret) if body_guarantees_return => expected_ret.clone(),
             _ => body_ty.clone(),
         };
         if let Some(expected_ret) = expected_ret {
-            match &self.module.expr(body).kind {
-                ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self
-                    .report_type_mismatch_expr(
-                        self.module.block(*block_id).tail,
-                        expected_ret,
-                        &body_ty,
-                        "closure body",
-                    ),
-                _ => self.report_type_mismatch(body, expected_ret, &body_ty, "closure body"),
+            if body_guarantees_return {
+                // Explicit closure `return` statements already carry their own
+                // diagnostics, so do not synthesize a second mismatch from the
+                // block tail or expression result.
+            } else {
+                match &self.module.expr(body).kind {
+                    ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
+                        if self.module.block(*block_id).tail.is_some() {
+                            self.report_type_mismatch_expr(
+                                self.module.block(*block_id).tail,
+                                expected_ret,
+                                &body_ty,
+                                "closure body",
+                            );
+                        } else {
+                            self.report_type_mismatch_block(
+                                *block_id,
+                                expected_ret,
+                                &body_ty,
+                                "closure body",
+                            );
+                        }
+                    }
+                    _ => self.report_type_mismatch(body, expected_ret, &body_ty, "closure body"),
+                }
             }
         }
 
@@ -631,95 +656,81 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn expr_contains_explicit_return(&self, expr_id: ExprId) -> bool {
+    fn expr_guarantees_return(&self, expr_id: ExprId) -> bool {
+        // This is intentionally a conservative under-approximation of "all
+        // paths return". It should never claim a body is guaranteed to return
+        // unless the current front-end can prove that cheaply.
         match &self.module.expr(expr_id).kind {
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
-                self.block_contains_explicit_return(*block_id)
+                self.block_guarantees_return(*block_id)
             }
             ExprKind::If {
-                condition,
                 then_branch,
                 else_branch,
+                ..
             } => {
-                self.expr_contains_explicit_return(*condition)
-                    || self.block_contains_explicit_return(*then_branch)
-                    || else_branch
-                        .is_some_and(|expr_id| self.expr_contains_explicit_return(expr_id))
+                self.block_guarantees_return(*then_branch)
+                    && else_branch.is_some_and(|expr_id| self.expr_guarantees_return(expr_id))
             }
-            ExprKind::Match { value, arms } => {
-                self.expr_contains_explicit_return(*value)
-                    || arms.iter().any(|arm| {
-                        arm.guard
-                            .is_some_and(|expr_id| self.expr_contains_explicit_return(expr_id))
-                            || self.expr_contains_explicit_return(arm.body)
-                    })
+            ExprKind::Match { arms, .. } => {
+                self.match_has_catch_all_arm(arms)
+                    && arms.iter().all(|arm| self.expr_guarantees_return(arm.body))
             }
-            ExprKind::Tuple(items) | ExprKind::Array(items) => items
-                .iter()
-                .copied()
-                .any(|expr_id| self.expr_contains_explicit_return(expr_id)),
-            ExprKind::Call { callee, args } => {
-                self.expr_contains_explicit_return(*callee)
-                    || args.iter().any(|arg| match arg {
-                        CallArg::Positional(expr_id) => {
-                            self.expr_contains_explicit_return(*expr_id)
-                        }
-                        CallArg::Named { value, .. } => self.expr_contains_explicit_return(*value),
-                    })
-            }
-            ExprKind::Member { object, .. } => self.expr_contains_explicit_return(*object),
-            ExprKind::Bracket { target, items } => {
-                self.expr_contains_explicit_return(*target)
-                    || items
-                        .iter()
-                        .copied()
-                        .any(|expr_id| self.expr_contains_explicit_return(expr_id))
-            }
-            ExprKind::StructLiteral { fields, .. } => fields
-                .iter()
-                .any(|field| self.expr_contains_explicit_return(field.value)),
-            ExprKind::Binary { left, right, .. } => {
-                self.expr_contains_explicit_return(*left)
-                    || self.expr_contains_explicit_return(*right)
-            }
+            ExprKind::Member { object, .. } => self.expr_guarantees_return(*object),
+            ExprKind::Call { callee, .. } => self.expr_guarantees_return(*callee),
+            ExprKind::Binary { left, .. } => self.expr_guarantees_return(*left),
             ExprKind::Unary { expr, .. } | ExprKind::Question(expr) => {
-                self.expr_contains_explicit_return(*expr)
+                self.expr_guarantees_return(*expr)
             }
+            // Nested closures are independent callable bodies, so their `return`
+            // statements must not satisfy the outer function/closure body.
             ExprKind::Closure { .. }
             | ExprKind::Name(_)
             | ExprKind::Integer(_)
             | ExprKind::String { .. }
             | ExprKind::Bool(_)
+            | ExprKind::Tuple(_)
+            | ExprKind::Array(_)
+            | ExprKind::Bracket { .. }
+            | ExprKind::StructLiteral { .. }
             | ExprKind::NoneLiteral => false,
         }
     }
 
-    fn block_contains_explicit_return(&self, block_id: BlockId) -> bool {
+    fn block_guarantees_return(&self, block_id: BlockId) -> bool {
         let block = self.module.block(block_id);
         block
             .statements
             .iter()
             .copied()
-            .any(|stmt_id| match &self.module.stmt(stmt_id).kind {
-                StmtKind::Return(_) => true,
-                StmtKind::Let { value, .. } | StmtKind::Defer(value) => {
-                    self.expr_contains_explicit_return(*value)
-                }
-                StmtKind::While { condition, body } => {
-                    self.expr_contains_explicit_return(*condition)
-                        || self.block_contains_explicit_return(*body)
-                }
-                StmtKind::Loop { body } => self.block_contains_explicit_return(*body),
-                StmtKind::For { iterable, body, .. } => {
-                    self.expr_contains_explicit_return(*iterable)
-                        || self.block_contains_explicit_return(*body)
-                }
-                StmtKind::Expr { expr, .. } => self.expr_contains_explicit_return(*expr),
-                StmtKind::Break | StmtKind::Continue => false,
-            })
+            .any(|stmt_id| self.stmt_guarantees_return(stmt_id))
             || block
                 .tail
-                .is_some_and(|expr_id| self.expr_contains_explicit_return(expr_id))
+                .is_some_and(|expr_id| self.expr_guarantees_return(expr_id))
+    }
+
+    fn stmt_guarantees_return(&self, stmt_id: StmtId) -> bool {
+        match &self.module.stmt(stmt_id).kind {
+            StmtKind::Return(_) => true,
+            StmtKind::Let { value, .. } | StmtKind::Defer(value) => {
+                self.expr_guarantees_return(*value)
+            }
+            StmtKind::While { condition, .. } => self.expr_guarantees_return(*condition),
+            // Loop bodies can still break or continue, so keep them outside the
+            // guaranteed-return surface until we have dedicated control-flow
+            // analysis for loop exits.
+            StmtKind::Loop { .. } => false,
+            StmtKind::For { iterable, .. } => self.expr_guarantees_return(*iterable),
+            StmtKind::Expr { expr, .. } => self.expr_guarantees_return(*expr),
+            StmtKind::Break | StmtKind::Continue => false,
+        }
+    }
+
+    fn match_has_catch_all_arm(&self, arms: &[MatchArm]) -> bool {
+        arms.iter().any(|arm| {
+            arm.guard.is_none()
+                && matches!(self.module.pattern(arm.pattern).kind, PatternKind::Wildcard)
+        })
     }
 
     fn check_call(&mut self, expr_id: ExprId, callee: ExprId, args: &[CallArg]) -> Ty {
@@ -2036,6 +2047,25 @@ impl<'a> Checker<'a> {
             return;
         };
         self.report_type_mismatch(expr_id, expected, actual, context);
+    }
+
+    fn report_type_mismatch_block(
+        &mut self,
+        block_id: BlockId,
+        expected: &Ty,
+        actual: &Ty,
+        context: &str,
+    ) {
+        if expected.compatible_with(actual) {
+            return;
+        }
+
+        self.diagnostics.push(
+            Diagnostic::error(format!(
+                "{context} has type mismatch: expected `{expected}`, found `{actual}`"
+            ))
+            .with_label(Label::new(self.module.block(block_id).span).with_message("block here")),
+        );
     }
 
     fn report_type_mismatch_stmt(

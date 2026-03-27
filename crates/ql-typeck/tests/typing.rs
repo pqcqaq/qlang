@@ -104,6 +104,118 @@ fn main() -> Int {
 }
 
 #[test]
+fn reports_function_bodies_that_can_fall_through_without_returning() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn maybe(flag: Bool) -> Int {
+    if flag {
+        return 1
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"function body has type mismatch: expected `Int`, found `Void`".to_string()),
+        "expected missing function return diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_function_bodies_whose_if_expression_returns_on_all_paths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose(flag: Bool) -> Int {
+    if flag {
+        return 1
+    } else {
+        return 2
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_function_matches_with_catch_all_returning_on_all_paths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose(flag: Bool) -> Int {
+    match flag {
+        true => {
+            return 1
+        }
+        _ => {
+            return 2
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_closure_bodies_that_can_fall_through_without_returning() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn apply(f: (Bool) -> Int, flag: Bool) -> Int {
+    return f(flag)
+}
+
+fn main() -> Int {
+    let value = apply((flag) => {
+        if flag {
+            return 1
+        }
+    }, true)
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"closure body has type mismatch: expected `Int`, found `Void`".to_string()),
+        "expected missing closure return diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_closure_bodies_whose_if_expression_returns_on_all_paths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn apply(f: (Bool) -> Int, flag: Bool) -> Int {
+    return f(flag)
+}
+
+fn main() -> Int {
+    return apply((flag) => if flag {
+        return 1
+    } else {
+        return 2
+    }, true)
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_tuple_multi_return_destructuring() {
     let diagnostics = diagnostic_messages(
         r#"
