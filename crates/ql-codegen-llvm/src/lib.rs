@@ -474,6 +474,7 @@ impl<'a> ModuleEmitter<'a> {
 
         let mut diagnostics = Vec::new();
         let mut local_types = self.seed_local_types(body, &signature, &mut diagnostics);
+        let unsupported_for_iterable_locals = collect_unsupported_for_iterable_locals(body);
 
         for block in body.blocks() {
             for statement_id in &block.statements {
@@ -481,6 +482,9 @@ impl<'a> ModuleEmitter<'a> {
                 match &statement.kind {
                     StatementKind::Assign { place, value } => {
                         self.require_direct_place(statement.span, place, &mut diagnostics);
+                        if unsupported_for_iterable_locals.contains(&place.base) {
+                            continue;
+                        }
                         if let Some(ty) = self.infer_rvalue_type(
                             body,
                             value,
@@ -547,9 +551,13 @@ impl<'a> ModuleEmitter<'a> {
                     block.terminator.span,
                     "LLVM IR backend foundation does not support `match` lowering yet",
                 )),
-                TerminatorKind::ForLoop { .. } => diagnostics.push(unsupported(
+                TerminatorKind::ForLoop { is_await, .. } => diagnostics.push(unsupported(
                     block.terminator.span,
-                    "LLVM IR backend foundation does not support `for` lowering yet",
+                    if *is_await {
+                        "LLVM IR backend foundation does not support `for await` lowering yet"
+                    } else {
+                        "LLVM IR backend foundation does not support `for` lowering yet"
+                    },
                 )),
             }
         }
@@ -1643,6 +1651,19 @@ fn align_to(value: u64, align: u64) -> u64 {
     }
 }
 
+fn collect_unsupported_for_iterable_locals(body: &mir::MirBody) -> HashSet<mir::LocalId> {
+    let mut locals = HashSet::new();
+    for block in body.blocks() {
+        let TerminatorKind::ForLoop { iterable, .. } = &block.terminator.kind else {
+            continue;
+        };
+        if let Operand::Place(place) = iterable {
+            locals.insert(place.base);
+        }
+    }
+    locals
+}
+
 fn arithmetic_opcode(op: BinaryOp, ty: &Ty) -> &'static str {
     match (op, is_float_ty(ty), integer_signedness(ty)) {
         (BinaryOp::Add, true, _) => "fadd",
@@ -2330,6 +2351,95 @@ fn main() -> Int {
         }));
         assert!(messages.iter().all(|message| {
             !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
+    fn rejects_unsupported_await_lowering_in_async_library_body() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    return await worker()
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message == "LLVM IR backend foundation does not support `await` yet"
+        }));
+        assert!(messages.iter().all(|message| {
+            !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
+    fn rejects_unsupported_spawn_lowering_in_async_library_body() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+        ]);
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    spawn worker()
+    return 0
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message == "LLVM IR backend foundation does not support `spawn` yet"
+        }));
+        assert!(messages.iter().all(|message| {
+            !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
+    fn rejects_unsupported_for_await_lowering_without_iterable_noise() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+async fn helper() -> Int {
+    for await value in [1, 2, 3] {
+        break
+    }
+    return 0
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message == "LLVM IR backend foundation does not support `for await` lowering yet"
+        }));
+        assert!(messages.iter().all(|message| {
+            message != "LLVM IR backend foundation does not support `for` lowering yet"
+                && message != "LLVM IR backend foundation does not support array values yet"
+                && !message.contains("could not resolve LLVM type for local")
                 && !message.contains("could not infer LLVM type for MIR local")
         }));
     }

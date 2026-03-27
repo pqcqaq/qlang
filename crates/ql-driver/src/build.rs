@@ -359,11 +359,27 @@ fn merge_unique_diagnostics(
     additions: &[Diagnostic],
 ) -> Vec<Diagnostic> {
     for diagnostic in additions {
+        if runtime_operator_message(diagnostic.message.as_str())
+            && diagnostics
+                .iter()
+                .any(|existing| existing.message == diagnostic.message)
+        {
+            continue;
+        }
         if !diagnostics.contains(diagnostic) {
             diagnostics.push(diagnostic.clone());
         }
     }
     diagnostics
+}
+
+fn runtime_operator_message(message: &str) -> bool {
+    matches!(
+        message,
+        "LLVM IR backend foundation does not support `await` yet"
+            | "LLVM IR backend foundation does not support `spawn` yet"
+            | "LLVM IR backend foundation does not support `for await` lowering yet"
+    )
 }
 
 fn build_emit_supports_c_header(emit: BuildEmit) -> bool {
@@ -1682,6 +1698,65 @@ async fn main() -> Int {
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message
                 == "LLVM IR backend foundation does not support `for await` lowering yet"
+        }));
+    }
+
+    #[test]
+    fn build_file_surfaces_async_for_await_library_diagnostics_without_backend_noise() {
+        let dir = TestDir::new("ql-driver-async-for-await-library-runtime");
+        let source = dir.write(
+            "async_for_await_library.ql",
+            r#"
+async fn helper() -> Int {
+    for await value in [1, 2, 3] {
+        break
+    }
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_for_await_library.lib"
+        } else {
+            "artifacts/libasync_for_await_library.a"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("async for-await library rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
+        }));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message
+                == "LLVM IR backend foundation does not support `for await` lowering yet"
+        }));
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support `for await` lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.message != "LLVM IR backend foundation does not support `for` lowering yet"
+                && diagnostic.message
+                    != "LLVM IR backend foundation does not support array values yet"
         }));
     }
 

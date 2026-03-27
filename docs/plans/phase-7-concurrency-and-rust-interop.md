@@ -60,6 +60,7 @@
 - `ql-driver` 已开始保守消费这份 runtime requirement surface：当前会把 `async-function-bodies`、`task-spawn`、`task-await`、`async-iteration` 映射成稳定的 build-time unsupported 诊断，并与 backend 同类 unsupported diagnostics 做去重合并
 - 已在 `ql-codegen-llvm` 接入共享 runtime hook ABI contract：`CodegenInput` 当前可携带 dedupe 后的 `RuntimeHookSignature` 列表，后端会直接复用 `ql-runtime` 的声明文本渲染 runtime hook declarations，而不是在 backend 内重复维护符号名或 ABI 字符串
 - 已在 `ql-codegen-llvm` 增补最小 async frame scaffold：当前 body-bearing `async fn` 会拆成一个统一接收 `ptr frame` 的真实 body symbol（`__async_body`）加一个公开 wrapper；parameterless wrapper 继续调用 `qlrt_async_task_create(entry, null)`，带参数 wrapper 会先通过 `qlrt_async_frame_alloc(size, align)` 构造最小 heap frame、写入参数，再调用 `qlrt_async_task_create(entry, frame)`，用于冻结最小 IR 结构
+- 已在 `ql-codegen-llvm` / `ql-driver` / `ql-cli` 补上 library-mode async unsupported 回归：非 entry async body 中的 `await` / `spawn` / `for await` 现在也有独立 backend/driver/CLI 覆盖，`for await` 不再额外泄露泛化的 ``for`` lowering 或 iterable 预物化噪声
 - 已在 `ql-typeck` 收紧 direct async call 语义：`async fn` 调用当前只能作为 `await <call>` 或 `spawn <call>` 的直接 operand 使用，独立使用 async call 结果会给出显式诊断，避免在 task/result ABI 未冻结前把 async 调用误当成同步返回值
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽

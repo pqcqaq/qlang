@@ -761,6 +761,7 @@ P6 当前仍刻意未完成：
 - `ql-driver` 已开始保守消费这份 runtime requirement surface：当前会把 `async-function-bodies`、`task-spawn`、`task-await`、`async-iteration` 映射成稳定的 build-time unsupported 诊断，并与 backend 同类 diagnostics 去重，锁住 driver/codegen 边界的拒绝合同
 - `ql-codegen-llvm` 已开始直接消费共享 runtime hook ABI signatures：后端输入现在可携带 dedupe 后的 hook 列表，并渲染稳定的 LLVM `declare` 语句，避免 backend 自己复制 hook 名称或 ABI 字符串
 - `ql-codegen-llvm` 现已把 body-bearing `async fn` 推进一步：backend 会统一生成 `ptr frame` 形态的真实 body symbol，并在 wrapper 中为带参数的 `async fn` 通过 `qlrt_async_frame_alloc` materialize 最小 heap frame，再交给 `qlrt_async_task_create`，先冻结 async body / wrapper / frame hydration 三层结构
+- `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已补上 library-mode async unsupported 合同回归：`await` / `spawn` / `for await` 在非 entry async body 中现在也有稳定回归覆盖，`for await` 不再额外泄露泛化的 ``for`` lowering 或 iterable 预物化噪声诊断
 - `ql-typeck` 已把 direct async call 语义收紧到显式边界：当前 `async fn` 调用只能被 `await` 或 `spawn` 直接消费，独立使用 async call 结果会给出稳定诊断，避免语义层继续把 async 调用伪装成同步返回值
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前共享 hook ABI 已冻结第一版 LLVM-facing contract string，但真实内存布局、结果传递协议和更细粒度调用约定仍未冻结

@@ -1,3 +1,6 @@
+error: tests/codegen/fail/unsupported_async_fn_build.ql:5:7: LLVM IR backend foundation does not support `async fn main` yet
+  async fn main() -> Int {
+        ^^^^^^^^
 error: tests/codegen/fail/unsupported_async_fn_build.ql:1:7: LLVM IR backend foundation does not support `async fn` yet
   async fn worker() -> Int {
         ^^^^^^^^
