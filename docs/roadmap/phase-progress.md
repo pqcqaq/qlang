@@ -728,6 +728,7 @@ P6 当前仍刻意未完成：
 - `ql-typeck` 新增 closure block 显式 `return` 回归：当 closure 有期望 callable 返回类型时，显式 `return` 会按 callable 签名检查；内层 nested closure 的 `return` 不会污染外层 closure 返回推断
 - `ql-typeck` 新增保守 return-path 收口：函数与 closure body 现在会拒绝“部分路径 `return`、部分路径 fallthrough”的情形；`if` 与最小穷尽性 `match`（`_`、`Bool true/false`、enum 全 variant）已进入 all-path return 推断，guarded arm 不计入覆盖
 - `ql-typeck` 已把显式常量条件的 `if` 纳入 must-return 收口：`if true { return ... }`、`if false { ... } else { return ... }` 与 closure 中同构写法现在会被接受；`if false { return ... }` 仍不会被误判成保证返回
+- `ql-typeck` 已把显式字面量 `Bool` scrutinee 的 `match` 纳入 must-return 收口：`match true/false` 会按 arm 顺序和字面量 guard 做保守裁剪；无可达 arm 或被字面量 `false` guard 挡住的唯一 arm 仍不会被误判成保证返回
 - `ql-typeck` 新增 loop-control 语义约束：`break` / `continue` 在非 loop body 中会给出显式诊断；closure body 不会继承外层 loop-control 上下文
 - `ql-typeck` 已把 must-return 收口提升到有序控制流摘要：`loop { return ... }` 现在会被接受；`break; return ...` 与“无 break 的 loop 之后再写 return”这类不可达路径不会再被误判成保证返回；更深层表达式子节点也按求值顺序参与保守 return 分析
 - `ql-typeck` 已把显式常量条件的 `while` 纳入 must-return 收口：`while true { return ... }` 与 closure 中同构写法现在会被接受；`while true` 中的 `break; return ...` 和 `while false { return ... }` 仍不会被误判成保证返回
@@ -744,6 +745,7 @@ P6 当前仍刻意未完成：
 - 评估是否将 async 上下文桥接能力通过受控实验接口暴露给 editor（保持协议低风险）
 - 在不引入完整 CFG 的前提下，继续补 closure / async / return-path 的保守语义回归
 - 若后续需要把 must-return 从显式字面量 `if` 扩展到更一般的常量传播或 branch pruning，应单独设计常量/CFG 规则边界
+- 若后续需要把字面量 `match` 推广到更一般的常量 scrutinee、enum variant 常量判定或更强 guard 推理，应单独设计 pattern/exhaustiveness 边界
 - 若后续需要把 must-return 从显式字面量 `while` 扩展到一般 `while` / `for` 的更强迭代推理、guard-sensitive `match` 或完整 unreachable/CFG 收口，应单独设计 CFG/exhaustiveness slice
 - 若后续需要把 loop-control 查询真正暴露到 editor 协议面，建议延续当前 read-only bridge 路线，而不是把状态重新塞回 typeck helper
 - 在不扩大 surface 的前提下继续按切片补回归
