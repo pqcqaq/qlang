@@ -2264,6 +2264,51 @@ fn read(point: Point) -> Int {
 }
 
 #[test]
+fn rename_bridge_keeps_deeper_struct_literal_and_pattern_variant_paths_closed() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Config { value: Int },
+    Stop,
+}
+
+fn build() -> Int {
+    let direct = Command.Scope.Config { value: 1 }
+    let alias = Cmd.Scope.Config { value: 2 }
+    return 0
+}
+
+fn read(command: Command) -> Int {
+    return match command {
+        Command.Scope.Retry(value) => value,
+        Cmd.Scope.Retry(value) => value,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for position in [
+        span_to_range(source, nth_span(source, "Config", 2)).start,
+        span_to_range(source, nth_span(source, "Config", 3)).start,
+        span_to_range(source, nth_span(source, "Retry", 2)).start,
+        span_to_range(source, nth_span(source, "Retry", 3)).start,
+    ] {
+        assert_eq!(
+            prepare_rename_for_analysis(source, &analysis, position),
+            None
+        );
+        assert_eq!(
+            rename_for_analysis(&uri, source, &analysis, position, "Closed"),
+            Ok(None)
+        );
+    }
+}
+
+#[test]
 fn hover_and_definition_bridge_keep_deeper_struct_like_shorthand_tokens_on_local_symbols() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
