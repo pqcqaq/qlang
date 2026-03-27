@@ -225,11 +225,23 @@ impl<'a> Checker<'a> {
                     self.check_block(*body);
                 }
                 StmtKind::For {
+                    is_await,
                     pattern,
                     iterable,
                     body,
                     ..
                 } => {
+                    if *is_await && !self.in_async_function {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "`for await` is only allowed inside `async fn`".to_string(),
+                            )
+                            .with_label(
+                                Label::new(self.module.stmt(stmt_id).span)
+                                    .with_message("`for await` used here"),
+                            ),
+                        );
+                    }
                     self.check_expr(*iterable, None);
                     self.bind_pattern(*pattern, &Ty::Unknown);
                     self.check_block(*body);

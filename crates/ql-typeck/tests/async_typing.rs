@@ -65,3 +65,43 @@ async fn main() -> Int {
         "did not expect async-boundary diagnostics in async function, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn reports_for_await_outside_async_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    for await value in [1, 2, 3] {
+        let current = value
+    }
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"`for await` is only allowed inside `async fn`".to_string()),
+        "expected async-boundary diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_for_await_inside_async_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn main() -> Int {
+    for await value in [1, 2, 3] {
+        let current = value
+    }
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|message| !message.contains("`for await` is only allowed inside `async fn`")),
+        "did not expect for-await boundary diagnostics in async function, got {diagnostics:?}"
+    );
+}
