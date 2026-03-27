@@ -589,7 +589,12 @@ impl<'a> Checker<'a> {
             Some(Ty::Callable { ret, .. }) => Some(ret.as_ref()),
             _ => None,
         };
+        let old_in_async_function = self.in_async_function;
+        // Closures are not `async` today, so their bodies must not inherit an outer
+        // function's async context.
+        self.in_async_function = false;
         let body_ty = self.check_expr(body, expected_ret);
+        self.in_async_function = old_in_async_function;
         if let Some(expected_ret) = expected_ret {
             self.report_type_mismatch(body, expected_ret, &body_ty, "closure body");
         }

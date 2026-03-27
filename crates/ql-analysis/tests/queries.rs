@@ -7185,3 +7185,50 @@ trait Runner {
         })
     );
 }
+
+#[test]
+fn async_context_queries_treat_closure_bodies_as_non_async_boundaries() {
+    let source = r#"
+fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let runner = () => {
+        for await value in [1, 2, 3] {
+            let current = value
+        }
+        let job = spawn worker()
+        await worker()
+    }
+    return 0
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "await", 1)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "await", 1),
+            operator: AsyncOperatorKind::ForAwait,
+            in_async_function: false,
+        })
+    );
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "spawn", 1)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "spawn", 1),
+            operator: AsyncOperatorKind::Spawn,
+            in_async_function: false,
+        })
+    );
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "await", 2)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "await", 2),
+            operator: AsyncOperatorKind::Await,
+            in_async_function: false,
+        })
+    );
+}

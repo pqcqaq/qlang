@@ -87,7 +87,11 @@ impl ResolutionMap {
             if self.async_function_scopes.contains(&current) {
                 return true;
             }
-            next = self.scopes.scope(current).parent;
+            let scope = self.scopes.scope(current);
+            if matches!(scope.kind, ScopeKind::Closure) {
+                return false;
+            }
+            next = scope.parent;
         }
         false
     }

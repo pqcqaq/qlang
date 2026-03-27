@@ -9361,3 +9361,55 @@ trait Runner {
     assert_eq!(async_for_await.operator, AsyncOperatorKind::ForAwait);
     assert!(async_for_await.in_async_function);
 }
+
+#[test]
+fn async_context_bridge_treats_closure_bodies_as_non_async_boundaries() {
+    let source = r#"
+fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let runner = () => {
+        for await value in [1, 2, 3] {
+            let current = value
+        }
+        let job = spawn worker()
+        await worker()
+    }
+    return 0
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let for_await_position = span_to_range(source, nth_span(source, "await", 1)).start;
+    let spawn_position = span_to_range(source, nth_span(source, "spawn", 1)).start;
+    let await_position = span_to_range(source, nth_span(source, "await", 2)).start;
+
+    let for_await = async_context_for_analysis(source, &analysis, for_await_position)
+        .expect("closure for-await context should exist");
+    assert_eq!(
+        for_await.range,
+        span_to_range(source, nth_span(source, "await", 1))
+    );
+    assert_eq!(for_await.operator, AsyncOperatorKind::ForAwait);
+    assert!(!for_await.in_async_function);
+
+    let spawn = async_context_for_analysis(source, &analysis, spawn_position)
+        .expect("closure spawn context should exist");
+    assert_eq!(
+        spawn.range,
+        span_to_range(source, nth_span(source, "spawn", 1))
+    );
+    assert_eq!(spawn.operator, AsyncOperatorKind::Spawn);
+    assert!(!spawn.in_async_function);
+
+    let await_expr = async_context_for_analysis(source, &analysis, await_position)
+        .expect("closure await context should exist");
+    assert_eq!(
+        await_expr.range,
+        span_to_range(source, nth_span(source, "await", 2))
+    );
+    assert_eq!(await_expr.operator, AsyncOperatorKind::Await);
+    assert!(!await_expr.in_async_function);
+}

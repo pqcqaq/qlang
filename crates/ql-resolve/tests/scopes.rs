@@ -428,3 +428,75 @@ trait Runner {
     assert!(!resolution.expr_is_in_async_function(*sync_spawn_expr));
     assert!(resolution.expr_is_in_async_function(*async_spawn_expr));
 }
+
+#[test]
+fn closure_scopes_break_async_function_context_in_queries() {
+    let (module, resolution) = resolved(
+        r#"
+fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let runner = () => {
+        for await value in [1, 2, 3] {
+            let current = value
+        }
+        let job = spawn worker()
+        await worker()
+    }
+    return 0
+}
+"#,
+    );
+
+    let main = find_function(&module, "main");
+    let main_scope = resolution
+        .function_scope(main.span)
+        .expect("async main should have a function scope");
+    assert!(resolution.scope_is_in_async_function(main_scope));
+
+    let body = module.block(main.body.expect("main should have a body"));
+    let StmtKind::Let { value: closure, .. } = &module.stmt(body.statements[0]).kind else {
+        panic!("main should start with a closure binding");
+    };
+    let ExprKind::Closure {
+        body: closure_body, ..
+    } = &module.expr(*closure).kind
+    else {
+        panic!("first let binding should initialize a closure");
+    };
+    let ExprKind::Block(closure_block_id) = &module.expr(*closure_body).kind else {
+        panic!("closure body should be a block expression");
+    };
+    let closure_scope = resolution
+        .expr_scope(*closure_body)
+        .expect("closure body should record its scope");
+    assert!(
+        !resolution.scope_is_in_async_function(closure_scope),
+        "closure scope should break inherited async-function context"
+    );
+
+    let closure_block = module.block(*closure_block_id);
+    let StmtKind::For {
+        iterable: closure_iterable,
+        ..
+    } = &module.stmt(closure_block.statements[0]).kind
+    else {
+        panic!("closure should start with a for-await loop");
+    };
+    let StmtKind::Let {
+        value: closure_spawn,
+        ..
+    } = &module.stmt(closure_block.statements[1]).kind
+    else {
+        panic!("closure should bind the spawn expression");
+    };
+    let closure_await = closure_block
+        .tail
+        .expect("closure block should end with an await expression");
+
+    assert!(!resolution.expr_is_in_async_function(*closure_iterable));
+    assert!(!resolution.expr_is_in_async_function(*closure_spawn));
+    assert!(!resolution.expr_is_in_async_function(closure_await));
+}

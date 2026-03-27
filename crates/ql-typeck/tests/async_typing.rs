@@ -270,3 +270,46 @@ trait Runner {
         "expected only the sync trait methods to contribute async-boundary diagnostics, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn closures_do_not_inherit_async_function_boundaries() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let runner = () => {
+        for await value in [1, 2, 3] {
+            let current = value
+        }
+        let job = spawn worker()
+        await worker()
+    }
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"`spawn` is only allowed inside `async fn`".to_string()),
+        "expected closure spawn boundary diagnostic, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(&"`await` is only allowed inside `async fn`".to_string()),
+        "expected closure await boundary diagnostic, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(&"`for await` is only allowed inside `async fn`".to_string()),
+        "expected closure for-await boundary diagnostic, got {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|message| message.contains("only allowed inside `async fn`"))
+            .count(),
+        3,
+        "expected closure body to contribute exactly three async-boundary diagnostics, got {diagnostics:?}"
+    );
+}
