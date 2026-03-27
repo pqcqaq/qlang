@@ -507,6 +507,7 @@ P4 的目标是把 MIR 真正接到原生产物链路上，同时把 driver / ba
 - unsupported backend features 走结构化 diagnostics，而不是静默跳过
 - first-class function value 现在也会返回结构化 diagnostics，而不是 panic backend
 - deferred multi-segment source-backed type path 现在也有黑盒回归覆盖：backend unsupported diagnostics 会继续保留 `Cmd.Scope.Config` 这类源码路径文本，而不是把它误折叠成伪 concrete type
+- cleanup/defer lowering 仍未进入 P4 支持矩阵，但完全重复的 backend unsupported diagnostics 现在会被稳定去重；backend、driver 与 CLI 也已经补上这条 rejection contract 的显式回归
 
 ### 已交付能力
 
