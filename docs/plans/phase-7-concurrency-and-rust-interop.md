@@ -20,6 +20,8 @@
 - 已在 `ql-resolve` 增加 async 上下文查询契约（`expr_is_in_async_function` / `scope_is_in_async_function`）
 - 已在 `ql-analysis` 暴露 `async_context_at`，可查询 `await` / `spawn` 在当前位置是否位于 `async fn` 内
 - 已补充 `crates/ql-analysis/tests/queries.rs` 的 async 查询回归
+- 已在 `ql-lsp` bridge 层增加只读 `async_context_for_analysis` 桥接（不扩展协议面）
+- 已补充 `crates/ql-lsp/tests/bridge.rs` 的 async 桥接回归
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 
 ## 分阶段实现建议
