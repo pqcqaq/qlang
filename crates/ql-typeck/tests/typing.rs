@@ -166,6 +166,144 @@ fn choose(flag: Bool) -> Int {
 }
 
 #[test]
+fn accepts_function_matches_over_bool_when_both_cases_return() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose(flag: Bool) -> Int {
+    match flag {
+        true => {
+            return 1
+        }
+        false => {
+            return 0
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_guarded_bool_matches_as_non_exhaustive_for_function_returns() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose(flag: Bool) -> Int {
+    match flag {
+        true if flag => {
+            return 1
+        }
+        false => {
+            return 0
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"function body has type mismatch: expected `Int`, found `Void`".to_string()),
+        "expected missing function return diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_function_matches_over_enum_when_all_variants_return() {
+    let diagnostics = diagnostic_messages(
+        r#"
+enum Command {
+    Quit,
+    Value(Int),
+    Config {
+        retries: Int,
+    },
+}
+
+fn run(command: Command) -> Int {
+    match command {
+        Command.Quit => {
+            return 0
+        }
+        Command.Value(value) => {
+            return value
+        }
+        Command.Config { retries } => {
+            return retries
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_function_matches_over_import_aliased_enum_when_all_variants_return() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Command as Cmd
+
+enum Command {
+    Quit,
+    Value(Int),
+}
+
+fn run(command: Command) -> Int {
+    match command {
+        Cmd.Quit => {
+            return 0
+        }
+        Cmd.Value(value) => {
+            return value
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_closure_bodies_whose_bool_match_returns_on_all_paths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn apply(f: (Bool) -> Int, flag: Bool) -> Int {
+    return f(flag)
+}
+
+fn main() -> Int {
+    return apply((flag) => match flag {
+        true => {
+            return 1
+        }
+        false => {
+            return 0
+        }
+    }, true)
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_closure_bodies_that_can_fall_through_without_returning() {
     let diagnostics = diagnostic_messages(
         r#"

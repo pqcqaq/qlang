@@ -672,8 +672,8 @@ impl<'a> Checker<'a> {
                 self.block_guarantees_return(*then_branch)
                     && else_branch.is_some_and(|expr_id| self.expr_guarantees_return(expr_id))
             }
-            ExprKind::Match { arms, .. } => {
-                self.match_has_catch_all_arm(arms)
+            ExprKind::Match { value, arms } => {
+                self.match_is_exhaustive(*value, arms)
                     && arms.iter().all(|arm| self.expr_guarantees_return(arm.body))
             }
             ExprKind::Member { object, .. } => self.expr_guarantees_return(*object),
@@ -731,6 +731,96 @@ impl<'a> Checker<'a> {
             arm.guard.is_none()
                 && matches!(self.module.pattern(arm.pattern).kind, PatternKind::Wildcard)
         })
+    }
+
+    fn match_is_exhaustive(&self, value: ExprId, arms: &[MatchArm]) -> bool {
+        if self.match_has_catch_all_arm(arms) {
+            return true;
+        }
+
+        let Some(value_ty) = self.expr_types.get(&value) else {
+            return false;
+        };
+
+        if value_ty.is_bool() {
+            return self.match_covers_all_bool_patterns(arms);
+        }
+
+        let Ty::Item { item_id, .. } = value_ty else {
+            return false;
+        };
+
+        self.match_covers_all_enum_variants(*item_id, arms)
+    }
+
+    fn match_covers_all_bool_patterns(&self, arms: &[MatchArm]) -> bool {
+        let mut saw_true = false;
+        let mut saw_false = false;
+
+        for arm in arms {
+            if arm.guard.is_some() {
+                continue;
+            }
+            match &self.module.pattern(arm.pattern).kind {
+                PatternKind::Bool(true) => saw_true = true,
+                PatternKind::Bool(false) => saw_false = true,
+                PatternKind::Wildcard => return true,
+                _ => {}
+            }
+        }
+
+        saw_true && saw_false
+    }
+
+    fn match_covers_all_enum_variants(&self, enum_item_id: ItemId, arms: &[MatchArm]) -> bool {
+        let item = self.module.item(enum_item_id);
+        let ItemKind::Enum(enum_decl) = &item.kind else {
+            return false;
+        };
+
+        let mut seen_variants = HashSet::new();
+        for arm in arms {
+            if arm.guard.is_some() {
+                continue;
+            }
+            if let Some(variant_name) =
+                self.enum_variant_name_for_pattern(enum_item_id, arm.pattern)
+            {
+                seen_variants.insert(variant_name.to_owned());
+            }
+        }
+
+        enum_decl
+            .variants
+            .iter()
+            .all(|variant| seen_variants.contains(&variant.name))
+    }
+
+    fn enum_variant_name_for_pattern(
+        &self,
+        enum_item_id: ItemId,
+        pattern_id: PatternId,
+    ) -> Option<&str> {
+        let pattern = self.module.pattern(pattern_id);
+        let path = match &pattern.kind {
+            PatternKind::Path(path)
+            | PatternKind::TupleStruct { path, .. }
+            | PatternKind::Struct { path, .. } => path,
+            _ => return None,
+        };
+
+        let resolved_item_id = self
+            .resolution
+            .pattern_resolution(pattern_id)
+            .and_then(|resolution| self.item_id_for_value_resolution(resolution))?;
+        if resolved_item_id != enum_item_id {
+            return None;
+        }
+
+        self.enum_variant_for_item_path(enum_item_id, path)
+            .ok()
+            .flatten()
+            .map(|variant| variant.name.as_str())
     }
 
     fn check_call(&mut self, expr_id: ExprId, callee: ExprId, args: &[CallArg]) -> Ty {

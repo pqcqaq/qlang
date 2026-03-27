@@ -30,14 +30,14 @@
 - 已补充 `crates/ql-typeck/tests/async_typing.rs` 的非调用操作数回归（`await value` / `spawn value`）
 - 已把 closure 视为独立 async 边界：closure body 当前不会继承外层 `async fn` 上下文，`await` / `spawn` / `for await` 会继续走非 async 诊断路径
 - 已在 `ql-typeck` 修正 closure block 的显式 `return` 推断：当 closure 存在期望 callable 返回类型时，显式 `return` 会对齐 callable 签名；内层 nested closure 的 `return` 不会抬升外层 closure 返回类型
-- 已在 `ql-typeck` 增补保守的 all-path return 分析：函数与 closure body 会拒绝“部分路径 `return`、部分路径 fallthrough”的情形；当前已覆盖 `if` 与带 `_` catch-all 的 `match`
+- 已在 `ql-typeck` 增补保守的 all-path return 分析：函数与 closure body 会拒绝“部分路径 `return`、部分路径 fallthrough”的情形；当前已覆盖 `if` 与最小穷尽性 `match`（`_`、`Bool true/false`、enum 全 variant），guarded arm 不计入覆盖
 - 已在 `ql-driver` 补充 async backend 边界回归：当语义层允许 `async fn` 时，构建流程会在 codegen 阶段稳定返回 `async fn` unsupported 诊断
 - 已在 `ql-cli` codegen 黑盒快照中补充 `unsupported_async_fn_build` 用例，锁住用户侧 `ql build` 的 async backend 拒绝输出
 - 已补充 `dylib` 路径上的 async backend 回归（含合法 `extern "c"` 导出存在时仍拒绝 `async fn`），锁住边界校验优先级
 - 已补充 `async + generic` 并存场景回归，锁住 backend 同阶段多条 unsupported 诊断聚合行为
 - 已补充 `async + unsafe fn body` 并存场景回归，锁住 backend 对函数签名级多条 unsupported 诊断的聚合与输出顺序
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
-- 当前仍未引入完整的 must-return / 全路径控制流分析；`loop`、更深层表达式求值顺序与完整 `match` 穷尽性仍保持 conservative 收口
+- 当前仍未引入完整的 must-return / 全路径控制流分析；`loop`、更深层表达式求值顺序与更完整的 `match` 穷尽性仍保持 conservative 收口
 
 ## 分阶段实现建议
 
