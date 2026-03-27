@@ -53,6 +53,7 @@ struct FunctionSignature {
     is_async: bool,
     async_body_llvm_name: Option<String>,
     async_frame_layout: Option<AsyncFrameLayout>,
+    async_result_layout: Option<AsyncTaskResultLayout>,
 }
 
 #[derive(Clone, Debug)]
@@ -74,6 +75,25 @@ struct AsyncFrameLayout {
 struct AsyncFrameField {
     param_index: usize,
     llvm_ty: String,
+}
+
+#[derive(Clone, Debug)]
+enum AsyncTaskResultLayout {
+    Void,
+    Scalar {
+        llvm_ty: String,
+        size: u64,
+        align: u64,
+    },
+}
+
+impl AsyncTaskResultLayout {
+    fn body_llvm_ty(&self) -> &str {
+        match self {
+            Self::Void => "void",
+            Self::Scalar { llvm_ty, .. } => llvm_ty,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -339,12 +359,22 @@ impl<'a> ModuleEmitter<'a> {
             .return_type
             .map(|type_id| lower_type(self.input.hir, self.input.resolution, type_id))
             .unwrap_or_else(void_ty);
-        let body_return_llvm_ty =
-            match lower_llvm_type(&body_return_ty, function.span, "return type") {
-                Ok(llvm_ty) => llvm_ty,
-                Err(error) => {
-                    diagnostics.push(error);
-                    String::new()
+        let (body_return_llvm_ty, async_result_layout) =
+            if function.is_async && body_style == FunctionBodyStyle::Definition {
+                match build_async_task_result_layout(&body_return_ty, function.span) {
+                    Ok(layout) => (layout.body_llvm_ty().to_owned(), Some(layout)),
+                    Err(error) => {
+                        diagnostics.push(error);
+                        (String::new(), None)
+                    }
+                }
+            } else {
+                match lower_llvm_type(&body_return_ty, function.span, "return type") {
+                    Ok(llvm_ty) => (llvm_ty, None),
+                    Err(error) => {
+                        diagnostics.push(error);
+                        (String::new(), None)
+                    }
                 }
             };
         let mut return_ty = body_return_ty.clone();
@@ -443,6 +473,7 @@ impl<'a> ModuleEmitter<'a> {
             is_async: function.is_async,
             async_body_llvm_name,
             async_frame_layout,
+            async_result_layout,
         })
     }
 
@@ -1171,6 +1202,23 @@ impl<'a> ModuleEmitter<'a> {
             function.signature.body_return_llvm_ty, llvm_name
         );
         output.push_str("entry:\n");
+        if function.signature.is_async {
+            match function.signature.async_result_layout.as_ref() {
+                Some(AsyncTaskResultLayout::Void) => {
+                    debug_assert!(is_void_ty(&function.signature.body_return_ty));
+                }
+                Some(AsyncTaskResultLayout::Scalar {
+                    llvm_ty,
+                    size,
+                    align,
+                }) => {
+                    debug_assert!(*size > 0);
+                    debug_assert!(*align > 0);
+                    debug_assert_eq!(llvm_ty, &function.signature.body_return_llvm_ty);
+                }
+                None => debug_assert!(false, "async definitions should precompute a result layout"),
+            }
+        }
 
         for local_id in body.local_ids() {
             let ty = function
@@ -1597,7 +1645,7 @@ fn build_async_frame_layout(
     let mut align = 1;
 
     for (index, param) in params.iter().enumerate() {
-        let layout = scalar_abi_layout(&param.ty, span)?;
+        let layout = scalar_abi_layout(&param.ty, span, "async fn frame field type")?;
         size = align_to(size, layout.align);
         size += layout.size;
         align = align.max(layout.align);
@@ -1616,7 +1664,25 @@ fn build_async_frame_layout(
     })
 }
 
-fn scalar_abi_layout(ty: &Ty, span: Span) -> Result<ScalarAbiLayout, Diagnostic> {
+fn build_async_task_result_layout(
+    ty: &Ty,
+    span: Span,
+) -> Result<AsyncTaskResultLayout, Diagnostic> {
+    if is_void_ty(ty) {
+        return Ok(AsyncTaskResultLayout::Void);
+    }
+
+    let llvm_ty = lower_llvm_type(ty, span, "async task result type")?;
+    let layout = scalar_abi_layout(ty, span, "async task result type")?;
+
+    Ok(AsyncTaskResultLayout::Scalar {
+        llvm_ty,
+        size: layout.size,
+        align: layout.align,
+    })
+}
+
+fn scalar_abi_layout(ty: &Ty, span: Span, context: &str) -> Result<ScalarAbiLayout, Diagnostic> {
     match ty {
         Ty::Builtin(BuiltinType::Bool)
         | Ty::Builtin(BuiltinType::I8)
@@ -1635,7 +1701,7 @@ fn scalar_abi_layout(ty: &Ty, span: Span) -> Result<ScalarAbiLayout, Diagnostic>
         | Ty::Builtin(BuiltinType::USize)
         | Ty::Builtin(BuiltinType::F64) => Ok(ScalarAbiLayout { size: 8, align: 8 }),
         _ => Err(Diagnostic::error(format!(
-            "LLVM IR backend foundation does not support `async fn` frame field type `{ty}` yet"
+            "LLVM IR backend foundation does not support {context} `{ty}` yet"
         ))
         .with_label(Label::new(span))),
     }
@@ -1828,7 +1894,14 @@ mod tests {
         runtime_hook_signature,
     };
 
-    use super::{CodegenInput, CodegenMode, emit_module};
+    use ql_resolve::BuiltinType;
+    use ql_span::Span;
+    use ql_typeck::Ty;
+
+    use super::{
+        AsyncTaskResultLayout, CodegenInput, CodegenMode, build_async_task_result_layout,
+        emit_module,
+    };
 
     fn emit(source: &str) -> String {
         emit_with_mode(source, CodegenMode::Program)
@@ -2127,6 +2200,31 @@ async fn worker(flag: Bool, value: Int) -> Int {
     }
 
     #[test]
+    fn builds_async_task_result_layouts_for_void_and_scalar_results() {
+        let void_layout =
+            build_async_task_result_layout(&Ty::Builtin(BuiltinType::Void), Span::new(0, 0))
+                .expect("void async result layout should be supported");
+        assert!(matches!(void_layout, AsyncTaskResultLayout::Void));
+        assert_eq!(void_layout.body_llvm_ty(), "void");
+
+        let int_layout =
+            build_async_task_result_layout(&Ty::Builtin(BuiltinType::Int), Span::new(0, 0))
+                .expect("scalar async result layout should be supported");
+        match int_layout {
+            AsyncTaskResultLayout::Scalar {
+                llvm_ty,
+                size,
+                align,
+            } => {
+                assert_eq!(llvm_ty, "i64");
+                assert_eq!(size, 8);
+                assert_eq!(align, 8);
+            }
+            AsyncTaskResultLayout::Void => panic!("expected scalar layout for Int"),
+        }
+    }
+
+    #[test]
     fn rejects_parameterized_async_function_bodies_without_async_frame_alloc_hook() {
         let messages = emit_error_with_runtime_hooks(
             r#"
@@ -2160,6 +2258,31 @@ async fn worker() -> Int {
             message
                 == "LLVM IR backend foundation requires the `async-task-create` runtime hook before lowering `async fn` bodies"
         }));
+    }
+
+    #[test]
+    fn rejects_unsupported_async_task_result_types_before_await_lowering() {
+        let runtime_hooks =
+            collect_runtime_hook_signatures([RuntimeCapability::AsyncFunctionBodies]);
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+async fn worker() -> (Int, Int) {
+    return (1, 2)
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message
+                == "LLVM IR backend foundation does not support async task result type `(Int, Int)` yet"
+        }));
+        assert!(
+            messages.iter().all(|message| {
+                !message.contains("does not support return type `(Int, Int)` yet")
+            })
+        );
     }
 
     #[test]

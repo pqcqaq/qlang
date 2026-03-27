@@ -62,6 +62,7 @@
 - 已在 `ql-codegen-llvm` 增补最小 async frame scaffold：当前 body-bearing `async fn` 会拆成一个统一接收 `ptr frame` 的真实 body symbol（`__async_body`）加一个公开 wrapper；parameterless wrapper 继续调用 `qlrt_async_task_create(entry, null)`，带参数 wrapper 会先通过 `qlrt_async_frame_alloc(size, align)` 构造最小 heap frame、写入参数，再调用 `qlrt_async_task_create(entry, frame)`，用于冻结最小 IR 结构
 - 已在 `ql-codegen-llvm` / `ql-driver` / `ql-cli` 补上 library-mode async unsupported 回归：非 entry async body 中的 `await` / `spawn` / `for await` 现在也有独立 backend/driver/CLI 覆盖，`for await` 不再额外泄露泛化的 ``for`` lowering 或 iterable 预物化噪声
 - 已在 `crates/ql-runtime` / `ql-cli` / `ql-codegen-llvm` 增补 task-result transport 的第一条共享 ABI 合同：`task-await` 当前会同时暴露 `qlrt_task_await(join_handle: ptr) -> ptr` 与 `qlrt_task_result_release(result: ptr) -> void`，先冻结 result payload 的“返回”和“释放”边界，再延后 typed extraction / await lowering 的细节
+- 已在 `ql-codegen-llvm` 增补 `AsyncTaskResultLayout` 内部抽象：当前先把 async 返回值限制在 `Void` 或已支持的 scalar builtin 上，提前冻结“`qlrt_task_await` 返回的 opaque ptr 指向原生标量 payload，取值后再调用 `qlrt_task_result_release`”这条 backend 内部假设；聚合类型仍保持未开放，避免过早承诺结果布局
 - 已在 `ql-typeck` 收紧 direct async call 语义：`async fn` 调用当前只能作为 `await <call>` 或 `spawn <call>` 的直接 operand 使用，独立使用 async call 结果会给出显式诊断，避免在 task/result ABI 未冻结前把 async 调用误当成同步返回值
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
