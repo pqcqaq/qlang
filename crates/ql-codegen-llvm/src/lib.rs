@@ -485,12 +485,14 @@ impl<'a> ModuleEmitter<'a> {
         let should_validate_local_types = diagnostics.is_empty();
         for local_id in body.local_ids() {
             let Some(ty) = local_types.get(&local_id) else {
-                diagnostics.push(Diagnostic::error(format!(
-                    "could not infer LLVM type for MIR local `{}`",
-                    body.local(local_id).name
-                ))
-                .with_label(Label::new(body.local(local_id).span))
-                .with_note("this usually means the current MIR shape is not part of the P4 backend foundation support matrix"));
+                if diagnostics.is_empty() {
+                    diagnostics.push(Diagnostic::error(format!(
+                        "could not infer LLVM type for MIR local `{}`",
+                        body.local(local_id).name
+                    ))
+                    .with_label(Label::new(body.local(local_id).span))
+                    .with_note("this usually means the current MIR shape is not part of the P4 backend foundation support matrix"));
+                }
                 continue;
             };
 
@@ -684,13 +686,15 @@ impl<'a> ModuleEmitter<'a> {
             Operand::Place(place) => {
                 self.require_direct_place(span, place, diagnostics);
                 local_types.get(&place.base).cloned().or_else(|| {
-                    diagnostics.push(
-                        Diagnostic::error(format!(
-                            "could not resolve LLVM type for local `{}`",
-                            body.local(place.base).name
-                        ))
-                        .with_label(Label::new(span)),
-                    );
+                    if diagnostics.is_empty() {
+                        diagnostics.push(
+                            Diagnostic::error(format!(
+                                "could not resolve LLVM type for local `{}`",
+                                body.local(place.base).name
+                            ))
+                            .with_label(Label::new(span)),
+                        );
+                    }
                     None
                 })
             }
@@ -1828,6 +1832,10 @@ fn main() -> Int {
         assert!(messages.iter().any(|message| {
             message == "LLVM IR backend foundation does not support closure values yet"
         }));
+        assert!(messages.iter().all(|message| {
+            !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
+        }));
     }
 
     #[test]
@@ -1847,6 +1855,10 @@ fn main() -> Int {
         assert!(messages.iter().any(|message| {
             message == "LLVM IR backend foundation does not support `match` lowering yet"
         }));
+        assert!(messages.iter().all(|message| {
+            !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
+        }));
     }
 
     #[test]
@@ -1864,6 +1876,10 @@ fn main() -> Int {
 
         assert!(messages.iter().any(|message| {
             message == "LLVM IR backend foundation does not support `for` lowering yet"
+        }));
+        assert!(messages.iter().all(|message| {
+            !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
         }));
     }
 

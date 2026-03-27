@@ -747,6 +747,7 @@ P6 当前仍刻意未完成：
 - `ql-driver` / `ql-cli` 新增 `async + generic` 并存回归：锁住多条 backend unsupported 诊断的聚合稳定性
 - `ql-driver` / `ql-cli` 新增 `async + unsafe fn body` 并存回归：锁住签名级多条 backend unsupported 诊断的聚合稳定性与终端输出
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 新增结构化 MIR terminator 的 backend 拒绝回归：`match` lowering unsupported 与 `for` lowering unsupported 现在都有后端单测、driver 回归和 CLI 失败快照覆盖
+- `ql-codegen-llvm` / `ql-driver` / `ql-cli` 进一步清理 backend 失败合同噪声：当 closure value、`match` lowering、`for` lowering 已经明确 unsupported 时，不再继续级联产出 `_t0` local-type 推导噪声，CLI 快照现在更接近真实主失败原因
 - `ql-mir` 新增 async operator lowering 回归：`await` / `spawn` 当前会作为显式 unary rvalue 保留在 MIR 中，并消费前面物化出来的 call 结果；same-file import alias 的 async call 也会继续保留 `Import` callee，而不是退化成 opaque/unresolved operand
 - `ql-cli` FFI 集成测试已补上最小 Rust host 静态链接回归：Rust harness 现在既可以直接链接 Qlang `staticlib` 调用导出函数，也可以为 Qlang 的 `extern "c"` import 提供 callback，实现最保守的双向互操作
 - `ql-cli` FFI 集成测试进一步补上 Cargo-based Rust host smoke test：测试会临时生成最小 Cargo 工程并通过 `build.rs` 链接 Qlang `staticlib`，让当前 Rust 混编路径更接近真实项目工作流

@@ -4,9 +4,6 @@ error: tests/codegen/fail/unsupported_match_build.ql:3:12: LLVM IR backend found
 error: tests/codegen/fail/unsupported_match_build.ql:3:12: LLVM IR backend foundation does not support `match` lowering yet
       return match flag {
              ^^^^^^^^
-error: tests/codegen/fail/unsupported_match_build.ql:3:5: could not resolve LLVM type for local `_t0`
-      return match flag {
-      ^^^^^^^^
 error: tests/codegen/fail/unsupported_match_build.ql:4:9: LLVM IR backend foundation only supports single-name binding patterns
           true => 1,
           ^^^^

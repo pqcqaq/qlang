@@ -1489,6 +1489,14 @@ fn main() -> Int {
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message == "LLVM IR backend foundation does not support closure values yet"
         }));
+        assert!(diagnostics.iter().all(|diagnostic| {
+            !diagnostic
+                .message
+                .contains("could not resolve LLVM type for local")
+                && !diagnostic
+                    .message
+                    .contains("could not infer LLVM type for MIR local")
+        }));
     }
 
     #[test]
@@ -1768,6 +1776,14 @@ fn main() -> Int {
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message == "LLVM IR backend foundation does not support `match` lowering yet"
         }));
+        assert!(diagnostics.iter().all(|diagnostic| {
+            !diagnostic
+                .message
+                .contains("could not resolve LLVM type for local")
+                && !diagnostic
+                    .message
+                    .contains("could not infer LLVM type for MIR local")
+        }));
     }
 
     #[test]
@@ -1792,6 +1808,14 @@ fn main() -> Int {
 
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message == "LLVM IR backend foundation does not support `for` lowering yet"
+        }));
+        assert!(diagnostics.iter().all(|diagnostic| {
+            !diagnostic
+                .message
+                .contains("could not resolve LLVM type for local")
+                && !diagnostic
+                    .message
+                    .contains("could not infer LLVM type for MIR local")
         }));
     }
 
