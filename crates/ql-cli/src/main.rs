@@ -67,6 +67,14 @@ fn run() -> Result<(), u8> {
 
             render_ownership_path(Path::new(&path))
         }
+        "runtime" => {
+            let Some(path) = args.next() else {
+                eprintln!("error: `ql runtime` expects a file path");
+                return Err(1);
+            };
+
+            render_runtime_requirements_path(Path::new(&path))
+        }
         "build" => {
             let Some(path) = args.next() else {
                 eprintln!("error: `ql build` expects a file path");
@@ -325,6 +333,29 @@ fn render_ownership_path(path: &Path) -> Result<(), u8> {
     }
 }
 
+fn render_runtime_requirements_path(path: &Path) -> Result<(), u8> {
+    let source = fs::read_to_string(path).map_err(|error| {
+        eprintln!("error: failed to read `{}`: {error}", path.display());
+        1
+    })?;
+
+    match analyze_semantics(&source) {
+        Ok(analysis) => {
+            print!("{}", render_runtime_requirements(&analysis));
+            if analysis.has_errors() {
+                print_diagnostics(path, &source, analysis.diagnostics());
+                Err(1)
+            } else {
+                Ok(())
+            }
+        }
+        Err(diagnostics) => {
+            print_diagnostics(path, &source, &diagnostics);
+            Err(1)
+        }
+    }
+}
+
 fn build_path(path: &Path, options: &BuildOptions) -> Result<(), u8> {
     match build_file(path, options) {
         Ok(artifact) => {
@@ -402,6 +433,23 @@ fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
     } else {
         Ok(())
     }
+}
+
+fn render_runtime_requirements(analysis: &ql_analysis::Analysis) -> String {
+    if analysis.runtime_requirements().is_empty() {
+        return "runtime requirements: none\n".to_owned();
+    }
+
+    let mut rendered = String::new();
+    for requirement in analysis.runtime_requirements() {
+        rendered.push_str(&format!(
+            "runtime requirement: {} @ {} ({})\n",
+            requirement.capability.stable_name(),
+            requirement.span,
+            requirement.capability.description(),
+        ));
+    }
+    rendered
 }
 
 fn collect_ql_files(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
@@ -509,6 +557,7 @@ fn print_usage() {
     eprintln!("  ql fmt <file> [--write]");
     eprintln!("  ql mir <file>");
     eprintln!("  ql ownership <file>");
+    eprintln!("  ql runtime <file>");
 }
 
 #[cfg(test)]
@@ -524,7 +573,8 @@ mod tests {
     };
 
     use super::{
-        analyze_source, build_path, collect_ql_files, render_mir_path, render_ownership_path,
+        analyze_semantics, analyze_source, build_path, collect_ql_files, render_mir_path,
+        render_ownership_path, render_runtime_requirements,
     };
 
     struct TestDir {
@@ -694,6 +744,49 @@ fn main() -> String {
         assert!(
             result.is_err(),
             "ownership diagnostics should fail the command"
+        );
+    }
+
+    #[test]
+    fn render_runtime_requirements_reports_async_surface() {
+        let analysis = analyze_semantics(
+            r#"
+async fn main() -> Int {
+    for await value in [1, 2, 3] {
+        let current = value
+    }
+    let task = spawn helper()
+    return await helper()
+}
+
+async fn helper() -> Int {
+    return 1
+}
+"#,
+        )
+        .expect("source should analyze");
+
+        let rendered = render_runtime_requirements(&analysis);
+        assert!(rendered.contains("runtime requirement: async-function-bodies @"));
+        assert!(rendered.contains("runtime requirement: async-iteration @"));
+        assert!(rendered.contains("runtime requirement: task-spawn @"));
+        assert!(rendered.contains("runtime requirement: task-await @"));
+    }
+
+    #[test]
+    fn render_runtime_requirements_reports_none_for_sync_sources() {
+        let analysis = analyze_semantics(
+            r#"
+fn main() -> Int {
+    return 1
+}
+"#,
+        )
+        .expect("source should analyze");
+
+        assert_eq!(
+            render_runtime_requirements(&analysis),
+            "runtime requirements: none\n"
         );
     }
 
