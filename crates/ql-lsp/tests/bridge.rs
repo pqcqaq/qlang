@@ -268,6 +268,20 @@ fn diagnostics_conversion_preserves_source_and_defaults_secondary_related_messag
 }
 
 #[test]
+fn diagnostics_conversion_omits_related_information_when_only_primary_label_exists() {
+    let source = "left right\n";
+    let diagnostics = diagnostics_to_lsp(
+        &Url::parse("file:///sample.ql").expect("URI should parse"),
+        source,
+        &[CompilerDiagnostic::error("duplicate binding")
+            .with_label(Label::new(Span::new(0, 4)).with_message("primary binding"))],
+    );
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].range, span_to_range(source, Span::new(0, 4)));
+    assert_eq!(diagnostics[0].related_information, None);
+}
+
+#[test]
 fn hover_bridge_renders_markdown_for_semantic_symbols() {
     let source = r#"
 fn id[T](value: T) -> T {
