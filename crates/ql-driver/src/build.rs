@@ -2157,6 +2157,52 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_spawned_task_handle_helpers() {
+        let dir = TestDir::new("ql-driver-staticlib-async-spawn-helper-handle");
+        let source = dir.write(
+            "async_spawn_helper_library.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn helper() -> Int {
+    let task = spawn schedule()
+    return await task
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_spawn_helper_library.lib"
+        } else {
+            "artifacts/libasync_spawn_helper_library.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with spawned task-handle helpers should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_surfaces_async_and_generic_codegen_diagnostics() {
         let dir = TestDir::new("ql-driver-async-generic-unsupported");
         let source = dir.write(

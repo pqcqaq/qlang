@@ -474,35 +474,31 @@ impl<'a> Checker<'a> {
                     return Ty::Unknown;
                 }
 
-                if !matches!(&self.module.expr(operand).kind, ExprKind::Call { .. }) {
-                    self.diagnostics.push(
-                        Diagnostic::error(
-                            "`spawn` currently requires a call expression operand".to_string(),
-                        )
-                        .with_label(
-                            Label::new(self.module.expr(expr_id).span)
-                                .with_message("`spawn` used with a non-call operand"),
-                        ),
-                    );
-                    return Ty::Unknown;
-                }
-
-                if !self.call_operand_is_async(operand) {
-                    self.diagnostics.push(
-                        Diagnostic::error(
-                            "`spawn` currently requires calling an `async fn`".to_string(),
-                        )
-                        .with_label(
-                            Label::new(self.module.expr(expr_id).span)
-                                .with_message("`spawn` used with a non-async call"),
-                        ),
-                    );
-                    return Ty::Unknown;
-                }
-
                 if let Some(result_ty) = operand_ty.task_output() {
                     Ty::TaskHandle(Box::new(result_ty.clone()))
                 } else {
+                    let diagnostic = if matches!(
+                        &self.module.expr(operand).kind,
+                        ExprKind::Call { .. }
+                    ) {
+                        Diagnostic::error(
+                                "`spawn` currently requires calling an `async fn` or task-handle helper"
+                                    .to_string(),
+                            )
+                            .with_label(
+                                Label::new(self.module.expr(expr_id).span)
+                                    .with_message("`spawn` used with a non-task call"),
+                            )
+                    } else {
+                        Diagnostic::error(
+                            "`spawn` currently requires an async task handle operand".to_string(),
+                        )
+                        .with_label(
+                            Label::new(self.module.expr(expr_id).span)
+                                .with_message("`spawn` used with a non-task operand"),
+                        )
+                    };
+                    self.diagnostics.push(diagnostic);
                     Ty::Unknown
                 }
             }
@@ -958,17 +954,6 @@ impl<'a> Checker<'a> {
             ExprKind::Bool(value) => Some(*value),
             _ => None,
         }
-    }
-
-    fn call_operand_is_async(&self, operand: ExprId) -> bool {
-        let ExprKind::Call { callee, .. } = &self.module.expr(operand).kind else {
-            return false;
-        };
-        let Some(callee_ty) = self.expr_types.get(callee) else {
-            return false;
-        };
-        self.call_signature(*callee, callee_ty)
-            .is_some_and(|signature| signature.is_async)
     }
 
     fn ordered_match_flow<F>(&self, arms: &[MatchArm], mut pattern_matches: F) -> ControlFlowSummary

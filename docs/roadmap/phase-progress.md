@@ -765,10 +765,11 @@ P6 当前仍刻意未完成：
 - `ql-runtime` / `ql-cli` / `ql-codegen-llvm` 已补上 task-result transport 的第一条 ABI skeleton：`task-await` capability 现在会同时暴露 `qlrt_task_await` 与 `qlrt_task_result_release`，先把“等待得到 opaque result ptr”与“释放 result payload”这两个动作拆开冻结合同，再决定后续 typed extraction lowering
 - `ql-codegen-llvm` 已补上 `AsyncTaskResultLayout` 内部抽象：当前 async 结果已接受 `Void`、scalar builtin 与 pure-scalar tuple，并在 signature 阶段锁定 payload 的 LLVM type/size/align，避免后续 `await` lowering 再反过来重写 async wrapper/result 合同
 - `ql-codegen-llvm` 已打开首个真实 `await` lowering：当前在 backend 内支持 `Void` / scalar builtin / pure-scalar tuple async 结果，并把 `await` 降成 `qlrt_task_await` + load payload + `qlrt_task_result_release` 的最小链路
-- `ql-codegen-llvm` 已打开首个真实 `spawn` lowering 子集：当前 backend 支持把 `spawn <async-call>` 降成 `qlrt_executor_spawn(ptr null, task)`，并返回可继续 `await` 的 task handle；statement-position fire-and-forget 只是丢弃该返回句柄的特例
+- `ql-codegen-llvm` 已打开首个真实 `spawn` lowering 子集：当前 backend 支持把 task-handle operand 降成 `qlrt_executor_spawn(ptr null, task)`，并返回可继续 `await` 的 task handle；当前已覆盖 direct async call、局部绑定 handle 与 sync helper 返回 handle，statement-position fire-and-forget 只是丢弃该返回句柄的特例
 - `ql-driver` 已开放第一条 public async build 子集：`staticlib` 现在允许已被 backend 支持的 async library body、scalar/tuple/void `await`、以及可绑定后再 `await` 的 `spawn` task handle 通过，`for await` 在 staticlib 上也不再额外泄露 `async fn` runtime 噪声
-- `ql-resolve` / `ql-typeck` 已开放首个显式 task-handle 类型面：`Task[T]` 现在作为保留类型根被接受，不再触发 unresolved-type 诊断，并映射到内部 task-handle 语义；direct async call、spawned task 与 sync helper 返回值现在都复用同一条句柄值模型
+- `ql-resolve` / `ql-typeck` 已开放首个显式 task-handle 类型面：`Task[T]` 现在作为保留类型根被接受，不再触发 unresolved-type 诊断，并映射到内部 task-handle 语义；direct async call、spawned task、局部绑定 handle 与 sync helper 返回值现在都复用同一条句柄值模型
 - `ql-typeck` 已移除 direct async call 的“必须立刻 `await` / `spawn`”限制：`let task = worker(); await task`、helper 参数传递、`return worker()` 到 `Task[T]` wrapper 等路径现在都可保守通过；当 direct async call 最终流入非 `Task[T]` 上下文时，会自然退化成普通类型不匹配，而不再依赖单独的特判诊断
+- `ql-typeck` 已把 `spawn` 消费模型对齐到 task-handle 语义：`spawn task` 与 `spawn schedule()`（其中 `schedule() -> Task[T]`）现在都可保守通过；非 task operand 会给出稳定诊断，而不再把 `spawn` 限死在“直接 async call”形态
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已补充 task-handle helper 回归：`fn schedule() -> Task[Int] { return worker() }` 加 `await schedule()` 的 staticlib 路径已被单测、driver 回归和黑盒快照锁住
 - `ql-driver` / `ql-cli` 已补上 async staticlib mixed-surface 回归：带内部 async helper 的库现在也锁住了 `extern "c"` export header sidecar 路径，确保公开 C header surface 不会被 async implementation details 污染
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口

@@ -89,8 +89,26 @@ async fn main() -> Int {
 "#;
     let rendered = rendered_diagnostics(source);
 
+    assert!(rendered.contains(
+        "error: sample.ql:4:5: `spawn` currently requires calling an `async fn` or task-handle helper"
+    ));
+}
+
+#[test]
+fn rendered_spawn_non_task_operand_diagnostics_anchor_to_the_spawn_expression() {
+    let source = r#"
+async fn main() -> Int {
+    let value = 1
+    spawn value
+    return 0
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
     assert!(
-        rendered.contains("error: sample.ql:4:5: `spawn` currently requires calling an `async fn`")
+        rendered.contains(
+            "error: sample.ql:4:5: `spawn` currently requires an async task handle operand"
+        )
     );
 }
 

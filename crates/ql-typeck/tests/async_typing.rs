@@ -94,6 +94,28 @@ async fn main() -> Int {
 }
 
 #[test]
+fn allows_spawning_bound_task_handles_inside_async_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = worker()
+    let running = spawn task
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected bound task handles to be spawnable, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_binding_direct_async_call_handles_before_awaiting() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -161,6 +183,31 @@ async fn main() -> Int {
 }
 
 #[test]
+fn allows_spawning_task_handle_helpers_inside_async_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn main() -> Int {
+    let task = spawn schedule()
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected task-handle helper calls to be spawnable, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_passing_async_calls_to_task_handle_parameters() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -220,7 +267,9 @@ async fn main() -> Int {
     );
 
     assert!(
-        diagnostics.contains(&"`spawn` currently requires calling an `async fn`".to_string()),
+        diagnostics.contains(
+            &"`spawn` currently requires calling an `async fn` or task-handle helper".to_string()
+        ),
         "expected spawn async-call-target diagnostic, got {diagnostics:?}"
     );
 }
@@ -264,8 +313,9 @@ async fn main() -> Int {
     );
 
     assert!(
-        diagnostics.contains(&"`spawn` currently requires a call expression operand".to_string()),
-        "expected spawn operand-shape diagnostic, got {diagnostics:?}"
+        diagnostics
+            .contains(&"`spawn` currently requires an async task handle operand".to_string()),
+        "expected spawn task-handle diagnostic, got {diagnostics:?}"
     );
 }
 
@@ -322,7 +372,9 @@ async fn main() -> Int {
     );
 
     assert!(
-        diagnostics.contains(&"`spawn` currently requires calling an `async fn`".to_string()),
+        diagnostics.contains(
+            &"`spawn` currently requires calling an `async fn` or task-handle helper".to_string()
+        ),
         "expected closure spawn async-call-target diagnostic, got {diagnostics:?}"
     );
 }
@@ -419,7 +471,9 @@ async fn main(counter: Counter) -> Int {
     );
 
     assert!(
-        diagnostics.contains(&"`spawn` currently requires calling an `async fn`".to_string()),
+        diagnostics.contains(
+            &"`spawn` currently requires calling an `async fn` or task-handle helper".to_string()
+        ),
         "expected sync method spawn async-call-target diagnostic, got {diagnostics:?}"
     );
     assert!(

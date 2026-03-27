@@ -3183,6 +3183,65 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn emits_spawn_lowering_for_bound_task_handles() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    let task = worker()
+    let running = spawn task
+    return await running
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @ql_0_worker()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_task_handle_helpers() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn helper() -> Int {
+    let task = spawn schedule()
+    return await task
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("_schedule(").count() >= 2);
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+    }
+
+    #[test]
     fn rejects_unsupported_for_await_lowering_without_iterable_noise() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
