@@ -43,6 +43,44 @@ fn ffi_exports_link_from_c_static_harnesses() {
 }
 
 #[test]
+fn ffi_exports_link_from_rust_static_harnesses() {
+    let workspace_root = workspace_root();
+    let fixture_root = workspace_root.join("tests/ffi/pass");
+    let cases = collect_rust_static_ffi_cases(&fixture_root);
+    assert!(
+        !cases.is_empty(),
+        "expected at least one Rust static FFI fixture under `{}`",
+        fixture_root.display()
+    );
+
+    let Some(rustc) = resolve_program_from_env_or_path("RUSTC", &rustc_candidates()) else {
+        eprintln!(
+            "skipping Rust static FFI integration tests: no rustc found on PATH and `RUSTC` is not set"
+        );
+        return;
+    };
+    if resolve_program_from_env_or_path("QLANG_AR", &archiver_candidates()).is_none() {
+        eprintln!(
+            "skipping Rust static FFI integration tests: no archive tool found on PATH and `QLANG_AR` is not set"
+        );
+        return;
+    }
+
+    let mut failures = Vec::new();
+    for case in cases {
+        if let Err(message) = run_static_rust_ffi_case(&workspace_root, &rustc, &case) {
+            failures.push(message);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "Rust static FFI integration regressions:\n\n{}",
+        failures.join("\n\n")
+    );
+}
+
+#[test]
 fn ffi_exports_load_from_c_dynamic_harnesses() {
     let workspace_root = workspace_root();
     let fixture_root = workspace_root.join("tests/ffi/pass");
@@ -367,6 +405,37 @@ fn collect_static_ffi_cases(root: &Path) -> Vec<FfiCase> {
     cases
 }
 
+fn collect_rust_static_ffi_cases(root: &Path) -> Vec<FfiCase> {
+    let mut cases = Vec::new();
+    for entry in
+        fs::read_dir(root).unwrap_or_else(|_| panic!("read FFI fixture dir `{}`", root.display()))
+    {
+        let entry = entry.expect("read Rust static FFI fixture entry");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("ql") {
+            continue;
+        }
+
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("ffi_case")
+            .to_owned();
+        let harness_path = path.with_extension("rs");
+        if !harness_path.is_file() {
+            continue;
+        }
+        cases.push(FfiCase {
+            name,
+            ql_path: path,
+            harness_path,
+            header_surface: HeaderSurface::Exports,
+        });
+    }
+    cases.sort_by(|left, right| left.name.cmp(&right.name));
+    cases
+}
+
 fn collect_dynamic_ffi_cases(root: &Path) -> Vec<FfiCase> {
     let mut cases = Vec::new();
     for entry in
@@ -460,6 +529,14 @@ fn archiver_candidates() -> Vec<&'static str> {
     }
 }
 
+fn rustc_candidates() -> Vec<&'static str> {
+    if cfg!(windows) {
+        vec!["rustc.exe", "rustc.cmd", "rustc.bat", "rustc"]
+    } else {
+        vec!["rustc"]
+    }
+}
+
 fn static_library_output_path(root: &Path, stem: &str) -> PathBuf {
     if cfg!(windows) {
         root.join(format!("{stem}.lib"))
@@ -492,6 +569,18 @@ fn executable_output_path(root: &Path, stem: &str) -> PathBuf {
 
 fn normalize(text: &str) -> String {
     text.replace("\r\n", "\n")
+}
+
+fn rust_crate_name(stem: &str) -> String {
+    let mut name = String::from("ql_ffi_");
+    for ch in stem.chars() {
+        if ch.is_ascii_alphanumeric() {
+            name.push(ch.to_ascii_lowercase());
+        } else {
+            name.push('_');
+        }
+    }
+    name
 }
 
 fn run_ql_build(
@@ -531,6 +620,91 @@ fn run_ql_build(
             build_stderr
         ));
     }
+    Ok(())
+}
+
+fn run_static_rust_ffi_case(
+    workspace_root: &Path,
+    rustc: &Path,
+    case: &FfiCase,
+) -> Result<(), String> {
+    let temp = TempDir::new(&format!("ql-ffi-rust-static-{}", case.name));
+    let staticlib = static_library_output_path(temp.path(), &case.name);
+    let executable = executable_output_path(temp.path(), &format!("{}_rust", case.name));
+    let relative_ql = relative_ql_path(workspace_root, &case.ql_path);
+
+    run_ql_build(
+        workspace_root,
+        &case.name,
+        &relative_ql,
+        "staticlib",
+        &staticlib,
+        HeaderSurface::Exports,
+        None,
+    )?;
+    if !staticlib.is_file() {
+        return Err(format!(
+            "[{}] expected static library `{}` to exist after build",
+            case.name,
+            staticlib.display()
+        ));
+    }
+
+    let compile = Command::new(rustc)
+        .current_dir(workspace_root)
+        .arg("--edition=2021")
+        .arg("--crate-name")
+        .arg(rust_crate_name(&case.name))
+        .arg(&case.harness_path)
+        .arg("-L")
+        .arg(format!("native={}", temp.path().display()))
+        .arg("-l")
+        .arg(format!("static={}", case.name))
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap_or_else(|_| {
+            panic!(
+                "run Rust FFI harness compiler `{}` for `{}`",
+                rustc.display(),
+                case.name
+            )
+        });
+    let compile_stdout = normalize(&String::from_utf8_lossy(&compile.stdout));
+    let compile_stderr = normalize(&String::from_utf8_lossy(&compile.stderr));
+    if compile.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[{}] expected Rust static FFI harness link to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            case.name,
+            compile.status.code(),
+            compile_stdout,
+            compile_stderr
+        ));
+    }
+    if !executable.is_file() {
+        return Err(format!(
+            "[{}] expected Rust executable `{}` to exist after static link",
+            case.name,
+            executable.display()
+        ));
+    }
+
+    let run = Command::new(&executable)
+        .current_dir(workspace_root)
+        .output()
+        .unwrap_or_else(|_| panic!("run Rust FFI executable `{}`", executable.display()));
+    let run_stdout = normalize(&String::from_utf8_lossy(&run.stdout));
+    let run_stderr = normalize(&String::from_utf8_lossy(&run.stderr));
+    if run.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[{}] expected Rust FFI executable to exit with 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            case.name,
+            run.status.code(),
+            run_stdout,
+            run_stderr
+        ));
+    }
+
     Ok(())
 }
 
