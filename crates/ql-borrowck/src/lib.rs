@@ -114,4 +114,5 @@ pub enum MoveReason {
     AwaitTaskHandle,
     SpawnTaskHandle,
     CallTaskHandleArgument,
+    ReturnTaskHandle,
 }

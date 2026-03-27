@@ -206,7 +206,18 @@ impl<'a> BodyAnalyzer<'a> {
         match statement {
             StatementKind::Assign { place, value } => {
                 let mut reporter = reporter;
-                self.apply_rvalue(states, value, span, reporter.as_deref_mut());
+                if let Some((local, reason)) = self.classify_task_handle_return_rvalue(place, value)
+                {
+                    self.check_moved_use(
+                        states,
+                        local,
+                        UseSite::normal(span),
+                        reporter.as_deref_mut(),
+                    );
+                    self.apply_consume(states, local, span, reason, reporter.as_deref_mut());
+                } else {
+                    self.apply_rvalue(states, value, span, reporter.as_deref_mut());
+                }
                 if place.projections.is_empty() {
                     self.write_local(states, place.base, span, reporter.as_deref_mut());
                 } else {
@@ -416,6 +427,21 @@ impl<'a> BodyAnalyzer<'a> {
             UnaryOp::Spawn => Some((local, MoveReason::SpawnTaskHandle)),
             UnaryOp::Neg => None,
         }
+    }
+
+    fn classify_task_handle_return_rvalue(
+        &self,
+        place: &Place,
+        value: &Rvalue,
+    ) -> Option<(MirLocalId, MoveReason)> {
+        if !place.projections.is_empty() || place.base != self.body.return_local {
+            return None;
+        }
+        let Rvalue::Use(operand) = value else {
+            return None;
+        };
+        let local = self.direct_task_handle_local_for_operand(operand)?;
+        Some((local, MoveReason::ReturnTaskHandle))
     }
 
     fn apply_consume(
@@ -742,6 +768,14 @@ impl<'a> BodyAnalyzer<'a> {
         }
         let local = self.direct_task_handle_local_for_expr(expr_id)?;
         Some((local, MoveReason::CallTaskHandleArgument))
+    }
+
+    fn classify_task_handle_return_expr(
+        &self,
+        expr_id: hir::ExprId,
+    ) -> Option<(MirLocalId, MoveReason)> {
+        let local = self.direct_task_handle_local_for_expr(expr_id)?;
+        Some((local, MoveReason::ReturnTaskHandle))
     }
 
     fn analyze_closure_facts(&self) -> Vec<ClosureFacts> {
@@ -1375,12 +1409,28 @@ impl<'a> BodyAnalyzer<'a> {
                 use_site.with_span(self.hir.expr(*value).span),
             ),
             hir::StmtKind::Return(Some(expr)) => {
-                let eval = self.eval_cleanup_expr(
+                let expr_span = self.hir.expr(*expr).span;
+                let mut eval = self.eval_cleanup_expr(
                     states,
                     *expr,
-                    reporter,
-                    use_site.with_span(self.hir.expr(*expr).span),
+                    reporter.as_deref_mut(),
+                    use_site.with_span(expr_span),
                 );
+                if let Some((local, reason)) = self.classify_task_handle_return_expr(*expr) {
+                    self.check_moved_use(
+                        &eval.states,
+                        local,
+                        use_site.with_span(expr_span),
+                        reporter.as_deref_mut(),
+                    );
+                    self.apply_consume(
+                        &mut eval.states,
+                        local,
+                        expr_span,
+                        reason,
+                        reporter.as_deref_mut(),
+                    );
+                }
                 CleanupEval::stop(eval.states)
             }
             hir::StmtKind::Return(None) | hir::StmtKind::Break | hir::StmtKind::Continue => {
@@ -1767,6 +1817,7 @@ fn render_move_origin(origin: &MoveOrigin) -> String {
         MoveReason::CallTaskHandleArgument => {
             "consumed here by a `Task[...]` call argument".to_owned()
         }
+        MoveReason::ReturnTaskHandle => "consumed here by `return`".to_owned(),
     }
 }
 

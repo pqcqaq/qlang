@@ -770,7 +770,7 @@ P6 当前仍刻意未完成：
 - `ql-resolve` / `ql-typeck` 已开放首个显式 task-handle 类型面：`Task[T]` 现在作为保留类型根被接受，不再触发 unresolved-type 诊断，并映射到内部 task-handle 语义；direct async call、spawned task、局部绑定 handle 与 sync helper 返回值现在都复用同一条句柄值模型
 - `ql-typeck` 已移除 direct async call 的“必须立刻 `await` / `spawn`”限制：`let task = worker(); await task`、helper 参数传递、`return worker()` 到 `Task[T]` wrapper 等路径现在都可保守通过；当 direct async call 最终流入非 `Task[T]` 上下文时，会自然退化成普通类型不匹配，而不再依赖单独的特判诊断
 - `ql-typeck` 已把 `spawn` 消费模型对齐到 task-handle 语义：`spawn task` 与 `spawn schedule()`（其中 `schedule() -> Task[T]`）现在都可保守通过；非 task operand 会给出稳定诊断，而不再把 `spawn` 限死在“直接 async call”形态
-- `ql-borrowck` 已把 direct-local task handle 的 `await` / `spawn` 与静态可判定的 helper `Task[T]` 参数传递接进当前 ownership facts：这些路径现在会显式 consume 任务句柄，本地句柄在消费后复用会得到稳定的 use-after-move / maybe-moved 诊断，而重赋值仍可恢复 local 可用性
+- `ql-borrowck` 已把 direct-local task handle 的 `await` / `spawn`、静态可判定的 helper `Task[T]` 参数传递与 direct-local `return task` 接进当前 ownership facts：这些路径现在会显式 consume 任务句柄，本地句柄在消费后复用会得到稳定的 use-after-move / maybe-moved 诊断，而重赋值仍可恢复 local 可用性
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已补充 task-handle helper 回归：`fn schedule() -> Task[Int] { return worker() }` 加 `await schedule()` 的 staticlib 路径已被单测、driver 回归和黑盒快照锁住
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已补充 helper-argument task-handle 回归：`let task = worker(); let forwarded = forward(task); await forwarded` 与 `let running = spawn forward(task); await running` 这两条组合路径已被单测、driver staticlib 回归和 CLI 黑盒 fixture 锁住
 - `ql-driver` / `ql-cli` 已补上 async staticlib mixed-surface 回归：带内部 async helper 的库现在也锁住了 `extern "c"` export header sidecar 路径，确保公开 C header surface 不会被 async implementation details 污染
@@ -779,7 +779,7 @@ P6 当前仍刻意未完成：
 - 当前 backend/driver 虽已具备 declaration + async body wrapper/frame scaffold，并已打通 scalar/tuple/void `await` lowering、`spawn` task-handle lowering 与 `staticlib` 子集开放，但 `for await` lowering、更广义的任务结果协议、frame 生命周期管理和更广义的布局协议仍未开放
 - 当前 `async-iteration` 已在 driver 层有公开 build 诊断，但仍只作为保守的失败合同存在；这还不代表 `for await` 已进入 lowering/runtime hook 设计
 - 当前 `Task[T]` 虽已进入显式类型面，但仍是保守的句柄抽象：还没有 cancellation、polling、scheduler hint、auto-drop 语义或更一般的 async effect/type inference 设计
-- 当前 borrowck 只对 direct-local task handle 建立最小 consume 合同；`await` / `spawn` 与静态可判定的 helper `Task[T]` 参数传递已接入，但 helper 返回值之外的更广义边界、place-sensitive handle lifecycle 与更广义 drop/submission 协议仍待后续切片
+- 当前 borrowck 只对 direct-local task handle 建立最小 consume 合同；`await` / `spawn`、静态可判定的 helper `Task[T]` 参数传递与 direct-local `return task` 已接入，但更广义的 helper 返回值边界、place-sensitive handle lifecycle 与更广义 drop/submission 协议仍待后续切片
 
 ### 下一步（P7.1 延续）
 

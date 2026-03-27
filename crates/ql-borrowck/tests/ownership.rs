@@ -381,6 +381,33 @@ async fn main() -> Int {
 }
 
 #[test]
+fn reports_deferred_cleanup_use_after_returning_task_handle() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn sink(task: Task[Int]) -> Void {
+    return
+}
+
+fn forward(task: Task[Int]) -> Task[Int] {
+    defer sink(task)
+    return task
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let forwarded = forward(worker())
+    return await forwarded
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `task` was used after move".to_string()));
+}
+
+#[test]
 fn closure_captures_read_moved_direct_locals() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -704,6 +731,29 @@ async fn main() -> Int {
     );
 
     assert!(rendered.contains("consume(call task handle argument)"));
+    assert!(rendered.contains("consume(await task handle)"));
+}
+
+#[test]
+fn renders_return_task_handle_consumes_for_debugging() {
+    let rendered = render_output(
+        r#"
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let forwarded = forward(worker())
+    return await forwarded
+}
+"#,
+    );
+
+    assert!(rendered.contains("consume(return task handle)"));
     assert!(rendered.contains("consume(await task handle)"));
 }
 

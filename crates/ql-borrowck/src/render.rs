@@ -118,6 +118,7 @@ fn render_state(state: &LocalState) -> String {
                     MoveReason::AwaitTaskHandle => "await-task".to_owned(),
                     MoveReason::SpawnTaskHandle => "spawn-task".to_owned(),
                     MoveReason::CallTaskHandleArgument => "call-task".to_owned(),
+                    MoveReason::ReturnTaskHandle => "return-task".to_owned(),
                 })
                 .collect::<Vec<_>>()
                 .join("|");
@@ -138,6 +139,7 @@ fn render_event(kind: &LocalEventKind) -> String {
             MoveReason::AwaitTaskHandle => "consume(await task handle)".to_owned(),
             MoveReason::SpawnTaskHandle => "consume(spawn task handle)".to_owned(),
             MoveReason::CallTaskHandleArgument => "consume(call task handle argument)".to_owned(),
+            MoveReason::ReturnTaskHandle => "consume(return task handle)".to_owned(),
         },
     }
 }
