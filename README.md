@@ -69,7 +69,7 @@ Current Rust workspace status:
 - `crates/ql-runtime`: Phase 7 minimal runtime/executor abstraction with deterministic inline execution
 - `crates/ql-driver`: Phase 4/P5 build orchestration boundary for source loading, analysis handoff, native artifacts, and generated C headers
 - `crates/ql-codegen-llvm`: Phase 4 textual LLVM IR backend foundation over a narrow MIR subset
-- `crates/ql-cli`: `ql` CLI with `check`, `build`, `ffi`, `fmt`, `mir`, and `ownership`
+- `crates/ql-cli`: `ql` CLI with `check`, `build`, `ffi`, `fmt`, `mir`, `ownership`, and `runtime`
 
 Current implemented syntax slice:
 
@@ -282,4 +282,5 @@ cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit dylib --he
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_library.ql --emit staticlib
 cargo run -p ql-cli -- build fixtures/codegen/pass/extern_c_library.ql --emit staticlib --header-surface imports
 cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit staticlib --header-output target/ql/debug/extern_c_export.h
+cargo run -p ql-cli -- runtime tests/codegen/fail/unsupported_async_fn_build.ql
 ```

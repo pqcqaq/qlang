@@ -55,6 +55,7 @@
 - 已在 `crates/ql-runtime` 固定第一批稳定 capability 名称：`async-function-bodies`、`task-spawn`、`task-await`、`async-iteration`
 - 已在 `ql-analysis` 暴露 `runtime_requirements()`：当前会按源码顺序枚举 `async fn`、`spawn`、`await`、`for await` 对应的 runtime 需求，为后续 driver/codegen 接线提供共享 truth surface
 - 已补充 `crates/ql-analysis/tests/queries.rs` 的 runtime requirement 回归：覆盖 capability 顺序、精确 operator span，以及“仅声明无 body 的 async method 不计入 lowering 需求”的边界
+- 已在 `ql-cli` 新增 `ql runtime <file>`：当前可直接输出该文件的 runtime requirements，便于开发阶段检查 capability surface 是否符合预期
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口

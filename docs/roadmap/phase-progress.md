@@ -755,6 +755,7 @@ P6 当前仍刻意未完成：
 - `crates/ql-runtime/tests/executor.rs` 已锁住 run-to-completion、`spawn` + `join`、`block_on` 与单线程执行顺序
 - `crates/ql-runtime` 已固定第一批稳定 capability 名称：`async-function-bodies`、`task-spawn`、`task-await`、`async-iteration`
 - `ql-analysis` 已暴露 `runtime_requirements()`，按源码顺序枚举当前 async surface 对应的 runtime 需求，并补上 operator span / declaration-vs-definition 边界回归
+- `ql-cli` 已新增 `ql runtime <file>`，可直接输出当前文件的 runtime capability 需求，作为后续 runtime/codegen 接线前的开发者可见检查面
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前 driver / backend 仍未消费这份 runtime requirement surface，继续保持结构化 unsupported 边界，避免在 hook contract 未冻结前提前绑死 lowering
 
