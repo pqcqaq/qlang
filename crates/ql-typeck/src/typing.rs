@@ -971,9 +971,12 @@ impl<'a> Checker<'a> {
         let path_text = path.segments.join(".");
         let resolution = self.resolution.struct_literal_resolution(expr_id)?;
         match resolution {
-            TypeResolution::Builtin(_) | TypeResolution::Generic(_) => Some(format!(
-                "struct literal syntax is not supported for `{path_text}`"
-            )),
+            TypeResolution::Builtin(_) | TypeResolution::Generic(_) if path.segments.len() == 1 => {
+                Some(format!(
+                    "struct literal syntax is not supported for `{path_text}`"
+                ))
+            }
+            TypeResolution::Builtin(_) | TypeResolution::Generic(_) => None,
             TypeResolution::Import(import_binding) => {
                 local_item_for_import_binding(self.module, import_binding).and_then(|item_id| {
                     self.invalid_struct_literal_item_path_message(item_id, path)
@@ -994,7 +997,7 @@ impl<'a> Checker<'a> {
         let ItemKind::Enum(enum_decl) = &item.kind else {
             return Ok(None);
         };
-        if path.segments.len() < 2 {
+        if path.segments.len() != 2 {
             return Ok(None);
         }
         let Some(variant_name) = path.segments.last() else {
@@ -1021,10 +1024,8 @@ impl<'a> Checker<'a> {
         let path_text = path.segments.join(".");
         match &self.module.item(item_id).kind {
             ItemKind::Struct(_) if path.segments.len() == 1 => None,
-            ItemKind::Struct(_) => Some(format!(
-                "struct literal syntax is not supported for `{path_text}`"
-            )),
-            ItemKind::Enum(_) if path.segments.len() >= 2 => {
+            ItemKind::Struct(_) => None,
+            ItemKind::Enum(_) if path.segments.len() == 2 => {
                 match self.enum_variant_for_item_path(item_id, path) {
                     Ok(Some(variant)) => match &variant.fields {
                         VariantFields::Struct(_) => None,
@@ -1036,17 +1037,32 @@ impl<'a> Checker<'a> {
                     Ok(None) => None,
                 }
             }
-            ItemKind::Enum(_)
-            | ItemKind::Function(_)
+            ItemKind::Enum(_) if path.segments.len() == 1 => Some(format!(
+                "struct literal syntax is not supported for `{path_text}`"
+            )),
+            ItemKind::Enum(_) => None,
+            ItemKind::Function(_)
             | ItemKind::Const(_)
             | ItemKind::Static(_)
             | ItemKind::Trait(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Impl(_)
             | ItemKind::Extend(_)
-            | ItemKind::ExternBlock(_) => Some(format!(
-                "struct literal syntax is not supported for `{path_text}`"
-            )),
+            | ItemKind::ExternBlock(_)
+                if path.segments.len() == 1 =>
+            {
+                Some(format!(
+                    "struct literal syntax is not supported for `{path_text}`"
+                ))
+            }
+            ItemKind::Function(_)
+            | ItemKind::Const(_)
+            | ItemKind::Static(_)
+            | ItemKind::Trait(_)
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Impl(_)
+            | ItemKind::Extend(_)
+            | ItemKind::ExternBlock(_) => None,
         }
     }
 
@@ -1511,7 +1527,7 @@ impl<'a> Checker<'a> {
     ) -> Option<String> {
         let path_text = path.segments.join(".");
         match &self.module.item(item_id).kind {
-            ItemKind::Enum(_) if path.segments.len() >= 2 => {
+            ItemKind::Enum(_) if path.segments.len() == 2 => {
                 match self.enum_variant_for_item_path(item_id, path) {
                     Ok(Some(variant)) => match &variant.fields {
                         VariantFields::Unit => None,
@@ -1523,9 +1539,10 @@ impl<'a> Checker<'a> {
                     Ok(None) => None,
                 }
             }
-            ItemKind::Struct(_) | ItemKind::Enum(_) => Some(format!(
+            ItemKind::Struct(_) | ItemKind::Enum(_) if path.segments.len() == 1 => Some(format!(
                 "path pattern syntax is not supported for `{path_text}`"
             )),
+            ItemKind::Struct(_) | ItemKind::Enum(_) => None,
             ItemKind::Const(_)
             | ItemKind::Static(_)
             | ItemKind::Function(_)
@@ -1533,9 +1550,21 @@ impl<'a> Checker<'a> {
             | ItemKind::TypeAlias(_)
             | ItemKind::Impl(_)
             | ItemKind::Extend(_)
-            | ItemKind::ExternBlock(_) => Some(format!(
-                "path pattern syntax is not supported for `{path_text}`"
-            )),
+            | ItemKind::ExternBlock(_)
+                if path.segments.len() == 1 =>
+            {
+                Some(format!(
+                    "path pattern syntax is not supported for `{path_text}`"
+                ))
+            }
+            ItemKind::Const(_)
+            | ItemKind::Static(_)
+            | ItemKind::Function(_)
+            | ItemKind::Trait(_)
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Impl(_)
+            | ItemKind::Extend(_)
+            | ItemKind::ExternBlock(_) => None,
         }
     }
 
@@ -1546,7 +1575,7 @@ impl<'a> Checker<'a> {
     ) -> Option<String> {
         let path_text = path.segments.join(".");
         match &self.module.item(item_id).kind {
-            ItemKind::Enum(_) if path.segments.len() >= 2 => {
+            ItemKind::Enum(_) if path.segments.len() == 2 => {
                 match self.enum_variant_for_item_path(item_id, path) {
                     Ok(Some(variant)) => match &variant.fields {
                         VariantFields::Tuple(_) => None,
@@ -1558,18 +1587,32 @@ impl<'a> Checker<'a> {
                     Ok(None) => None,
                 }
             }
-            ItemKind::Struct(_)
-            | ItemKind::Enum(_)
-            | ItemKind::Function(_)
+            ItemKind::Struct(_) | ItemKind::Enum(_) if path.segments.len() == 1 => Some(format!(
+                "tuple-struct pattern syntax is not supported for `{path_text}`"
+            )),
+            ItemKind::Struct(_) | ItemKind::Enum(_) => None,
+            ItemKind::Function(_)
             | ItemKind::Const(_)
             | ItemKind::Static(_)
             | ItemKind::Trait(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Impl(_)
             | ItemKind::Extend(_)
-            | ItemKind::ExternBlock(_) => Some(format!(
-                "tuple-struct pattern syntax is not supported for `{path_text}`"
-            )),
+            | ItemKind::ExternBlock(_)
+                if path.segments.len() == 1 =>
+            {
+                Some(format!(
+                    "tuple-struct pattern syntax is not supported for `{path_text}`"
+                ))
+            }
+            ItemKind::Function(_)
+            | ItemKind::Const(_)
+            | ItemKind::Static(_)
+            | ItemKind::Trait(_)
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Impl(_)
+            | ItemKind::Extend(_)
+            | ItemKind::ExternBlock(_) => None,
         }
     }
 
@@ -1603,10 +1646,8 @@ impl<'a> Checker<'a> {
         let path_text = path.segments.join(".");
         match &self.module.item(item_id).kind {
             ItemKind::Struct(_) if path.segments.len() == 1 => None,
-            ItemKind::Struct(_) => Some(format!(
-                "struct pattern syntax is not supported for `{path_text}`"
-            )),
-            ItemKind::Enum(_) if path.segments.len() >= 2 => {
+            ItemKind::Struct(_) => None,
+            ItemKind::Enum(_) if path.segments.len() == 2 => {
                 match self.enum_variant_for_item_path(item_id, path) {
                     Ok(Some(variant)) => match &variant.fields {
                         VariantFields::Struct(_) => None,
@@ -1618,17 +1659,32 @@ impl<'a> Checker<'a> {
                     Ok(None) => None,
                 }
             }
-            ItemKind::Enum(_)
-            | ItemKind::Function(_)
+            ItemKind::Enum(_) if path.segments.len() == 1 => Some(format!(
+                "struct pattern syntax is not supported for `{path_text}`"
+            )),
+            ItemKind::Enum(_) => None,
+            ItemKind::Function(_)
             | ItemKind::Const(_)
             | ItemKind::Static(_)
             | ItemKind::Trait(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Impl(_)
             | ItemKind::Extend(_)
-            | ItemKind::ExternBlock(_) => Some(format!(
-                "struct pattern syntax is not supported for `{path_text}`"
-            )),
+            | ItemKind::ExternBlock(_)
+                if path.segments.len() == 1 =>
+            {
+                Some(format!(
+                    "struct pattern syntax is not supported for `{path_text}`"
+                ))
+            }
+            ItemKind::Function(_)
+            | ItemKind::Const(_)
+            | ItemKind::Static(_)
+            | ItemKind::Trait(_)
+            | ItemKind::TypeAlias(_)
+            | ItemKind::Impl(_)
+            | ItemKind::Extend(_)
+            | ItemKind::ExternBlock(_) => None,
         }
     }
 
@@ -1673,7 +1729,7 @@ impl<'a> Checker<'a> {
                 name: item_display_name(self.module, item_id),
                 args: Vec::new(),
             }),
-            ItemKind::Enum(_) if path.segments.len() >= 2 => Some(Ty::Item {
+            ItemKind::Enum(_) if path.segments.len() == 2 => Some(Ty::Item {
                 item_id,
                 name: item_display_name(self.module, item_id),
                 args: Vec::new(),
@@ -1694,7 +1750,7 @@ impl<'a> Checker<'a> {
             .and_then(|resolution| self.item_id_for_value_resolution(resolution))?;
 
         match &self.module.item(item_id).kind {
-            ItemKind::Enum(_) if path.segments.len() >= 2 => {
+            ItemKind::Enum(_) if path.segments.len() == 2 => {
                 match self.enum_variant_for_item_path(item_id, path).ok()? {
                     Some(variant) => match &variant.fields {
                         VariantFields::Tuple(types) => Some(
@@ -1743,7 +1799,7 @@ impl<'a> Checker<'a> {
                     })
                     .collect(),
             ),
-            ItemKind::Enum(_) if path.segments.len() >= 2 => {
+            ItemKind::Enum(_) if path.segments.len() == 2 => {
                 match self.enum_variant_for_item_path(item_id, path).ok()? {
                     Some(variant) => match &variant.fields {
                         VariantFields::Struct(fields) => Some(

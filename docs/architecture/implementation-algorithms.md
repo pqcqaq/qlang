@@ -264,9 +264,9 @@
 - import alias 的 value/callable typing 先只复用 same-file single-segment canonicalization，不把这条路径误写成完整 module graph / foreign import 语义
 - ambiguous method 先只升级成显式 type diagnostics，不提前宣称 completion / rename / query 已经具备模糊候选真值模型
 - projection receiver diagnostics 也先只覆盖“已知必错”的类型，不拿 generic / unresolved / module-path deferred case 冒进报错
-- struct-literal root diagnostics 也先只覆盖“root 已解析成功且构造形状已知必错”的 case；same-file 已解析 enum root 的 unknown variant 现在也会升级成显式错误，但 deeper module-path 仍不提前下结论
-- pattern-root shape diagnostics 也先只覆盖“pattern root 已解析成功且构造形状已知必错”的 case；same-file 已解析 enum root 的 unknown variant 现在也会升级成显式错误，但 path-pattern semantics / deeper module-path 仍不提前下结论
-- bare path-pattern diagnostics 也先只覆盖“path root 已解析成功且 bare path 形状已知必错”的 case；unit variant 保持允许，同文件已解析 enum root 的 unknown variant 与 const/static pattern 语义现在会显式报错，但 cross-file / deeper module-path 仍继续保守
+- struct-literal root diagnostics 也先只覆盖“root 已解析成功且构造形状已知必错”的 case；same-file 已解析二段 enum variant path 的 unknown variant 现在也会升级成显式错误，但 deeper module-path 仍不提前下结论
+- pattern-root shape diagnostics 也先只覆盖“pattern root 已解析成功且构造形状已知必错”的 case；same-file 已解析二段 enum variant path 的 unknown variant 现在也会升级成显式错误，但 path-pattern semantics / deeper module-path 仍不提前下结论
+- bare path-pattern diagnostics 也先只覆盖“path root 已解析成功且 bare path 形状已知必错”的 case；unit variant 保持允许，同文件已解析二段 enum variant path 的 unknown variant 与 const/static pattern 语义现在会显式报错，但 cross-file / deeper module-path 仍继续保守
 - const/static bare path-pattern diagnostics 也先只覆盖 same-file root 与 same-file local import alias，不把 cross-file constant semantics 误写成已完成
 - 还没建立完整 import/module/member/索引协议前，不把每个未知都提前升级成硬错误
 

@@ -1162,6 +1162,31 @@ fn main() -> Command {
 }
 
 #[test]
+fn keeps_deeper_enum_struct_literal_paths_deferred() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Command as Cmd
+
+enum Command {
+    Config {
+        retries: Int,
+    },
+}
+
+fn main() -> Command {
+    let direct = Command.Scope.Config { retries: 3 }
+    return Cmd.Scope.Missing { retries: 4 }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "deeper enum-like struct literal paths should stay deferred for now, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_pattern_root_type_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -1603,6 +1628,35 @@ fn main(result: Result) -> Int {
             "unknown variant `Other` in enum `Result`".to_string(),
             "unknown variant `Unknown` in enum `Result`".to_string(),
         ]
+    );
+}
+
+#[test]
+fn keeps_deeper_enum_pattern_paths_deferred() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Result as Res
+
+enum Result {
+    Named {
+        value: Int,
+    },
+    Value(Int),
+    Empty,
+}
+
+fn main(result: Result) -> Int {
+    let Result.Scope.Value(value) = result
+    let Res.Scope.Named { value } = result
+    let Res.Scope.Empty = result
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "deeper enum-like pattern paths should stay deferred for now, got {diagnostics:?}"
     );
 }
 
