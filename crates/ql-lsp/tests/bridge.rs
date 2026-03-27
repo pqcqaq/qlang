@@ -427,6 +427,38 @@ fn main() -> Int {
 }
 
 #[test]
+fn hover_bridge_renders_markdown_for_function_signatures_with_import_alias_types() {
+    let source = r#"
+use std.collections.HashMap as Map
+
+struct Counter {
+    value: Int,
+}
+
+fn build(cache: Map[String, Int]) -> Counter {
+    Counter { value: 1 }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let hover = hover_for_analysis(
+        source,
+        &analysis,
+        span_to_range(source, nth_span(source, "build", 1)).start,
+    )
+    .expect("function declaration should hover");
+
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown content");
+    };
+    assert!(markup.value.contains("**function** `build`"));
+    assert!(
+        markup
+            .value
+            .contains("fn build(cache: Map[String, Int]) -> Counter")
+    );
+}
+
+#[test]
 fn hover_bridge_renders_markdown_for_member_symbols() {
     let source = r#"
 struct Counter {
