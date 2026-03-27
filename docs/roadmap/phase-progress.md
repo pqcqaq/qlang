@@ -751,6 +751,9 @@ P6 当前仍刻意未完成：
 - `ql-cli` FFI 集成测试已补上最小 Rust host 静态链接回归：Rust harness 现在既可以直接链接 Qlang `staticlib` 调用导出函数，也可以为 Qlang 的 `extern "c"` import 提供 callback，实现最保守的双向互操作
 - `ql-cli` FFI 集成测试进一步补上 Cargo-based Rust host smoke test：测试会临时生成最小 Cargo 工程并通过 `build.rs` 链接 Qlang `staticlib`，让当前 Rust 混编路径更接近真实项目工作流
 - 仓库已提交 `examples/ffi-rust`：真实 Cargo host 通过 `build.rs` 编译 sibling Qlang 源码并链接 `staticlib`，同时 `ql-cli` FFI 集成测试也已回归锁住该示例的可运行性
+- 新增 `crates/ql-runtime`：当前仓库已有最小 runtime/executor 抽象地基，提供 `Task` / `JoinHandle` / `Executor` trait 和单线程 `InlineExecutor`
+- `crates/ql-runtime/tests/executor.rs` 已锁住 run-to-completion、`spawn` + `join`、`block_on` 与单线程执行顺序
+- 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 
 ### 下一步（P7.1 延续）
 

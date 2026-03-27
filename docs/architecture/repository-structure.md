@@ -94,6 +94,7 @@ Qlang 仓库结构必须同时服务于四类工作：
 │  ├─ ql-borrowck             # Phase 3 ownership facts 与显式消费诊断
 │  ├─ ql-resolve              # 作用域图与保守名称解析
 │  ├─ ql-typeck               # Phase 2 初始语义检查
+│  ├─ ql-runtime              # Phase 7 最小 runtime / executor 抽象
 │  ├─ ql-driver               # Phase 4 build orchestration 边界
 │  ├─ ql-codegen-llvm         # Phase 4 文本 LLVM IR 后端地基
 │  ├─ ql-lsp                  # 最小 qlsp：hover / definition / same-file references / diagnostics

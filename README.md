@@ -14,6 +14,7 @@ Current scope:
 - landed Phase 4 LLVM backend and native-artifact foundation
 - landed Phase 5 C FFI, header projection, and host-integration foundation
 - landed Phase 6 query, rename, completion, and semantic-token editor foundation
+- started Phase 7 runtime/executor foundation
 
 Documentation lives in the VitePress subproject under [`docs/`](./docs).
 Merged phase plans live under [`docs/plans/`](./docs/plans/), and raw dated slice notes are archived under [`docs/plans/archive/`](./docs/plans/archive/).
@@ -65,6 +66,7 @@ Current Rust workspace status:
 - `crates/ql-borrowck`: Phase 3 ownership facts and explicit `move self` consumption diagnostics
 - `crates/ql-resolve`: Phase 2 scope graph and conservative name resolution
 - `crates/ql-typeck`: current Phase 2 semantic baseline checks
+- `crates/ql-runtime`: Phase 7 minimal runtime/executor abstraction with deterministic inline execution
 - `crates/ql-driver`: Phase 4/P5 build orchestration boundary for source loading, analysis handoff, native artifacts, and generated C headers
 - `crates/ql-codegen-llvm`: Phase 4 textual LLVM IR backend foundation over a narrow MIR subset
 - `crates/ql-cli`: `ql` CLI with `check`, `build`, `ffi`, `fmt`, `mir`, and `ownership`

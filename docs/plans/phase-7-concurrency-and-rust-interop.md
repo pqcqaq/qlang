@@ -50,8 +50,11 @@
 - 已在 `crates/ql-cli/tests/ffi.rs` 增补 Cargo-based Rust host smoke test：测试会临时生成最小 Cargo 工程，通过 `build.rs` 链接 Qlang `staticlib`，让 Rust 互操作从单文件 `rustc` 基线推进到更接近真实工作流的可复现路径
 - 已提交 `examples/ffi-rust`：仓库内现在有真实的 Cargo host 示例，`build.rs` 会编译 sibling Qlang 源码并链接生成的 `staticlib`
 - 已在 `crates/ql-cli/tests/ffi.rs` 增补 committed example 回归：会复制 `examples/ffi-rust` 后执行 `cargo run --quiet`，锁住示例本身的可运行性
+- 已新增 `crates/ql-runtime`：当前仓库已有最小 runtime/executor 抽象地基，提供 `Task` / `JoinHandle` / `Executor` trait 和单线程 `InlineExecutor`
+- 已补充 `crates/ql-runtime/tests/executor.rs`：锁住 run-to-completion、`spawn` + `join`、`block_on` 以及单线程执行顺序
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
+- 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、显式字面量 `if true` / `if false`、显式字面量 `match true/false`、非字面量 `Bool` / enum `match` 上的字面量 guard、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、更广义的常量传播、更一般的 guard-sensitive `match` 与 unreachable 细化仍待后续切片
 - 当前 loop-control 已具备 analysis/LSP 的只读桥接，但还未扩展到公开 editor 协议 capability；继续保持低风险桥接策略
 
@@ -71,7 +74,7 @@
 
 ### P7.3 Runtime 与 executor 抽象
 
-- 先提供最小 executor trait 与单线程实现
+- 已落地最小 `Executor` trait 与单线程 `InlineExecutor`
 - 把 runtime 调度边界隔离在独立 crate
 - 与 codegen 的调用约定通过明确定义对齐
 
