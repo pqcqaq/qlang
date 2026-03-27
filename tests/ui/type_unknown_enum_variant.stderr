@@ -1,0 +1,15 @@
+error: tests/ui/type_unknown_enum_variant.ql:19:26: unknown variant `Missing` in enum `Command`
+      let direct_literal = Command.Missing { retries: 1 };
+                           ^^^^^^^^ struct literal here
+error: tests/ui/type_unknown_enum_variant.ql:20:25: unknown variant `Other` in enum `Command`
+      let alias_literal = Cmd.Other { retries: 1 };
+                          ^^^^^^^^ struct literal here
+error: tests/ui/type_unknown_enum_variant.ql:21:9: unknown variant `Absent` in enum `Result`
+      let Result.Absent(tuple_value) = result;
+          ^^^^^^^^ pattern here
+error: tests/ui/type_unknown_enum_variant.ql:22:9: unknown variant `Unknown` in enum `Result`
+      let Res.Unknown { value } = result;
+          ^^^^^^^^ pattern here
+error: tests/ui/type_unknown_enum_variant.ql:23:9: unknown variant `Gone` in enum `Result`
+      let Res.Gone = result;
+          ^^^^^^^^ pattern here

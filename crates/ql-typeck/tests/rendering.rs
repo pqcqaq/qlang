@@ -196,6 +196,26 @@ fn build[T]() -> Int {
 }
 
 #[test]
+fn rendered_unknown_enum_variant_diagnostics_anchor_to_the_use_site() {
+    let source = r#"
+enum Command {
+    Config {
+        retries: Int,
+    },
+}
+
+fn main() -> Command {
+    return Command.Missing { retries: 1 }
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(
+        rendered.contains("error: sample.ql:9:12: unknown variant `Missing` in enum `Command`")
+    );
+}
+
+#[test]
 fn rendered_invalid_pattern_root_diagnostics_anchor_to_the_pattern() {
     let source = r#"
 struct Point {

@@ -123,9 +123,9 @@ source
 - `=` 当前只对 bare mutable binding 开放真实可写语义；field/index 写入仍未开放，但已经有显式 unsupported diagnostics，不再静默伪装成“可能可用”
 - local import alias 的 value/callable typing 当前仍只限 same-file、single-segment、可规范化到本地 function / const / static item 的场景；foreign import 与更深 module graph 仍然延后
 - invalid projection receiver diagnostics 当前也只在“类型已知且明确不支持当前语义”时触发；`unknown` / generic / deeper import-module 相关场景仍保持保守，不提前下结论
-- invalid struct-literal root diagnostics 当前也只在“root 已解析成功且明确不支持 struct-style 字段构造”时触发；未知 variant / deeper module-path case 仍保持保守，不提前下结论
-- invalid pattern-root shape diagnostics 当前也只在“pattern root 已解析成功且构造形状已知必错”时触发；missing variant / path pattern shape / deeper module-path case 仍保持保守，不提前下结论
-- invalid path-pattern root diagnostics 当前也只在“path pattern root 已解析成功且 bare path 形状已知必错”时触发；unit variant 仍允许，const/static path 语义与 missing variant / deeper module-path case 仍保持保守，不提前下结论
+- invalid struct-literal root diagnostics 当前也只在“root 已解析成功且明确不支持 struct-style 字段构造”时触发；same-file 已解析 enum root 的 unknown variant 现在也会显式报错，但 deeper module-path case 仍保持保守，不提前下结论
+- invalid pattern-root shape diagnostics 当前也只在“pattern root 已解析成功且构造形状已知必错”时触发；same-file 已解析 enum root 的 unknown variant 现在也会显式报错，但 path pattern shape / deeper module-path case 仍保持保守，不提前下结论
+- invalid path-pattern root diagnostics 当前也只在“path pattern root 已解析成功且 bare path 形状已知必错”时触发；unit variant 仍允许，same-file 已解析 enum root 的 unknown variant 与 const/static path 语义现在也会给出显式诊断，但 deeper module-path case 仍保持保守，不提前下结论
 - const/static bare path pattern 现在也已经改成显式 unsupported diagnostics；但这仍然只覆盖 same-file root / same-file local import alias，cross-file / deeper module-path case 继续保守
 - ambiguous method 的 type diagnostics 已开放，但 query / completion / rename 仍只接受唯一 candidate，不提前伪造模糊成员 truth surface
 - bare single-segment unresolved diagnostics 已落地，但 multi-segment unresolved global / unresolved type diagnostics 仍然延后

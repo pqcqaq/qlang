@@ -1116,6 +1116,52 @@ fn main() -> Command {
 }
 
 #[test]
+fn reports_unknown_enum_struct_variant_literals() {
+    let diagnostics = diagnostic_messages(
+        r#"
+enum Command {
+    Config {
+        retries: Int,
+    },
+}
+
+fn main() -> Command {
+    return Command.Missing { retries: 3 }
+}
+"#,
+    );
+
+    assert_eq!(
+        diagnostics,
+        vec!["unknown variant `Missing` in enum `Command`".to_string()]
+    );
+}
+
+#[test]
+fn reports_unknown_enum_struct_variant_literals_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Command as Cmd
+
+enum Command {
+    Config {
+        retries: Int,
+    },
+}
+
+fn main() -> Command {
+    return Cmd.Missing { retries: 3 }
+}
+"#,
+    );
+
+    assert_eq!(
+        diagnostics,
+        vec!["unknown variant `Missing` in enum `Command`".to_string()]
+    );
+}
+
+#[test]
 fn reports_pattern_root_type_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -1494,6 +1540,70 @@ fn main(value: Int) -> Int {
 
     assert!(diagnostics.contains(&"path pattern syntax is not supported for `Bound`".to_string()));
     assert!(diagnostics.contains(&"path pattern syntax is not supported for `Count`".to_string()));
+}
+
+#[test]
+fn reports_unknown_enum_variant_patterns() {
+    let diagnostics = diagnostic_messages(
+        r#"
+enum Result {
+    Named {
+        value: Int,
+    },
+    Value(Int),
+    Empty,
+}
+
+fn main(result: Result) -> Int {
+    let Result.Missing(value) = result
+    let Result.Other { value } = result
+    let Result.Unknown = result
+    return 0
+}
+"#,
+    );
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            "unknown variant `Missing` in enum `Result`".to_string(),
+            "unknown variant `Other` in enum `Result`".to_string(),
+            "unknown variant `Unknown` in enum `Result`".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn reports_unknown_enum_variant_patterns_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Result as Res
+
+enum Result {
+    Named {
+        value: Int,
+    },
+    Value(Int),
+    Empty,
+}
+
+fn main(result: Result) -> Int {
+    let Res.Missing(value) = result
+    let Res.Other { value } = result
+    let Res.Unknown = result
+    return 0
+}
+"#,
+    );
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            "unknown variant `Missing` in enum `Result`".to_string(),
+            "unknown variant `Other` in enum `Result`".to_string(),
+            "unknown variant `Unknown` in enum `Result`".to_string(),
+        ]
+    );
 }
 
 #[test]

@@ -70,7 +70,7 @@ Phase 2 的目标不是一次做完完整类型系统，而是建立统一语义
 - `Ty::Unknown` 是明确的退化阀门，不是“暂时没做”
 - source text 与 semantic normalized value 分层保存
 - 只在已有稳定语义身份处收紧规则，不提前宣称完整 place/index protocol
-- pattern root shape 也只在“已解析且已知必错”时显式报错；missing variant / path-pattern semantics / deeper module-path 继续保守
+- pattern root shape 也只在“已解析且已知必错”时显式报错；same-file 已解析 enum root 的 unknown variant 现在也显式报错，path-pattern semantics / deeper module-path 继续保守
 - bare path pattern 也只在“已解析且已知 bare path 形状必错”时显式报错；unit variant 保持允许
 - const/static bare path pattern 现在也显式报 unsupported，但只限 same-file root / same-file local import alias；更广义 constant-pattern 语义继续保守
 
