@@ -28,6 +28,8 @@
 - 已补充 `crates/ql-typeck/tests/async_typing.rs` 的 `for await` 边界回归
 - 已在 `ql-typeck` 收紧 `await` / `spawn` 操作数约束：当前仅允许直接作用于 call expression，非调用操作数会给出显式诊断
 - 已补充 `crates/ql-typeck/tests/async_typing.rs` 的非调用操作数回归（`await value` / `spawn value`）
+- 已在 `ql-typeck` 继续收紧 `await` / `spawn` 的调用目标约束：当前不仅要求 operand 是 call expression，还要求被调用目标来自 `async fn`；sync function、sync method 与普通 closure/callable 值调用都会给出显式诊断
+- 已补充 `crates/ql-typeck/tests/async_typing.rs` 的 async-call-target 回归，覆盖 sync function / async function / method / closure callable 这几类路径
 - 已把 closure 视为独立 async 边界：closure body 当前不会继承外层 `async fn` 上下文，`await` / `spawn` / `for await` 会继续走非 async 诊断路径
 - 已在 `ql-typeck` 修正 closure block 的显式 `return` 推断：当 closure 存在期望 callable 返回类型时，显式 `return` 会对齐 callable 签名；内层 nested closure 的 `return` 不会抬升外层 closure 返回类型
 - 已在 `ql-typeck` 增补保守的 all-path return 分析：函数与 closure body 会拒绝“部分路径 `return`、部分路径 fallthrough”的情形；当前已覆盖 `if` 与最小穷尽性 `match`（`_`、`Bool true/false`、enum 全 variant）；带 guard 的 arm 默认仍保守，只有显式字面量 `true` guard 会计入覆盖
@@ -44,6 +46,7 @@
 - 已补充 `async + generic` 并存场景回归，锁住 backend 同阶段多条 unsupported 诊断聚合行为
 - 已补充 `async + unsafe fn body` 并存场景回归，锁住 backend 对函数签名级多条 unsupported 诊断的聚合与输出顺序
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
+- 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
 - 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、显式字面量 `if true` / `if false`、显式字面量 `match true/false`、非字面量 `Bool` / enum `match` 上的字面量 guard、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、更广义的常量传播、更一般的 guard-sensitive `match` 与 unreachable 细化仍待后续切片
 - 当前 loop-control 已具备 analysis/LSP 的只读桥接，但还未扩展到公开 editor 协议 capability；继续保持低风险桥接策略
 
@@ -51,7 +54,7 @@
 
 ### P7.1 语义层收口
 
-- 在 `ql-typeck` 明确 `await` 输入输出约束和错误信息
+- 把 `await` / `spawn` 当前“必须调用 `async fn`”的约束继续下沉到 MIR/runtime 接口契约（仍保持 conservative）
 - 在 `ql-resolve` / `ql-analysis` 增补 async 语义查询契约
 - 保持 conservative 策略，不提前承诺完整 effect 系统
 

@@ -724,6 +724,8 @@ P6 当前仍刻意未完成：
 - 新增 `ql-typeck` 的 `for await` 边界回归测试
 - `ql-typeck` 新增 `await` / `spawn` 操作数形态约束：当前要求操作数必须是 call expression
 - 新增 `ql-typeck` 的 `await` / `spawn` 非调用操作数回归测试
+- `ql-typeck` 进一步收紧 `await` / `spawn` 的调用目标约束：当前不仅要求 operand 是 call expression，还要求被调用目标来自 `async fn`；同步函数、sync 方法和普通 closure/callable 值调用都会给出显式诊断
+- 新增 `ql-typeck` 的 async-call-target 回归测试，覆盖 sync function / async function / method / closure callable 这几类 operand
 - `ql-resolve` / `ql-typeck` / `ql-analysis` / `ql-lsp` 新增 closure async 边界回归：closure body 当前不会继承外层 `async fn` 语义上下文
 - `ql-typeck` 新增 closure block 显式 `return` 回归：当 closure 有期望 callable 返回类型时，显式 `return` 会按 callable 签名检查；内层 nested closure 的 `return` 不会污染外层 closure 返回推断
 - `ql-typeck` 新增保守 return-path 收口：函数与 closure body 现在会拒绝“部分路径 `return`、部分路径 fallthrough”的情形；`if` 与最小穷尽性 `match`（`_`、`Bool true/false`、enum 全 variant）已进入 all-path return 推断；带 guard 的 arm 默认仍保守，只有显式字面量 `true` guard 会计入覆盖
@@ -742,7 +744,7 @@ P6 当前仍刻意未完成：
 
 ### 下一步（P7.1 延续）
 
-- 把 `await` / `spawn` 的当前 call-expression 约束继续下沉到 MIR/runtime 接口契约（仍保持 conservative）
+- 把 `await` / `spawn` 当前“必须调用 `async fn`”的约束继续下沉到 MIR/runtime 接口契约（仍保持 conservative）
 - 评估是否将 async 上下文桥接能力通过受控实验接口暴露给 editor（保持协议低风险）
 - 在不引入完整 CFG 的前提下，继续补 closure / async / return-path 的保守语义回归
 - 若后续需要把 must-return 从显式字面量 `if` 扩展到更一般的常量传播或 branch pruning，应单独设计常量/CFG 规则边界
