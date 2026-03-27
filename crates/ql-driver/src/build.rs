@@ -205,7 +205,7 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
         Vec::new()
     };
 
-    let runtime_diagnostics = runtime_requirement_diagnostics(&analysis);
+    let runtime_diagnostics = runtime_requirement_diagnostics(&analysis, options.emit);
     let runtime_hooks = collect_runtime_hook_signatures(
         analysis
             .runtime_requirements()
@@ -322,23 +322,35 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
     })
 }
 
-fn runtime_requirement_diagnostics(analysis: &ql_analysis::Analysis) -> Vec<Diagnostic> {
+fn runtime_requirement_diagnostics(
+    analysis: &ql_analysis::Analysis,
+    emit: BuildEmit,
+) -> Vec<Diagnostic> {
     analysis
         .runtime_requirements()
         .iter()
-        .filter_map(runtime_requirement_diagnostic)
+        .filter_map(|requirement| runtime_requirement_diagnostic(requirement, emit))
         .collect()
 }
 
 fn runtime_requirement_diagnostic(
     requirement: &ql_analysis::RuntimeRequirement,
+    emit: BuildEmit,
 ) -> Option<Diagnostic> {
-    runtime_requirement_message(requirement.capability)
+    runtime_requirement_message(requirement.capability, emit)
         .map(|message| Diagnostic::error(message).with_label(Label::new(requirement.span)))
 }
 
-fn runtime_requirement_message(capability: RuntimeCapability) -> Option<&'static str> {
+fn runtime_requirement_message(
+    capability: RuntimeCapability,
+    emit: BuildEmit,
+) -> Option<&'static str> {
     match capability {
+        RuntimeCapability::AsyncFunctionBodies | RuntimeCapability::TaskAwait
+            if emit == BuildEmit::StaticLibrary =>
+        {
+            None
+        }
         RuntimeCapability::AsyncFunctionBodies => {
             Some("LLVM IR backend foundation does not support `async fn` yet")
         }
@@ -1201,6 +1213,60 @@ fn add_two(value: Int) -> Int {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_supported_async_library_bodies() {
+        let dir = TestDir::new("ql-driver-staticlib-async");
+        let source = dir.write(
+            "async_math.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    return await worker()
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_math.lib"
+        } else {
+            "artifacts/libasync_math.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("static library build with supported async library bodies should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+        let leftovers = fs::read_dir(output.parent().expect("output should have a parent"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen."))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "successful async static library emission should clean up intermediate artifacts"
+        );
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_import_header_sidecar() {
         let dir = TestDir::new("ql-driver-staticlib-import-header");
         let source = dir.write(
@@ -1737,9 +1803,6 @@ async fn helper() -> Int {
             .expect("async for-await library rejection should return diagnostics");
 
         assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
-        }));
-        assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message
                 == "LLVM IR backend foundation does not support `for await` lowering yet"
         }));
@@ -1757,6 +1820,50 @@ async fn helper() -> Int {
             diagnostic.message != "LLVM IR backend foundation does not support `for` lowering yet"
                 && diagnostic.message
                     != "LLVM IR backend foundation does not support array values yet"
+                && diagnostic.message
+                    != "LLVM IR backend foundation does not support `async fn` yet"
+        }));
+    }
+
+    #[test]
+    fn build_file_surfaces_async_library_result_layout_diagnostics_without_runtime_noise() {
+        let dir = TestDir::new("ql-driver-async-library-result-layout");
+        let source = dir.write(
+            "async_tuple_result_library.ql",
+            r#"
+async fn worker() -> (Int, Int) {
+    return (1, 2)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_tuple_result_library.lib"
+        } else {
+            "artifacts/libasync_tuple_result_library.a"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("async library result-layout rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message
+                == "LLVM IR backend foundation does not support async task result type `(Int, Int)` yet"
+        }));
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.message != "LLVM IR backend foundation does not support `async fn` yet"
+                && diagnostic.message != "LLVM IR backend foundation does not support `await` yet"
         }));
     }
 
