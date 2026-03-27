@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::analyze_source;
-use ql_codegen_llvm::{CodegenError, CodegenInput, CodegenMode, emit_module};
-use ql_diagnostics::Diagnostic;
+use ql_codegen_llvm::{CodegenInput, CodegenMode, emit_module};
+use ql_diagnostics::{Diagnostic, Label};
+use ql_runtime::RuntimeCapability;
 
 use crate::ffi::{
     CHeaderArtifact, CHeaderError, CHeaderOptions, CHeaderSurface, emit_c_header_from_analysis,
@@ -204,20 +205,37 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
         Vec::new()
     };
 
+    let runtime_diagnostics = runtime_requirement_diagnostics(&analysis);
     let module_name = default_module_name(path);
-    let ir = emit_module(CodegenInput {
+    let ir = match emit_module(CodegenInput {
         module_name: &module_name,
         mode: codegen_mode(options.emit),
         hir: analysis.hir(),
         mir: analysis.mir(),
         resolution: analysis.resolution(),
         typeck: analysis.typeck(),
-    })
-    .map_err(|error: CodegenError| BuildError::Diagnostics {
-        path: path.to_path_buf(),
-        source: source.clone(),
-        diagnostics: error.into_diagnostics(),
-    })?;
+    }) {
+        Ok(ir) => {
+            if !runtime_diagnostics.is_empty() {
+                return Err(BuildError::Diagnostics {
+                    path: path.to_path_buf(),
+                    source: source.clone(),
+                    diagnostics: runtime_diagnostics,
+                });
+            }
+            ir
+        }
+        Err(error) => {
+            return Err(BuildError::Diagnostics {
+                path: path.to_path_buf(),
+                source: source.clone(),
+                diagnostics: merge_unique_diagnostics(
+                    error.into_diagnostics(),
+                    &runtime_diagnostics,
+                ),
+            });
+        }
+    };
 
     let output_path = match &options.output {
         Some(path) => path.clone(),
@@ -295,6 +313,40 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
         path: output_path,
         c_header,
     })
+}
+
+fn runtime_requirement_diagnostics(analysis: &ql_analysis::Analysis) -> Vec<Diagnostic> {
+    analysis
+        .runtime_requirements()
+        .iter()
+        .filter_map(runtime_requirement_diagnostic)
+        .collect()
+}
+
+fn runtime_requirement_diagnostic(
+    requirement: &ql_analysis::RuntimeRequirement,
+) -> Option<Diagnostic> {
+    match requirement.capability {
+        RuntimeCapability::AsyncFunctionBodies => Some(
+            Diagnostic::error("LLVM IR backend foundation does not support `async fn` yet")
+                .with_label(Label::new(requirement.span)),
+        ),
+        RuntimeCapability::TaskSpawn
+        | RuntimeCapability::TaskAwait
+        | RuntimeCapability::AsyncIteration => None,
+    }
+}
+
+fn merge_unique_diagnostics(
+    mut diagnostics: Vec<Diagnostic>,
+    additions: &[Diagnostic],
+) -> Vec<Diagnostic> {
+    for diagnostic in additions {
+        if !diagnostics.contains(diagnostic) {
+            diagnostics.push(diagnostic.clone());
+        }
+    }
+    diagnostics
 }
 
 fn build_emit_supports_c_header(emit: BuildEmit) -> bool {
@@ -1481,6 +1533,39 @@ async fn main() -> Int {
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
         }));
+    }
+
+    #[test]
+    fn build_file_dedupes_runtime_and_codegen_async_diagnostics() {
+        let dir = TestDir::new("ql-driver-async-diagnostic-dedupe");
+        let source = dir.write(
+            "async_main.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    return await worker()
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("async codegen rejection should return diagnostics");
+        let async_count = diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
+            })
+            .count();
+
+        assert_eq!(
+            async_count, 2,
+            "expected one async rejection per async function body without driver/codegen duplicates, got {diagnostics:?}"
+        );
     }
 
     #[test]
