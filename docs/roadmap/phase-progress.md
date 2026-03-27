@@ -723,6 +723,7 @@ P6 当前仍刻意未完成：
 - 新增 `ql-typeck` 的 `for await` 边界回归测试
 - `ql-typeck` 新增 `await` / `spawn` 操作数形态约束：当前要求操作数必须是 call expression
 - 新增 `ql-typeck` 的 `await` / `spawn` 非调用操作数回归测试
+- `ql-driver` 新增 async backend 拒绝路径回归：语义层通过后，codegen 仍会稳定给出 `async fn` unsupported 诊断
 
 ### 下一步（P7.1 延续）
 
