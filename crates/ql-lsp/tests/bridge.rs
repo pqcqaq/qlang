@@ -65,6 +65,89 @@ fn position_to_offset_handles_utf16_columns() {
 }
 
 #[test]
+fn position_to_offset_handles_crlf_boundaries_and_rejects_invalid_utf16_positions() {
+    let source = "😀x\r\ny\n";
+
+    assert_eq!(position_to_offset(source, Position::new(0, 0)), Some(0));
+    assert_eq!(position_to_offset(source, Position::new(0, 1)), None);
+    assert_eq!(
+        position_to_offset(source, Position::new(0, 2)),
+        Some("😀".len())
+    );
+    assert_eq!(
+        position_to_offset(source, Position::new(0, 3)),
+        Some("😀x".len())
+    );
+    assert_eq!(position_to_offset(source, Position::new(0, 4)), None);
+
+    let second_line_start = source.find("y").expect("second line should exist");
+    assert_eq!(
+        position_to_offset(source, Position::new(1, 0)),
+        Some(second_line_start)
+    );
+    assert_eq!(
+        position_to_offset(source, Position::new(1, 1)),
+        Some(second_line_start + "y".len())
+    );
+    assert_eq!(
+        position_to_offset(source, Position::new(2, 0)),
+        Some(source.len())
+    );
+    assert_eq!(position_to_offset(source, Position::new(3, 0)), None);
+}
+
+#[test]
+fn span_to_range_tracks_utf16_columns_across_crlf_lines() {
+    let source = "😀x\r\ny\n";
+    let range = span_to_range(
+        source,
+        Span::new("😀".len(), source.find('\n').expect("newline") + 2),
+    );
+
+    assert_eq!(
+        range,
+        tower_lsp::lsp_types::Range::new(Position::new(0, 2), Position::new(1, 1))
+    );
+}
+
+#[test]
+fn query_and_rename_bridges_return_none_on_invalid_utf16_positions() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = "fn main() -> String {\n    \"😀\"\n}\n";
+    let analysis = analyze_source(source).expect("source should analyze");
+    let emoji_offset = source.find('😀').expect("emoji should exist");
+    let emoji_range = span_to_range(source, Span::new(emoji_offset, emoji_offset + "😀".len()));
+    let invalid_position = Position::new(emoji_range.start.line, emoji_range.start.character + 1);
+
+    assert_eq!(position_to_offset(source, invalid_position), None);
+    assert_eq!(
+        hover_for_analysis(source, &analysis, invalid_position),
+        None
+    );
+    assert_eq!(
+        definition_for_analysis(&uri, source, &analysis, invalid_position),
+        None
+    );
+    assert_eq!(
+        references_for_analysis(&uri, source, &analysis, invalid_position, true),
+        None
+    );
+    assert_eq!(
+        completion_for_analysis(source, &analysis, invalid_position),
+        None
+    );
+    assert_eq!(
+        prepare_rename_for_analysis(source, &analysis, invalid_position),
+        None
+    );
+    assert_eq!(
+        rename_for_analysis(&uri, source, &analysis, invalid_position, "next_name")
+            .expect("invalid positions should not surface rename errors"),
+        None
+    );
+}
+
+#[test]
 fn diagnostics_conversion_uses_primary_span_and_related_information() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = "let left = right\n";
