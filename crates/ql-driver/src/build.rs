@@ -1484,6 +1484,32 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_async_and_generic_codegen_diagnostics() {
+        let dir = TestDir::new("ql-driver-async-generic-unsupported");
+        let source = dir.write(
+            "async_generic_main.ql",
+            r#"
+async fn main[T]() -> Int {
+    return 0
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("async/generic codegen rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message
+                == "LLVM IR backend foundation does not support generic functions yet"
+        }));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
+        }));
+    }
+
+    #[test]
     fn build_file_surfaces_async_function_codegen_diagnostics_for_dylib_with_exports() {
         let dir = TestDir::new("ql-driver-async-dylib-unsupported");
         let source = dir.write(

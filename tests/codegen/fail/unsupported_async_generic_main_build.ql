@@ -1,0 +1,3 @@
+async fn main[T]() -> Int {
+    return 0
+}

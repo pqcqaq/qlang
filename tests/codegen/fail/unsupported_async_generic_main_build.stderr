@@ -1,0 +1,6 @@
+error: tests/codegen/fail/unsupported_async_generic_main_build.ql:1:7: LLVM IR backend foundation does not support generic functions yet
+  async fn main[T]() -> Int {
+        ^^^^^^^^
+error: tests/codegen/fail/unsupported_async_generic_main_build.ql:1:7: LLVM IR backend foundation does not support `async fn` yet
+  async fn main[T]() -> Int {
+        ^^^^^^^^
