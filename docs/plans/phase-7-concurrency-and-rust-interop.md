@@ -71,6 +71,7 @@
 - 已在 `ql-typeck` 把 `spawn` 的消费模型对齐到 task-handle 语义：`spawn task` 与 `spawn schedule()`（其中 `schedule() -> Task[T]`）现在都可保守通过；非 task operand 会给出稳定诊断，而不是继续把 `spawn` 限死在“直接 async call”形态
 - 已在 `ql-typeck` 移除 direct async call 的“必须立刻 `await` / `spawn`”限制：`let task = worker(); await task`、`forward(worker())`、`return worker()` 到 `Task[T]` helper 等路径现在都可保守通过；当 direct async call 最终被放进非 `Task[T]` 上下文时，会自然退化成普通类型不匹配（例如 `Task[Int]` vs `Int`），不再依赖单独的特判诊断
 - 已在 `ql-borrowck` 扩展 task-handle 生命周期边界：direct-local `Task[T]` 当前会在 `await` / `spawn`，以及静态可判定的 helper `Task[T]` 形参传递时被视为 consume，后续复用会给出稳定的 use-after-move / maybe-moved 诊断，而重赋值仍可把 local 恢复为可用状态
+- 已补充 `ql-codegen-llvm` / `ql-driver` / `ql-cli` 的 helper-argument end-to-end 回归：`let task = worker(); let forwarded = forward(task); await forwarded` 与 `spawn forward(task)` 现在都被显式锁住，避免 task-handle helper 形参路径在后续 backend / driver 收口中回退
 - 当前仍保持 conservative 类型策略：`ql-typeck` 目前只开放 `Task[T]` 这一显式 task-handle 类型面，`await` 暂不引入 Future/effect 全类型建模，也不开放更广义的任务调度/cancellation 类型协议
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
 - 当前 direct `async fn` call 已可直接作为 `Task[T]` 句柄值参与局部绑定、helper 参数/返回值与后续 `await`，但这仍不代表更广义的 async effect/type inference 已完成；更宽的 task-handle 生命周期与调度语义仍待后续设计

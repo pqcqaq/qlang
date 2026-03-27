@@ -772,6 +772,7 @@ P6 当前仍刻意未完成：
 - `ql-typeck` 已把 `spawn` 消费模型对齐到 task-handle 语义：`spawn task` 与 `spawn schedule()`（其中 `schedule() -> Task[T]`）现在都可保守通过；非 task operand 会给出稳定诊断，而不再把 `spawn` 限死在“直接 async call”形态
 - `ql-borrowck` 已把 direct-local task handle 的 `await` / `spawn` 与静态可判定的 helper `Task[T]` 参数传递接进当前 ownership facts：这些路径现在会显式 consume 任务句柄，本地句柄在消费后复用会得到稳定的 use-after-move / maybe-moved 诊断，而重赋值仍可恢复 local 可用性
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已补充 task-handle helper 回归：`fn schedule() -> Task[Int] { return worker() }` 加 `await schedule()` 的 staticlib 路径已被单测、driver 回归和黑盒快照锁住
+- `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已补充 helper-argument task-handle 回归：`let task = worker(); let forwarded = forward(task); await forwarded` 与 `let running = spawn forward(task); await running` 这两条组合路径已被单测、driver staticlib 回归和 CLI 黑盒 fixture 锁住
 - `ql-driver` / `ql-cli` 已补上 async staticlib mixed-surface 回归：带内部 async helper 的库现在也锁住了 `extern "c"` export header sidecar 路径，确保公开 C header surface 不会被 async implementation details 污染
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前共享 hook ABI 已冻结第一版 LLVM-facing contract string，但真实内存布局、结果传递协议和更细粒度调用约定仍未冻结

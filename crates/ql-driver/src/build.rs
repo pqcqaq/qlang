@@ -1313,6 +1313,52 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_forwarded_task_handle_arguments() {
+        let dir = TestDir::new("ql-driver-staticlib-async-forward-task-handle");
+        let source = dir.write(
+            "async_forward_task_handle.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn helper() -> Int {
+    let task = worker()
+    let forwarded = forward(task)
+    return await forwarded
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_forward_task_handle.lib"
+        } else {
+            "artifacts/libasync_forward_task_handle.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("static library build with forwarded task-handle arguments should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_supported_async_tuple_library_bodies() {
         let dir = TestDir::new("ql-driver-staticlib-async-tuple");
         let source = dir.write(
@@ -2196,6 +2242,53 @@ async fn helper() -> Int {
             },
         )
         .expect("static library build with spawned task-handle helpers should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_spawned_forwarded_task_handle_arguments() {
+        let dir = TestDir::new("ql-driver-staticlib-async-spawn-forward-task-handle");
+        let source = dir.write(
+            "async_spawn_forward_task_handle.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn helper() -> Int {
+    let task = worker()
+    let running = spawn forward(task)
+    return await running
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_spawn_forward_task_handle.lib"
+        } else {
+            "artifacts/libasync_spawn_forward_task_handle.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with spawned forwarded task-handle arguments should succeed");
         let rendered =
             fs::read_to_string(&output).expect("read generated static library placeholder");
 
