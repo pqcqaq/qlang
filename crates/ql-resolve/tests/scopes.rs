@@ -313,3 +313,118 @@ extend Counter {
     assert!(!resolution.expr_is_in_async_function(*sync_extend_spawn));
     assert!(resolution.expr_is_in_async_function(*async_extend_spawn));
 }
+
+#[test]
+fn async_trait_method_scopes_propagate_through_default_bodies() {
+    let (module, resolution) = resolved(
+        r#"
+fn worker() -> Int {
+    return 1
+}
+
+trait Runner {
+    fn sync_run(self) -> Int {
+        let value = await worker()
+        return value
+    }
+
+    async fn async_run(self) -> Int {
+        let value = await worker()
+        return value
+    }
+
+    fn sync_spawn(self) -> Int {
+        spawn worker()
+        return 0
+    }
+
+    async fn async_spawn(self) -> Int {
+        spawn worker()
+        return 0
+    }
+}
+"#,
+    );
+
+    let trait_decl = module
+        .items
+        .iter()
+        .find_map(|&item_id| match &module.item(item_id).kind {
+            ql_hir::ItemKind::Trait(trait_decl) => Some(trait_decl),
+            _ => None,
+        })
+        .expect("trait should exist");
+
+    let sync_run_scope = resolution
+        .function_scope(trait_decl.methods[0].span)
+        .expect("sync trait method should have a scope");
+    let async_run_scope = resolution
+        .function_scope(trait_decl.methods[1].span)
+        .expect("async trait method should have a scope");
+    let sync_spawn_scope = resolution
+        .function_scope(trait_decl.methods[2].span)
+        .expect("sync trait spawn method should have a scope");
+    let async_spawn_scope = resolution
+        .function_scope(trait_decl.methods[3].span)
+        .expect("async trait spawn method should have a scope");
+
+    assert!(!resolution.scope_is_in_async_function(sync_run_scope));
+    assert!(resolution.scope_is_in_async_function(async_run_scope));
+    assert!(!resolution.scope_is_in_async_function(sync_spawn_scope));
+    assert!(resolution.scope_is_in_async_function(async_spawn_scope));
+
+    let sync_run_body = module.block(
+        trait_decl.methods[0]
+            .body
+            .expect("sync trait method should have a body"),
+    );
+    let async_run_body = module.block(
+        trait_decl.methods[1]
+            .body
+            .expect("async trait method should have a body"),
+    );
+    let sync_spawn_body = module.block(
+        trait_decl.methods[2]
+            .body
+            .expect("sync trait spawn method should have a body"),
+    );
+    let async_spawn_body = module.block(
+        trait_decl.methods[3]
+            .body
+            .expect("async trait spawn method should have a body"),
+    );
+
+    let StmtKind::Let {
+        value: sync_run_await,
+        ..
+    } = &module.stmt(sync_run_body.statements[0]).kind
+    else {
+        panic!("sync trait method should start with a let binding");
+    };
+    let StmtKind::Let {
+        value: async_run_await,
+        ..
+    } = &module.stmt(async_run_body.statements[0]).kind
+    else {
+        panic!("async trait method should start with a let binding");
+    };
+    let StmtKind::Expr {
+        expr: sync_spawn_expr,
+        ..
+    } = &module.stmt(sync_spawn_body.statements[0]).kind
+    else {
+        panic!("sync trait spawn method should start with a spawn expression");
+    };
+    let StmtKind::Expr {
+        expr: async_spawn_expr,
+        ..
+    } = &module.stmt(async_spawn_body.statements[0]).kind
+    else {
+        panic!("async trait spawn method should start with a spawn expression");
+    };
+
+    assert!(!resolution.expr_is_in_async_function(*sync_run_await));
+    assert!(resolution.expr_is_in_async_function(*async_run_await));
+    assert!(!resolution.expr_is_in_async_function(*sync_spawn_expr));
+    assert!(resolution.expr_is_in_async_function(*async_spawn_expr));
+}

@@ -212,3 +212,61 @@ extend Counter {
         "expected only the sync methods to contribute async-boundary diagnostics, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn async_trait_method_boundaries_follow_default_method_contexts() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn worker() -> Int {
+    return 1
+}
+
+trait Runner {
+    fn sync_run(self) -> Int {
+        spawn worker()
+        return await worker()
+    }
+
+    async fn async_run(self) -> Int {
+        spawn worker()
+        return await worker()
+    }
+
+    fn sync_stream(self) -> Int {
+        for await value in [1, 2, 3] {
+            let current = value
+        }
+        return 0
+    }
+
+    async fn async_stream(self) -> Int {
+        for await value in [1, 2, 3] {
+            let current = value
+        }
+        return 0
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"`spawn` is only allowed inside `async fn`".to_string()),
+        "expected sync trait method spawn boundary diagnostic, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(&"`await` is only allowed inside `async fn`".to_string()),
+        "expected sync trait method await boundary diagnostic, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(&"`for await` is only allowed inside `async fn`".to_string()),
+        "expected sync trait method for-await boundary diagnostic, got {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|message| message.contains("only allowed inside `async fn`"))
+            .count(),
+        3,
+        "expected only the sync trait methods to contribute async-boundary diagnostics, got {diagnostics:?}"
+    );
+}

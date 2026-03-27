@@ -7099,3 +7099,89 @@ extend Counter {
         })
     );
 }
+
+#[test]
+fn async_context_queries_cover_trait_default_methods() {
+    let source = r#"
+fn worker() -> Int {
+    return 1
+}
+
+trait Runner {
+    fn sync_run(self) -> Int {
+        spawn worker()
+        return await worker()
+    }
+
+    async fn async_run(self) -> Int {
+        spawn worker()
+        return await worker()
+    }
+
+    fn sync_stream(self) -> Int {
+        for await value in [1, 2, 3] {
+            let current = value
+        }
+        return 0
+    }
+
+    async fn async_stream(self) -> Int {
+        for await value in [1, 2, 3] {
+            let current = value
+        }
+        return 0
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "spawn", 1)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "spawn", 1),
+            operator: AsyncOperatorKind::Spawn,
+            in_async_function: false,
+        })
+    );
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "await", 1)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "await", 1),
+            operator: AsyncOperatorKind::Await,
+            in_async_function: false,
+        })
+    );
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "spawn", 2)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "spawn", 2),
+            operator: AsyncOperatorKind::Spawn,
+            in_async_function: true,
+        })
+    );
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "await", 2)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "await", 2),
+            operator: AsyncOperatorKind::Await,
+            in_async_function: true,
+        })
+    );
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "await", 3)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "await", 3),
+            operator: AsyncOperatorKind::ForAwait,
+            in_async_function: false,
+        })
+    );
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "await", 4)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "await", 4),
+            operator: AsyncOperatorKind::ForAwait,
+            in_async_function: true,
+        })
+    );
+}
