@@ -765,17 +765,18 @@ P6 当前仍刻意未完成：
 - `ql-runtime` / `ql-cli` / `ql-codegen-llvm` 已补上 task-result transport 的第一条 ABI skeleton：`task-await` capability 现在会同时暴露 `qlrt_task_await` 与 `qlrt_task_result_release`，先把“等待得到 opaque result ptr”与“释放 result payload”这两个动作拆开冻结合同，再决定后续 typed extraction lowering
 - `ql-codegen-llvm` 已补上 `AsyncTaskResultLayout` 内部抽象：当前 async 结果已接受 `Void`、scalar builtin 与 pure-scalar tuple，并在 signature 阶段锁定 payload 的 LLVM type/size/align，避免后续 `await` lowering 再反过来重写 async wrapper/result 合同
 - `ql-codegen-llvm` 已打开首个真实 `await` lowering：当前在 backend 内支持 `Void` / scalar builtin / pure-scalar tuple async 结果，并把 `await` 降成 `qlrt_task_await` + load payload + `qlrt_task_result_release` 的最小链路
-- `ql-driver` 已开放第一条 public async build 子集：`staticlib` 现在允许已被 backend 支持的 async library body 与 scalar/tuple/void `await` 通过，`for await` 在 staticlib 上也不再额外泄露 `async fn` runtime 噪声
+- `ql-codegen-llvm` 已打开首个真实 `spawn` lowering 子集：当前 backend 支持 statement-position fire-and-forget `spawn <async-call>`，并把它降成 `qlrt_executor_spawn(ptr null, task)` 的最小链路；`spawn` result value 仍保持显式 unsupported
+- `ql-driver` 已开放第一条 public async build 子集：`staticlib` 现在允许已被 backend 支持的 async library body 与 scalar/tuple/void `await` 及 statement-position fire-and-forget `spawn` 通过，`for await` 在 staticlib 上也不再额外泄露 `async fn` runtime 噪声
 - `ql-driver` / `ql-cli` 已补上 async staticlib mixed-surface 回归：带内部 async helper 的库现在也锁住了 `extern "c"` export header sidecar 路径，确保公开 C header surface 不会被 async implementation details 污染
 - `ql-typeck` 已把 direct async call 语义收紧到显式边界：当前 `async fn` 调用只能被 `await` 或 `spawn` 直接消费，独立使用 async call 结果会给出稳定诊断，避免语义层继续把 async 调用伪装成同步返回值
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前共享 hook ABI 已冻结第一版 LLVM-facing contract string，但真实内存布局、结果传递协议和更细粒度调用约定仍未冻结
-- 当前 backend/driver 虽已具备 declaration + async body wrapper/frame scaffold，并已打通首个 scalar/tuple/void `await` lowering 与 `staticlib` 子集开放，但 `spawn` / `for await` lowering、更广义的任务结果协议、frame 生命周期管理和更广义的布局协议仍未开放
+- 当前 backend/driver 虽已具备 declaration + async body wrapper/frame scaffold，并已打通 scalar/tuple/void `await` lowering、statement-position fire-and-forget `spawn` lowering 与 `staticlib` 子集开放，但 `spawn` result value / join handle、`for await` lowering、更广义的任务结果协议、frame 生命周期管理和更广义的布局协议仍未开放
 - 当前 `async-iteration` 已在 driver 层有公开 build 诊断，但仍只作为保守的失败合同存在；这还不代表 `for await` 已进入 lowering/runtime hook 设计
 
 ### 下一步（P7.1 延续）
 
-- 在现有 shared hook ABI + async body wrapper/frame scaffold + scalar/tuple/void `await` lowering + `staticlib` 子集开放基础上，优先扩展 task result / await join 协议到更广义 payload，并决定是否推进 `spawn` 的首个 call-site IR 切片
+- 在现有 shared hook ABI + async body wrapper/frame scaffold + scalar/tuple/void `await` lowering + fire-and-forget `spawn` lowering + `staticlib` 子集开放基础上，优先扩展 task result / await join 协议到更广义 payload，并决定是否推进 `spawn` result value / join handle 的首个 call-site IR 切片
 - 评估是否将 async 上下文桥接能力通过受控实验接口暴露给 editor（保持协议低风险）
 - 在不引入完整 CFG 的前提下，继续补 closure / async / return-path 的保守语义回归
 - 若后续需要把 must-return 从显式字面量 `if` 扩展到更一般的常量传播或 branch pruning，应单独设计常量/CFG 规则边界

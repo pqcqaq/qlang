@@ -520,12 +520,27 @@ impl<'a> ModuleEmitter<'a> {
         let mut local_types = self.seed_local_types(body, &signature, &mut diagnostics);
         let async_task_handles = self.collect_async_task_handles(body);
         let unsupported_for_iterable_locals = collect_unsupported_for_iterable_locals(body);
+        let fire_and_forget_spawn_locals = collect_fire_and_forget_spawn_locals(body);
 
         for block in body.blocks() {
             for statement_id in &block.statements {
                 let statement = body.statement(*statement_id);
                 match &statement.kind {
                     StatementKind::Assign { place, value } => {
+                        if matches!(
+                            value,
+                            Rvalue::Unary {
+                                op: UnaryOp::Spawn,
+                                ..
+                            }
+                        ) && !fire_and_forget_spawn_locals.contains(&place.base)
+                        {
+                            diagnostics.push(unsupported(
+                                statement.span,
+                                "LLVM IR backend foundation currently only supports `spawn` in statement position",
+                            ));
+                            continue;
+                        }
                         self.require_direct_place(statement.span, place, &mut diagnostics);
                         if unsupported_for_iterable_locals.contains(&place.base) {
                             continue;
@@ -859,11 +874,33 @@ impl<'a> ModuleEmitter<'a> {
                             })
                 }
                 UnaryOp::Spawn => {
-                    diagnostics.push(unsupported(
-                        span,
-                        "LLVM IR backend foundation does not support `spawn` yet",
-                    ));
-                    None
+                    if !self.has_runtime_hook(RuntimeHook::ExecutorSpawn) {
+                        diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation requires the `executor-spawn` runtime hook before lowering `spawn` expressions",
+                        ));
+                        return None;
+                    }
+
+                    let Operand::Place(place) = operand else {
+                        diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation currently requires `spawn` operands to lower through a task-handle place",
+                        ));
+                        return None;
+                    };
+                    self.require_direct_place(span, place, diagnostics);
+
+                    async_task_handles
+                        .get(&place.base)
+                        .map(|_| void_ty())
+                        .or_else(|| {
+                            diagnostics.push(unsupported(
+                                span,
+                                "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`",
+                            ));
+                            None
+                        })
                 }
             },
             Rvalue::Tuple(items) => {
@@ -1620,9 +1657,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     })
                 }
                 UnaryOp::Await => self.render_await(output, operand, span),
-                UnaryOp::Spawn => {
-                    panic!("prepared functions should not contain unsupported unary ops")
-                }
+                UnaryOp::Spawn => self.render_spawn(output, operand, span),
             },
             Rvalue::Tuple(items) => self.render_tuple_rvalue(output, items, span),
             Rvalue::Array(_)
@@ -1742,6 +1777,43 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_spawn(
+        &mut self,
+        output: &mut String,
+        operand: &Operand,
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let spawn_hook = self
+            .emitter
+            .runtime_hook_signature(RuntimeHook::ExecutorSpawn)
+            .expect("prepared spawn lowering should require the executor-spawn runtime hook");
+        let Operand::Place(place) = operand else {
+            panic!("prepared spawn operands should lower through task-handle places");
+        };
+        self.prepared
+            .async_task_handles
+            .get(&place.base)
+            .unwrap_or_else(|| {
+                panic!("prepared spawn operand at {span:?} should be a task handle")
+            });
+        let task = self.render_operand(output, operand, span);
+        let submitted = self.fresh_temp();
+        // `null` is the current placeholder for the ambient/default executor contract.
+        let _ = writeln!(
+            output,
+            "  {submitted} = call {} @{}(ptr null, {} {})",
+            spawn_hook.return_type.llvm_ir(),
+            spawn_hook.hook.symbol_name(),
+            task.llvm_ty,
+            task.repr
+        );
+        Some(LoweredValue {
+            ty: void_ty(),
+            llvm_ty: "void".to_owned(),
+            repr: "void".to_owned(),
+        })
+    }
+
     fn render_binary(
         &mut self,
         output: &mut String,
@@ -1817,6 +1889,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     .get(&place.base)
                     .cloned()
                     .unwrap_or_else(|| panic!("prepared place at {span:?} should have a type"));
+                if is_void_ty(&ty) {
+                    return LoweredValue {
+                        ty,
+                        llvm_ty: "void".to_owned(),
+                        repr: "void".to_owned(),
+                    };
+                }
                 let llvm_ty = lower_llvm_type(&ty, span, "operand type")
                     .expect("prepared operand types should already be supported");
                 let temp = self.fresh_temp();
@@ -2040,6 +2119,95 @@ fn collect_unsupported_for_iterable_locals(body: &mir::MirBody) -> HashSet<mir::
         }
     }
     locals
+}
+
+fn collect_fire_and_forget_spawn_locals(body: &mir::MirBody) -> HashSet<mir::LocalId> {
+    let mut spawn_locals = HashSet::new();
+    let mut used_locals = HashSet::new();
+
+    for block in body.blocks() {
+        for statement_id in &block.statements {
+            let statement = body.statement(*statement_id);
+            match &statement.kind {
+                StatementKind::Assign { place, value }
+                    if matches!(
+                        value,
+                        Rvalue::Unary {
+                            op: UnaryOp::Spawn,
+                            ..
+                        }
+                    ) && place.projections.is_empty() =>
+                {
+                    spawn_locals.insert(place.base);
+                }
+                StatementKind::Assign { value, .. } | StatementKind::Eval { value } => {
+                    collect_rvalue_operand_locals(value, &mut used_locals);
+                }
+                StatementKind::BindPattern { source, .. } => {
+                    collect_operand_locals(source, &mut used_locals);
+                }
+                _ => {}
+            }
+        }
+
+        match &block.terminator.kind {
+            TerminatorKind::Branch { condition, .. } => {
+                collect_operand_locals(condition, &mut used_locals);
+            }
+            TerminatorKind::Match { scrutinee, .. } => {
+                collect_operand_locals(scrutinee, &mut used_locals);
+            }
+            TerminatorKind::ForLoop { iterable, .. } => {
+                collect_operand_locals(iterable, &mut used_locals);
+            }
+            TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Terminate => {}
+        }
+    }
+
+    spawn_locals
+        .into_iter()
+        .filter(|local| !used_locals.contains(local))
+        .collect()
+}
+
+fn collect_rvalue_operand_locals(value: &Rvalue, locals: &mut HashSet<mir::LocalId>) {
+    match value {
+        Rvalue::Use(operand) | Rvalue::Unary { operand, .. } | Rvalue::Question(operand) => {
+            collect_operand_locals(operand, locals);
+        }
+        Rvalue::Tuple(items) | Rvalue::Array(items) => {
+            for item in items {
+                collect_operand_locals(item, locals);
+            }
+        }
+        Rvalue::Call { callee, args } => {
+            collect_operand_locals(callee, locals);
+            for arg in args {
+                collect_operand_locals(&arg.value, locals);
+            }
+        }
+        Rvalue::Binary { left, right, .. } => {
+            collect_operand_locals(left, locals);
+            collect_operand_locals(right, locals);
+        }
+        Rvalue::AggregateStruct { fields, .. } => {
+            for field in fields {
+                collect_operand_locals(&field.value, locals);
+            }
+        }
+        Rvalue::Closure { .. } | Rvalue::OpaqueExpr(_) => {}
+    }
+}
+
+fn collect_operand_locals(operand: &Operand, locals: &mut HashSet<mir::LocalId>) {
+    if let Operand::Place(place) = operand {
+        locals.insert(place.base);
+        for projection in &place.projections {
+            if let mir::ProjectionElem::Index(index) = projection {
+                collect_operand_locals(index, locals);
+            }
+        }
+    }
 }
 
 fn arithmetic_opcode(op: BinaryOp, ty: &Ty) -> &'static str {
@@ -2960,12 +3128,12 @@ async fn helper() -> Int {
     }
 
     #[test]
-    fn rejects_unsupported_spawn_lowering_in_async_library_body() {
+    fn emits_fire_and_forget_spawn_lowering_in_async_library_body() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
             RuntimeCapability::TaskSpawn,
         ]);
-        let messages = emit_error_with_runtime_hooks(
+        let rendered = emit_with_runtime_hooks(
             r#"
 async fn worker() -> Int {
     return 1
@@ -2980,8 +3148,34 @@ async fn helper() -> Int {
             &runtime_hooks,
         );
 
+        assert!(rendered.contains("declare ptr @qlrt_executor_spawn(ptr, ptr)"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+    }
+
+    #[test]
+    fn rejects_spawn_value_lowering_in_async_library_body() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+        ]);
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    let task = spawn worker()
+    return 0
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
         assert!(messages.iter().any(|message| {
-            message == "LLVM IR backend foundation does not support `spawn` yet"
+            message
+                == "LLVM IR backend foundation currently only supports `spawn` in statement position"
         }));
         assert!(messages.iter().all(|message| {
             !message.contains("could not resolve LLVM type for local")

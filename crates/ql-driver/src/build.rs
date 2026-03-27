@@ -346,7 +346,9 @@ fn runtime_requirement_message(
     emit: BuildEmit,
 ) -> Option<&'static str> {
     match capability {
-        RuntimeCapability::AsyncFunctionBodies | RuntimeCapability::TaskAwait
+        RuntimeCapability::AsyncFunctionBodies
+        | RuntimeCapability::TaskAwait
+        | RuntimeCapability::TaskSpawn
             if emit == BuildEmit::StaticLibrary =>
         {
             None
@@ -1322,6 +1324,61 @@ async fn helper() -> (Bool, Int) {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_supported_spawn_statements() {
+        let dir = TestDir::new("ql-driver-staticlib-async-spawn");
+        let source = dir.write(
+            "async_spawn.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    spawn worker()
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_spawn.lib"
+        } else {
+            "artifacts/libasync_spawn.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("static library build with supported spawn statements should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+        let leftovers = fs::read_dir(output.parent().expect("output should have a parent"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen."))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "successful async spawn static library emission should clean up intermediate artifacts"
+        );
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_async_export_header_sidecar() {
         let dir = TestDir::new("ql-driver-staticlib-async-export-header");
         let source = dir.write(
@@ -1997,6 +2054,53 @@ async fn worker() -> Pair {
         assert!(diagnostics.iter().all(|diagnostic| {
             diagnostic.message != "LLVM IR backend foundation does not support `async fn` yet"
                 && diagnostic.message != "LLVM IR backend foundation does not support `await` yet"
+        }));
+    }
+
+    #[test]
+    fn build_file_surfaces_spawn_value_diagnostics_without_runtime_noise() {
+        let dir = TestDir::new("ql-driver-async-library-spawn-value");
+        let source = dir.write(
+            "async_spawn_value_library.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    let task = spawn worker()
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_spawn_value_library.lib"
+        } else {
+            "artifacts/libasync_spawn_value_library.a"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("async spawn value rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message
+                == "LLVM IR backend foundation currently only supports `spawn` in statement position"
+        }));
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.message != "LLVM IR backend foundation does not support `async fn` yet"
+                && diagnostic.message != "LLVM IR backend foundation does not support `spawn` yet"
         }));
     }
 
