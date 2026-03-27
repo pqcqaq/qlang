@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ql_analysis::analyze_source;
 use ql_codegen_llvm::{CodegenInput, CodegenMode, emit_module};
 use ql_diagnostics::{Diagnostic, Label};
-use ql_runtime::RuntimeCapability;
+use ql_runtime::{RuntimeCapability, collect_runtime_hook_signatures};
 
 use crate::ffi::{
     CHeaderArtifact, CHeaderError, CHeaderOptions, CHeaderSurface, emit_c_header_from_analysis,
@@ -206,6 +206,12 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
     };
 
     let runtime_diagnostics = runtime_requirement_diagnostics(&analysis);
+    let runtime_hooks = collect_runtime_hook_signatures(
+        analysis
+            .runtime_requirements()
+            .iter()
+            .map(|requirement| requirement.capability),
+    );
     let module_name = default_module_name(path);
     let ir = match emit_module(CodegenInput {
         module_name: &module_name,
@@ -214,6 +220,7 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
         mir: analysis.mir(),
         resolution: analysis.resolution(),
         typeck: analysis.typeck(),
+        runtime_hooks: &runtime_hooks,
     }) {
         Ok(ir) => {
             if !runtime_diagnostics.is_empty() {

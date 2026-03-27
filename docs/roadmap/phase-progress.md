@@ -759,13 +759,15 @@ P6 当前仍刻意未完成：
 - `ql-analysis` 已暴露 `runtime_requirements()`，按源码顺序枚举当前 async surface 对应的 runtime 需求，并补上 operator span / declaration-vs-definition 边界回归
 - `ql-cli` 已扩展 `ql runtime <file>`，现在会同时输出 runtime capability 需求和 dedupe 后的 runtime hook 计划，作为后续 runtime/codegen 接线前的开发者可见检查面
 - `ql-driver` 已开始保守消费这份 runtime requirement surface：当前会把 `async-function-bodies`、`task-spawn`、`task-await`、`async-iteration` 映射成稳定的 build-time unsupported 诊断，并与 backend 同类 diagnostics 去重，锁住 driver/codegen 边界的拒绝合同
+- `ql-codegen-llvm` 已开始直接消费共享 runtime hook ABI signatures：后端输入现在可携带 dedupe 后的 hook 列表，并渲染稳定的 LLVM `declare` 语句，避免 backend 自己复制 hook 名称或 ABI 字符串
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前共享 hook ABI 已冻结第一版 LLVM-facing contract string，但真实内存布局、结果传递协议和更细粒度调用约定仍未冻结
+- 当前 backend 仅复用这些 ABI signatures 发出 declarations；真正的 async lowering、hook call emission 和布局协议仍未开放
 - 当前 `async-iteration` 已在 driver 层有公开 build 诊断，但仍只作为保守的失败合同存在；这还不代表 `for await` 已进入 lowering/runtime hook 设计
 
 ### 下一步（P7.1 延续）
 
-- 在现有 MIR async operator lowering 合同之上，继续把 `await` / `spawn` 当前“必须调用 `async fn`”的约束下沉到 runtime/codegen 接口契约（仍保持 conservative）
+- 在现有共享 hook ABI + backend declaration scaffolding 基础上，为最小 async 路径选择第一条 call-site/IR 约定切片，并继续保持保守失败合同
 - 评估是否将 async 上下文桥接能力通过受控实验接口暴露给 editor（保持协议低风险）
 - 在不引入完整 CFG 的前提下，继续补 closure / async / return-path 的保守语义回归
 - 若后续需要把 must-return 从显式字面量 `if` 扩展到更一般的常量传播或 branch pruning，应单独设计常量/CFG 规则边界

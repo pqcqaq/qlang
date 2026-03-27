@@ -446,6 +446,7 @@ dependencies = [
  "ql-hir",
  "ql-mir",
  "ql-resolve",
+ "ql-runtime",
  "ql-span",
  "ql-typeck",
 ]

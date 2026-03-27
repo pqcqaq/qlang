@@ -58,10 +58,12 @@
 - 已补充 `crates/ql-analysis/tests/queries.rs` 的 runtime requirement 回归：覆盖 capability 顺序、精确 operator span，以及“仅声明无 body 的 async method 不计入 lowering 需求”的边界
 - 已在 `ql-cli` 新增并扩展 `ql runtime <file>`：当前可直接输出该文件的 runtime requirements 与 dedupe 后的 runtime hook 计划，便于开发阶段检查 capability/hook contract 是否符合预期
 - `ql-driver` 已开始保守消费这份 runtime requirement surface：当前会把 `async-function-bodies`、`task-spawn`、`task-await`、`async-iteration` 映射成稳定的 build-time unsupported 诊断，并与 backend 同类 unsupported diagnostics 做去重合并
+- 已在 `ql-codegen-llvm` 接入共享 runtime hook ABI contract：`CodegenInput` 当前可携带 dedupe 后的 `RuntimeHookSignature` 列表，后端会直接复用 `ql-runtime` 的声明文本渲染 runtime hook declarations，而不是在 backend 内重复维护符号名或 ABI 字符串
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前 hook ABI skeleton 已冻结第一版 LLVM-facing contract string，但仍只使用 `ptr` 级 opaque 形态；真实内存布局、结果传递协议和更细粒度调用约定仍未冻结
+- 当前 backend 对这些 hook 仍只做 declaration scaffolding，不代表 async lowering、hook call emission、任务/结果内存布局或调度语义已经进入可执行阶段
 - 当前 `async-iteration` 已在 driver 层前移成公开 build 诊断，但仍只固定失败合同，不代表 `for await` lowering、runtime hook 或调度语义已经设计完成
 - 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、显式字面量 `if true` / `if false`、显式字面量 `match true/false`、非字面量 `Bool` / enum `match` 上的字面量 guard、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、更广义的常量传播、更一般的 guard-sensitive `match` 与 unreachable 细化仍待后续切片
 - 当前 loop-control 已具备 analysis/LSP 的只读桥接，但还未扩展到公开 editor 协议 capability；继续保持低风险桥接策略

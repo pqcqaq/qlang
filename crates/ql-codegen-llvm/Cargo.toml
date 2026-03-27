@@ -11,6 +11,7 @@ ql-diagnostics.workspace = true
 ql-hir.workspace = true
 ql-mir.workspace = true
 ql-resolve.workspace = true
+ql-runtime.workspace = true
 ql-span.workspace = true
 ql-typeck.workspace = true
 

@@ -12,6 +12,7 @@ use ql_mir::{
     TerminatorKind,
 };
 use ql_resolve::{BuiltinType, ResolutionMap};
+use ql_runtime::RuntimeHookSignature;
 use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, lower_type};
 
@@ -30,6 +31,7 @@ pub struct CodegenInput<'a> {
     pub mir: &'a mir::MirModule,
     pub resolution: &'a ResolutionMap,
     pub typeck: &'a TypeckResult,
+    pub runtime_hooks: &'a [RuntimeHookSignature],
 }
 
 pub fn emit_module(input: CodegenInput<'_>) -> Result<String, CodegenError> {
@@ -878,6 +880,11 @@ impl<'a> ModuleEmitter<'a> {
         );
         let _ = writeln!(output, "target triple = \"{}\"", default_target_triple());
 
+        if !self.input.runtime_hooks.is_empty() {
+            output.push('\n');
+            self.render_runtime_hook_declarations(&mut output);
+        }
+
         for function_ref in reachable {
             output.push('\n');
             if let Some(function) = functions
@@ -929,6 +936,12 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         output.push_str("}\n");
+    }
+
+    fn render_runtime_hook_declarations(&self, output: &mut String) {
+        for signature in self.input.runtime_hooks {
+            let _ = writeln!(output, "{}", signature.render_llvm_declaration());
+        }
     }
 
     fn render_declaration(&self, output: &mut String, function: &FunctionSignature) {
@@ -1524,6 +1537,7 @@ fn sanitize_symbol(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use ql_analysis::analyze_source;
+    use ql_runtime::{RuntimeCapability, RuntimeHookSignature, collect_runtime_hook_signatures};
 
     use super::{CodegenInput, CodegenMode, emit_module};
 
@@ -1536,6 +1550,14 @@ mod tests {
     }
 
     fn emit_with_mode(source: &str, mode: CodegenMode) -> String {
+        emit_with_runtime_hooks(source, mode, &[])
+    }
+
+    fn emit_with_runtime_hooks(
+        source: &str,
+        mode: CodegenMode,
+        runtime_hooks: &[RuntimeHookSignature],
+    ) -> String {
         let analysis = analyze_source(source).expect("source should analyze");
         assert!(
             !analysis.has_errors(),
@@ -1549,6 +1571,7 @@ mod tests {
             mir: analysis.mir(),
             resolution: analysis.resolution(),
             typeck: analysis.typeck(),
+            runtime_hooks,
         })
         .expect("codegen should succeed")
     }
@@ -1567,6 +1590,7 @@ mod tests {
             mir: analysis.mir(),
             resolution: analysis.resolution(),
             typeck: analysis.typeck(),
+            runtime_hooks: &[],
         })
         .expect_err("codegen should fail")
         .into_diagnostics()
@@ -1667,6 +1691,46 @@ fn main() -> Int {
         assert!(rendered.contains("declare i64 @q_add(i64, i64)"));
         assert!(rendered.contains("define i64 @ql_1_main()"));
         assert!(rendered.contains("call i64 @q_add(i64 1, i64 2)"));
+    }
+
+    #[test]
+    fn emits_runtime_hook_declarations_from_shared_abi_contract() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::AsyncFunctionBodies,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        let async_task_create = "declare ptr @qlrt_async_task_create(ptr, ptr)";
+        let executor_spawn = "declare ptr @qlrt_executor_spawn(ptr, ptr)";
+        let entry_definition = "define i64 @ql_0_main()";
+
+        assert!(rendered.contains(async_task_create));
+        assert!(rendered.contains(executor_spawn));
+        assert!(
+            rendered
+                .find(async_task_create)
+                .expect("runtime declaration should exist")
+                < rendered
+                    .find(entry_definition)
+                    .expect("entry function should exist")
+        );
+        assert!(
+            rendered
+                .find(executor_spawn)
+                .expect("runtime declaration should exist")
+                < rendered
+                    .find(entry_definition)
+                    .expect("entry function should exist")
+        );
     }
 
     #[test]
