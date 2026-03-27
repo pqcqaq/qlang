@@ -1,0 +1,18 @@
+error: tests/ui/type_invalid_assignment_target.ql:17:5: cannot assign to constant `limit`
+      limit = 2;
+      ^^^^^ assignment target here
+error: tests/ui/type_invalid_assignment_target.ql:18:5: cannot assign to static `total`
+      total = 3;
+      ^^^^^ assignment target here
+error: tests/ui/type_invalid_assignment_target.ql:19:5: cannot assign to function `add`
+      add = add;
+      ^^^ assignment target here
+error: tests/ui/type_invalid_assignment_target.ql:20:5: cannot assign to imported binding `imported_limit`
+      imported_limit = 4;
+      ^^^^^^^^ assignment target here
+error: tests/ui/type_invalid_assignment_target.ql:21:5: assignment through member access is not supported yet; only bare mutable bindings can be assigned
+      counter.value = 5;
+      ^^^^^^^^ assignment target here
+error: tests/ui/type_invalid_assignment_target.ql:22:5: assignment through indexing is not supported yet; only bare mutable bindings can be assigned
+      values[0] = 6
+      ^^^^^^^^ assignment target here

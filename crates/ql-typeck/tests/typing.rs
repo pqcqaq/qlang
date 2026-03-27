@@ -333,6 +333,101 @@ impl Counter {
 }
 
 #[test]
+fn reports_assignment_to_top_level_values() {
+    let diagnostics = diagnostic_messages(
+        r#"
+const limit: Int = 1
+static total: Int = 0
+
+fn main() -> Int {
+    limit = 2;
+    total = 3
+    return total
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"cannot assign to constant `limit`".to_string()));
+    assert!(diagnostics.contains(&"cannot assign to static `total`".to_string()));
+}
+
+#[test]
+fn reports_assignment_to_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn add(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+fn main() -> Int {
+    add = add
+    return add(1, 2)
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"cannot assign to function `add`".to_string()));
+}
+
+#[test]
+fn reports_assignment_to_imported_bindings() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use source_value as source
+
+const source_value: Int = 1
+
+fn main() -> Int {
+    source = 2
+    return source_value
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"cannot assign to imported binding `source`".to_string()));
+}
+
+#[test]
+fn reports_unsupported_member_assignment_targets() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+fn main() -> Int {
+    var counter = Counter { value: 1 }
+    counter.value = 2
+    return counter.value
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"assignment through member access is not supported yet; only bare mutable bindings can be assigned"
+            .to_string()
+    ));
+}
+
+#[test]
+fn reports_unsupported_index_assignment_targets() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    var values = [1, 2, 3]
+    values[0] = 4
+    return values[0]
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"assignment through indexing is not supported yet; only bare mutable bindings can be assigned"
+            .to_string()
+    ));
+}
+
+#[test]
 fn accepts_declared_array_types_in_function_signatures() {
     let diagnostics = diagnostic_messages(
         r#"

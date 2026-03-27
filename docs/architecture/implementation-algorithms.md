@@ -244,7 +244,8 @@
 - homogeneous array literal inference，与 expected fixed-array context 下的元素类型约束
 - 保守 tuple / array indexing：array element projection、支持 lexer-style integer literal 的 constant tuple indexing、array index type 检查、tuple out-of-bounds 检查
 - equality operand compatibility
-- bare mutable binding assignment diagnostics：只对 `var` local / `var self` 做 assignment target 可写性检查
+- bare mutable binding assignment diagnostics：对 `var` local / `var self` 做 assignment target 可写性检查
+- 非 binding assignment target diagnostics：`const` / `static` / function / import binding 赋值会显式报错，member/index 写入会显式报 unsupported
 - struct member existence
 - pattern root / literal compatibility
 - calling non-callable values
@@ -252,7 +253,7 @@
 关键设计取舍：
 
 - `unknown` 不是偷懒，而是明确的退化阀门
-- assignment target 先只接管已有稳定语义身份的 binding，不把 member/index 写入提前伪装成完整 place system
+- assignment target 先只接管已有稳定语义身份的 binding；对 member/index 写入先给出显式 unsupported 诊断，而不是提前伪装成完整 place system
 - 还没建立完整 import/module/member/索引协议前，不把每个未知都提前升级成硬错误
 
 ### Unified Analysis And Query Index

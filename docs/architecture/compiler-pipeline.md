@@ -104,7 +104,8 @@ source
 - 新增保守 tuple / array indexing：array element projection、支持 lexer-style integer literal 的 constant tuple indexing、array index type checking、tuple out-of-bounds diagnostics
 - 新增 equality operand compatibility checking
 - 新增 comparison operand compatible-numeric checking
-- 新增 bare mutable binding assignment diagnostics：`=` 现在会约束 `var` local / `var self`，并继续把 member/index place assignment 留给后续 place-sensitive 语义
+- 新增 bare mutable binding assignment diagnostics：`=` 现在会约束 `var` local / `var self`
+- 同一条路径现在还会显式拒绝 `const` / `static` / function / import binding 赋值，以及 member/index assignment target，避免语义层静默放过 backend 尚未承诺的写入模型
 - 新增 struct member existence checking
 - 新增 pattern root / literal compatibility checking
 - 新增 struct pattern unknown-field checking，并复用 same-file local import alias -> local item 的 canonicalization
@@ -112,7 +113,7 @@ source
 当前依然保守的边界：
 
 - 未解析成员调用、通用索引协议、import prelude 细节时，表达式类型会主动退化为 `unknown`；当前只对源码层 fixed array、inferred array 和 constant tuple index 开放一层 typing
-- `=` 当前只对 bare mutable binding 做可写性校验，不提前宣称 field/index 写入已经有完整 place 语义
+- `=` 当前只对 bare mutable binding 开放真实可写语义；field/index 写入仍未开放，但已经有显式 unsupported diagnostics，不再静默伪装成“可能可用”
 - bare single-segment unresolved diagnostics 已落地，但 multi-segment unresolved global / unresolved type diagnostics 仍然延后
 - 完整 trait solving、泛型实参推断、effect checking 和 flow-sensitive narrowing 还未开始
 - 默认参数仍停留在语言设计稿，没有进入当前 AST / HIR / type checker 的实现边界

@@ -875,9 +875,16 @@ impl<'a> Checker<'a> {
 
         match op {
             BinaryOp::Assign => {
-                self.check_assignment_target(left);
-                let right_ty = self.check_expr(right, Some(&left_ty));
-                self.report_type_mismatch(right, &left_ty, &right_ty, "assignment");
+                let assignment_policy = self.check_assignment_target(left);
+                let right_ty = match assignment_policy {
+                    AssignmentTargetPolicy::EnforceValueType => {
+                        self.check_expr(right, Some(&left_ty))
+                    }
+                    AssignmentTargetPolicy::SkipValueType => self.check_expr(right, None),
+                };
+                if assignment_policy == AssignmentTargetPolicy::EnforceValueType {
+                    self.report_type_mismatch(right, &left_ty, &right_ty, "assignment");
+                }
                 Ty::Unknown
             }
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
@@ -941,39 +948,89 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_assignment_target(&mut self, expr_id: ExprId) {
+    fn check_assignment_target(&mut self, expr_id: ExprId) -> AssignmentTargetPolicy {
         let expr = self.module.expr(expr_id);
-        let ExprKind::Name(name) = &expr.kind else {
-            return;
+        let unsupported_target = |checker: &mut Self, message: String| {
+            checker.diagnostics.push(
+                Diagnostic::error(message)
+                    .with_label(Label::new(expr.span).with_message("assignment target here")),
+            );
+            AssignmentTargetPolicy::SkipValueType
         };
 
-        match self.resolution.expr_resolution(expr_id) {
-            Some(ValueResolution::Local(local_id)) if self.mutable_locals.contains(local_id) => {}
-            Some(ValueResolution::Local(_)) => {
-                self.diagnostics.push(
-                    Diagnostic::error(format!(
-                        "cannot assign to immutable local `{name}`; declare it with `var`"
-                    ))
-                    .with_label(Label::new(expr.span).with_message("assignment target here")),
-                );
-            }
-            Some(ValueResolution::Param(_)) => {
-                self.diagnostics.push(
-                    Diagnostic::error(format!("cannot assign to immutable parameter `{name}`"))
+        match &expr.kind {
+            ExprKind::Name(name) => match self.resolution.expr_resolution(expr_id) {
+                Some(ValueResolution::Local(local_id)) if self.mutable_locals.contains(local_id) => {
+                    AssignmentTargetPolicy::EnforceValueType
+                }
+                Some(ValueResolution::Local(_)) => {
+                    self.diagnostics.push(
+                        Diagnostic::error(format!(
+                            "cannot assign to immutable local `{name}`; declare it with `var`"
+                        ))
                         .with_label(Label::new(expr.span).with_message("assignment target here")),
-                );
-            }
-            Some(ValueResolution::SelfValue) if self.self_is_mutable => {}
-            Some(ValueResolution::SelfValue) => {
-                self.diagnostics.push(
-                    Diagnostic::error("cannot assign to immutable receiver `self`; use `var self`")
+                    );
+                    AssignmentTargetPolicy::EnforceValueType
+                }
+                Some(ValueResolution::Param(_)) => {
+                    self.diagnostics.push(
+                        Diagnostic::error(format!("cannot assign to immutable parameter `{name}`"))
+                            .with_label(
+                                Label::new(expr.span).with_message("assignment target here"),
+                            ),
+                    );
+                    AssignmentTargetPolicy::EnforceValueType
+                }
+                Some(ValueResolution::SelfValue) if self.self_is_mutable => {
+                    AssignmentTargetPolicy::EnforceValueType
+                }
+                Some(ValueResolution::SelfValue) => {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "cannot assign to immutable receiver `self`; use `var self`",
+                        )
                         .with_label(Label::new(expr.span).with_message("assignment target here")),
-                );
-            }
-            Some(ValueResolution::Function(_))
-            | Some(ValueResolution::Item(_))
-            | Some(ValueResolution::Import(_))
-            | None => {}
+                    );
+                    AssignmentTargetPolicy::EnforceValueType
+                }
+                Some(ValueResolution::Function(_)) => {
+                    unsupported_target(self, format!("cannot assign to function `{name}`"))
+                }
+                Some(ValueResolution::Item(item_id)) => match &self.module.item(*item_id).kind {
+                    ItemKind::Const(_) => {
+                        unsupported_target(self, format!("cannot assign to constant `{name}`"))
+                    }
+                    ItemKind::Static(_) => {
+                        unsupported_target(self, format!("cannot assign to static `{name}`"))
+                    }
+                    _ => unsupported_target(
+                        self,
+                        format!(
+                            "cannot assign to item `{}`",
+                            item_display_name(self.module, *item_id)
+                        ),
+                    ),
+                },
+                Some(ValueResolution::Import(_)) => {
+                    unsupported_target(self, format!("cannot assign to imported binding `{name}`"))
+                }
+                None => AssignmentTargetPolicy::SkipValueType,
+            },
+            ExprKind::Member { .. } => unsupported_target(
+                self,
+                "assignment through member access is not supported yet; only bare mutable bindings can be assigned"
+                    .to_string(),
+            ),
+            ExprKind::Bracket { .. } => unsupported_target(
+                self,
+                "assignment through indexing is not supported yet; only bare mutable bindings can be assigned"
+                    .to_string(),
+            ),
+            _ => unsupported_target(
+                self,
+                "this assignment target is not supported yet; only bare mutable bindings can be assigned"
+                    .to_string(),
+            ),
         }
     }
 
@@ -1419,6 +1476,12 @@ enum MethodSelection {
     None,
     Unique(MethodTarget),
     Ambiguous,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AssignmentTargetPolicy {
+    EnforceValueType,
+    SkipValueType,
 }
 
 struct Signature {
