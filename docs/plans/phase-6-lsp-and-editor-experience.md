@@ -51,6 +51,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - stable member completion
 - parsed variant-path completion
 - import alias variant / struct-variant follow-through
+- deeper variant-like member chains stay deliberately closed
 - escaped identifier completion 保真
 - candidate-list parity
 - filtering parity

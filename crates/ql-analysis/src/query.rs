@@ -1550,7 +1550,8 @@ impl<'a> QueryIndexBuilder<'a> {
                     && let Some(symbol) = self.symbol_for_member_target(target)
                 {
                     self.push_occurrence(*field_span, &symbol);
-                } else if let Some(resolution) = self.resolution.expr_resolution(expr_id)
+                } else if matches!(self.module.expr(*object).kind, ExprKind::Name(_))
+                    && let Some(resolution) = self.resolution.expr_resolution(expr_id)
                     && let Some(item_id) = self.enum_item_for_value_resolution(resolution)
                 {
                     self.index_variant_member_use(item_id, field, *field_span);
@@ -1917,7 +1918,8 @@ impl<'a> QueryIndexBuilder<'a> {
             }
         }
 
-        if let Some(resolution) = self.resolution.expr_resolution(object)
+        if matches!(self.module.expr(object).kind, ExprKind::Name(_))
+            && let Some(resolution) = self.resolution.expr_resolution(object)
             && let Some(item_id) = self.enum_item_for_value_resolution(resolution)
         {
             return self.variant_completion_items(item_id);

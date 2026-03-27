@@ -1892,6 +1892,31 @@ fn build() -> Command {
 }
 
 #[test]
+fn definition_bridge_stays_empty_on_deeper_variant_like_member_paths() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Stop,
+}
+
+fn main() -> Int {
+    let alias = Cmd.Retry.Stop
+    return 0
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let bogus_position = span_to_range(source, nth_span(source, "Stop", 2)).start;
+
+    assert_eq!(
+        definition_for_analysis(&uri, source, &analysis, bogus_position),
+        None
+    );
+}
+
+#[test]
 fn references_bridge_respects_include_declaration() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
@@ -4083,6 +4108,39 @@ fn main() -> Command {
             TextEdit::new(variant_range, "Retry".to_owned(),)
         ))
     );
+}
+
+#[test]
+fn completion_bridge_stays_empty_on_deeper_variant_like_member_paths() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Stop,
+    Reset,
+}
+
+fn main() -> Int {
+    let alias = Cmd.Retry.St
+    return 0
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let variant_offset = source
+        .find("Cmd.Retry.St")
+        .map(|offset| offset + "Cmd.Retry.".len())
+        .expect("alias deeper member path should exist");
+    let variant_range = span_to_range(source, Span::new(variant_offset, variant_offset + 2));
+    let position = Position::new(variant_range.start.line, variant_range.start.character + 1);
+
+    let Some(CompletionResponse::Array(items)) =
+        completion_for_analysis(source, &analysis, position)
+    else {
+        panic!("expected array completion response");
+    };
+
+    assert!(items.is_empty());
 }
 
 #[test]

@@ -492,18 +492,20 @@
 
 当前 enum item-root variant completion 进一步复用同一条 variant truth surface：
 
-1. 仍然只在已经成功解析的 `ExprKind::Member` 上工作
+1. 仍然只在已经成功解析、且对象仍是 root `Name` 的第一段 `ExprKind::Member` 上工作
 2. 如果对象表达式没有稳定 receiver `Ty`，再回退看对象表达式本身是否解析成 `ValueResolution::Item`
 3. 只有该 item 确实是 enum，才暴露 variant completion items
-4. imported alias / deeper module graph / foreign enum 不会被伪装成“已经支持”
+4. deeper variant-like member chain 不会继续复用 root enum truth；`Command.Retry.more` 这类 case 只保留上层 lexical completion fallback，不再伪造 variant completion / query identity
+5. imported alias / deeper module graph / foreign enum 不会被伪装成“已经支持”
 
 当前同文件 local import alias variant follow-through 继续复用这条 truth surface：
 
 1. 不改 resolver 的 root-binding 语义，也不引入 module graph
 2. 只在 import alias 的原始路径恰好是单段、且该单段命中同文件根 enum item 时继续跟进
 3. root token 仍然保持 import alias 自身的 source-backed symbol identity
-4. 只有尾段 variant token / completion / rename occurrence / semantic token 才继续复用 enum variant truth surface
-5. foreign import alias、multi-segment import path、deeper module graph 仍明确不支持
+4. 只有 alias root 的第一段 variant tail token / completion / rename occurrence / semantic token 才继续复用 enum variant truth surface
+5. `Cmd.Retry.more` 这类更深 member chain 不会继续从 alias root 偷出 enum variant identity
+6. foreign import alias、multi-segment import path、deeper module graph 仍明确不支持
 
 也就是说，当前这块能力只是“在稳定 receiver type、same-file enum item root，以及同文件 local import alias -> local enum item 上复用已有 member/variant semantics”，并继续服务 query / completion / same-file rename / semantic tokens；它仍然不是“完整编辑器智能补全”。
 

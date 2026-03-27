@@ -4506,6 +4506,83 @@ fn main() -> Command {
 }
 
 #[test]
+fn deeper_variant_like_member_paths_do_not_reuse_root_variant_queries() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Stop,
+}
+
+fn main() -> Int {
+    let direct = Command.Retry.Stop
+    let alias = Cmd.Retry.Stop
+    return 0
+}
+"#;
+
+    let analysis = analyzed(source);
+    let direct_use = nth_offset(source, "Stop", 2);
+    let alias_use = nth_offset(source, "Stop", 3);
+
+    assert_eq!(analysis.hover_at(direct_use), None);
+    assert_eq!(analysis.definition_at(direct_use), None);
+    assert_eq!(analysis.references_at(direct_use), None);
+
+    assert_eq!(analysis.hover_at(alias_use), None);
+    assert_eq!(analysis.definition_at(alias_use), None);
+    assert_eq!(analysis.references_at(alias_use), None);
+}
+
+#[test]
+fn completion_queries_do_not_offer_variant_candidates_on_deeper_member_paths() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Stop,
+    Reset,
+}
+
+fn main() -> Int {
+    let direct = Command.Retry.St
+    let alias = Cmd.Retry.St
+    return 0
+}
+"#;
+
+    let analysis = analyzed(source);
+    let direct_member_use = source
+        .find("Command.Retry.St")
+        .map(|offset| offset + "Command.Retry.".len())
+        .expect("direct deeper member path should exist");
+    let alias_member_use = source
+        .find("Cmd.Retry.St")
+        .map(|offset| offset + "Cmd.Retry.".len())
+        .expect("alias deeper member path should exist");
+
+    let direct_items = analysis
+        .completions_at(direct_member_use)
+        .expect("lexical completion site should still exist");
+    let alias_items = analysis
+        .completions_at(alias_member_use)
+        .expect("lexical completion site should still exist");
+
+    assert!(
+        direct_items
+            .iter()
+            .all(|item| item.kind != SymbolKind::Variant)
+    );
+    assert!(
+        alias_items
+            .iter()
+            .all(|item| item.kind != SymbolKind::Variant)
+    );
+}
+
+#[test]
 fn completion_queries_follow_variant_candidates_in_import_alias_struct_literal_paths() {
     let source = r#"
 use Command as Cmd
