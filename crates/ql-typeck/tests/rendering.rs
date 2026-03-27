@@ -124,3 +124,19 @@ fn main(counter: Counter) -> Int {
         "error: sample.ql:19:12: ambiguous method `ping` on type `Counter`; multiple matching methods found"
     ));
 }
+
+#[test]
+fn rendered_import_alias_call_diagnostics_anchor_to_the_use_site() {
+    let source = r#"
+use VALUE as current
+
+const VALUE: Int = 1
+
+fn main() -> Int {
+    return current()
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(rendered.contains("error: sample.ql:7:12: cannot call value of type `Int`"));
+}

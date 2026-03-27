@@ -185,6 +185,71 @@ fn main() -> Int {
 }
 
 #[test]
+fn reports_call_argument_type_mismatches_through_imported_function_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use add as plus
+
+fn add(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+fn main() -> Int {
+    return plus(1, "x")
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"call argument has type mismatch: expected `Int`, found `String`".to_string()
+        )
+    );
+}
+
+#[test]
+fn reports_named_call_argument_type_mismatches_through_imported_function_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use add as plus
+
+fn add(left: Int, right: Int) -> Int {
+    return left + right
+}
+
+fn main() -> Int {
+    return plus(left: 1, right: true)
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"named call argument has type mismatch: expected `Int`, found `Bool`".to_string()
+    ));
+}
+
+#[test]
+fn reports_call_argument_type_mismatches_through_imported_const_callable_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use APPLY as run
+
+const APPLY: (Int) -> Int = (value) => value + 1
+
+fn main() -> Int {
+    return run("x")
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"call argument has type mismatch: expected `Int`, found `String`".to_string()
+        )
+    );
+}
+
+#[test]
 fn reports_call_argument_type_mismatches_for_extern_block_functions() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -211,6 +276,23 @@ fn reports_non_callable_values() {
 fn main() -> Int {
     let value = 1
     return value()
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"cannot call value of type `Int`".to_string()));
+}
+
+#[test]
+fn reports_non_callable_import_alias_values() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use VALUE as current
+
+const VALUE: Int = 1
+
+fn main() -> Int {
+    return current()
 }
 "#,
     );

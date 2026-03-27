@@ -247,6 +247,7 @@
 - bare mutable binding assignment diagnostics：对 `var` local / `var self` 做 assignment target 可写性检查
 - 非 binding assignment target diagnostics：`const` / `static` / function / import binding 赋值会显式报错，member/index 写入会显式报 unsupported
 - struct member existence
+- same-file local import alias value/callable canonicalization
 - ambiguous method member diagnostics
 - pattern root / literal compatibility
 - calling non-callable values
@@ -255,6 +256,7 @@
 
 - `unknown` 不是偷懒，而是明确的退化阀门
 - assignment target 先只接管已有稳定语义身份的 binding；对 member/index 写入先给出显式 unsupported 诊断，而不是提前伪装成完整 place system
+- import alias 的 value/callable typing 先只复用 same-file single-segment canonicalization，不把这条路径误写成完整 module graph / foreign import 语义
 - ambiguous method 先只升级成显式 type diagnostics，不提前宣称 completion / rename / query 已经具备模糊候选真值模型
 - 还没建立完整 import/module/member/索引协议前，不把每个未知都提前升级成硬错误
 

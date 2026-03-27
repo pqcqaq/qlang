@@ -308,13 +308,26 @@ impl<'a> Checker<'a> {
             Some(ValueResolution::Function(function_ref)) => {
                 Ty::from_function_ref(self.module, self.resolution, *function_ref)
             }
-            Some(ValueResolution::Item(item_id)) => match &self.module.item(*item_id).kind {
-                ItemKind::Const(global) | ItemKind::Static(global) => {
-                    lower_type(self.module, self.resolution, global.ty)
-                }
-                _ => Ty::Unknown,
-            },
-            Some(ValueResolution::Import(_)) | None => Ty::Unknown,
+            Some(resolution @ ValueResolution::Item(_))
+            | Some(resolution @ ValueResolution::Import(_)) => self
+                .item_id_for_value_resolution(resolution)
+                .map(|item_id| self.value_item_ty(item_id))
+                .unwrap_or(Ty::Unknown),
+            None => Ty::Unknown,
+        }
+    }
+
+    fn value_item_ty(&self, item_id: ItemId) -> Ty {
+        // Same-file single-segment import aliases can reuse local item value semantics
+        // without pretending the full module graph already exists.
+        match &self.module.item(item_id).kind {
+            ItemKind::Function(function) => {
+                Ty::from_function(self.module, self.resolution, function)
+            }
+            ItemKind::Const(global) | ItemKind::Static(global) => {
+                lower_type(self.module, self.resolution, global.ty)
+            }
+            _ => Ty::Unknown,
         }
     }
 
@@ -672,15 +685,27 @@ impl<'a> Checker<'a> {
     }
 
     fn call_signature(&self, callee: ExprId, callee_ty: &Ty) -> Option<Signature> {
-        if let Some(ValueResolution::Function(function_ref)) =
-            self.resolution.expr_resolution(callee)
-        {
-            let function = self.module.function(*function_ref);
-            return Some(Signature::from_function(
-                self.module,
-                self.resolution,
-                function,
-            ));
+        if let Some(resolution) = self.resolution.expr_resolution(callee) {
+            match resolution {
+                ValueResolution::Function(function_ref) => {
+                    let function = self.module.function(*function_ref);
+                    return Some(Signature::from_function(
+                        self.module,
+                        self.resolution,
+                        function,
+                    ));
+                }
+                ValueResolution::Item(_) | ValueResolution::Import(_) => {
+                    if let Some(item_id) = self.item_id_for_value_resolution(resolution)
+                        && let Some(signature) = self.value_item_signature(item_id)
+                    {
+                        return Some(signature);
+                    }
+                }
+                ValueResolution::Local(_)
+                | ValueResolution::Param(_)
+                | ValueResolution::SelfValue => {}
+            }
         }
         if let Some(MemberTarget::Method(target)) = self.member_targets.get(&callee).copied() {
             let function = self.method(target);
@@ -700,6 +725,17 @@ impl<'a> Checker<'a> {
                     .collect(),
                 ret: ret.as_ref().clone(),
             }),
+            _ => None,
+        }
+    }
+
+    fn value_item_signature(&self, item_id: ItemId) -> Option<Signature> {
+        match &self.module.item(item_id).kind {
+            ItemKind::Function(function) => Some(Signature::from_function(
+                self.module,
+                self.resolution,
+                function,
+            )),
             _ => None,
         }
     }

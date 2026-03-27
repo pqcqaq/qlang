@@ -1,0 +1,9 @@
+error: tests/ui/type_import_alias_value.ql:13:5: cannot call value of type `Int`
+      current();
+      ^^^^^^^ callee here
+error: tests/ui/type_import_alias_value.ql:14:26: named call argument has type mismatch: expected `Int`, found `Bool`
+      plus(left: 1, right: true);
+                           ^^^^ expression here
+error: tests/ui/type_import_alias_value.ql:15:9: call argument has type mismatch: expected `Int`, found `String`
+      run("x");
+          ^^^ expression here
