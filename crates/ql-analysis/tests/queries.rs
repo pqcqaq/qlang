@@ -332,6 +332,39 @@ fn main(value: Cmd.Scope.Config) -> Cmd.Scope.Config {
 }
 
 #[test]
+fn function_hover_preserves_deferred_multi_segment_import_alias_type_paths() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Config {
+        retries: Int,
+    },
+}
+
+fn main(value: Cmd.Scope.Config) -> Cmd.Scope.Config {
+    let local_value = value
+    return local_value
+}
+"#;
+
+    let analysis = analyzed(source);
+    let function_hover = analysis
+        .hover_at(nth_offset(source, "main", 1))
+        .expect("function declaration should hover");
+
+    assert_eq!(function_hover.kind, SymbolKind::Function);
+    assert_eq!(
+        function_hover.detail,
+        "fn main(value: Cmd.Scope.Config) -> Cmd.Scope.Config"
+    );
+    assert_eq!(
+        function_hover.definition_span,
+        Some(nth_span(source, "main", 1))
+    );
+}
+
+#[test]
 fn hover_queries_report_items_imports_and_builtins() {
     let source = r#"
 use std.collections.HashMap as Map
