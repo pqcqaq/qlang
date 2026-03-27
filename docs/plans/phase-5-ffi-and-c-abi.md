@@ -59,6 +59,7 @@ Phase 5 的任务是建立最小但真实可用的 C ABI 互操作闭环，让 Q
 - C static-link harness
 - C dynamic-load harness
 - imported-host callback harness
+- Rust static-link harness（通过稳定 C ABI 直接消费 Qlang 导出）
 - per-fixture `.header-surface` metadata
 
 ## 当前架构收益
@@ -68,6 +69,7 @@ P5 现在已经建立：
 - Qlang <-> C 的最小闭环
 - header 与 library artifact 的统一 truth surface
 - 真实宿主集成测试，而不是只做字符串快照
+- Rust 宿主现在也已有最小静态链接闭环，可直接复用现有 C ABI surface
 
 ## 当前仍刻意保留的边界
 
