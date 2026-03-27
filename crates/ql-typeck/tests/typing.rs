@@ -1231,6 +1231,43 @@ fn main() -> Bool {
 }
 
 #[test]
+fn deferred_multi_segment_import_alias_types_do_not_canonicalize_to_local_items() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Command as Cmd
+
+enum Command {
+    Config {
+        retries: Int,
+    },
+}
+
+fn expects(value: Cmd.Scope.Config) -> Int {
+    return 0
+}
+
+fn returns(value: Command) -> Cmd.Scope.Config {
+    return value
+}
+
+fn main(command: Command) -> Int {
+    return expects(command)
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"return value has type mismatch: expected `Cmd.Scope.Config`, found `Command`".to_string()
+    ));
+    assert!(
+        diagnostics.contains(
+            &"call argument has type mismatch: expected `Cmd.Scope.Config`, found `Command`"
+                .to_string()
+        )
+    );
+}
+
+#[test]
 fn reports_pattern_root_type_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"

@@ -74,6 +74,7 @@ Phase 2 的目标不是一次做完完整类型系统，而是建立统一语义
 - bare path pattern 也只在“已解析且已知 bare path 形状必错”时显式报错；unit variant 保持允许
 - const/static bare path pattern 现在也显式报 unsupported，但只限 same-file root / same-file local import alias；更广义 constant-pattern 语义继续保守
 - unsupported 或仍 deferred 的 struct literal root 现在也回退成 `unknown`，避免继续制造级联 type mismatch
+- deferred multi-segment type path 现在也保持 source-backed `Named`，避免 same-file local item / import alias 的首段解析结果继续污染 type/query truth surface
 
 ### 4. 同文件查询与最小 LSP
 

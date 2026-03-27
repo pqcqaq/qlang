@@ -253,15 +253,19 @@ pub fn lower_type(module: &Module, resolution: &ResolutionMap, type_id: TypeId) 
                 .iter()
                 .map(|&arg| lower_type(module, resolution, arg))
                 .collect();
+            let path_text = path.segments.join(".");
+            let is_single_segment = path.segments.len() == 1;
             match resolution.type_resolution(type_id) {
-                Some(TypeResolution::Builtin(builtin)) => Ty::Builtin(*builtin),
-                Some(TypeResolution::Generic(_)) => Ty::Generic(path.segments.join(".")),
-                Some(TypeResolution::Item(item_id)) => Ty::Item {
+                Some(TypeResolution::Builtin(builtin)) if is_single_segment => {
+                    Ty::Builtin(*builtin)
+                }
+                Some(TypeResolution::Generic(_)) if is_single_segment => Ty::Generic(path_text),
+                Some(TypeResolution::Item(item_id)) if is_single_segment => Ty::Item {
                     item_id: *item_id,
                     name: item_display_name(module, *item_id),
                     args,
                 },
-                Some(TypeResolution::Import(import_binding)) => {
+                Some(TypeResolution::Import(import_binding)) if is_single_segment => {
                     if let Some(item_id) = local_item_for_import_binding(module, import_binding) {
                         Ty::Item {
                             item_id,
@@ -275,8 +279,12 @@ pub fn lower_type(module: &Module, resolution: &ResolutionMap, type_id: TypeId) 
                         }
                     }
                 }
-                None => Ty::Named {
-                    path: path.segments.join("."),
+                Some(TypeResolution::Builtin(_))
+                | Some(TypeResolution::Generic(_))
+                | Some(TypeResolution::Item(_))
+                | Some(TypeResolution::Import(_))
+                | None => Ty::Named {
+                    path: path_text,
                     args,
                 },
             }

@@ -266,6 +266,7 @@
 - projection receiver diagnostics 也先只覆盖“已知必错”的类型，不拿 generic / unresolved / module-path deferred case 冒进报错
 - struct-literal root diagnostics 也先只覆盖“root 已解析成功且构造形状已知必错”的 case；same-file 已解析二段 enum variant path 的 unknown variant 现在也会升级成显式错误，但 deeper module-path 仍不提前下结论
 - unsupported 或仍 deferred 的 struct literal root 也直接回退成 `unknown`，避免把首段解析结果伪装成稳定 item type 后继续触发级联 type mismatch
+- deferred multi-segment type path 也保持 source-backed `Named`，不把 same-file local item / import alias 的首段解析结果误升级成稳定 concrete type
 - pattern-root shape diagnostics 也先只覆盖“pattern root 已解析成功且构造形状已知必错”的 case；same-file 已解析二段 enum variant path 的 unknown variant 现在也会升级成显式错误，但 path-pattern semantics / deeper module-path 仍不提前下结论
 - bare path-pattern diagnostics 也先只覆盖“path root 已解析成功且 bare path 形状已知必错”的 case；unit variant 保持允许，同文件已解析二段 enum variant path 的 unknown variant 与 const/static pattern 语义现在会显式报错，但 cross-file / deeper module-path 仍继续保守
 - const/static bare path-pattern diagnostics 也先只覆盖 same-file root 与 same-file local import alias，不把 cross-file constant semantics 误写成已完成

@@ -305,6 +305,33 @@ impl Counter {
 }
 
 #[test]
+fn local_hover_preserves_deferred_multi_segment_import_alias_type_paths() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Config {
+        retries: Int,
+    },
+}
+
+fn main(value: Cmd.Scope.Config) -> Cmd.Scope.Config {
+    let local_value = value
+    return local_value
+}
+"#;
+
+    let analysis = analyzed(source);
+    let local_hover = analysis
+        .hover_at(nth_offset(source, "local_value", 2))
+        .expect("local hover should exist");
+
+    assert_eq!(local_hover.kind, SymbolKind::Local);
+    assert_eq!(local_hover.detail, "local local_value: Cmd.Scope.Config");
+    assert_eq!(local_hover.ty.as_deref(), Some("Cmd.Scope.Config"));
+}
+
+#[test]
 fn hover_queries_report_items_imports_and_builtins() {
     let source = r#"
 use std.collections.HashMap as Map
