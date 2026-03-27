@@ -766,6 +766,7 @@ P6 当前仍刻意未完成：
 - `ql-codegen-llvm` 已补上 `AsyncTaskResultLayout` 内部抽象：当前 async 结果先只接受 `Void` 和已支持的 scalar builtin，并在 signature 阶段就锁定 payload 的 LLVM type/size/align，避免后续 `await` lowering 再反过来重写 async wrapper/result 合同
 - `ql-codegen-llvm` 已打开首个真实 `await` lowering：当前在 backend 内仅支持 `Void` / scalar builtin async 结果，并把 `await` 降成 `qlrt_task_await` + optional scalar load + `qlrt_task_result_release` 的最小链路
 - `ql-driver` 已开放第一条 public async build 子集：`staticlib` 现在允许已被 backend 支持的 async library body 与 scalar/void `await` 通过，`for await` 在 staticlib 上也不再额外泄露 `async fn` runtime 噪声
+- `ql-driver` / `ql-cli` 已补上 async staticlib mixed-surface 回归：带内部 async helper 的库现在也锁住了 `extern "c"` export header sidecar 路径，确保公开 C header surface 不会被 async implementation details 污染
 - `ql-typeck` 已把 direct async call 语义收紧到显式边界：当前 `async fn` 调用只能被 `await` 或 `spawn` 直接消费，独立使用 async call 结果会给出稳定诊断，避免语义层继续把 async 调用伪装成同步返回值
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前共享 hook ABI 已冻结第一版 LLVM-facing contract string，但真实内存布局、结果传递协议和更细粒度调用约定仍未冻结

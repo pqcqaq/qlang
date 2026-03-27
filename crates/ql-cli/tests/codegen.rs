@@ -109,6 +109,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "ffi_export_async_staticlib_with_header",
+            source_relative: "fixtures/codegen/pass/ffi_export_async.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: Some("exports"),
+            expected_header_relative: Some("tests/codegen/pass/ffi_export_async.h"),
+        },
+        PassCase {
             name: "extern_c_library_staticlib",
             source_relative: "fixtures/codegen/pass/extern_c_library.ql",
             emit: "staticlib",

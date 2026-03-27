@@ -1267,6 +1267,79 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_async_export_header_sidecar() {
+        let dir = TestDir::new("ql-driver-staticlib-async-export-header");
+        let source = dir.write(
+            "ffi_export_async.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    return await worker()
+}
+
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/ffi_export_async.lib"
+        } else {
+            "artifacts/libffi_export_async.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: Some(BuildCHeaderOptions {
+                output: None,
+                surface: CHeaderSurface::Exports,
+            }),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("static library build with async helpers and export header should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+        let header = artifact
+            .c_header
+            .expect("static library build should return a generated export header");
+        let header_rendered = fs::read_to_string(&header.path).expect("read generated header");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+        assert_eq!(header.path, dir.path().join("artifacts/ffi_export_async.h"));
+        assert_eq!(header.surface, CHeaderSurface::Exports);
+        assert_eq!(header.exported_functions, 1);
+        assert_eq!(header.imported_functions, 0);
+        assert!(header_rendered.contains("#ifndef QLANG_FFI_EXPORT_ASYNC_H"));
+        assert!(header_rendered.contains("int64_t q_add(int64_t left, int64_t right);"));
+        assert!(!header_rendered.contains("worker"));
+        assert!(!header_rendered.contains("helper"));
+        let leftovers = fs::read_dir(output.parent().expect("output should have a parent"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen."))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "successful async export static library emission should clean up intermediate artifacts"
+        );
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_import_header_sidecar() {
         let dir = TestDir::new("ql-driver-staticlib-import-header");
         let source = dir.write(

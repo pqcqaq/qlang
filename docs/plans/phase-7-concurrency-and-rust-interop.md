@@ -65,6 +65,7 @@
 - 已在 `ql-codegen-llvm` 增补 `AsyncTaskResultLayout` 内部抽象：当前先把 async 返回值限制在 `Void` 或已支持的 scalar builtin 上，提前冻结“`qlrt_task_await` 返回的 opaque ptr 指向原生标量 payload，取值后再调用 `qlrt_task_result_release`”这条 backend 内部假设；聚合类型仍保持未开放，避免过早承诺结果布局
 - 已在 `ql-codegen-llvm` 打开首个真实 `await` lowering：当前在 backend 内仅支持 `Void` / scalar builtin async 结果，把 `await <async-call>` 降成“读取 task handle -> `qlrt_task_await` -> 如有标量则 load -> `qlrt_task_result_release`”；仍不开放 `spawn` lowering、`for await` lowering、聚合结果 payload 或对外 async build 入口
 - 已在 `ql-driver` 放开第一条 public async build 子集：`staticlib` 现在允许已被 backend 支持的 async library body + scalar/void `await` 通过构建；`spawn`、`for await`、聚合 async result、`dylib` async 与 program async 入口仍保持保守拒绝
+- 已补充 `ql-driver` / `ql-cli` 的 mixed-surface 回归：当前 `staticlib` 的 async library subset 已被黑盒锁住可与 `extern "c"` export header sidecar 共存，保证异步内部 helper 不会污染公开 C header surface
 - 已在 `ql-typeck` 收紧 direct async call 语义：`async fn` 调用当前只能作为 `await <call>` 或 `spawn <call>` 的直接 operand 使用，独立使用 async call 结果会给出显式诊断，避免在 task/result ABI 未冻结前把 async 调用误当成同步返回值
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
