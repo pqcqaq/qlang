@@ -1917,6 +1917,40 @@ fn main() -> Int {
 }
 
 #[test]
+fn references_bridge_stays_empty_on_deeper_variant_like_member_paths() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Retry(Int),
+    Stop,
+}
+
+fn main() -> Int {
+    let direct = Command.Retry.Stop
+    let alias = Cmd.Retry.Stop
+    return 0
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for position in [
+        span_to_range(source, nth_span(source, "Stop", 2)).start,
+        span_to_range(source, nth_span(source, "Stop", 3)).start,
+    ] {
+        assert_eq!(
+            references_for_analysis(&uri, source, &analysis, position, true),
+            None
+        );
+        assert_eq!(
+            references_for_analysis(&uri, source, &analysis, position, false),
+            None
+        );
+    }
+}
+
+#[test]
 fn definition_bridge_stays_empty_on_deeper_struct_literal_and_pattern_variant_paths() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
