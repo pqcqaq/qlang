@@ -2114,18 +2114,22 @@ async fn helper() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_async_struct_result_layout_diagnostics_without_runtime_noise() {
-        let dir = TestDir::new("ql-driver-async-library-result-layout");
+    fn build_file_writes_static_library_with_async_struct_results() {
+        let dir = TestDir::new("ql-driver-staticlib-async-struct");
         let source = dir.write(
             "async_struct_result_library.ql",
             r#"
 struct Pair {
-    left: Int,
+    left: Bool,
     right: Int,
 }
 
 async fn worker() -> Pair {
-    return Pair { left: 1, right: 2 }
+    return Pair { right: 42, left: true }
+}
+
+async fn helper() -> Pair {
+    return await worker()
 }
 "#,
         );
@@ -2135,29 +2139,65 @@ async fn worker() -> Pair {
             "artifacts/libasync_struct_result_library.a"
         });
 
-        let error = build_file(
+        build_file(
             &source,
             &BuildOptions {
                 emit: BuildEmit::StaticLibrary,
                 profile: BuildProfile::Debug,
-                output: Some(output),
+                output: Some(output.clone()),
                 c_header: None,
-                toolchain: ToolchainOptions::default(),
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
             },
         )
-        .expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("async library result-layout rejection should return diagnostics");
+        .expect("static library build with async struct results should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
 
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message
-                == "LLVM IR backend foundation does not support async task result type `Pair` yet"
-        }));
-        assert!(diagnostics.iter().all(|diagnostic| {
-            diagnostic.message != "LLVM IR backend foundation does not support `async fn` yet"
-                && diagnostic.message != "LLVM IR backend foundation does not support `await` yet"
-        }));
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_async_array_results() {
+        let dir = TestDir::new("ql-driver-staticlib-async-array");
+        let source = dir.write(
+            "async_array_result_library.ql",
+            r#"
+async fn worker() -> [Int; 3] {
+    return [1, 2, 3]
+}
+
+async fn helper() -> [Int; 3] {
+    return await worker()
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_array_result_library.lib"
+        } else {
+            "artifacts/libasync_array_result_library.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with async array results should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
     }
 
     #[test]

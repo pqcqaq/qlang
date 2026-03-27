@@ -11,7 +11,7 @@ use ql_mir::{
     self as mir, BodyOwner, Constant, LocalOrigin, Operand, Place, Rvalue, StatementKind,
     TerminatorKind,
 };
-use ql_resolve::{BuiltinType, ResolutionMap};
+use ql_resolve::{BuiltinType, ResolutionMap, TypeResolution};
 use ql_runtime::{RuntimeHook, RuntimeHookSignature};
 use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, lower_type};
@@ -129,9 +129,40 @@ struct LoadableAbiLayout {
 }
 
 #[derive(Clone, Debug)]
+struct StructFieldLowering {
+    name: String,
+    ty: Ty,
+    llvm_ty: String,
+}
+
+#[derive(Clone, Debug)]
 struct AsyncTaskHandleInfo {
     result_ty: Ty,
     result_layout: AsyncTaskResultLayout,
+}
+
+#[derive(Clone, Debug)]
+enum ResolvedProjectionStep {
+    Field { index: usize, ty: Ty },
+    TupleIndex { index: usize, ty: Ty },
+    ArrayIndex { ty: Ty },
+}
+
+impl ResolvedProjectionStep {
+    fn output_ty(&self) -> Ty {
+        match self {
+            Self::Field { ty, .. } | Self::TupleIndex { ty, .. } | Self::ArrayIndex { ty } => {
+                ty.clone()
+            }
+        }
+    }
+}
+
+struct TypeInferenceContext<'a> {
+    body: &'a mir::MirBody,
+    local_types: &'a HashMap<mir::LocalId, Ty>,
+    async_task_handles: &'a HashMap<mir::LocalId, AsyncTaskHandleInfo>,
+    diagnostics: &'a mut Vec<Diagnostic>,
 }
 
 struct ModuleEmitter<'a> {
@@ -341,7 +372,7 @@ impl<'a> ModuleEmitter<'a> {
             match param {
                 Param::Regular(param) => {
                     let ty = lower_type(self.input.hir, self.input.resolution, param.ty);
-                    match lower_llvm_type(&ty, param.name_span, "parameter type") {
+                    match self.lower_llvm_type(&ty, param.name_span, "parameter type") {
                         Ok(llvm_ty) => params.push(ParamSignature {
                             name: param.name.clone(),
                             ty,
@@ -374,7 +405,7 @@ impl<'a> ModuleEmitter<'a> {
             .unwrap_or_else(void_ty);
         let (body_return_llvm_ty, async_result_layout) =
             if function.is_async && body_style == FunctionBodyStyle::Definition {
-                match build_async_task_result_layout(&body_return_ty, function.span) {
+                match self.build_async_task_result_layout(&body_return_ty, function.span) {
                     Ok(layout) => (layout.body_llvm_ty().to_owned(), Some(layout)),
                     Err(error) => {
                         diagnostics.push(error);
@@ -382,7 +413,7 @@ impl<'a> ModuleEmitter<'a> {
                     }
                 }
             } else {
-                match lower_llvm_type(&body_return_ty, function.span, "return type") {
+                match self.lower_llvm_type(&body_return_ty, function.span, "return type") {
                     Ok(llvm_ty) => (llvm_ty, None),
                     Err(error) => {
                         diagnostics.push(error);
@@ -530,14 +561,16 @@ impl<'a> ModuleEmitter<'a> {
                         if unsupported_for_iterable_locals.contains(&place.base) {
                             continue;
                         }
-                        if let Some(ty) = self.infer_rvalue_type(
+                        let expected_ty = local_types.get(&place.base);
+                        let mut infer = TypeInferenceContext {
                             body,
-                            value,
-                            &local_types,
-                            &async_task_handles,
-                            &mut diagnostics,
-                            statement.span,
-                        ) {
+                            local_types: &local_types,
+                            async_task_handles: &async_task_handles,
+                            diagnostics: &mut diagnostics,
+                        };
+                        if let Some(ty) =
+                            self.infer_rvalue_type(value, expected_ty, &mut infer, statement.span)
+                        {
                             local_types.entry(place.base).or_insert(ty);
                         }
                     }
@@ -555,14 +588,13 @@ impl<'a> ModuleEmitter<'a> {
                         );
                     }
                     StatementKind::Eval { value } => {
-                        let _ = self.infer_rvalue_type(
+                        let mut infer = TypeInferenceContext {
                             body,
-                            value,
-                            &local_types,
-                            &async_task_handles,
-                            &mut diagnostics,
-                            statement.span,
-                        );
+                            local_types: &local_types,
+                            async_task_handles: &async_task_handles,
+                            diagnostics: &mut diagnostics,
+                        };
+                        let _ = self.infer_rvalue_type(value, None, &mut infer, statement.span);
                     }
                     StatementKind::StorageLive { .. } | StatementKind::StorageDead { .. } => {}
                     StatementKind::RegisterCleanup { .. } | StatementKind::RunCleanup { .. } => {
@@ -631,7 +663,7 @@ impl<'a> ModuleEmitter<'a> {
             if !should_validate_local_types || is_void_ty(ty) {
                 continue;
             }
-            if let Err(error) = lower_llvm_type(ty, body.local(local_id).span, "local type") {
+            if let Err(error) = self.lower_llvm_type(ty, body.local(local_id).span, "local type") {
                 diagnostics.push(error);
             }
         }
@@ -740,7 +772,7 @@ impl<'a> ModuleEmitter<'a> {
         let Some(Ty::TaskHandle(result_ty)) = local_types.get(&local_id) else {
             return None;
         };
-        match build_async_task_result_layout(result_ty, span) {
+        match self.build_async_task_result_layout(result_ty, span) {
             Ok(result_layout) => Some(AsyncTaskHandleInfo {
                 result_ty: (**result_ty).clone(),
                 result_layout,
@@ -754,42 +786,40 @@ impl<'a> ModuleEmitter<'a> {
 
     fn infer_rvalue_type(
         &self,
-        body: &mir::MirBody,
         value: &Rvalue,
-        local_types: &HashMap<mir::LocalId, Ty>,
-        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
-        diagnostics: &mut Vec<Diagnostic>,
+        expected_ty: Option<&Ty>,
+        ctx: &mut TypeInferenceContext<'_>,
         span: Span,
     ) -> Option<Ty> {
         match value {
             Rvalue::Use(operand) => self.infer_operand_type(
-                body,
+                ctx.body,
                 operand,
-                local_types,
-                async_task_handles,
-                diagnostics,
+                ctx.local_types,
+                ctx.async_task_handles,
+                ctx.diagnostics,
                 span,
             ),
             Rvalue::Call { callee, args } => {
                 for arg in args {
                     if arg.name.is_some() {
-                        diagnostics.push(unsupported(
+                        ctx.diagnostics.push(unsupported(
                             span,
                             "LLVM IR backend foundation does not support named call arguments yet",
                         ));
                     }
                     let _ = self.infer_operand_type(
-                        body,
+                        ctx.body,
                         &arg.value,
-                        local_types,
-                        async_task_handles,
-                        diagnostics,
+                        ctx.local_types,
+                        ctx.async_task_handles,
+                        ctx.diagnostics,
                         span,
                     );
                 }
 
                 let Operand::Constant(Constant::Function { function, .. }) = callee else {
-                    diagnostics.push(unsupported(
+                    ctx.diagnostics.push(unsupported(
                         span,
                         "LLVM IR backend foundation only supports direct resolved function calls",
                     ));
@@ -797,7 +827,7 @@ impl<'a> ModuleEmitter<'a> {
                 };
 
                 let Some(signature) = self.signatures.get(function) else {
-                    diagnostics.push(unsupported(
+                    ctx.diagnostics.push(unsupported(
                         span,
                         "LLVM IR backend foundation could not resolve the direct callee declaration",
                     ));
@@ -812,37 +842,37 @@ impl<'a> ModuleEmitter<'a> {
             }
             Rvalue::Binary { left, op, right } => {
                 let left_ty = self.infer_operand_type(
-                    body,
+                    ctx.body,
                     left,
-                    local_types,
-                    async_task_handles,
-                    diagnostics,
+                    ctx.local_types,
+                    ctx.async_task_handles,
+                    ctx.diagnostics,
                     span,
                 )?;
                 let right_ty = self.infer_operand_type(
-                    body,
+                    ctx.body,
                     right,
-                    local_types,
-                    async_task_handles,
-                    diagnostics,
+                    ctx.local_types,
+                    ctx.async_task_handles,
+                    ctx.diagnostics,
                     span,
                 )?;
-                self.validate_binary_operands(*op, &left_ty, &right_ty, span, diagnostics)
+                self.validate_binary_operands(*op, &left_ty, &right_ty, span, ctx.diagnostics)
             }
             Rvalue::Unary { op, operand } => match op {
                 UnaryOp::Neg => {
                     let operand_ty = self.infer_operand_type(
-                        body,
+                        ctx.body,
                         operand,
-                        local_types,
-                        async_task_handles,
-                        diagnostics,
+                        ctx.local_types,
+                        ctx.async_task_handles,
+                        ctx.diagnostics,
                         span,
                     )?;
                     if is_numeric_ty(&operand_ty) {
                         Some(operand_ty)
                     } else {
-                        diagnostics.push(unsupported(
+                        ctx.diagnostics.push(unsupported(
                             span,
                             "LLVM IR backend foundation only supports numeric negation",
                         ));
@@ -851,14 +881,14 @@ impl<'a> ModuleEmitter<'a> {
                 }
                 UnaryOp::Await => {
                     if !self.has_runtime_hook(RuntimeHook::TaskAwait) {
-                        diagnostics.push(unsupported(
+                        ctx.diagnostics.push(unsupported(
                                 span,
                                 "LLVM IR backend foundation requires the `task-await` runtime hook before lowering `await` expressions",
                             ));
                         return None;
                     }
                     if !self.has_runtime_hook(RuntimeHook::TaskResultRelease) {
-                        diagnostics.push(unsupported(
+                        ctx.diagnostics.push(unsupported(
                                 span,
                                 "LLVM IR backend foundation requires the `task-result-release` runtime hook before lowering `await` expressions",
                             ));
@@ -866,24 +896,24 @@ impl<'a> ModuleEmitter<'a> {
                     }
 
                     let Operand::Place(place) = operand else {
-                        diagnostics.push(unsupported(
+                        ctx.diagnostics.push(unsupported(
                                 span,
                                 "LLVM IR backend foundation currently requires `await` operands to lower through a task-handle place",
                             ));
                         return None;
                     };
-                    self.require_direct_place(span, place, diagnostics);
+                    self.require_direct_place(span, place, ctx.diagnostics);
 
                     self.resolve_task_handle_info(
                         place.base,
-                        local_types,
-                        async_task_handles,
-                        diagnostics,
+                        ctx.local_types,
+                        ctx.async_task_handles,
+                        ctx.diagnostics,
                         span,
                     )
                     .map(|handle| handle.result_ty)
                     .or_else(|| {
-                        diagnostics.push(unsupported(
+                        ctx.diagnostics.push(unsupported(
                             span,
                             "LLVM IR backend foundation could not resolve the async task handle consumed by `await`",
                         ));
@@ -892,7 +922,7 @@ impl<'a> ModuleEmitter<'a> {
                 }
                 UnaryOp::Spawn => {
                     if !self.has_runtime_hook(RuntimeHook::ExecutorSpawn) {
-                        diagnostics.push(unsupported(
+                        ctx.diagnostics.push(unsupported(
                             span,
                             "LLVM IR backend foundation requires the `executor-spawn` runtime hook before lowering `spawn` expressions",
                         ));
@@ -900,24 +930,24 @@ impl<'a> ModuleEmitter<'a> {
                     }
 
                     let Operand::Place(place) = operand else {
-                        diagnostics.push(unsupported(
+                        ctx.diagnostics.push(unsupported(
                             span,
                             "LLVM IR backend foundation currently requires `spawn` operands to lower through a task-handle place",
                         ));
                         return None;
                     };
-                    self.require_direct_place(span, place, diagnostics);
+                    self.require_direct_place(span, place, ctx.diagnostics);
 
                     self.resolve_task_handle_info(
                         place.base,
-                        local_types,
-                        async_task_handles,
-                        diagnostics,
+                        ctx.local_types,
+                        ctx.async_task_handles,
+                        ctx.diagnostics,
                         span,
                     )
                     .map(|handle| Ty::TaskHandle(Box::new(handle.result_ty)))
                     .or_else(|| {
-                        diagnostics.push(unsupported(
+                        ctx.diagnostics.push(unsupported(
                             span,
                             "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`",
                         ));
@@ -929,52 +959,179 @@ impl<'a> ModuleEmitter<'a> {
                 let mut item_types = Vec::with_capacity(items.len());
                 for item in items {
                     item_types.push(self.infer_operand_type(
-                        body,
+                        ctx.body,
                         item,
-                        local_types,
-                        async_task_handles,
-                        diagnostics,
+                        ctx.local_types,
+                        ctx.async_task_handles,
+                        ctx.diagnostics,
                         span,
                     )?);
                 }
                 Some(Ty::Tuple(item_types))
             }
-            Rvalue::Array(_) => {
-                diagnostics.push(unsupported(
-                    span,
-                    "LLVM IR backend foundation does not support array values yet",
-                ));
-                None
-            }
-            Rvalue::AggregateStruct { .. } => {
-                diagnostics.push(unsupported(
-                    span,
-                    "LLVM IR backend foundation does not support struct values yet",
-                ));
-                None
+            Rvalue::Array(items) => self.infer_array_rvalue_type(items, expected_ty, ctx, span),
+            Rvalue::AggregateStruct { path, fields } => {
+                self.infer_struct_rvalue_type(path, fields, expected_ty, ctx, span)
             }
             Rvalue::Closure { .. } => {
-                diagnostics.push(unsupported(
+                ctx.diagnostics.push(unsupported(
                     span,
                     "LLVM IR backend foundation does not support closure values yet",
                 ));
                 None
             }
             Rvalue::Question(_) => {
-                diagnostics.push(unsupported(
+                ctx.diagnostics.push(unsupported(
                     span,
                     "LLVM IR backend foundation does not support `?` lowering yet",
                 ));
                 None
             }
             Rvalue::OpaqueExpr(_) => {
-                diagnostics.push(unsupported(
+                ctx.diagnostics.push(unsupported(
                     span,
                     "LLVM IR backend foundation encountered an opaque expression that still needs MIR elaboration",
                 ));
                 None
             }
         }
+    }
+
+    fn infer_struct_rvalue_type(
+        &self,
+        path: &ql_ast::Path,
+        fields: &[mir::AggregateField],
+        expected_ty: Option<&Ty>,
+        ctx: &mut TypeInferenceContext<'_>,
+        span: Span,
+    ) -> Option<Ty> {
+        let struct_ty = expected_ty
+            .filter(|ty| matches!(ty, Ty::Item { .. }))
+            .cloned()
+            .or_else(|| self.resolve_local_struct_path(path));
+        let Some(struct_ty) = struct_ty else {
+            ctx.diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation could not resolve the struct type for this aggregate value",
+            ));
+            return None;
+        };
+
+        let field_layouts = match self.struct_field_lowerings(&struct_ty, span, "struct value type")
+        {
+            Ok(layouts) => layouts,
+            Err(error) => {
+                ctx.diagnostics.push(error);
+                return None;
+            }
+        };
+
+        for field in fields {
+            let Some(expected_field) = field_layouts.iter().find(|info| info.name == field.name)
+            else {
+                ctx.diagnostics.push(unsupported(
+                    span,
+                    "LLVM IR backend foundation encountered a struct field that was not present in the lowered declaration",
+                ));
+                continue;
+            };
+            let Some(actual_ty) = self.infer_operand_type(
+                ctx.body,
+                &field.value,
+                ctx.local_types,
+                ctx.async_task_handles,
+                ctx.diagnostics,
+                span,
+            ) else {
+                continue;
+            };
+            if !expected_field.ty.compatible_with(&actual_ty) {
+                ctx.diagnostics.push(unsupported(
+                    span,
+                    "LLVM IR backend foundation encountered a struct field value whose lowered type did not match the declaration",
+                ));
+            }
+        }
+
+        Some(struct_ty)
+    }
+
+    fn infer_array_rvalue_type(
+        &self,
+        items: &[Operand],
+        expected_ty: Option<&Ty>,
+        ctx: &mut TypeInferenceContext<'_>,
+        span: Span,
+    ) -> Option<Ty> {
+        let expected_array = match expected_ty {
+            Some(Ty::Array { element, len }) => Some((element.as_ref().clone(), *len)),
+            _ => None,
+        };
+        if let Some((_, expected_len)) = expected_array.as_ref()
+            && items.len() != *expected_len
+        {
+            ctx.diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation encountered an array literal whose length no longer matches the expected array type",
+            ));
+            return None;
+        }
+        if items.is_empty() && expected_array.is_none() {
+            ctx.diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation cannot infer the element type of an empty array literal without an expected array type",
+            ));
+            return None;
+        }
+
+        let mut element_ty = expected_array
+            .as_ref()
+            .map(|(element, _)| element.clone())
+            .unwrap_or(Ty::Unknown);
+        for item in items {
+            let item_ty = self.infer_operand_type(
+                ctx.body,
+                item,
+                ctx.local_types,
+                ctx.async_task_handles,
+                ctx.diagnostics,
+                span,
+            )?;
+
+            if expected_array.is_none() && element_ty.is_unknown() && !item_ty.is_unknown() {
+                element_ty = item_ty;
+                continue;
+            }
+
+            if item_ty.is_unknown() {
+                continue;
+            }
+
+            let expected_element = expected_array
+                .as_ref()
+                .map(|(element, _)| element)
+                .unwrap_or(&element_ty);
+            if !expected_element.compatible_with(&item_ty) {
+                ctx.diagnostics.push(unsupported(
+                    span,
+                    "LLVM IR backend foundation currently requires array literals to lower to one compatible element type",
+                ));
+                return None;
+            }
+        }
+
+        if element_ty.is_unknown() {
+            ctx.diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation could not resolve the element type of this array literal",
+            ));
+            return None;
+        }
+
+        Some(Ty::Array {
+            element: Box::new(element_ty),
+            len: items.len(),
+        })
     }
 
     fn infer_operand_type(
@@ -987,24 +1144,14 @@ impl<'a> ModuleEmitter<'a> {
         span: Span,
     ) -> Option<Ty> {
         match operand {
-            Operand::Place(place) => {
-                self.require_direct_place(span, place, diagnostics);
-                local_types.get(&place.base).cloned().or_else(|| {
-                    if let Some(handle) = async_task_handles.get(&place.base) {
-                        return Some(Ty::TaskHandle(Box::new(handle.result_ty.clone())));
-                    }
-                    if diagnostics.is_empty() {
-                        diagnostics.push(
-                            Diagnostic::error(format!(
-                                "could not resolve LLVM type for local `{}`",
-                                body.local(place.base).name
-                            ))
-                            .with_label(Label::new(span)),
-                        );
-                    }
-                    None
-                })
-            }
+            Operand::Place(place) => self.infer_place_type(
+                body,
+                place,
+                local_types,
+                async_task_handles,
+                diagnostics,
+                span,
+            ),
             Operand::Constant(constant) => match constant {
                 Constant::Integer(_) => Some(Ty::Builtin(BuiltinType::Int)),
                 Constant::Bool(_) => Some(Ty::Builtin(BuiltinType::Bool)),
@@ -1053,6 +1200,194 @@ impl<'a> ModuleEmitter<'a> {
                 }
             },
         }
+    }
+
+    fn infer_place_type(
+        &self,
+        body: &mir::MirBody,
+        place: &Place,
+        local_types: &HashMap<mir::LocalId, Ty>,
+        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
+        diagnostics: &mut Vec<Diagnostic>,
+        span: Span,
+    ) -> Option<Ty> {
+        let mut current_ty = self.resolve_place_base_type(
+            body,
+            place,
+            local_types,
+            async_task_handles,
+            diagnostics,
+            span,
+        )?;
+
+        for projection in &place.projections {
+            if let mir::ProjectionElem::Index(index) = projection {
+                let index_ty = self.infer_operand_type(
+                    body,
+                    index,
+                    local_types,
+                    async_task_handles,
+                    diagnostics,
+                    span,
+                )?;
+                if !index_ty.is_unknown()
+                    && !Ty::Builtin(BuiltinType::Int).compatible_with(&index_ty)
+                {
+                    diagnostics.push(unsupported(
+                        span,
+                        format!(
+                            "LLVM IR backend foundation currently requires index projections to use `Int`, found `{index_ty}`"
+                        ),
+                    ));
+                    return None;
+                }
+            }
+
+            let step = match self.resolve_projection_step(&current_ty, projection, span) {
+                Ok(step) => step,
+                Err(error) => {
+                    diagnostics.push(error);
+                    return None;
+                }
+            };
+            current_ty = step.output_ty();
+        }
+
+        Some(current_ty)
+    }
+
+    fn resolve_place_base_type(
+        &self,
+        body: &mir::MirBody,
+        place: &Place,
+        local_types: &HashMap<mir::LocalId, Ty>,
+        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
+        diagnostics: &mut Vec<Diagnostic>,
+        span: Span,
+    ) -> Option<Ty> {
+        local_types.get(&place.base).cloned().or_else(|| {
+            if let Some(handle) = async_task_handles.get(&place.base) {
+                return Some(Ty::TaskHandle(Box::new(handle.result_ty.clone())));
+            }
+            if diagnostics.is_empty() {
+                diagnostics.push(
+                    Diagnostic::error(format!(
+                        "could not resolve LLVM type for local `{}`",
+                        body.local(place.base).name
+                    ))
+                    .with_label(Label::new(span)),
+                );
+            }
+            None
+        })
+    }
+
+    fn resolve_projection_step(
+        &self,
+        current_ty: &Ty,
+        projection: &mir::ProjectionElem,
+        span: Span,
+    ) -> Result<ResolvedProjectionStep, Diagnostic> {
+        match projection {
+            mir::ProjectionElem::Field(field) => {
+                let (index, field) = self.struct_field_projection(current_ty, field, span)?;
+                Ok(ResolvedProjectionStep::Field {
+                    index,
+                    ty: field.ty,
+                })
+            }
+            mir::ProjectionElem::TupleIndex(index) => match current_ty {
+                Ty::Tuple(items) => items
+                    .get(*index)
+                    .cloned()
+                    .map(|ty| ResolvedProjectionStep::TupleIndex { index: *index, ty })
+                    .ok_or_else(|| {
+                        unsupported(
+                            span,
+                            format!(
+                                "LLVM IR backend foundation could not project tuple index `{index}` from `{current_ty}`"
+                            ),
+                        )
+                    }),
+                _ => Err(unsupported(
+                    span,
+                    format!(
+                        "LLVM IR backend foundation does not support tuple projection on `{current_ty}` yet"
+                    ),
+                )),
+            },
+            mir::ProjectionElem::Index(index) => match current_ty {
+                Ty::Array { element, .. } => Ok(ResolvedProjectionStep::ArrayIndex {
+                    ty: element.as_ref().clone(),
+                }),
+                Ty::Tuple(items) => {
+                    let index = self.parse_tuple_projection_index(index, current_ty, span)?;
+                    items.get(index).cloned().map_or_else(
+                        || {
+                            Err(unsupported(
+                                span,
+                                format!(
+                                    "LLVM IR backend foundation could not project tuple index `{index}` from `{current_ty}`"
+                                ),
+                            ))
+                        },
+                        |ty| Ok(ResolvedProjectionStep::TupleIndex { index, ty }),
+                    )
+                }
+                _ => Err(unsupported(
+                    span,
+                    format!(
+                        "LLVM IR backend foundation does not support index projection on `{current_ty}` yet"
+                    ),
+                )),
+            },
+        }
+    }
+
+    fn struct_field_projection(
+        &self,
+        ty: &Ty,
+        field: &str,
+        span: Span,
+    ) -> Result<(usize, StructFieldLowering), Diagnostic> {
+        let fields = self.struct_field_lowerings(ty, span, "field projection")?;
+        fields
+            .into_iter()
+            .enumerate()
+            .find(|(_, candidate)| candidate.name == field)
+            .ok_or_else(|| {
+                unsupported(
+                    span,
+                    format!(
+                        "LLVM IR backend foundation could not resolve field `{field}` on `{ty}`"
+                    ),
+                )
+            })
+    }
+
+    fn parse_tuple_projection_index(
+        &self,
+        index: &Operand,
+        current_ty: &Ty,
+        span: Span,
+    ) -> Result<usize, Diagnostic> {
+        let Operand::Constant(Constant::Integer(raw)) = index else {
+            return Err(unsupported(
+                span,
+                format!(
+                    "LLVM IR backend foundation currently requires tuple projection on `{current_ty}` to use an integer literal index"
+                ),
+            ));
+        };
+
+        ql_ast::parse_usize_literal(raw).ok_or_else(|| {
+            unsupported(
+                span,
+                format!(
+                    "LLVM IR backend foundation currently requires tuple projection on `{current_ty}` to use a non-negative integer literal index"
+                ),
+            )
+        })
     }
 
     fn validate_binary_operands(
@@ -1428,7 +1763,8 @@ impl<'a> ModuleEmitter<'a> {
             if is_void_ty(ty) {
                 continue;
             }
-            let llvm_ty = lower_llvm_type(ty, body.local(local_id).span, "local type")
+            let llvm_ty = self
+                .lower_llvm_type(ty, body.local(local_id).span, "local type")
                 .expect("prepared local types should already be supported");
             let _ = writeln!(
                 output,
@@ -1496,6 +1832,231 @@ impl<'a> ModuleEmitter<'a> {
 
         output.push_str("}\n");
     }
+
+    fn build_async_task_result_layout(
+        &self,
+        ty: &Ty,
+        span: Span,
+    ) -> Result<AsyncTaskResultLayout, Diagnostic> {
+        if is_void_ty(ty) {
+            return Ok(AsyncTaskResultLayout::Void);
+        }
+
+        let llvm_ty = self.lower_llvm_type(ty, span, "async task result type")?;
+        let layout = self.loadable_abi_layout(ty, span, "async task result type")?;
+
+        Ok(AsyncTaskResultLayout::Loadable {
+            llvm_ty,
+            size: layout.size,
+            align: layout.align,
+        })
+    }
+
+    fn lower_llvm_type(&self, ty: &Ty, span: Span, context: &str) -> Result<String, Diagnostic> {
+        match ty {
+            Ty::Array { element, len } => {
+                let element_llvm_ty = self.lower_llvm_type(element, span, context)?;
+                Ok(format!("[{len} x {element_llvm_ty}]"))
+            }
+            Ty::Tuple(items) => {
+                if items.iter().any(is_void_ty) {
+                    return Err(Diagnostic::error(format!(
+                        "LLVM IR backend foundation does not support {context} `{ty}` yet"
+                    ))
+                    .with_label(Label::new(span)));
+                }
+
+                let field_types = items
+                    .iter()
+                    .map(|item| self.lower_llvm_type(item, span, context))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("{{ {} }}", field_types.join(", ")))
+            }
+            Ty::Item { .. } => {
+                let fields = self.struct_field_lowerings(ty, span, context)?;
+                Ok(format!(
+                    "{{ {} }}",
+                    fields
+                        .iter()
+                        .map(|field| field.llvm_ty.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            }
+            _ => lower_llvm_type(ty, span, context),
+        }
+    }
+
+    fn loadable_abi_layout(
+        &self,
+        ty: &Ty,
+        span: Span,
+        context: &str,
+    ) -> Result<LoadableAbiLayout, Diagnostic> {
+        match ty {
+            Ty::Array { element, len } => {
+                let element = self.loadable_abi_layout(element, span, context)?;
+                Ok(LoadableAbiLayout {
+                    size: element.size * (*len as u64),
+                    align: element.align,
+                })
+            }
+            Ty::Tuple(items) => {
+                if items.iter().any(is_void_ty) {
+                    return Err(Diagnostic::error(format!(
+                        "LLVM IR backend foundation does not support {context} `{ty}` yet"
+                    ))
+                    .with_label(Label::new(span)));
+                }
+
+                let mut size = 0;
+                let mut align = 1;
+                for item in items {
+                    let layout = self.loadable_abi_layout(item, span, context)?;
+                    size = align_to(size, layout.align);
+                    size += layout.size;
+                    align = align.max(layout.align);
+                }
+                Ok(LoadableAbiLayout {
+                    size: align_to(size, align),
+                    align,
+                })
+            }
+            Ty::Item { .. } => {
+                let mut size = 0;
+                let mut align = 1;
+                for field in self.struct_field_lowerings(ty, span, context)? {
+                    let layout = self.loadable_abi_layout(&field.ty, span, context)?;
+                    size = align_to(size, layout.align);
+                    size += layout.size;
+                    align = align.max(layout.align);
+                }
+                Ok(LoadableAbiLayout {
+                    size: align_to(size, align),
+                    align,
+                })
+            }
+            _ => {
+                let layout = scalar_abi_layout(ty, span, context)?;
+                Ok(LoadableAbiLayout {
+                    size: layout.size,
+                    align: layout.align,
+                })
+            }
+        }
+    }
+
+    fn struct_field_lowerings(
+        &self,
+        ty: &Ty,
+        span: Span,
+        context: &str,
+    ) -> Result<Vec<StructFieldLowering>, Diagnostic> {
+        let Ty::Item { item_id, args, .. } = ty else {
+            return Err(Diagnostic::error(format!(
+                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+            ))
+            .with_label(Label::new(span)));
+        };
+        if !args.is_empty() {
+            return Err(Diagnostic::error(format!(
+                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+            ))
+            .with_label(Label::new(span)));
+        }
+
+        let item = self.input.hir.item(*item_id);
+        let ItemKind::Struct(struct_decl) = &item.kind else {
+            return Err(Diagnostic::error(format!(
+                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+            ))
+            .with_label(Label::new(span)));
+        };
+        if !struct_decl.generics.is_empty() {
+            return Err(Diagnostic::error(format!(
+                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+            ))
+            .with_label(Label::new(span)));
+        }
+
+        struct_decl
+            .fields
+            .iter()
+            .map(|field| {
+                let ty = lower_type(self.input.hir, self.input.resolution, field.ty);
+                if is_void_ty(&ty) {
+                    return Err(Diagnostic::error(format!(
+                        "LLVM IR backend foundation does not support {context} `{ty}` yet"
+                    ))
+                    .with_label(Label::new(span)));
+                }
+                let llvm_ty = self.lower_llvm_type(&ty, span, context)?;
+                Ok(StructFieldLowering {
+                    name: field.name.clone(),
+                    ty,
+                    llvm_ty,
+                })
+            })
+            .collect()
+    }
+
+    fn resolve_local_struct_path(&self, path: &ql_ast::Path) -> Option<Ty> {
+        let [name] = path.segments.as_slice() else {
+            return None;
+        };
+        let mut candidates = HashSet::new();
+
+        for item_id in self.input.hir.items.iter().copied() {
+            if matches!(
+                &self.input.hir.item(item_id).kind,
+                ItemKind::Struct(struct_decl) if struct_decl.name == *name
+            ) {
+                candidates.insert(item_id);
+            }
+        }
+
+        for scope in self.input.resolution.scopes.scopes() {
+            for binding in &scope.type_bindings {
+                if binding.name != *name {
+                    continue;
+                }
+                match &binding.resolution {
+                    TypeResolution::Item(item_id) => {
+                        candidates.insert(*item_id);
+                    }
+                    TypeResolution::Import(import_binding) => {
+                        let Some(target_name) = import_binding.path.segments.last() else {
+                            continue;
+                        };
+                        for item_id in self.input.hir.items.iter().copied() {
+                            if matches!(
+                                &self.input.hir.item(item_id).kind,
+                                ItemKind::Struct(struct_decl) if struct_decl.name == *target_name
+                            ) {
+                                candidates.insert(item_id);
+                            }
+                        }
+                    }
+                    TypeResolution::Builtin(_) | TypeResolution::Generic(_) => {}
+                }
+            }
+        }
+
+        let mut candidates = candidates.into_iter();
+        let item_id = candidates.next()?;
+        if candidates.next().is_some() {
+            return None;
+        }
+
+        match &self.input.hir.item(item_id).kind {
+            ItemKind::Struct(struct_decl) => Some(Ty::Item {
+                item_id,
+                name: struct_decl.name.clone(),
+                args: Vec::new(),
+            }),
+            _ => None,
+        }
+    }
 }
 
 struct FunctionRenderer<'a, 'b> {
@@ -1509,7 +2070,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
     fn render_statement(&mut self, output: &mut String, statement: &mir::Statement) {
         match &statement.kind {
             StatementKind::Assign { place, value } => {
-                if let Some(rendered) = self.render_rvalue(output, value, statement.span)
+                let expected_ty = self.prepared.local_types.get(&place.base);
+                if let Some(rendered) =
+                    self.render_rvalue(output, value, expected_ty, statement.span)
                     && !is_void_ty(&rendered.ty)
                 {
                     let _ = writeln!(
@@ -1548,7 +2111,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 );
             }
             StatementKind::Eval { value } => {
-                let _ = self.render_rvalue(output, value, statement.span);
+                let _ = self.render_rvalue(output, value, None, statement.span);
             }
             StatementKind::StorageLive { .. } | StatementKind::StorageDead { .. } => {}
             StatementKind::RegisterCleanup { .. } | StatementKind::RunCleanup { .. } => {
@@ -1607,6 +2170,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         &mut self,
         output: &mut String,
         value: &Rvalue,
+        expected_ty: Option<&Ty>,
         span: Span,
     ) -> Option<LoweredValue> {
         match value {
@@ -1682,11 +2246,11 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 UnaryOp::Spawn => self.render_spawn(output, operand, span),
             },
             Rvalue::Tuple(items) => self.render_tuple_rvalue(output, items, span),
-            Rvalue::Array(_)
-            | Rvalue::AggregateStruct { .. }
-            | Rvalue::Closure { .. }
-            | Rvalue::Question(_)
-            | Rvalue::OpaqueExpr(_) => {
+            Rvalue::Array(items) => self.render_array_rvalue(output, items, expected_ty, span),
+            Rvalue::AggregateStruct { path, fields } => {
+                self.render_struct_rvalue(output, path, fields, expected_ty, span)
+            }
+            Rvalue::Closure { .. } | Rvalue::Question(_) | Rvalue::OpaqueExpr(_) => {
                 panic!("prepared functions should not contain unsupported rvalues")
             }
         }
@@ -1703,7 +2267,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             .map(|item| self.render_operand(output, item, span))
             .collect::<Vec<_>>();
         let ty = Ty::Tuple(rendered_items.iter().map(|item| item.ty.clone()).collect());
-        let llvm_ty = lower_llvm_type(&ty, span, "tuple value")
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&ty, span, "tuple value")
             .expect("prepared tuple values should already have supported LLVM types");
 
         if rendered_items.is_empty() {
@@ -1732,6 +2298,131 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         })
     }
 
+    fn render_array_rvalue(
+        &mut self,
+        output: &mut String,
+        items: &[Operand],
+        expected_ty: Option<&Ty>,
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let rendered_items = items
+            .iter()
+            .map(|item| self.render_operand(output, item, span))
+            .collect::<Vec<_>>();
+        let ty = if let Some(Ty::Array { .. }) = expected_ty {
+            expected_ty.cloned().expect("checked array expected type")
+        } else {
+            let mut element_ty = Ty::Unknown;
+            for item in &rendered_items {
+                if element_ty.is_unknown() && !item.ty.is_unknown() {
+                    element_ty = item.ty.clone();
+                    continue;
+                }
+                if item.ty.is_unknown() {
+                    continue;
+                }
+                assert!(
+                    element_ty.compatible_with(&item.ty),
+                    "prepared array literal at {span:?} should contain one compatible element type"
+                );
+            }
+            assert!(
+                !element_ty.is_unknown(),
+                "prepared array literal at {span:?} should have a resolved element type"
+            );
+            Ty::Array {
+                element: Box::new(element_ty),
+                len: rendered_items.len(),
+            }
+        };
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&ty, span, "array value")
+            .expect("prepared array values should already have supported LLVM types");
+
+        if rendered_items.is_empty() {
+            return Some(LoweredValue {
+                ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            });
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for (index, item) in rendered_items.iter().enumerate() {
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                item.llvm_ty, item.repr, index
+            );
+            aggregate = next;
+        }
+
+        Some(LoweredValue {
+            ty,
+            llvm_ty,
+            repr: aggregate,
+        })
+    }
+
+    fn render_struct_rvalue(
+        &mut self,
+        output: &mut String,
+        _path: &ql_ast::Path,
+        fields: &[mir::AggregateField],
+        expected_ty: Option<&Ty>,
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let struct_ty = expected_ty.cloned().or_else(|| {
+            panic!("prepared struct aggregate at {span:?} should have an expected lowered type")
+        })?;
+        let field_layouts = self
+            .emitter
+            .struct_field_lowerings(&struct_ty, span, "struct value")
+            .unwrap_or_else(|_| panic!("prepared struct aggregate at {span:?} should have a loadable declaration layout"));
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&struct_ty, span, "struct value")
+            .unwrap_or_else(|_| {
+                panic!("prepared struct aggregate at {span:?} should have a lowered LLVM type")
+            });
+
+        let mut rendered_fields = HashMap::with_capacity(fields.len());
+        for field in fields {
+            let rendered = self.render_operand(output, &field.value, span);
+            rendered_fields.insert(field.name.clone(), rendered);
+        }
+
+        if field_layouts.is_empty() {
+            return Some(LoweredValue {
+                ty: struct_ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            });
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for (index, field) in field_layouts.iter().enumerate() {
+            let rendered = rendered_fields.remove(&field.name).unwrap_or_else(|| {
+                panic!("prepared struct aggregate at {span:?} should provide every declared field")
+            });
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                rendered.llvm_ty, rendered.repr, index
+            );
+            aggregate = next;
+        }
+
+        Some(LoweredValue {
+            ty: struct_ty,
+            llvm_ty,
+            repr: aggregate,
+        })
+    }
+
     fn task_handle_info_for_local(
         &self,
         local_id: mir::LocalId,
@@ -1744,7 +2435,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         match self.prepared.local_types.get(&local_id) {
             Some(Ty::TaskHandle(result_ty)) => AsyncTaskHandleInfo {
                 result_ty: (**result_ty).clone(),
-                result_layout: build_async_task_result_layout(result_ty, span).unwrap_or_else(
+                result_layout: self.emitter.build_async_task_result_layout(result_ty, span).unwrap_or_else(
                     |_| panic!("prepared task-handle local at {span:?} should have a loadable async result layout"),
                 ),
             },
@@ -1899,49 +2590,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
     ) -> LoweredValue {
         match operand {
-            Operand::Place(place) => {
-                if self.prepared.async_task_handles.contains_key(&place.base) {
-                    let temp = self.fresh_temp();
-                    let _ = writeln!(
-                        output,
-                        "  {temp} = load ptr, ptr {}",
-                        llvm_slot_name(self.body, place.base)
-                    );
-                    return LoweredValue {
-                        ty: Ty::Unknown,
-                        llvm_ty: "ptr".to_owned(),
-                        repr: temp,
-                    };
-                }
-
-                let ty = self
-                    .prepared
-                    .local_types
-                    .get(&place.base)
-                    .cloned()
-                    .unwrap_or_else(|| panic!("prepared place at {span:?} should have a type"));
-                if is_void_ty(&ty) {
-                    return LoweredValue {
-                        ty,
-                        llvm_ty: "void".to_owned(),
-                        repr: "void".to_owned(),
-                    };
-                }
-                let llvm_ty = lower_llvm_type(&ty, span, "operand type")
-                    .expect("prepared operand types should already be supported");
-                let temp = self.fresh_temp();
-                let _ = writeln!(
-                    output,
-                    "  {temp} = load {}, ptr {}",
-                    llvm_ty,
-                    llvm_slot_name(self.body, place.base)
-                );
-                LoweredValue {
-                    ty,
-                    llvm_ty,
-                    repr: temp,
-                }
-            }
+            Operand::Place(place) => self.render_place_operand(output, place, span),
             Operand::Constant(constant) => match constant {
                 Constant::Integer(value) => LoweredValue {
                     ty: Ty::Builtin(BuiltinType::Int),
@@ -1976,6 +2625,122 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_place_operand(
+        &mut self,
+        output: &mut String,
+        place: &Place,
+        span: Span,
+    ) -> LoweredValue {
+        if place.projections.is_empty()
+            && self.prepared.async_task_handles.contains_key(&place.base)
+        {
+            let temp = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {temp} = load ptr, ptr {}",
+                llvm_slot_name(self.body, place.base)
+            );
+            return LoweredValue {
+                ty: Ty::Unknown,
+                llvm_ty: "ptr".to_owned(),
+                repr: temp,
+            };
+        }
+
+        let (ptr, ty) = self.render_place_pointer(output, place, span);
+        if is_void_ty(&ty) {
+            return LoweredValue {
+                ty,
+                llvm_ty: "void".to_owned(),
+                repr: "void".to_owned(),
+            };
+        }
+
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&ty, span, "operand type")
+            .expect("prepared operand types should already be supported");
+        let temp = self.fresh_temp();
+        let _ = writeln!(output, "  {temp} = load {llvm_ty}, ptr {ptr}");
+        LoweredValue {
+            ty,
+            llvm_ty,
+            repr: temp,
+        }
+    }
+
+    fn render_place_pointer(
+        &mut self,
+        output: &mut String,
+        place: &Place,
+        span: Span,
+    ) -> (String, Ty) {
+        let mut current_ptr = llvm_slot_name(self.body, place.base);
+        let mut current_ty = self
+            .prepared
+            .local_types
+            .get(&place.base)
+            .cloned()
+            .unwrap_or_else(|| panic!("prepared place at {span:?} should have a type"));
+
+        for projection in &place.projections {
+            let aggregate_llvm_ty = self
+                .emitter
+                .lower_llvm_type(&current_ty, span, "projection base type")
+                .unwrap_or_else(|_| {
+                    panic!("prepared projection base at {span:?} should have a lowered LLVM type")
+                });
+            let step = self
+                .emitter
+                .resolve_projection_step(&current_ty, projection, span)
+                .unwrap_or_else(|_| {
+                    panic!("prepared projection at {span:?} should have a supported place type")
+                });
+
+            match (projection, &step) {
+                (mir::ProjectionElem::Field(_), ResolvedProjectionStep::Field { index, .. })
+                | (
+                    mir::ProjectionElem::TupleIndex(_),
+                    ResolvedProjectionStep::TupleIndex { index, .. },
+                )
+                | (
+                    mir::ProjectionElem::Index(_),
+                    ResolvedProjectionStep::TupleIndex { index, .. },
+                ) => {
+                    let next = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {next} = getelementptr inbounds {aggregate_llvm_ty}, ptr {current_ptr}, i32 0, i32 {index}"
+                    );
+                    current_ptr = next;
+                }
+                (mir::ProjectionElem::Index(index), ResolvedProjectionStep::ArrayIndex { .. }) => {
+                    let rendered_index = self.render_operand(output, index, span);
+                    assert!(
+                        rendered_index
+                            .ty
+                            .compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                        "prepared array index at {span:?} should have type Int"
+                    );
+                    let next = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {next} = getelementptr inbounds {aggregate_llvm_ty}, ptr {current_ptr}, i64 0, {} {}",
+                        rendered_index.llvm_ty, rendered_index.repr
+                    );
+                    current_ptr = next;
+                }
+                _ => {
+                    panic!("prepared projection at {span:?} should lower through a matching step")
+                }
+            }
+
+            current_ty = step.output_ty();
+        }
+
+        (current_ptr, current_ty)
+    }
+
     fn fresh_temp(&mut self) -> String {
         let index = self.next_temp;
         self.next_temp += 1;
@@ -1989,6 +2754,10 @@ fn pattern_kind(module: &hir::Module, pattern: hir::PatternId) -> &PatternKind {
 
 fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnostic> {
     match ty {
+        Ty::Array { element, len } => {
+            let element_llvm_ty = lower_llvm_type(element, span, context)?;
+            Ok(format!("[{len} x {element_llvm_ty}]"))
+        }
         Ty::Builtin(BuiltinType::Bool) => Ok("i1".to_owned()),
         Ty::Builtin(BuiltinType::Void) => Ok("void".to_owned()),
         Ty::Builtin(BuiltinType::Int) | Ty::Builtin(BuiltinType::I64) => Ok("i64".to_owned()),
@@ -2050,6 +2819,7 @@ fn build_async_frame_layout(
     })
 }
 
+#[cfg(test)]
 fn build_async_task_result_layout(
     ty: &Ty,
     span: Span,
@@ -2068,12 +2838,20 @@ fn build_async_task_result_layout(
     })
 }
 
+#[cfg(test)]
 fn loadable_abi_layout(
     ty: &Ty,
     span: Span,
     context: &str,
 ) -> Result<LoadableAbiLayout, Diagnostic> {
     match ty {
+        Ty::Array { element, len } => {
+            let element = loadable_abi_layout(element, span, context)?;
+            Ok(LoadableAbiLayout {
+                size: element.size * (*len as u64),
+                align: element.align,
+            })
+        }
         Ty::Tuple(items) => {
             if items.iter().any(is_void_ty) {
                 return Err(Diagnostic::error(format!(
@@ -2624,7 +3402,7 @@ async fn worker(flag: Bool, value: Int) -> Int {
     }
 
     #[test]
-    fn builds_async_task_result_layouts_for_void_scalar_and_tuple_results() {
+    fn builds_async_task_result_layouts_for_void_scalar_tuple_and_array_results() {
         let void_layout =
             build_async_task_result_layout(&Ty::Builtin(BuiltinType::Void), Span::new(0, 0))
                 .expect("void async result layout should be supported");
@@ -2667,6 +3445,141 @@ async fn worker(flag: Bool, value: Int) -> Int {
             }
             AsyncTaskResultLayout::Void => panic!("expected loadable layout for tuple result"),
         }
+
+        let array_layout = build_async_task_result_layout(
+            &Ty::Array {
+                element: Box::new(Ty::Builtin(BuiltinType::Int)),
+                len: 3,
+            },
+            Span::new(0, 0),
+        )
+        .expect("array async result layout should be supported");
+        match array_layout {
+            AsyncTaskResultLayout::Loadable {
+                llvm_ty,
+                size,
+                align,
+            } => {
+                assert_eq!(llvm_ty, "[3 x i64]");
+                assert_eq!(size, 24);
+                assert_eq!(align, 8);
+            }
+            AsyncTaskResultLayout::Void => panic!("expected loadable layout for array result"),
+        }
+    }
+
+    #[test]
+    fn emits_scalar_struct_value_lowering_in_declaration_order() {
+        let rendered = emit_library(
+            r#"
+struct Pair {
+    left: Bool,
+    right: Int,
+}
+
+fn pair() -> Pair {
+    return Pair { right: 42, left: true }
+}
+"#,
+        );
+
+        assert!(rendered.contains("define { i1, i64 } @ql_1_pair()"));
+        assert!(rendered.contains("insertvalue { i1, i64 } undef, i1 true, 0"));
+        assert!(rendered.contains("insertvalue { i1, i64 }"));
+        assert!(rendered.contains("i64 42, 1"));
+        assert!(rendered.contains("ret { i1, i64 }"));
+    }
+
+    #[test]
+    fn emits_fixed_array_value_lowering() {
+        let rendered = emit_library(
+            r#"
+fn values() -> [Int; 3] {
+    return [1, 2, 3]
+}
+"#,
+        );
+
+        assert!(rendered.contains("define [3 x i64] @ql_0_values()"));
+        assert!(rendered.contains("insertvalue [3 x i64] undef, i64 1, 0"));
+        assert!(rendered.contains("i64 2, 1"));
+        assert!(rendered.contains("i64 3, 2"));
+        assert!(rendered.contains("ret [3 x i64]"));
+    }
+
+    #[test]
+    fn emits_struct_literal_lowering_through_same_file_import_alias() {
+        let rendered = emit_library(
+            r#"
+use Pair as P
+
+struct Pair {
+    left: Bool,
+    right: Int,
+}
+
+fn pair() -> Pair {
+    return P { right: 42, left: true }
+}
+"#,
+        );
+
+        assert!(rendered.contains("define { i1, i64 } @ql_1_pair()"));
+        assert!(rendered.contains("insertvalue { i1, i64 } undef, i1 true, 0"));
+        assert!(rendered.contains("i64 42, 1"));
+    }
+
+    #[test]
+    fn emits_struct_field_projection_reads() {
+        let rendered = emit_library(
+            r#"
+struct Pair {
+    left: Bool,
+    right: Int,
+}
+
+fn right(pair: Pair) -> Int {
+    return pair.right
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @ql_1_right({ i1, i64 } %arg0)"));
+        assert!(rendered.contains("getelementptr inbounds { i1, i64 }, ptr"));
+        assert!(rendered.contains("i32 0, i32 1"));
+        assert!(rendered.contains("load i64, ptr"));
+    }
+
+    #[test]
+    fn emits_tuple_index_projection_reads() {
+        let rendered = emit_library(
+            r#"
+fn second(pair: (Bool, Int)) -> Int {
+    return pair[1]
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @ql_0_second({ i1, i64 } %arg0)"));
+        assert!(rendered.contains("getelementptr inbounds { i1, i64 }, ptr"));
+        assert!(rendered.contains("i32 0, i32 1"));
+        assert!(rendered.contains("load i64, ptr"));
+    }
+
+    #[test]
+    fn emits_array_index_projection_reads() {
+        let rendered = emit_library(
+            r#"
+fn pick(values: [Int; 3], index: Int) -> Int {
+    return values[index]
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @ql_0_pick([3 x i64] %arg0, i64 %arg1)"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(rendered.contains("i64 0, i64 %t"));
+        assert!(rendered.contains("load i64, ptr"));
     }
 
     #[test]
@@ -2706,33 +3619,67 @@ async fn worker() -> Int {
     }
 
     #[test]
-    fn rejects_unsupported_async_struct_task_result_types_before_await_lowering() {
-        let runtime_hooks =
-            collect_runtime_hook_signatures([RuntimeCapability::AsyncFunctionBodies]);
-        let messages = emit_error_with_runtime_hooks(
+    fn emits_async_struct_task_result_lowering() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
             r#"
 struct Pair {
-    left: Int,
+    left: Bool,
     right: Int,
 }
 
 async fn worker() -> Pair {
-    return Pair { left: 1, right: 2 }
+    return Pair { right: 42, left: true }
+}
+
+async fn helper() -> Pair {
+    return await worker()
 }
 "#,
             CodegenMode::Library,
             &runtime_hooks,
         );
 
-        assert!(messages.iter().any(|message| {
-            message
-                == "LLVM IR backend foundation does not support async task result type `Pair` yet"
-        }));
-        assert!(
-            messages
-                .iter()
-                .all(|message| { !message.contains("does not support return type `Pair` yet") })
+        assert!(rendered.contains("define { i1, i64 } @ql_1_worker__async_body(ptr %frame)"));
+        assert!(rendered.contains("insertvalue { i1, i64 } undef, i1 true, 0"));
+        assert!(rendered.contains("i64 42, 1"));
+        assert!(rendered.contains("define { i1, i64 } @ql_2_helper__async_body(ptr %frame)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr"));
+        assert!(rendered.contains("load { i1, i64 }, ptr"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr"));
+    }
+
+    #[test]
+    fn emits_async_array_task_result_lowering() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> [Int; 3] {
+    return [1, 2, 3]
+}
+
+async fn helper() -> [Int; 3] {
+    return await worker()
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
         );
+
+        assert!(rendered.contains("define [3 x i64] @ql_0_worker__async_body(ptr %frame)"));
+        assert!(rendered.contains("insertvalue [3 x i64] undef, i64 1, 0"));
+        assert!(rendered.contains("i64 2, 1"));
+        assert!(rendered.contains("i64 3, 2"));
+        assert!(rendered.contains("define [3 x i64] @ql_1_helper__async_body(ptr %frame)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr"));
+        assert!(rendered.contains("load [3 x i64], ptr"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr"));
     }
 
     #[test]
