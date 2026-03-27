@@ -46,6 +46,7 @@ struct Checker<'a> {
     self_type: Option<Ty>,
     self_is_mutable: bool,
     current_return: Option<Ty>,
+    in_async_function: bool,
 }
 
 impl<'a> Checker<'a> {
@@ -63,6 +64,7 @@ impl<'a> Checker<'a> {
             self_type: None,
             self_is_mutable: false,
             current_return: None,
+            in_async_function: false,
         }
     }
 
@@ -134,6 +136,7 @@ impl<'a> Checker<'a> {
         let old_self = self.self_type.clone();
         let old_self_is_mutable = self.self_is_mutable;
         let old_return = self.current_return.clone();
+        let old_in_async_function = self.in_async_function;
         let old_param_types = std::mem::take(&mut self.param_types);
 
         self.self_type = self_type;
@@ -153,6 +156,7 @@ impl<'a> Checker<'a> {
                 .map(|type_id| lower_type(self.module, self.resolution, type_id))
                 .unwrap_or_else(void_ty),
         );
+        self.in_async_function = function.is_async;
 
         if let Some(scope) = function_scope(function, self.resolution) {
             for (index, param) in function.params.iter().enumerate() {
@@ -180,6 +184,7 @@ impl<'a> Checker<'a> {
         self.self_type = old_self;
         self.self_is_mutable = old_self_is_mutable;
         self.current_return = old_return;
+        self.in_async_function = old_in_async_function;
         self.param_types = old_param_types;
     }
 
@@ -282,7 +287,7 @@ impl<'a> Checker<'a> {
             ExprKind::Bracket { target, items } => self.check_bracket(expr_id, *target, items),
             ExprKind::StructLiteral { .. } => self.check_struct_literal(expr_id),
             ExprKind::Binary { left, op, right } => self.check_binary(expr_id, *left, *op, *right),
-            ExprKind::Unary { expr, .. } => self.check_expr(*expr, None),
+            ExprKind::Unary { op, expr } => self.check_unary(expr_id, *op, *expr),
             ExprKind::Question(expr) => {
                 self.check_expr(*expr, None);
                 Ty::Unknown
@@ -290,6 +295,41 @@ impl<'a> Checker<'a> {
         };
         self.expr_types.insert(expr_id, ty.clone());
         ty
+    }
+
+    fn check_unary(&mut self, expr_id: ExprId, op: ql_ast::UnaryOp, operand: ExprId) -> Ty {
+        let operand_ty = self.check_expr(operand, None);
+        match op {
+            ql_ast::UnaryOp::Neg => operand_ty,
+            ql_ast::UnaryOp::Await => {
+                if !self.in_async_function {
+                    self.diagnostics.push(
+                        Diagnostic::error("`await` is only allowed inside `async fn`".to_string())
+                            .with_label(
+                                Label::new(self.module.expr(expr_id).span)
+                                    .with_message("`await` used here"),
+                            ),
+                    );
+                    return Ty::Unknown;
+                }
+
+                operand_ty
+            }
+            ql_ast::UnaryOp::Spawn => {
+                if !self.in_async_function {
+                    self.diagnostics.push(
+                        Diagnostic::error("`spawn` is only allowed inside `async fn`".to_string())
+                            .with_label(
+                                Label::new(self.module.expr(expr_id).span)
+                                    .with_message("`spawn` used here"),
+                            ),
+                    );
+                    return Ty::Unknown;
+                }
+
+                Ty::Unknown
+            }
+        }
     }
 
     fn type_of_name(&self, expr_id: ExprId) -> Ty {
