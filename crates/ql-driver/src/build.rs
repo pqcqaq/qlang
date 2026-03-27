@@ -1458,6 +1458,32 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_async_function_codegen_diagnostics() {
+        let dir = TestDir::new("ql-driver-async-unsupported");
+        let source = dir.write(
+            "async_main.ql",
+            r#"
+fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    return await worker()
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("async codegen rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
+        }));
+    }
+
+    #[test]
     fn build_file_rejects_dynamic_libraries_without_public_extern_c_exports() {
         let dir = TestDir::new("ql-driver-dylib-no-exports");
         let source = dir.write(
