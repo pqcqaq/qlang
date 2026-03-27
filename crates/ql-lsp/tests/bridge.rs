@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use ql_analysis::{AsyncOperatorKind, analyze_source};
+use ql_analysis::{AsyncOperatorKind, LoopControlKind, analyze_source};
 use ql_diagnostics::{Diagnostic as CompilerDiagnostic, Label};
 use ql_lsp::bridge::{
     async_context_for_analysis, completion_for_analysis, definition_for_analysis,
-    diagnostics_to_lsp, hover_for_analysis, position_to_offset, prepare_rename_for_analysis,
-    references_for_analysis, rename_for_analysis, semantic_tokens_for_analysis,
-    semantic_tokens_legend, span_to_range,
+    diagnostics_to_lsp, hover_for_analysis, loop_control_context_for_analysis, position_to_offset,
+    prepare_rename_for_analysis, references_for_analysis, rename_for_analysis,
+    semantic_tokens_for_analysis, semantic_tokens_legend, span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
@@ -9412,4 +9412,157 @@ async fn main() -> Int {
     );
     assert_eq!(await_expr.operator, AsyncOperatorKind::Await);
     assert!(!await_expr.in_async_function);
+}
+
+#[test]
+fn loop_control_context_bridge_reports_loop_membership() {
+    let source = r#"
+fn main(flag: Bool) -> Int {
+    break
+    continue
+    while flag {
+        break
+        continue
+    }
+    return 0
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let outer_break_position = span_to_range(source, nth_span(source, "break", 1)).start;
+    let outer_continue_position = span_to_range(source, nth_span(source, "continue", 1)).start;
+    let inner_break_position = span_to_range(source, nth_span(source, "break", 2)).start;
+    let inner_continue_position = span_to_range(source, nth_span(source, "continue", 2)).start;
+
+    let outer_break = loop_control_context_for_analysis(source, &analysis, outer_break_position)
+        .expect("outer break loop-control context should exist");
+    assert_eq!(
+        outer_break.range,
+        span_to_range(source, nth_span(source, "break", 1))
+    );
+    assert_eq!(outer_break.control, LoopControlKind::Break);
+    assert!(!outer_break.in_loop);
+
+    let outer_continue =
+        loop_control_context_for_analysis(source, &analysis, outer_continue_position)
+            .expect("outer continue loop-control context should exist");
+    assert_eq!(
+        outer_continue.range,
+        span_to_range(source, nth_span(source, "continue", 1))
+    );
+    assert_eq!(outer_continue.control, LoopControlKind::Continue);
+    assert!(!outer_continue.in_loop);
+
+    let inner_break = loop_control_context_for_analysis(source, &analysis, inner_break_position)
+        .expect("inner break loop-control context should exist");
+    assert_eq!(
+        inner_break.range,
+        span_to_range(source, nth_span(source, "break", 2))
+    );
+    assert_eq!(inner_break.control, LoopControlKind::Break);
+    assert!(inner_break.in_loop);
+
+    let inner_continue =
+        loop_control_context_for_analysis(source, &analysis, inner_continue_position)
+            .expect("inner continue loop-control context should exist");
+    assert_eq!(
+        inner_continue.range,
+        span_to_range(source, nth_span(source, "continue", 2))
+    );
+    assert_eq!(inner_continue.control, LoopControlKind::Continue);
+    assert!(inner_continue.in_loop);
+}
+
+#[test]
+fn loop_control_context_bridge_covers_methods_and_closure_boundaries() {
+    let source = r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn step(self, flags: [Bool; 3]) -> Int {
+        for flag in flags {
+            let worker = () => {
+                break
+            }
+            continue
+        }
+        return 0
+    }
+}
+
+trait Runner {
+    fn spin(self) -> Int {
+        loop {
+            break
+        }
+        return 0
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let closure_break_position = span_to_range(source, nth_span(source, "break", 1)).start;
+    let for_continue_position = span_to_range(source, nth_span(source, "continue", 1)).start;
+    let trait_break_position = span_to_range(source, nth_span(source, "break", 2)).start;
+
+    let closure_break =
+        loop_control_context_for_analysis(source, &analysis, closure_break_position)
+            .expect("closure break context should exist");
+    assert_eq!(
+        closure_break.range,
+        span_to_range(source, nth_span(source, "break", 1))
+    );
+    assert_eq!(closure_break.control, LoopControlKind::Break);
+    assert!(!closure_break.in_loop);
+
+    let for_continue = loop_control_context_for_analysis(source, &analysis, for_continue_position)
+        .expect("for-loop continue context should exist");
+    assert_eq!(
+        for_continue.range,
+        span_to_range(source, nth_span(source, "continue", 1))
+    );
+    assert_eq!(for_continue.control, LoopControlKind::Continue);
+    assert!(for_continue.in_loop);
+
+    let trait_break = loop_control_context_for_analysis(source, &analysis, trait_break_position)
+        .expect("trait loop break context should exist");
+    assert_eq!(
+        trait_break.range,
+        span_to_range(source, nth_span(source, "break", 2))
+    );
+    assert_eq!(trait_break.control, LoopControlKind::Break);
+    assert!(trait_break.in_loop);
+}
+
+#[test]
+fn loop_control_context_bridge_returns_none_for_non_loop_control_or_invalid_positions() {
+    let source = r#"
+fn main() -> Int {
+    let value = 1
+    return value
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let value_position = span_to_range(source, nth_span(source, "value", 2)).start;
+    assert_eq!(
+        loop_control_context_for_analysis(source, &analysis, value_position),
+        None
+    );
+
+    let emoji_source = "fn main() -> String {\n    \"😀\"\n}\n";
+    let emoji_analysis = analyze_source(emoji_source).expect("source should analyze");
+    let emoji_offset = emoji_source.find('😀').expect("emoji should exist");
+    let emoji_range = span_to_range(
+        emoji_source,
+        Span::new(emoji_offset, emoji_offset + "😀".len()),
+    );
+    let invalid_position = Position::new(emoji_range.start.line, emoji_range.start.character + 1);
+
+    assert_eq!(
+        loop_control_context_for_analysis(emoji_source, &emoji_analysis, invalid_position),
+        None
+    );
 }

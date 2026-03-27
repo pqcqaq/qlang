@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use ql_analysis::{Analysis, AsyncOperatorKind, HoverInfo, RenameError, SymbolKind};
+use ql_analysis::{
+    Analysis, AsyncOperatorKind, HoverInfo, LoopControlKind, RenameError, SymbolKind,
+};
 use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
 };
@@ -64,6 +66,13 @@ pub struct AsyncContextBridge {
     pub in_async_function: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoopControlContextBridge {
+    pub range: Range,
+    pub control: LoopControlKind,
+    pub in_loop: bool,
+}
+
 pub fn hover_for_analysis(source: &str, analysis: &Analysis, position: Position) -> Option<Hover> {
     let offset = position_to_offset(source, position)?;
     let info = analysis.hover_at(offset)?;
@@ -88,6 +97,20 @@ pub fn async_context_for_analysis(
             range: span_to_range(source, context.span),
             operator: context.operator,
             in_async_function: context.in_async_function,
+        })
+}
+
+pub fn loop_control_context_for_analysis(
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<LoopControlContextBridge> {
+    analysis
+        .loop_control_context_at(position_to_offset(source, position)?)
+        .map(|context| LoopControlContextBridge {
+            range: span_to_range(source, context.span),
+            control: context.control,
+            in_loop: context.in_loop,
         })
 }
 
