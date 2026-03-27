@@ -13,8 +13,9 @@ use ql_resolve::{ResolutionMap, resolve_module};
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
 use query::QueryIndex;
 pub use query::{
-    CompletionItem, DefinitionTarget, HoverInfo, ReferenceTarget, RenameEdit, RenameError,
-    RenameResult, RenameTarget, SemanticTokenOccurrence, SymbolKind,
+    AsyncContextInfo, AsyncOperatorKind, CompletionItem, DefinitionTarget, HoverInfo,
+    ReferenceTarget, RenameEdit, RenameError, RenameResult, RenameTarget, SemanticTokenOccurrence,
+    SymbolKind,
 };
 
 /// Parsed-and-lowered semantic analysis snapshot shared by CLI and future LSP work.
@@ -91,6 +92,11 @@ impl Analysis {
     /// Return hover-ready semantic data for the symbol covering `offset`.
     pub fn hover_at(&self, offset: usize) -> Option<HoverInfo> {
         self.symbol_at(offset)
+    }
+
+    /// Return async semantic context for `await` / `spawn` at `offset`.
+    pub fn async_context_at(&self, offset: usize) -> Option<AsyncContextInfo> {
+        self.index.async_context_at(offset)
     }
 
     /// Return the definition site for the symbol covering `offset`, when the target lives in source.

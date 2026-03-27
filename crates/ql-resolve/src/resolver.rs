@@ -256,6 +256,9 @@ impl<'module> Resolver<'module> {
     fn resolve_function(&mut self, function: &Function, parent_scope: ScopeId) -> ScopeId {
         let scope = self.alloc_scope(ScopeKind::Item, Some(parent_scope));
         self.resolution.function_scopes.insert(function.span, scope);
+        if function.is_async {
+            self.resolution.async_function_scopes.insert(scope);
+        }
         self.bind_generics(scope, &function.generics);
         self.bind_params(scope, &function.params);
 

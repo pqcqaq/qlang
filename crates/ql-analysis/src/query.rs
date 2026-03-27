@@ -3,7 +3,7 @@ use std::{
     fmt,
 };
 
-use ql_ast::{Path, ReceiverKind};
+use ql_ast::{Path, ReceiverKind, UnaryOp};
 use ql_hir::{
     BlockId, EnumVariant, ExprId, ExprKind, Field, Function, FunctionRef, GenericParam, ItemId,
     ItemKind, LocalId, MatchArm, Module, Param, PatternId, PatternKind, TypeAlias, TypeId,
@@ -101,6 +101,21 @@ pub struct SemanticTokenOccurrence {
     pub kind: SymbolKind,
 }
 
+/// Async operator forms represented in same-file semantic queries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AsyncOperatorKind {
+    Await,
+    Spawn,
+}
+
+/// Async semantic context for one source operator occurrence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AsyncContextInfo {
+    pub span: Span,
+    pub operator: AsyncOperatorKind,
+    pub in_async_function: bool,
+}
+
 /// One same-file text edit for a rename operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenameEdit {
@@ -157,6 +172,7 @@ pub(crate) struct QueryIndex {
     occurrences: Vec<IndexedSymbol>,
     field_shorthand_occurrences: HashMap<FieldTarget, Vec<FieldShorthandOccurrence>>,
     binding_shorthand_occurrences: HashMap<SymbolKey, Vec<BindingShorthandOccurrence>>,
+    async_contexts: Vec<AsyncContextInfo>,
     completion_sites: Vec<CompletionSite>,
     completion_scopes: HashMap<ScopeId, CompletionScope>,
     semantic_completion_sites: Vec<SemanticCompletionSite>,
@@ -172,6 +188,7 @@ impl QueryIndex {
         let mut builder = QueryIndexBuilder::new(source, module, resolution, typeck);
         builder.index_definitions();
         builder.index_uses();
+        builder.index_async_contexts();
         builder.index_completion_support();
         builder.finish()
     }
@@ -181,6 +198,13 @@ impl QueryIndex {
             .iter()
             .find(|entry| entry.span.contains(offset))
             .map(|entry| entry.hover.clone())
+    }
+
+    pub(crate) fn async_context_at(&self, offset: usize) -> Option<AsyncContextInfo> {
+        self.async_contexts
+            .iter()
+            .find(|entry| entry.span.contains(offset))
+            .cloned()
     }
 
     pub(crate) fn definition_at(&self, offset: usize) -> Option<DefinitionTarget> {
@@ -466,6 +490,7 @@ struct QueryIndexBuilder<'a> {
     import_defs: HashMap<ImportBinding, SymbolData>,
     field_shorthand_occurrences: HashMap<FieldTarget, Vec<FieldShorthandOccurrence>>,
     binding_shorthand_occurrences: HashMap<SymbolKey, Vec<BindingShorthandOccurrence>>,
+    async_contexts: Vec<AsyncContextInfo>,
     completion_sites: Vec<CompletionSite>,
     completion_scopes: HashMap<ScopeId, CompletionScope>,
     module_completion_scope: Option<ScopeId>,
@@ -503,6 +528,7 @@ impl<'a> QueryIndexBuilder<'a> {
             import_defs: HashMap::new(),
             field_shorthand_occurrences: HashMap::new(),
             binding_shorthand_occurrences: HashMap::new(),
+            async_contexts: Vec::new(),
             completion_sites: Vec::new(),
             completion_scopes: HashMap::new(),
             module_completion_scope: None,
@@ -534,10 +560,16 @@ impl<'a> QueryIndexBuilder<'a> {
             occurrences.sort_by_key(|occurrence| (occurrence.span.start, occurrence.span.end));
             occurrences.dedup_by(|left, right| left.span == right.span);
         }
+        self.async_contexts
+            .sort_by_key(|entry| (entry.span.len(), entry.span.start, entry.span.end));
+        self.async_contexts
+            .dedup_by(|left, right| left.span == right.span && left.operator == right.operator);
+
         QueryIndex {
             occurrences: self.occurrences,
             field_shorthand_occurrences: self.field_shorthand_occurrences,
             binding_shorthand_occurrences: self.binding_shorthand_occurrences,
+            async_contexts: self.async_contexts,
             completion_sites: self.completion_sites,
             completion_scopes: self.completion_scopes,
             semantic_completion_sites: self.semantic_completion_sites,
@@ -555,6 +587,169 @@ impl<'a> QueryIndexBuilder<'a> {
         for &item_id in &self.module.items {
             self.index_item_uses(item_id);
         }
+    }
+
+    fn index_async_contexts(&mut self) {
+        for &item_id in &self.module.items {
+            self.index_item_async_contexts(item_id);
+        }
+    }
+
+    fn index_item_async_contexts(&mut self, item_id: ItemId) {
+        match &self.module.item(item_id).kind {
+            ItemKind::Function(function) => self.index_function_async_contexts(function),
+            ItemKind::Trait(trait_decl) => {
+                for method in &trait_decl.methods {
+                    self.index_function_async_contexts(method);
+                }
+            }
+            ItemKind::Impl(impl_block) => {
+                for method in &impl_block.methods {
+                    self.index_function_async_contexts(method);
+                }
+            }
+            ItemKind::Extend(extend_block) => {
+                for method in &extend_block.methods {
+                    self.index_function_async_contexts(method);
+                }
+            }
+            ItemKind::ExternBlock(extern_block) => {
+                for function in &extern_block.functions {
+                    self.index_function_async_contexts(function);
+                }
+            }
+            ItemKind::Const(_)
+            | ItemKind::Static(_)
+            | ItemKind::Struct(_)
+            | ItemKind::Enum(_)
+            | ItemKind::TypeAlias(_) => {}
+        }
+    }
+
+    fn index_function_async_contexts(&mut self, function: &Function) {
+        if let Some(body) = function.body {
+            self.index_block_async_contexts(body);
+        }
+    }
+
+    fn index_block_async_contexts(&mut self, block_id: BlockId) {
+        let block = self.module.block(block_id);
+        for &stmt_id in &block.statements {
+            let stmt = self.module.stmt(stmt_id);
+            match &stmt.kind {
+                ql_hir::StmtKind::Let { value, .. } => self.index_expr_async_contexts(*value),
+                ql_hir::StmtKind::Return(expr) => {
+                    if let Some(expr) = expr {
+                        self.index_expr_async_contexts(*expr);
+                    }
+                }
+                ql_hir::StmtKind::Defer(expr) => self.index_expr_async_contexts(*expr),
+                ql_hir::StmtKind::Break | ql_hir::StmtKind::Continue => {}
+                ql_hir::StmtKind::While { condition, body } => {
+                    self.index_expr_async_contexts(*condition);
+                    self.index_block_async_contexts(*body);
+                }
+                ql_hir::StmtKind::Loop { body } => self.index_block_async_contexts(*body),
+                ql_hir::StmtKind::For { iterable, body, .. } => {
+                    self.index_expr_async_contexts(*iterable);
+                    self.index_block_async_contexts(*body);
+                }
+                ql_hir::StmtKind::Expr { expr, .. } => self.index_expr_async_contexts(*expr),
+            }
+        }
+
+        if let Some(expr) = block.tail {
+            self.index_expr_async_contexts(expr);
+        }
+    }
+
+    fn index_expr_async_contexts(&mut self, expr_id: ExprId) {
+        let expr = self.module.expr(expr_id);
+        match &expr.kind {
+            ExprKind::Name(_)
+            | ExprKind::Integer(_)
+            | ExprKind::String { .. }
+            | ExprKind::Bool(_)
+            | ExprKind::NoneLiteral => {}
+            ExprKind::Tuple(items) | ExprKind::Array(items) => {
+                for &item in items {
+                    self.index_expr_async_contexts(item);
+                }
+            }
+            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
+                self.index_block_async_contexts(*block_id);
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.index_expr_async_contexts(*condition);
+                self.index_block_async_contexts(*then_branch);
+                if let Some(expr) = else_branch {
+                    self.index_expr_async_contexts(*expr);
+                }
+            }
+            ExprKind::Match { value, arms } => {
+                self.index_expr_async_contexts(*value);
+                for arm in arms {
+                    if let Some(guard) = arm.guard {
+                        self.index_expr_async_contexts(guard);
+                    }
+                    self.index_expr_async_contexts(arm.body);
+                }
+            }
+            ExprKind::Closure { body, .. } => self.index_expr_async_contexts(*body),
+            ExprKind::Call { callee, args } => {
+                self.index_expr_async_contexts(*callee);
+                for arg in args {
+                    match arg {
+                        ql_hir::CallArg::Positional(expr) => self.index_expr_async_contexts(*expr),
+                        ql_hir::CallArg::Named { value, .. } => {
+                            self.index_expr_async_contexts(*value)
+                        }
+                    }
+                }
+            }
+            ExprKind::Member { object, .. } => self.index_expr_async_contexts(*object),
+            ExprKind::Bracket { target, items } => {
+                self.index_expr_async_contexts(*target);
+                for &item in items {
+                    self.index_expr_async_contexts(item);
+                }
+            }
+            ExprKind::StructLiteral { fields, .. } => {
+                for field in fields {
+                    self.index_expr_async_contexts(field.value);
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.index_expr_async_contexts(*left);
+                self.index_expr_async_contexts(*right);
+            }
+            ExprKind::Unary { op, expr } => {
+                let operator = match op {
+                    UnaryOp::Await => Some(AsyncOperatorKind::Await),
+                    UnaryOp::Spawn => Some(AsyncOperatorKind::Spawn),
+                    UnaryOp::Neg => None,
+                };
+                if let Some(operator) = operator {
+                    self.record_async_context(expr_id, operator);
+                }
+                self.index_expr_async_contexts(*expr);
+            }
+            ExprKind::Question(expr) => self.index_expr_async_contexts(*expr),
+        }
+    }
+
+    fn record_async_context(&mut self, expr_id: ExprId, operator: AsyncOperatorKind) {
+        let expr = self.module.expr(expr_id);
+        let span = self.root_span(expr.span);
+        self.async_contexts.push(AsyncContextInfo {
+            span,
+            operator,
+            in_async_function: self.resolution.expr_is_in_async_function(expr_id),
+        });
     }
 
     fn index_completion_support(&mut self) {

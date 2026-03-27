@@ -1,7 +1,7 @@
 mod ids;
 mod resolver;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ql_ast::{Path, UseDecl, UseItem};
 use ql_diagnostics::Diagnostic;
@@ -26,6 +26,7 @@ pub struct ResolutionMap {
     type_scopes: HashMap<TypeId, ScopeId>,
     item_scopes: HashMap<ItemId, ScopeId>,
     function_scopes: HashMap<Span, ScopeId>,
+    async_function_scopes: HashSet<ScopeId>,
 }
 
 impl ResolutionMap {
@@ -77,6 +78,25 @@ impl ResolutionMap {
     /// Return the function-local scope allocated while resolving one function or method body/signature.
     pub fn function_scope(&self, span: Span) -> Option<ScopeId> {
         self.function_scopes.get(&span).copied()
+    }
+
+    /// Return whether `scope_id` is enclosed by an `async fn` scope.
+    pub fn scope_is_in_async_function(&self, scope_id: ScopeId) -> bool {
+        let mut next = Some(scope_id);
+        while let Some(current) = next {
+            if self.async_function_scopes.contains(&current) {
+                return true;
+            }
+            next = self.scopes.scope(current).parent;
+        }
+        false
+    }
+
+    /// Return whether the expression is enclosed by an `async fn`.
+    pub fn expr_is_in_async_function(&self, expr_id: ExprId) -> bool {
+        self.expr_scope(expr_id)
+            .map(|scope| self.scope_is_in_async_function(scope))
+            .unwrap_or(false)
     }
 }
 

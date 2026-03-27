@@ -1,6 +1,6 @@
 mod support;
 
-use ql_analysis::SymbolKind;
+use ql_analysis::{AsyncContextInfo, AsyncOperatorKind, SymbolKind};
 use ql_span::Span;
 
 use support::{analyzed, nth_offset, nth_span};
@@ -6913,4 +6913,75 @@ fn compute() -> Int {
             );
         }
     }
+}
+
+#[test]
+fn async_context_queries_follow_await_and_spawn_boundaries() {
+    let source = r#"
+fn worker() -> Int {
+    return 1
+}
+
+fn sync_main() -> Int {
+    spawn worker()
+    return await worker()
+}
+
+async fn async_main() -> Int {
+    spawn worker()
+    return await worker()
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "spawn", 1)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "spawn", 1),
+            operator: AsyncOperatorKind::Spawn,
+            in_async_function: false,
+        })
+    );
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "await", 1)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "await", 1),
+            operator: AsyncOperatorKind::Await,
+            in_async_function: false,
+        })
+    );
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "spawn", 2)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "spawn", 2),
+            operator: AsyncOperatorKind::Spawn,
+            in_async_function: true,
+        })
+    );
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "await", 2)),
+        Some(AsyncContextInfo {
+            span: nth_span(source, "await", 2),
+            operator: AsyncOperatorKind::Await,
+            in_async_function: true,
+        })
+    );
+}
+
+#[test]
+fn async_context_queries_return_none_outside_async_operators() {
+    let source = r#"
+fn main() -> Int {
+    let value = 1
+    return value
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert_eq!(
+        analysis.async_context_at(nth_offset(source, "value", 2)),
+        None
+    );
 }
