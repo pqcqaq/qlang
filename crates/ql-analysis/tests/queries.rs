@@ -4937,6 +4937,73 @@ fn main(counter: Counter) -> Int {
 }
 
 #[test]
+fn member_completion_skips_deferred_multi_segment_member_targets_on_concrete_receivers() {
+    let source = r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter.Scope.Config {
+    fn read(self) -> Int {
+        return 1
+    }
+}
+
+extend Counter.Scope.Config {
+    fn extra(self) -> Int {
+        return 1
+    }
+}
+
+fn main(counter: Counter) -> Int {
+    let read_result = counter.re
+    let extra_result = counter.ex
+    return counter.value
+}
+"#;
+
+    let analysis = analyzed(source);
+    let read_use = source
+        .find(".re")
+        .map(|offset| offset + 1)
+        .expect("read member use should exist");
+    let extra_use = source
+        .find(".ex")
+        .map(|offset| offset + 1)
+        .expect("extra member use should exist");
+
+    let read_items = analysis
+        .completions_at(read_use)
+        .expect("member completion should exist");
+    let extra_items = analysis
+        .completions_at(extra_use)
+        .expect("member completion should exist");
+
+    assert!(
+        read_items.iter().all(|item| item.label != "read"),
+        "expected deferred impl target to stay detached from concrete receiver, got {read_items:?}"
+    );
+    assert!(
+        extra_items.iter().all(|item| item.label != "extra"),
+        "expected deferred extend target to stay detached from concrete receiver, got {extra_items:?}"
+    );
+    assert_eq!(
+        read_items
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["value"]
+    );
+    assert_eq!(
+        extra_items
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["value"]
+    );
+}
+
+#[test]
 fn semantic_tokens_follow_current_query_surface() {
     let source = r#"
 use std.collections.HashMap as Map

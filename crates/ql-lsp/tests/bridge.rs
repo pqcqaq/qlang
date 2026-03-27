@@ -3740,6 +3740,70 @@ fn main(counter: Counter) -> Int {
 }
 
 #[test]
+fn completion_bridge_skips_deferred_multi_segment_member_targets_on_concrete_receivers() {
+    let source = r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter.Scope.Config {
+    fn read(self) -> Int {
+        return 1
+    }
+}
+
+extend Counter.Scope.Config {
+    fn extra(self) -> Int {
+        return 1
+    }
+}
+
+fn main(counter: Counter) -> Int {
+    let read_result = counter.re
+    let extra_result = counter.ex
+    return counter.value
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let read_offset = source
+        .find(".re")
+        .map(|offset| offset + 1)
+        .expect("read member use should exist");
+    let read_range = span_to_range(source, Span::new(read_offset, read_offset + 2));
+    let read_position = Position::new(read_range.start.line, read_range.start.character + 2);
+
+    let Some(CompletionResponse::Array(read_items)) =
+        completion_for_analysis(source, &analysis, read_position)
+    else {
+        panic!("expected array completion response");
+    };
+
+    assert!(
+        read_items.is_empty(),
+        "expected no fake deferred impl candidates on concrete receiver, got {read_items:?}"
+    );
+
+    let extra_offset = source
+        .find(".ex")
+        .map(|offset| offset + 1)
+        .expect("extra member use should exist");
+    let extra_range = span_to_range(source, Span::new(extra_offset, extra_offset + 2));
+    let extra_position = Position::new(extra_range.start.line, extra_range.start.character + 2);
+
+    let Some(CompletionResponse::Array(extra_items)) =
+        completion_for_analysis(source, &analysis, extra_position)
+    else {
+        panic!("expected array completion response");
+    };
+
+    assert!(
+        extra_items.is_empty(),
+        "expected no fake deferred extend candidates on concrete receiver, got {extra_items:?}"
+    );
+}
+
+#[test]
 fn completion_bridge_filters_variant_candidates_by_prefix() {
     let source = r#"
 enum Command {

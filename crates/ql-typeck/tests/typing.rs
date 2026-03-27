@@ -881,6 +881,48 @@ fn main() -> Int {
 }
 
 #[test]
+fn deferred_multi_segment_member_targets_do_not_attach_to_concrete_local_items() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter.Scope.Config {
+    fn read(self) -> Int {
+        return 1
+    }
+}
+
+extend Counter.Scope.Config {
+    fn extra(self) -> Int {
+        return 1
+    }
+}
+
+fn main(counter: Counter) -> Int {
+    return counter.read() + counter.extra()
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"unknown member `read` on type `Counter`".to_string()),
+        "expected deferred impl target to stay detached from concrete local item, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(&"unknown member `extra` on type `Counter`".to_string()),
+        "expected deferred extend target to stay detached from concrete local item, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|message| message.contains("ambiguous method")),
+        "expected detached deferred targets instead of fake method matches, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_struct_literal_shape_and_field_type_errors() {
     let diagnostics = diagnostic_messages(
         r#"

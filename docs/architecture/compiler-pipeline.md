@@ -126,6 +126,7 @@ source
 - invalid struct-literal root diagnostics 当前也只在“root 已解析成功且明确不支持 struct-style 字段构造”时触发；same-file 已解析二段 enum variant path 的 unknown variant 现在也会显式报错，但 deeper module-path case 仍保持保守，不提前下结论
 - unsupported 或仍 deferred 的 struct literal root 当前也会直接回退成 `unknown`，不再把首段解析结果伪装成真实 item type 并继续污染 return/assignment diagnostics
 - deferred multi-segment type path 当前也保持 source-backed `Named` 表示，不再把首段解析出来的 same-file local item / import alias 过早伪装成真实 concrete type
+- deferred multi-segment `impl` / `extend` target 当前也不会被投影到 concrete local receiver surface：member typing / analysis completion 只继续枚举真实 receiver 的稳定候选，不把 `Counter.Scope.Config` 这类 deferred path 的方法伪装成 same-file `Counter` 成员
 - invalid pattern-root shape diagnostics 当前也只在“pattern root 已解析成功且构造形状已知必错”时触发；same-file 已解析二段 enum variant path 的 unknown variant 现在也会显式报错，但 path pattern shape / deeper module-path case 仍保持保守，不提前下结论
 - invalid path-pattern root diagnostics 当前也只在“path pattern root 已解析成功且 bare path 形状已知必错”时触发；unit variant 仍允许，same-file 已解析二段 enum variant path 的 unknown variant 与 const/static path 语义现在也会给出显式诊断，但 deeper module-path case 仍保持保守，不提前下结论
 - const/static bare path pattern 现在也已经改成显式 unsupported diagnostics；但这仍然只覆盖 same-file root / same-file local import alias，cross-file / deeper module-path case 继续保守
