@@ -1,8 +1,8 @@
-# P1-P6 阶段总览
+# P1-P7 阶段总览
 
 > 最后同步时间：2026-03-27
 
-这份文档不是路线图，而是对当前已经完成的 P1-P6 开发工作的阶段性归档。目标是回答三个问题：
+这份文档不是路线图，而是对当前已经完成与正在推进的 P1-P7 开发工作的阶段性归档。目标是回答三个问题：
 
 1. 每个阶段原本要解决什么问题
 2. 现在到底已经做到了什么
@@ -701,6 +701,25 @@ P6 当前仍刻意未完成：
 - 从 shorthand field token 本身发起 field-symbol rename 的完整 editor semantics
 - code actions / inlay hints / call hierarchy / project-wide rename
 
+## P7: 并发、异步与 Rust 互操作（进行中）
+
+### 当前范围
+
+- 先收口语义层与诊断层，不直接跳到 runtime/codegen 大改
+- 保持 conservative 策略，避免过早承诺完整 effect/Future 类型系统
+
+### 本轮已完成
+
+- `ql-typeck` 已新增函数级 async 上下文
+- `await` / `spawn` 在非 `async fn` 内使用会给出显式 diagnostics
+- 新增 `crates/ql-typeck/tests/async_typing.rs`，锁住边界行为
+
+### 下一步（P7.1 延续）
+
+- 在 `ql-resolve` / `ql-analysis` 补 async 语义查询契约
+- 细化 `await` / `spawn` 与后续 MIR/runtime 接口的类型约束
+- 在不扩大 surface 的前提下继续按切片补回归
+
 ## 阶段状态表
 
 | 阶段 | 状态 | 结论 |
@@ -711,10 +730,11 @@ P6 当前仍刻意未完成：
 | P4 | 已完成基础阶段 | LLVM backend、artifact pipeline、extern C direct-call foundation 与 codegen harness 已建立 |
 | P5 | 已完成基础阶段 | 最小 C ABI 互操作、头文件生成、sidecar header 与真实 C 宿主集成已建立 |
 | P6 | 已完成基础阶段 | same-file query / rename / completion / semantic-token / LSP parity 已系统收口 |
+| P7 | 进行中（P7.1） | 已开始 async 语义边界收口，先落 typeck 诊断与测试 |
 
 ## 对后续开发的直接建议
 
-P1-P6 之后，不应再回到“大而化之地继续堆功能”的工作方式。更合理的推进方向是：
+P1-P7 之后，不应再回到“大而化之地继续堆功能”的工作方式。更合理的推进方向是：
 
 1. 在 P3 上继续补一般化 ownership / borrow / drop，而不是回头重做 MIR
 2. 在 P4/P5 上继续补 lowering、ABI 与 runtime，而不是推翻 driver/codegen/ffi 边界

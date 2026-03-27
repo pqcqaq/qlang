@@ -13,6 +13,12 @@
 - LLVM backend 对 async 相关能力仍显式报 `unsupported`
 - C ABI 与 header 投影已经稳定，可作为 Rust 混编入口
 
+## 当前进度（2026-03-27）
+
+- 已在 `ql-typeck` 落地 `await` / `spawn` 的 async 上下文约束：在非 `async fn` 内使用会给出显式诊断
+- 已补充 `crates/ql-typeck/tests/async_typing.rs`，锁住 `await` / `spawn` 边界与 async 函数内允许路径
+- 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
+
 ## 分阶段实现建议
 
 ### P7.1 语义层收口
