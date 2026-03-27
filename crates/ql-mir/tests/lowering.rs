@@ -1,7 +1,17 @@
 use ql_hir::lower_module as lower_hir;
-use ql_mir::{lower_module as lower_mir, render_module};
+use ql_mir::{
+    Constant, MirBody, MirModule, Operand, Rvalue, StatementKind, lower_module as lower_mir,
+    render_module,
+};
 use ql_parser::parse_source;
 use ql_resolve::resolve_module;
+
+fn lower(source: &str) -> MirModule {
+    let ast = parse_source(source).expect("source should parse");
+    let hir = lower_hir(&ast);
+    let resolution = resolve_module(&hir);
+    lower_mir(&hir, &resolution)
+}
 
 fn render(source: &str) -> String {
     let ast = parse_source(source).expect("source should parse");
@@ -9,6 +19,14 @@ fn render(source: &str) -> String {
     let resolution = resolve_module(&hir);
     let mir = lower_mir(&hir, &resolution);
     render_module(&mir, &hir)
+}
+
+fn body_named<'a>(mir: &'a MirModule, name: &str) -> &'a MirBody {
+    mir.bodies()
+        .iter()
+        .map(|id| mir.body(*id))
+        .find(|body| body.name == name)
+        .unwrap_or_else(|| panic!("expected MIR body named `{name}`"))
 }
 
 #[test]
@@ -97,6 +115,86 @@ fn main(stream: Stream, command: Command) -> Int {
     assert!(rendered.contains("for await"));
     assert!(rendered.contains("match "));
     assert!(rendered.contains("bind_pattern event <-"));
+}
+
+#[test]
+fn keeps_await_and_spawn_as_explicit_unary_mir_rvalues() {
+    let rendered = render(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    spawn worker()
+    return await worker()
+}
+"#,
+    );
+
+    assert!(rendered.contains("assign l"));
+    assert!(rendered.contains("= worker()"));
+    assert!(rendered.contains("= spawn l"));
+    assert!(rendered.contains("= await l"));
+}
+
+#[test]
+fn lowers_import_aliased_async_calls_with_import_callees() {
+    let mir = lower(
+        r#"
+use worker as run
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    return await run()
+}
+"#,
+    );
+
+    let body = body_named(&mir, "main");
+    let mut saw_import_callee = false;
+    let mut saw_await_of_call_result = false;
+
+    let mut call_result_locals = std::collections::HashSet::new();
+    for block in body.blocks() {
+        for statement_id in &block.statements {
+            let statement = body.statement(*statement_id);
+            match &statement.kind {
+                StatementKind::Assign { place, value } if place.projections.is_empty() => {
+                    match value {
+                        Rvalue::Call {
+                            callee: Operand::Constant(Constant::Import(path)),
+                            ..
+                        } => {
+                            assert_eq!(path.segments, vec!["worker".to_string()]);
+                            call_result_locals.insert(place.base);
+                            saw_import_callee = true;
+                        }
+                        Rvalue::Unary {
+                            op: ql_ast::UnaryOp::Await,
+                            operand: Operand::Place(place),
+                        } if place.projections.is_empty() => {
+                            saw_await_of_call_result = call_result_locals.contains(&place.base);
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    assert!(
+        saw_import_callee,
+        "expected import-aliased async call in MIR"
+    );
+    assert!(
+        saw_await_of_call_result,
+        "expected `await` to consume the import-call result local"
+    );
 }
 
 #[test]
