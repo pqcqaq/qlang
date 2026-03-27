@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ql_analysis::{Analysis, HoverInfo, RenameError, SymbolKind};
+use ql_analysis::{Analysis, AsyncOperatorKind, HoverInfo, RenameError, SymbolKind};
 use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
 };
@@ -57,6 +57,13 @@ pub fn diagnostics_to_lsp(
         .collect()
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AsyncContextBridge {
+    pub range: Range,
+    pub operator: AsyncOperatorKind,
+    pub in_async_function: bool,
+}
+
 pub fn hover_for_analysis(source: &str, analysis: &Analysis, position: Position) -> Option<Hover> {
     let offset = position_to_offset(source, position)?;
     let info = analysis.hover_at(offset)?;
@@ -68,6 +75,20 @@ pub fn hover_for_analysis(source: &str, analysis: &Analysis, position: Position)
         }),
         range: Some(span_to_range(source, info.span)),
     })
+}
+
+pub fn async_context_for_analysis(
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<AsyncContextBridge> {
+    analysis
+        .async_context_at(position_to_offset(source, position)?)
+        .map(|context| AsyncContextBridge {
+            range: span_to_range(source, context.span),
+            operator: context.operator,
+            in_async_function: context.in_async_function,
+        })
 }
 
 pub fn definition_for_analysis(

@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use ql_analysis::analyze_source;
+use ql_analysis::{AsyncOperatorKind, analyze_source};
 use ql_diagnostics::{Diagnostic as CompilerDiagnostic, Label};
 use ql_lsp::bridge::{
-    completion_for_analysis, definition_for_analysis, diagnostics_to_lsp, hover_for_analysis,
-    position_to_offset, prepare_rename_for_analysis, references_for_analysis, rename_for_analysis,
-    semantic_tokens_for_analysis, semantic_tokens_legend, span_to_range,
+    async_context_for_analysis, completion_for_analysis, definition_for_analysis,
+    diagnostics_to_lsp, hover_for_analysis, position_to_offset, prepare_rename_for_analysis,
+    references_for_analysis, rename_for_analysis, semantic_tokens_for_analysis,
+    semantic_tokens_legend, span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
@@ -9041,4 +9042,96 @@ fn read(point: Point) -> Int {
     );
 
     assert_eq!(edit, WorkspaceEdit::new(expected_changes));
+}
+
+#[test]
+fn async_context_bridge_reports_operator_and_async_scope() {
+    let source = r#"
+fn worker() -> Int {
+    return 1
+}
+
+fn sync_main() -> Int {
+    spawn worker()
+    return await worker()
+}
+
+async fn async_main() -> Int {
+    spawn worker()
+    return await worker()
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let sync_spawn_position = span_to_range(source, nth_span(source, "spawn", 1)).start;
+    let sync_await_position = span_to_range(source, nth_span(source, "await", 1)).start;
+    let async_spawn_position = span_to_range(source, nth_span(source, "spawn", 2)).start;
+    let async_await_position = span_to_range(source, nth_span(source, "await", 2)).start;
+
+    let sync_spawn = async_context_for_analysis(source, &analysis, sync_spawn_position)
+        .expect("sync spawn async context should exist");
+    assert_eq!(
+        sync_spawn.range,
+        span_to_range(source, nth_span(source, "spawn", 1))
+    );
+    assert_eq!(sync_spawn.operator, AsyncOperatorKind::Spawn);
+    assert!(!sync_spawn.in_async_function);
+
+    let sync_await = async_context_for_analysis(source, &analysis, sync_await_position)
+        .expect("sync await async context should exist");
+    assert_eq!(
+        sync_await.range,
+        span_to_range(source, nth_span(source, "await", 1))
+    );
+    assert_eq!(sync_await.operator, AsyncOperatorKind::Await);
+    assert!(!sync_await.in_async_function);
+
+    let async_spawn = async_context_for_analysis(source, &analysis, async_spawn_position)
+        .expect("async spawn async context should exist");
+    assert_eq!(
+        async_spawn.range,
+        span_to_range(source, nth_span(source, "spawn", 2))
+    );
+    assert_eq!(async_spawn.operator, AsyncOperatorKind::Spawn);
+    assert!(async_spawn.in_async_function);
+
+    let async_await = async_context_for_analysis(source, &analysis, async_await_position)
+        .expect("async await async context should exist");
+    assert_eq!(
+        async_await.range,
+        span_to_range(source, nth_span(source, "await", 2))
+    );
+    assert_eq!(async_await.operator, AsyncOperatorKind::Await);
+    assert!(async_await.in_async_function);
+}
+
+#[test]
+fn async_context_bridge_returns_none_for_non_async_operators_or_invalid_positions() {
+    let source = r#"
+fn main() -> Int {
+    let value = 1
+    return value
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let value_position = span_to_range(source, nth_span(source, "value", 2)).start;
+    assert_eq!(
+        async_context_for_analysis(source, &analysis, value_position),
+        None
+    );
+
+    let emoji_source = "fn main() -> String {\n    \"😀\"\n}\n";
+    let emoji_analysis = analyze_source(emoji_source).expect("source should analyze");
+    let emoji_offset = emoji_source.find('😀').expect("emoji should exist");
+    let emoji_range = span_to_range(
+        emoji_source,
+        Span::new(emoji_offset, emoji_offset + "😀".len()),
+    );
+    let invalid_position = Position::new(emoji_range.start.line, emoji_range.start.character + 1);
+
+    assert_eq!(
+        async_context_for_analysis(emoji_source, &emoji_analysis, invalid_position),
+        None
+    );
 }
