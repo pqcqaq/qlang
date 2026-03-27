@@ -363,6 +363,40 @@ impl Counter {
 }
 
 #[test]
+fn hover_bridge_preserves_deferred_multi_segment_import_alias_type_paths_on_locals() {
+    let source = r#"
+use Command as Cmd
+
+enum Command {
+    Config {
+        retries: Int,
+    },
+}
+
+fn main(value: Cmd.Scope.Config) -> Cmd.Scope.Config {
+    let local_value = value
+    return local_value
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let hover = hover_for_analysis(
+        source,
+        &analysis,
+        span_to_range(source, nth_span(source, "local_value", 2)).start,
+    )
+    .expect("local hover should exist");
+
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown content");
+    };
+    assert!(markup.value.contains("**local** `local_value`"));
+    assert!(markup.value.contains("local local_value: Cmd.Scope.Config"));
+    assert!(markup.value.contains("Type: `Cmd.Scope.Config`"));
+    assert!(!markup.value.contains("local local_value: Command"));
+    assert!(!markup.value.contains("Type: `Command`"));
+}
+
+#[test]
 fn hover_bridge_renders_markdown_for_member_symbols() {
     let source = r#"
 struct Counter {
