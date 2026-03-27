@@ -448,7 +448,7 @@ impl<'a> ModuleEmitter<'a> {
                         ));
                     }
                     if !params.is_empty() {
-                        match build_async_frame_layout(&params, function.span) {
+                        match self.build_async_frame_layout(&params, function.span) {
                             Ok(layout) => async_frame_layout = Some(layout),
                             Err(error) => diagnostics.push(error),
                         }
@@ -1852,6 +1852,36 @@ impl<'a> ModuleEmitter<'a> {
         })
     }
 
+    fn build_async_frame_layout(
+        &self,
+        params: &[ParamSignature],
+        span: Span,
+    ) -> Result<AsyncFrameLayout, Diagnostic> {
+        let mut fields = Vec::with_capacity(params.len());
+        let mut field_types = Vec::with_capacity(params.len());
+        let mut size = 0;
+        let mut align = 1;
+
+        for (index, param) in params.iter().enumerate() {
+            let layout = self.loadable_abi_layout(&param.ty, span, "async fn frame field type")?;
+            size = align_to(size, layout.align);
+            size += layout.size;
+            align = align.max(layout.align);
+            field_types.push(param.llvm_ty.clone());
+            fields.push(AsyncFrameField {
+                param_index: index,
+                llvm_ty: param.llvm_ty.clone(),
+            });
+        }
+
+        Ok(AsyncFrameLayout {
+            llvm_ty: format!("{{ {} }}", field_types.join(", ")),
+            size: align_to(size, align),
+            align,
+            fields,
+        })
+    }
+
     fn lower_llvm_type(&self, ty: &Ty, span: Span, context: &str) -> Result<String, Diagnostic> {
         match ty {
             Ty::Array { element, len } => {
@@ -2794,35 +2824,6 @@ fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnos
     }
 }
 
-fn build_async_frame_layout(
-    params: &[ParamSignature],
-    span: Span,
-) -> Result<AsyncFrameLayout, Diagnostic> {
-    let mut fields = Vec::with_capacity(params.len());
-    let mut field_types = Vec::with_capacity(params.len());
-    let mut size = 0;
-    let mut align = 1;
-
-    for (index, param) in params.iter().enumerate() {
-        let layout = scalar_abi_layout(&param.ty, span, "async fn frame field type")?;
-        size = align_to(size, layout.align);
-        size += layout.size;
-        align = align.max(layout.align);
-        field_types.push(param.llvm_ty.clone());
-        fields.push(AsyncFrameField {
-            param_index: index,
-            llvm_ty: param.llvm_ty.clone(),
-        });
-    }
-
-    Ok(AsyncFrameLayout {
-        llvm_ty: format!("{{ {} }}", field_types.join(", ")),
-        size: align_to(size, align),
-        align,
-        fields,
-    })
-}
-
 #[cfg(test)]
 fn build_async_task_result_layout(
     ty: &Ty,
@@ -3403,6 +3404,48 @@ async fn worker(flag: Bool, value: Int) -> Int {
         assert!(rendered.contains(
             "%async_body_frame_field1 = getelementptr inbounds { i1, i64 }, ptr %frame, i32 0, i32 1"
         ));
+    }
+
+    #[test]
+    fn emits_async_task_create_wrapper_with_recursive_aggregate_frame_fields() {
+        let runtime_hooks =
+            collect_runtime_hook_signatures([RuntimeCapability::AsyncFunctionBodies]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+async fn worker(pair: Pair, values: [Int; 2]) -> Int {
+    return pair.right + values[1]
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i64 @ql_1_worker__async_body(ptr %frame)"));
+        assert!(rendered.contains("define ptr @ql_1_worker({ i64, i64 } %arg0, [2 x i64] %arg1)"));
+        assert!(rendered.contains("call ptr @qlrt_async_frame_alloc(i64 32, i64 8)"));
+        assert!(rendered.contains(
+            "getelementptr inbounds { { i64, i64 }, [2 x i64] }, ptr %async_frame, i32 0, i32 0"
+        ));
+        assert!(rendered.contains(
+            "getelementptr inbounds { { i64, i64 }, [2 x i64] }, ptr %async_frame, i32 0, i32 1"
+        ));
+        assert!(rendered.contains("store { i64, i64 } %arg0, ptr %async_frame_field0"));
+        assert!(rendered.contains("store [2 x i64] %arg1, ptr %async_frame_field1"));
+        assert!(
+            rendered.contains(
+                "%async_body_frame_field0 = getelementptr inbounds { { i64, i64 }, [2 x i64] }, ptr %frame, i32 0, i32 0"
+            )
+        );
+        assert!(
+            rendered.contains(
+                "%async_body_frame_field1 = getelementptr inbounds { { i64, i64 }, [2 x i64] }, ptr %frame, i32 0, i32 1"
+            )
+        );
     }
 
     #[test]

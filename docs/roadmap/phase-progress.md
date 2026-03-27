@@ -764,6 +764,7 @@ P6 当前仍刻意未完成：
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已补上 library-mode async 边界回归：`spawn` / `for await` 在非 entry async body 中仍保持稳定 unsupported 覆盖，`await` 则补上缺失 hook / 不支持结果布局等边界回归，而 `for await` 不再额外泄露泛化的 ``for`` lowering 或 iterable 预物化噪声诊断
 - `ql-runtime` / `ql-cli` / `ql-codegen-llvm` 已补上 task-result transport 的第一条 ABI skeleton：`task-await` capability 现在会同时暴露 `qlrt_task_await` 与 `qlrt_task_result_release`，先把“等待得到 opaque result ptr”与“释放 result payload”这两个动作拆开冻结合同，再决定后续 typed extraction lowering
 - `ql-codegen-llvm` 已补上 `AsyncTaskResultLayout` 内部抽象：当前 async 结果已接受 `Void`、scalar builtin，以及递归可加载的 tuple / fixed array / 非泛型 struct，并在 signature 阶段锁定 payload 的 LLVM type/size/align，避免后续 `await` lowering 再反过来重写 async wrapper/result 合同
+- `ql-codegen-llvm` 已把 parameterized `async fn` wrapper 的 frame layout 扩到递归可加载 aggregate 参数：tuple / fixed array / 非泛型 struct 参数现在可被写入 heap frame，并在 `__async_body` 内按相同布局回读
 - `ql-codegen-llvm` 已打开首个真实 `await` lowering：当前在 backend 内支持 `Void` / scalar builtin / recursively loadable aggregate async 结果，并把 `await` 降成 `qlrt_task_await` + load payload + `qlrt_task_result_release` 的最小链路
 - `ql-codegen-llvm` 已打开首个真实 `spawn` lowering 子集：当前 backend 支持把 task-handle operand 降成 `qlrt_executor_spawn(ptr null, task)`，并返回可继续 `await` 的 task handle；当前已覆盖 direct async call、局部绑定 handle 与 sync helper 返回 handle，statement-position fire-and-forget 只是丢弃该返回句柄的特例
 - `ql-codegen-llvm` 已打开只读 place projection lowering：当前嵌套 struct field read、constant tuple index read、array index read 已进入统一 place/type 推导与 LLVM GEP 链 lowering；这条切片仍刻意不开放 projection assignment target，也不把 projected place 放进 `await` / `spawn`
@@ -777,7 +778,7 @@ P6 当前仍刻意未完成：
 - `ql-driver` / `ql-cli` 已补上 async staticlib mixed-surface 回归：带内部 async helper 的库现在也锁住了 `extern "c"` export header sidecar 路径，确保公开 C header surface 不会被 async implementation details 污染
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前共享 hook ABI 已冻结第一版 LLVM-facing contract string，但真实内存布局、结果传递协议和更细粒度调用约定仍未冻结
-- 当前 backend/driver 虽已具备 declaration + async body wrapper/frame scaffold，并已打通 scalar/tuple/array/struct/void `await` lowering、`spawn` task-handle lowering、只读 projection lowering 与 `staticlib` 子集开放，但 `for await` lowering、更广义的任务结果协议、frame 生命周期管理、更广义的布局协议与 projection write 语义仍未开放
+- 当前 backend/driver 虽已具备 declaration + async body wrapper/frame scaffold，并已打通递归可加载 aggregate frame/result lowering、`spawn` task-handle lowering、只读 projection lowering 与 `staticlib` 子集开放，但 `for await` lowering、更广义的任务结果协议、frame 生命周期管理、更广义的布局协议与 projection write 语义仍未开放
 - 当前 `async-iteration` 已在 driver 层有公开 build 诊断，但仍只作为保守的失败合同存在；这还不代表 `for await` 已进入 lowering/runtime hook 设计
 - 当前 `Task[T]` 虽已进入显式类型面，但仍是保守的句柄抽象：还没有 cancellation、polling、scheduler hint、auto-drop 语义或更一般的 async effect/type inference 设计
 - 当前 borrowck 只对 direct-local task handle 建立最小 consume 合同；`await` / `spawn`、静态可判定的 helper `Task[T]` 参数传递与 direct-local `return task` 已接入，但更广义的 helper 返回值边界、place-sensitive handle lifecycle 与更广义 drop/submission 协议仍待后续切片
