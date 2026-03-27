@@ -30,9 +30,10 @@
 - 已补充 `crates/ql-typeck/tests/async_typing.rs` 的非调用操作数回归（`await value` / `spawn value`）
 - 已把 closure 视为独立 async 边界：closure body 当前不会继承外层 `async fn` 上下文，`await` / `spawn` / `for await` 会继续走非 async 诊断路径
 - 已在 `ql-typeck` 修正 closure block 的显式 `return` 推断：当 closure 存在期望 callable 返回类型时，显式 `return` 会对齐 callable 签名；内层 nested closure 的 `return` 不会抬升外层 closure 返回类型
-- 已在 `ql-typeck` 增补保守的 all-path return 分析：函数与 closure body 会拒绝“部分路径 `return`、部分路径 fallthrough”的情形；当前已覆盖 `if` 与最小穷尽性 `match`（`_`、`Bool true/false`、enum 全 variant），guarded arm 不计入覆盖
+- 已在 `ql-typeck` 增补保守的 all-path return 分析：函数与 closure body 会拒绝“部分路径 `return`、部分路径 fallthrough”的情形；当前已覆盖 `if` 与最小穷尽性 `match`（`_`、`Bool true/false`、enum 全 variant）；带 guard 的 arm 默认仍保守，只有显式字面量 `true` guard 会计入覆盖
 - 已在 `ql-typeck` 把显式常量条件的 `if` 纳入 must-return 收口：`if true { return ... }`、`if false { ... } else { return ... }` 与 closure 中同构写法现在会被接受；`if false { return ... }` 仍不会被误判成保证返回
 - 已在 `ql-typeck` 把显式字面量 `Bool` scrutinee 的 `match` 纳入 must-return 收口：`match true/false` 会按 arm 顺序和字面量 guard 做保守裁剪；无可达 arm 或被字面量 `false` guard 挡住的唯一 arm 仍不会被误判成保证返回
+- 已在 `ql-typeck` 把非字面量 `Bool` / enum `match` 的字面量 guard 纳入有序 arm 流分析：`true if true`、`false if true`、`_ if true` 与 enum variant `if true` 现在会参与穷尽性与 must-return 推断；未知 guard 仍保持保守，不会提前裁掉后续 arm
 - 已在 `ql-typeck` 增补 loop-control 上下文约束：`break` / `continue` 在非 loop body 中会给出显式诊断；closure body 不会继承外层 loop-control 语义
 - 已在 `ql-typeck` 把 must-return 收口重构为有序控制流摘要：`loop { return ... }` 与 closure 中同构写法现在会被接受；`break; return ...` 和“无 break 的 loop 之后追加 return”不会再被误判成保证返回；更深层表达式子节点也会按求值顺序参与保守 return 分析
 - 已在 `ql-typeck` 把显式常量条件的 `while` 纳入 must-return 收口：`while true { return ... }` 与 closure 中同构写法现在会被接受；`while true` 中的 `break; return ...` 和 `while false { return ... }` 仍不会被误判成保证返回
@@ -43,7 +44,7 @@
 - 已补充 `async + generic` 并存场景回归，锁住 backend 同阶段多条 unsupported 诊断聚合行为
 - 已补充 `async + unsafe fn body` 并存场景回归，锁住 backend 对函数签名级多条 unsupported 诊断的聚合与输出顺序
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
-- 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、显式字面量 `if true` / `if false`、显式字面量 `match true/false`、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、更广义的常量传播、guard-sensitive `match` 与 unreachable 细化仍待后续切片
+- 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、显式字面量 `if true` / `if false`、显式字面量 `match true/false`、非字面量 `Bool` / enum `match` 上的字面量 guard、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、更广义的常量传播、更一般的 guard-sensitive `match` 与 unreachable 细化仍待后续切片
 - 当前 loop-control 已具备 analysis/LSP 的只读桥接，但还未扩展到公开 editor 协议 capability；继续保持低风险桥接策略
 
 ## 分阶段实现建议
