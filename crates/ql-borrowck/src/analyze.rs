@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
-use ql_ast::{BinaryOp, ReceiverKind};
+use ql_ast::{BinaryOp, ReceiverKind, UnaryOp};
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{self as hir, Function, ItemKind, Param};
 use ql_mir::{
@@ -279,9 +279,22 @@ impl<'a> BodyAnalyzer<'a> {
                 self.read_operand(states, left, span, reporter.as_deref_mut());
                 self.read_operand(states, right, span, reporter);
             }
-            Rvalue::Unary { operand, .. } | Rvalue::Question(operand) => {
-                self.read_operand(states, operand, span, reporter)
+            Rvalue::Unary { op, operand } => {
+                let mut reporter = reporter;
+                if let Some((local, reason)) = self.classify_task_handle_unary_operand(*op, operand)
+                {
+                    self.check_moved_use(
+                        states,
+                        local,
+                        UseSite::normal(span),
+                        reporter.as_deref_mut(),
+                    );
+                    self.apply_consume(states, local, span, reason, reporter);
+                } else {
+                    self.read_operand(states, operand, span, reporter);
+                }
             }
+            Rvalue::Question(operand) => self.read_operand(states, operand, span, reporter),
             Rvalue::AggregateStruct { fields, .. } => {
                 let mut reporter = reporter;
                 for field in fields {
@@ -371,6 +384,29 @@ impl<'a> BodyAnalyzer<'a> {
         self.check_moved_use(states, place.base, UseSite::normal(span), reporter);
 
         Some((place.base, reason))
+    }
+
+    fn classify_task_handle_unary_operand(
+        &self,
+        op: UnaryOp,
+        operand: &Operand,
+    ) -> Option<(MirLocalId, MoveReason)> {
+        let Operand::Place(place) = operand else {
+            return None;
+        };
+        if !place.projections.is_empty() {
+            return None;
+        }
+        let operand_ty = self.local_ty(place.base)?;
+        if !matches!(operand_ty, Ty::TaskHandle(_)) {
+            return None;
+        }
+
+        match op {
+            UnaryOp::Await => Some((place.base, MoveReason::AwaitTaskHandle)),
+            UnaryOp::Spawn => Some((place.base, MoveReason::SpawnTaskHandle)),
+            UnaryOp::Neg => None,
+        }
     }
 
     fn apply_consume(
@@ -620,6 +656,24 @@ impl<'a> BodyAnalyzer<'a> {
                 .expr_resolution(expr_id)
                 .and_then(|resolution| self.local_for_resolution(resolution)),
             _ => None,
+        }
+    }
+
+    fn classify_task_handle_unary_expr(
+        &self,
+        op: UnaryOp,
+        expr_id: hir::ExprId,
+    ) -> Option<(MirLocalId, MoveReason)> {
+        let local = self.direct_local_for_expr(expr_id)?;
+        let operand_ty = self.local_ty(local)?;
+        if !matches!(operand_ty, Ty::TaskHandle(_)) {
+            return None;
+        }
+
+        match op {
+            UnaryOp::Await => Some((local, MoveReason::AwaitTaskHandle)),
+            UnaryOp::Spawn => Some((local, MoveReason::SpawnTaskHandle)),
+            UnaryOp::Neg => None,
         }
     }
 
@@ -1136,13 +1190,36 @@ impl<'a> BodyAnalyzer<'a> {
                     use_site.with_span(self.hir.expr(*right).span),
                 )
             }
-            hir::ExprKind::Unary { expr: inner, .. } | hir::ExprKind::Question(inner) => self
-                .eval_cleanup_expr(
+            hir::ExprKind::Unary { op, expr: inner } => {
+                let mut reporter = reporter;
+                let inner_eval = self.eval_cleanup_expr(
                     states,
                     *inner,
-                    reporter,
+                    reporter.as_deref_mut(),
                     use_site.with_span(self.hir.expr(*inner).span),
-                ),
+                );
+                if !inner_eval.continues {
+                    return inner_eval;
+                }
+
+                let mut states = inner_eval.states;
+                if let Some((local, reason)) = self.classify_task_handle_unary_expr(*op, *inner) {
+                    self.check_moved_use(
+                        &states,
+                        local,
+                        use_site.with_span(expr.span),
+                        reporter.as_deref_mut(),
+                    );
+                    self.apply_consume(&mut states, local, expr.span, reason, reporter);
+                }
+                CleanupEval::cont(states)
+            }
+            hir::ExprKind::Question(inner) => self.eval_cleanup_expr(
+                states,
+                *inner,
+                reporter,
+                use_site.with_span(self.hir.expr(*inner).span),
+            ),
         }
     }
 
@@ -1599,6 +1676,8 @@ fn render_move_origin(origin: &MoveOrigin) -> String {
             format!("consumed here by `move self` method `{method_name}`")
         }
         MoveReason::MoveClosureCapture => "captured here by `move` closure".to_owned(),
+        MoveReason::AwaitTaskHandle => "consumed here by `await`".to_owned(),
+        MoveReason::SpawnTaskHandle => "consumed here by `spawn`".to_owned(),
     }
 }
 

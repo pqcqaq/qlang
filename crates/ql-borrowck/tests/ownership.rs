@@ -167,6 +167,93 @@ fn main() -> Int {
 }
 
 #[test]
+fn reports_use_after_awaiting_task_handle() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = worker()
+    let first = await task
+    return await task
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `task` was used after move".to_string()));
+}
+
+#[test]
+fn reports_use_after_spawning_task_handle() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = worker()
+    let running = spawn task
+    return await task
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `task` was used after move".to_string()));
+}
+
+#[test]
+fn reports_maybe_moved_task_handle_after_branch_join() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main(flag: Bool) -> Int {
+    let task = worker()
+    if flag {
+        await task
+    } else {
+        0
+    }
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"local `task` may have been moved on another control-flow path".to_string())
+    );
+}
+
+#[test]
+fn reassigning_a_task_handle_makes_it_available_again() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    var task = worker()
+    let first = await task
+    task = worker()
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn closure_captures_read_moved_direct_locals() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -447,6 +534,26 @@ fn main() -> Int {
     );
 
     assert!(rendered.contains("consume(move closure capture)"));
+}
+
+#[test]
+fn renders_async_task_handle_consumes_for_debugging() {
+    let rendered = render_output(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = worker()
+    let running = spawn task
+    return await running
+}
+"#,
+    );
+
+    assert!(rendered.contains("consume(spawn task handle)"));
+    assert!(rendered.contains("consume(await task handle)"));
 }
 
 #[test]

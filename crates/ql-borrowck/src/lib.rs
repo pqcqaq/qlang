@@ -111,4 +111,6 @@ pub struct MoveOrigin {
 pub enum MoveReason {
     MoveSelfMethod { method_name: String },
     MoveClosureCapture,
+    AwaitTaskHandle,
+    SpawnTaskHandle,
 }
