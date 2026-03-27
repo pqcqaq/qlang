@@ -341,7 +341,9 @@ fn runtime_requirement_message(capability: RuntimeCapability) -> Option<&'static
         RuntimeCapability::TaskAwait => {
             Some("LLVM IR backend foundation does not support `await` yet")
         }
-        RuntimeCapability::AsyncIteration => None,
+        RuntimeCapability::AsyncIteration => {
+            Some("LLVM IR backend foundation does not support `for await` lowering yet")
+        }
     }
 }
 
@@ -1606,6 +1608,35 @@ async fn main() -> Int {
         }));
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message == "LLVM IR backend foundation does not support `await` yet"
+        }));
+    }
+
+    #[test]
+    fn build_file_surfaces_async_iteration_runtime_diagnostics() {
+        let dir = TestDir::new("ql-driver-async-iteration-runtime");
+        let source = dir.write(
+            "async_for_await.ql",
+            r#"
+async fn main() -> Int {
+    for await value in [1, 2, 3] {
+        break
+    }
+    return 0
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("async iteration rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
+        }));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message
+                == "LLVM IR backend foundation does not support `for await` lowering yet"
         }));
     }
 
