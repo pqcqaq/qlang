@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/ql-runtime",
     "crates/ql-span",
     "crates/ql-ast",
     "crates/ql-lexer",
@@ -27,6 +28,7 @@ license = "MIT"
 repository = ""
 
 [workspace.dependencies]
+ql-runtime = { path = "crates/ql-runtime" }
 ql-span = { path = "crates/ql-span" }
 ql-ast = { path = "crates/ql-ast" }
 ql-lexer = { path = "crates/ql-lexer" }
