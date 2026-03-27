@@ -246,6 +246,88 @@ fn choose(flag: Bool) -> Int {
 }
 
 #[test]
+fn accepts_function_matches_over_bool_literals_when_reachable_arm_returns() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose() -> Int {
+    match true {
+        true => {
+            return 1
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_function_matches_over_bool_literals_with_literal_guarded_reachable_arm_returns() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose() -> Int {
+    match false {
+        false if true => {
+            return 0
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_function_matches_over_bool_literals_when_no_reachable_arm_returns() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose() -> Int {
+    match true {
+        false => {
+            return 0
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"function body has type mismatch: expected `Int`, found `Void`".to_string()),
+        "expected missing function return diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_function_matches_over_bool_literals_when_literal_guard_blocks_only_reachable_arm() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose() -> Int {
+    match true {
+        true if false => {
+            return 1
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"function body has type mismatch: expected `Int`, found `Void`".to_string()),
+        "expected missing function return diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_guarded_bool_matches_as_non_exhaustive_for_function_returns() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -581,6 +663,30 @@ fn main() -> Int {
     } else {
         return 2
     }, true)
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_closure_bodies_with_bool_literal_matches_when_reachable_arm_returns() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn apply(f: () -> Int) -> Int {
+    return f()
+}
+
+fn main() -> Int {
+    return apply(() => match true {
+        true => {
+            return 1
+        }
+    })
 }
 "#,
     );

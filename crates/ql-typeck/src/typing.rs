@@ -788,15 +788,19 @@ impl<'a> Checker<'a> {
                 self.expr_flow(*condition).then(branch_flow)
             }
             ExprKind::Match { value, arms } => {
-                let arms_flow = arms
-                    .iter()
-                    .fold(ControlFlowSummary::diverges(), |flow, arm| {
-                        flow.union(self.match_arm_flow(arm))
-                    });
-                let match_flow = if self.match_is_exhaustive(*value, arms) {
-                    arms_flow
+                let match_flow = if let Some(literal) = self.bool_literal(*value) {
+                    self.literal_bool_match_flow(literal, arms)
                 } else {
-                    arms_flow.union(ControlFlowSummary::normal())
+                    let arms_flow = arms
+                        .iter()
+                        .fold(ControlFlowSummary::diverges(), |flow, arm| {
+                            flow.union(self.match_arm_flow(arm))
+                        });
+                    if self.match_is_exhaustive(*value, arms) {
+                        arms_flow
+                    } else {
+                        arms_flow.union(ControlFlowSummary::normal())
+                    }
                 };
                 self.expr_flow(*value).then(match_flow)
             }
@@ -916,6 +920,66 @@ impl<'a> Checker<'a> {
         match &self.module.expr(expr_id).kind {
             ExprKind::Bool(value) => Some(*value),
             _ => None,
+        }
+    }
+
+    fn literal_bool_match_flow(&self, value: bool, arms: &[MatchArm]) -> ControlFlowSummary {
+        let mut flow = ControlFlowSummary::diverges();
+        let mut pending = true;
+
+        for arm in arms {
+            if !pending {
+                break;
+            }
+            if !self.pattern_matches_bool_literal(arm.pattern, value) {
+                continue;
+            }
+
+            let body_flow = self.expr_flow(arm.body);
+            match arm.guard {
+                None => {
+                    flow = flow.union(body_flow);
+                    pending = false;
+                }
+                Some(guard) => {
+                    let guard_flow = self.expr_flow(guard);
+                    flow = flow.union(ControlFlowSummary {
+                        falls_through: false,
+                        returns: guard_flow.returns,
+                        breaks: guard_flow.breaks,
+                        continues: guard_flow.continues,
+                    });
+                    if !guard_flow.falls_through {
+                        pending = false;
+                        continue;
+                    }
+
+                    match self.bool_literal(guard) {
+                        Some(true) => {
+                            flow = flow.union(body_flow);
+                            pending = false;
+                        }
+                        Some(false) => {}
+                        None => {
+                            flow = flow.union(body_flow);
+                        }
+                    }
+                }
+            }
+        }
+
+        if pending {
+            flow = flow.union(ControlFlowSummary::normal());
+        }
+
+        flow
+    }
+
+    fn pattern_matches_bool_literal(&self, pattern_id: PatternId, value: bool) -> bool {
+        match &self.module.pattern(pattern_id).kind {
+            PatternKind::Bool(pattern_value) => *pattern_value == value,
+            PatternKind::Wildcard => true,
+            _ => false,
         }
     }
 
