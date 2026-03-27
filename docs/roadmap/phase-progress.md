@@ -755,10 +755,12 @@ P6 当前仍刻意未完成：
 - 新增 `crates/ql-runtime`：当前仓库已有最小 runtime/executor 抽象地基，提供 `Task` / `JoinHandle` / `Executor` trait 和单线程 `InlineExecutor`
 - `crates/ql-runtime/tests/executor.rs` 已锁住 run-to-completion、`spawn` + `join`、`block_on` 与单线程执行顺序
 - `crates/ql-runtime` 已固定第一批稳定 capability 名称：`async-function-bodies`、`task-spawn`、`task-await`、`async-iteration`
+- `crates/ql-runtime` 已起草第一版共享 runtime hook ABI skeleton：当前固定 `async-task-create`、`executor-spawn`、`task-await`、`async-iter-next` 及对应稳定符号名，作为后续 backend/runtime 接线骨架
 - `ql-analysis` 已暴露 `runtime_requirements()`，按源码顺序枚举当前 async surface 对应的 runtime 需求，并补上 operator span / declaration-vs-definition 边界回归
-- `ql-cli` 已新增 `ql runtime <file>`，可直接输出当前文件的 runtime capability 需求，作为后续 runtime/codegen 接线前的开发者可见检查面
+- `ql-cli` 已扩展 `ql runtime <file>`，现在会同时输出 runtime capability 需求和 dedupe 后的 runtime hook 计划，作为后续 runtime/codegen 接线前的开发者可见检查面
 - `ql-driver` 已开始保守消费这份 runtime requirement surface：当前会把 `async-function-bodies`、`task-spawn`、`task-await`、`async-iteration` 映射成稳定的 build-time unsupported 诊断，并与 backend 同类 diagnostics 去重，锁住 driver/codegen 边界的拒绝合同
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
+- 当前共享 hook ABI 仍只冻结命名与责任边界，尚未冻结真实 LLVM 签名、内存布局或调用约定
 - 当前 `async-iteration` 已在 driver 层有公开 build 诊断，但仍只作为保守的失败合同存在；这还不代表 `for await` 已进入 lowering/runtime hook 设计
 
 ### 下一步（P7.1 延续）

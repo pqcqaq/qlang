@@ -433,6 +433,7 @@ dependencies = [
  "ql-driver",
  "ql-fmt",
  "ql-parser",
+ "ql-runtime",
 ]
 
 [[package]]

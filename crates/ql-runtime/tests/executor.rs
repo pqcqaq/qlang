@@ -1,7 +1,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ql_runtime::{Executor, InlineExecutor, RuntimeCapability};
+use ql_runtime::{
+    Executor, InlineExecutor, RuntimeCapability, RuntimeHook, collect_runtime_hooks,
+    runtime_hooks_for_capability,
+};
 
 #[test]
 fn runtime_capabilities_expose_stable_names() {
@@ -22,6 +25,70 @@ fn runtime_capabilities_expose_stable_names() {
             "task-spawn",
             "task-await",
             "async-iteration",
+        ]
+    );
+}
+
+#[test]
+fn runtime_hooks_expose_stable_names_and_symbols() {
+    let hooks = [
+        RuntimeHook::AsyncTaskCreate,
+        RuntimeHook::ExecutorSpawn,
+        RuntimeHook::TaskAwait,
+        RuntimeHook::AsyncIterNext,
+    ];
+
+    assert_eq!(
+        hooks
+            .into_iter()
+            .map(|hook| (hook.stable_name(), hook.symbol_name()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("async-task-create", "qlrt_async_task_create"),
+            ("executor-spawn", "qlrt_executor_spawn"),
+            ("task-await", "qlrt_task_await"),
+            ("async-iter-next", "qlrt_async_iter_next"),
+        ]
+    );
+}
+
+#[test]
+fn runtime_capabilities_map_to_shared_hook_contracts() {
+    assert_eq!(
+        runtime_hooks_for_capability(RuntimeCapability::AsyncFunctionBodies),
+        &[RuntimeHook::AsyncTaskCreate]
+    );
+    assert_eq!(
+        runtime_hooks_for_capability(RuntimeCapability::TaskSpawn),
+        &[RuntimeHook::ExecutorSpawn]
+    );
+    assert_eq!(
+        runtime_hooks_for_capability(RuntimeCapability::TaskAwait),
+        &[RuntimeHook::TaskAwait]
+    );
+    assert_eq!(
+        runtime_hooks_for_capability(RuntimeCapability::AsyncIteration),
+        &[RuntimeHook::AsyncIterNext]
+    );
+}
+
+#[test]
+fn collect_runtime_hooks_dedupes_and_orders_the_contract_surface() {
+    let hooks = collect_runtime_hooks([
+        RuntimeCapability::TaskAwait,
+        RuntimeCapability::AsyncFunctionBodies,
+        RuntimeCapability::TaskSpawn,
+        RuntimeCapability::TaskSpawn,
+        RuntimeCapability::AsyncIteration,
+    ]);
+
+    assert_eq!(
+        hooks,
+        vec![
+            RuntimeHook::AsyncTaskCreate,
+            RuntimeHook::ExecutorSpawn,
+            RuntimeHook::TaskAwait,
+            RuntimeHook::AsyncIterNext,
         ]
     );
 }

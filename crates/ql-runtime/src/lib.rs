@@ -33,6 +33,78 @@ impl RuntimeCapability {
     }
 }
 
+/// Shared runtime hook surface reserved for future backend/runtime ABI work.
+///
+/// These names intentionally stay at the contract level instead of committing
+/// the compiler to concrete Rust `Future` shapes, scheduler APIs, or stream
+/// protocols before Phase 7 lowering is designed end to end.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum RuntimeHook {
+    AsyncTaskCreate,
+    ExecutorSpawn,
+    TaskAwait,
+    AsyncIterNext,
+}
+
+impl RuntimeHook {
+    pub const fn stable_name(self) -> &'static str {
+        match self {
+            Self::AsyncTaskCreate => "async-task-create",
+            Self::ExecutorSpawn => "executor-spawn",
+            Self::TaskAwait => "task-await",
+            Self::AsyncIterNext => "async-iter-next",
+        }
+    }
+
+    pub const fn symbol_name(self) -> &'static str {
+        match self {
+            Self::AsyncTaskCreate => "qlrt_async_task_create",
+            Self::ExecutorSpawn => "qlrt_executor_spawn",
+            Self::TaskAwait => "qlrt_task_await",
+            Self::AsyncIterNext => "qlrt_async_iter_next",
+        }
+    }
+
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::AsyncTaskCreate => "materializing an executable task from an `async fn` body",
+            Self::ExecutorSpawn => "submitting a task to the configured runtime executor",
+            Self::TaskAwait => "waiting for an asynchronous task result",
+            Self::AsyncIterNext => "advancing the next item in a `for await` iteration",
+        }
+    }
+}
+
+const ASYNC_FUNCTION_BODY_HOOKS: &[RuntimeHook] = &[RuntimeHook::AsyncTaskCreate];
+const TASK_SPAWN_HOOKS: &[RuntimeHook] = &[RuntimeHook::ExecutorSpawn];
+const TASK_AWAIT_HOOKS: &[RuntimeHook] = &[RuntimeHook::TaskAwait];
+const ASYNC_ITERATION_HOOKS: &[RuntimeHook] = &[RuntimeHook::AsyncIterNext];
+
+pub const fn runtime_hooks_for_capability(capability: RuntimeCapability) -> &'static [RuntimeHook] {
+    match capability {
+        RuntimeCapability::AsyncFunctionBodies => ASYNC_FUNCTION_BODY_HOOKS,
+        RuntimeCapability::TaskSpawn => TASK_SPAWN_HOOKS,
+        RuntimeCapability::TaskAwait => TASK_AWAIT_HOOKS,
+        RuntimeCapability::AsyncIteration => ASYNC_ITERATION_HOOKS,
+    }
+}
+
+pub fn collect_runtime_hooks<I>(capabilities: I) -> Vec<RuntimeHook>
+where
+    I: IntoIterator<Item = RuntimeCapability>,
+{
+    let mut hooks = Vec::new();
+    for capability in capabilities {
+        for &hook in runtime_hooks_for_capability(capability) {
+            if !hooks.contains(&hook) {
+                hooks.push(hook);
+            }
+        }
+    }
+    hooks.sort();
+    hooks
+}
+
 pub trait Task {
     type Output;
 
