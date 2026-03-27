@@ -1484,6 +1484,58 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_async_function_codegen_diagnostics_for_dylib_with_exports() {
+        let dir = TestDir::new("ql-driver-async-dylib-unsupported");
+        let source = dir.write(
+            "async_dylib.ql",
+            r#"
+extern "c" pub fn q_export() -> Int {
+    return 1
+}
+
+fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    return await worker()
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_dylib.dll"
+        } else if cfg!(target_os = "macos") {
+            "artifacts/libasync_dylib.dylib"
+        } else {
+            "artifacts/libasync_dylib.so"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::DynamicLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("async codegen rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
+        }));
+        assert!(diagnostics.iter().all(|diagnostic| {
+            !diagnostic.message.contains(
+                "requires at least one public top-level `extern \"c\"` function definition",
+            )
+        }));
+    }
+
+    #[test]
     fn build_file_rejects_dynamic_libraries_without_public_extern_c_exports() {
         let dir = TestDir::new("ql-driver-dylib-no-exports");
         let source = dir.write(
