@@ -45,6 +45,7 @@
 - 已补充 `dylib` 路径上的 async backend 回归（含合法 `extern "c"` 导出存在时仍拒绝 `async fn`），锁住边界校验优先级
 - 已补充 `async + generic` 并存场景回归，锁住 backend 同阶段多条 unsupported 诊断聚合行为
 - 已补充 `async + unsafe fn body` 并存场景回归，锁住 backend 对函数签名级多条 unsupported 诊断的聚合与输出顺序
+- 已在 `ql-mir` 增补 async operator lowering 回归：`await` / `spawn` 当前会作为显式 unary rvalue 保留，并消费前面物化的 call 结果；same-file import alias 的 async call 也会继续保留 `Import` callee，而不是退化成 opaque/unresolved operand
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
 - 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、显式字面量 `if true` / `if false`、显式字面量 `match true/false`、非字面量 `Bool` / enum `match` 上的字面量 guard、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、更广义的常量传播、更一般的 guard-sensitive `match` 与 unreachable 细化仍待后续切片
@@ -54,7 +55,7 @@
 
 ### P7.1 语义层收口
 
-- 把 `await` / `spawn` 当前“必须调用 `async fn`”的约束继续下沉到 MIR/runtime 接口契约（仍保持 conservative）
+- 在现有 MIR async operator lowering 合同之上，继续把 `await` / `spawn` 当前“必须调用 `async fn`”的约束下沉到 runtime/codegen 接口契约（仍保持 conservative）
 - 在 `ql-resolve` / `ql-analysis` 增补 async 语义查询契约
 - 保持 conservative 策略，不提前承诺完整 effect 系统
 

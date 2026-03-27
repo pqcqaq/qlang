@@ -741,10 +741,11 @@ P6 当前仍刻意未完成：
 - `ql-driver` / `ql-cli` 进一步补齐 `dylib` async 拒绝回归：即使存在合法导出，也会优先返回 `async fn` unsupported 诊断
 - `ql-driver` / `ql-cli` 新增 `async + generic` 并存回归：锁住多条 backend unsupported 诊断的聚合稳定性
 - `ql-driver` / `ql-cli` 新增 `async + unsafe fn body` 并存回归：锁住签名级多条 backend unsupported 诊断的聚合稳定性与终端输出
+- `ql-mir` 新增 async operator lowering 回归：`await` / `spawn` 当前会作为显式 unary rvalue 保留在 MIR 中，并消费前面物化出来的 call 结果；same-file import alias 的 async call 也会继续保留 `Import` callee，而不是退化成 opaque/unresolved operand
 
 ### 下一步（P7.1 延续）
 
-- 把 `await` / `spawn` 当前“必须调用 `async fn`”的约束继续下沉到 MIR/runtime 接口契约（仍保持 conservative）
+- 在现有 MIR async operator lowering 合同之上，继续把 `await` / `spawn` 当前“必须调用 `async fn`”的约束下沉到 runtime/codegen 接口契约（仍保持 conservative）
 - 评估是否将 async 上下文桥接能力通过受控实验接口暴露给 editor（保持协议低风险）
 - 在不引入完整 CFG 的前提下，继续补 closure / async / return-path 的保守语义回归
 - 若后续需要把 must-return 从显式字面量 `if` 扩展到更一般的常量传播或 branch pruning，应单独设计常量/CFG 规则边界
