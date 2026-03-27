@@ -9,6 +9,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - same-file references / rename
 - completion surface parity
 - semantic-token parity
+- diagnostics bridge parity
 - direct/member/type-namespace/callable/value/variant truth surface aggregate
 - analysis / LSP 一致性回归
 
@@ -87,6 +88,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - variant candidate-list refresh
 - impl-preferred filtering refresh
 - lexical visibility filtering refresh
+- diagnostics severity / label fallback bridge parity
 
 ## 当前架构收益
 

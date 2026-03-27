@@ -9,9 +9,9 @@ use ql_lsp::bridge::{
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
-    CompletionItemKind, CompletionResponse, GotoDefinitionResponse, HoverContents, Location,
-    Position, PrepareRenameResponse, SemanticTokenType, SemanticTokensResult, TextEdit, Url,
-    WorkspaceEdit,
+    CompletionItemKind, CompletionResponse, DiagnosticSeverity, GotoDefinitionResponse,
+    HoverContents, Location, Position, PrepareRenameResponse, SemanticTokenType,
+    SemanticTokensResult, TextEdit, Url, WorkspaceEdit,
 };
 
 fn nth_span(source: &str, needle: &str, occurrence: usize) -> Span {
@@ -96,6 +96,92 @@ fn diagnostics_conversion_uses_primary_span_and_related_information() {
             .uri,
         uri
     );
+}
+
+#[test]
+fn diagnostics_conversion_maps_warning_and_note_severities_and_falls_back_without_labels() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = "fn main() {}\n";
+    let diagnostics = diagnostics_to_lsp(
+        &uri,
+        source,
+        &[
+            CompilerDiagnostic::warning("semantic warning").with_note("details survive"),
+            CompilerDiagnostic::note("semantic note"),
+        ],
+    );
+
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+    assert_eq!(
+        diagnostics[0].range,
+        tower_lsp::lsp_types::Range::new(Position::new(0, 0), Position::new(0, 0))
+    );
+    assert!(diagnostics[0].message.contains("semantic warning"));
+    assert!(diagnostics[0].message.contains("note: details survive"));
+
+    assert_eq!(
+        diagnostics[1].severity,
+        Some(DiagnosticSeverity::INFORMATION)
+    );
+    assert_eq!(
+        diagnostics[1].range,
+        tower_lsp::lsp_types::Range::new(Position::new(0, 0), Position::new(0, 0))
+    );
+    assert_eq!(diagnostics[1].message, "semantic note");
+}
+
+#[test]
+fn diagnostics_conversion_uses_first_label_when_no_primary_exists() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = "alpha beta gamma\n";
+    let diagnostics = diagnostics_to_lsp(
+        &uri,
+        source,
+        &[CompilerDiagnostic::error("duplicate binding")
+            .with_label(
+                Label::new(Span::new(0, 5))
+                    .secondary()
+                    .with_message("first seen here"),
+            )
+            .with_label(
+                Label::new(Span::new(6, 10))
+                    .secondary()
+                    .with_message("second seen here"),
+            )],
+    );
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].range, span_to_range(source, Span::new(0, 5)));
+    assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+}
+
+#[test]
+fn diagnostics_conversion_preserves_source_and_defaults_secondary_related_messages() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = "left right\n";
+    let diagnostics = diagnostics_to_lsp(
+        &uri,
+        source,
+        &[CompilerDiagnostic::error("duplicate binding")
+            .with_label(Label::new(Span::new(0, 4)).with_message("primary binding"))
+            .with_label(Label::new(Span::new(5, 10)).secondary())],
+    );
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].source.as_deref(), Some("ql"));
+
+    let related = diagnostics[0]
+        .related_information
+        .as_ref()
+        .expect("secondary labels should convert into related information");
+    assert_eq!(related.len(), 1);
+    assert_eq!(related[0].location.uri, uri);
+    assert_eq!(
+        related[0].location.range,
+        span_to_range(source, Span::new(5, 10))
+    );
+    assert_eq!(related[0].message, "related span");
 }
 
 #[test]
