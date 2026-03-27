@@ -80,7 +80,7 @@ struct AsyncFrameField {
 #[derive(Clone, Debug)]
 enum AsyncTaskResultLayout {
     Void,
-    Scalar {
+    Loadable {
         llvm_ty: String,
         size: u64,
         align: u64,
@@ -91,7 +91,7 @@ impl AsyncTaskResultLayout {
     fn body_llvm_ty(&self) -> &str {
         match self {
             Self::Void => "void",
-            Self::Scalar { llvm_ty, .. } => llvm_ty,
+            Self::Loadable { llvm_ty, .. } => llvm_ty,
         }
     }
 }
@@ -118,6 +118,12 @@ struct LoweredValue {
 
 #[derive(Clone, Copy, Debug)]
 struct ScalarAbiLayout {
+    size: u64,
+    align: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LoadableAbiLayout {
     size: u64,
     align: u64,
 }
@@ -860,12 +866,19 @@ impl<'a> ModuleEmitter<'a> {
                     None
                 }
             },
-            Rvalue::Tuple(_) => {
-                diagnostics.push(unsupported(
-                    span,
-                    "LLVM IR backend foundation does not support tuple values yet",
-                ));
-                None
+            Rvalue::Tuple(items) => {
+                let mut item_types = Vec::with_capacity(items.len());
+                for item in items {
+                    item_types.push(self.infer_operand_type(
+                        body,
+                        item,
+                        local_types,
+                        async_task_handles,
+                        diagnostics,
+                        span,
+                    )?);
+                }
+                Some(Ty::Tuple(item_types))
             }
             Rvalue::Array(_) => {
                 diagnostics.push(unsupported(
@@ -1331,7 +1344,7 @@ impl<'a> ModuleEmitter<'a> {
                 Some(AsyncTaskResultLayout::Void) => {
                     debug_assert!(is_void_ty(&function.signature.body_return_ty));
                 }
-                Some(AsyncTaskResultLayout::Scalar {
+                Some(AsyncTaskResultLayout::Loadable {
                     llvm_ty,
                     size,
                     align,
@@ -1611,8 +1624,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     panic!("prepared functions should not contain unsupported unary ops")
                 }
             },
-            Rvalue::Tuple(_)
-            | Rvalue::Array(_)
+            Rvalue::Tuple(items) => self.render_tuple_rvalue(output, items, span),
+            Rvalue::Array(_)
             | Rvalue::AggregateStruct { .. }
             | Rvalue::Closure { .. }
             | Rvalue::Question(_)
@@ -1620,6 +1633,46 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 panic!("prepared functions should not contain unsupported rvalues")
             }
         }
+    }
+
+    fn render_tuple_rvalue(
+        &mut self,
+        output: &mut String,
+        items: &[Operand],
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let rendered_items = items
+            .iter()
+            .map(|item| self.render_operand(output, item, span))
+            .collect::<Vec<_>>();
+        let ty = Ty::Tuple(rendered_items.iter().map(|item| item.ty.clone()).collect());
+        let llvm_ty = lower_llvm_type(&ty, span, "tuple value")
+            .expect("prepared tuple values should already have supported LLVM types");
+
+        if rendered_items.is_empty() {
+            return Some(LoweredValue {
+                ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            });
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for (index, item) in rendered_items.iter().enumerate() {
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                item.llvm_ty, item.repr, index
+            );
+            aggregate = next;
+        }
+
+        Some(LoweredValue {
+            ty,
+            llvm_ty,
+            repr: aggregate,
+        })
     }
 
     fn render_await(
@@ -1671,7 +1724,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     repr: "void".to_owned(),
                 })
             }
-            AsyncTaskResultLayout::Scalar { llvm_ty, .. } => {
+            AsyncTaskResultLayout::Loadable { llvm_ty, .. } => {
                 let loaded = self.fresh_temp();
                 let _ = writeln!(output, "  {loaded} = load {llvm_ty}, ptr {result_ptr}");
                 let _ = writeln!(
@@ -1836,6 +1889,20 @@ fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnos
         Ty::Builtin(BuiltinType::ISize) | Ty::Builtin(BuiltinType::USize) => Ok("i64".to_owned()),
         Ty::Builtin(BuiltinType::F32) => Ok("float".to_owned()),
         Ty::Builtin(BuiltinType::F64) => Ok("double".to_owned()),
+        Ty::Tuple(items) => {
+            if items.iter().any(is_void_ty) {
+                return Err(Diagnostic::error(format!(
+                    "LLVM IR backend foundation does not support {context} `{ty}` yet"
+                ))
+                .with_label(Label::new(span)));
+            }
+
+            let field_types = items
+                .iter()
+                .map(|item| lower_llvm_type(item, span, context))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(format!("{{ {} }}", field_types.join(", ")))
+        }
         _ => Err(Diagnostic::error(format!(
             "LLVM IR backend foundation does not support {context} `{ty}` yet"
         ))
@@ -1881,13 +1948,50 @@ fn build_async_task_result_layout(
     }
 
     let llvm_ty = lower_llvm_type(ty, span, "async task result type")?;
-    let layout = scalar_abi_layout(ty, span, "async task result type")?;
+    let layout = loadable_abi_layout(ty, span, "async task result type")?;
 
-    Ok(AsyncTaskResultLayout::Scalar {
+    Ok(AsyncTaskResultLayout::Loadable {
         llvm_ty,
         size: layout.size,
         align: layout.align,
     })
+}
+
+fn loadable_abi_layout(
+    ty: &Ty,
+    span: Span,
+    context: &str,
+) -> Result<LoadableAbiLayout, Diagnostic> {
+    match ty {
+        Ty::Tuple(items) => {
+            if items.iter().any(is_void_ty) {
+                return Err(Diagnostic::error(format!(
+                    "LLVM IR backend foundation does not support {context} `{ty}` yet"
+                ))
+                .with_label(Label::new(span)));
+            }
+
+            let mut size = 0;
+            let mut align = 1;
+            for item in items {
+                let layout = loadable_abi_layout(item, span, context)?;
+                size = align_to(size, layout.align);
+                size += layout.size;
+                align = align.max(layout.align);
+            }
+            Ok(LoadableAbiLayout {
+                size: align_to(size, align),
+                align,
+            })
+        }
+        _ => {
+            let layout = scalar_abi_layout(ty, span, context)?;
+            Ok(LoadableAbiLayout {
+                size: layout.size,
+                align: layout.align,
+            })
+        }
+    }
 }
 
 fn scalar_abi_layout(ty: &Ty, span: Span, context: &str) -> Result<ScalarAbiLayout, Diagnostic> {
@@ -2408,7 +2512,7 @@ async fn worker(flag: Bool, value: Int) -> Int {
     }
 
     #[test]
-    fn builds_async_task_result_layouts_for_void_and_scalar_results() {
+    fn builds_async_task_result_layouts_for_void_scalar_and_tuple_results() {
         let void_layout =
             build_async_task_result_layout(&Ty::Builtin(BuiltinType::Void), Span::new(0, 0))
                 .expect("void async result layout should be supported");
@@ -2419,7 +2523,7 @@ async fn worker(flag: Bool, value: Int) -> Int {
             build_async_task_result_layout(&Ty::Builtin(BuiltinType::Int), Span::new(0, 0))
                 .expect("scalar async result layout should be supported");
         match int_layout {
-            AsyncTaskResultLayout::Scalar {
+            AsyncTaskResultLayout::Loadable {
                 llvm_ty,
                 size,
                 align,
@@ -2429,6 +2533,27 @@ async fn worker(flag: Bool, value: Int) -> Int {
                 assert_eq!(align, 8);
             }
             AsyncTaskResultLayout::Void => panic!("expected scalar layout for Int"),
+        }
+
+        let tuple_layout = build_async_task_result_layout(
+            &Ty::Tuple(vec![
+                Ty::Builtin(BuiltinType::Bool),
+                Ty::Builtin(BuiltinType::Int),
+            ]),
+            Span::new(0, 0),
+        )
+        .expect("tuple async result layout should be supported");
+        match tuple_layout {
+            AsyncTaskResultLayout::Loadable {
+                llvm_ty,
+                size,
+                align,
+            } => {
+                assert_eq!(llvm_ty, "{ i1, i64 }");
+                assert_eq!(size, 16);
+                assert_eq!(align, 8);
+            }
+            AsyncTaskResultLayout::Void => panic!("expected loadable layout for tuple result"),
         }
     }
 
@@ -2469,13 +2594,18 @@ async fn worker() -> Int {
     }
 
     #[test]
-    fn rejects_unsupported_async_task_result_types_before_await_lowering() {
+    fn rejects_unsupported_async_struct_task_result_types_before_await_lowering() {
         let runtime_hooks =
             collect_runtime_hook_signatures([RuntimeCapability::AsyncFunctionBodies]);
         let messages = emit_error_with_runtime_hooks(
             r#"
-async fn worker() -> (Int, Int) {
-    return (1, 2)
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+async fn worker() -> Pair {
+    return Pair { left: 1, right: 2 }
 }
 "#,
             CodegenMode::Library,
@@ -2484,13 +2614,29 @@ async fn worker() -> (Int, Int) {
 
         assert!(messages.iter().any(|message| {
             message
-                == "LLVM IR backend foundation does not support async task result type `(Int, Int)` yet"
+                == "LLVM IR backend foundation does not support async task result type `Pair` yet"
         }));
         assert!(
-            messages.iter().all(|message| {
-                !message.contains("does not support return type `(Int, Int)` yet")
-            })
+            messages
+                .iter()
+                .all(|message| { !message.contains("does not support return type `Pair` yet") })
         );
+    }
+
+    #[test]
+    fn emits_scalar_tuple_value_lowering() {
+        let rendered = emit_library(
+            r#"
+fn pair() -> (Bool, Int) {
+    return (true, 42)
+}
+"#,
+        );
+
+        assert!(rendered.contains("define { i1, i64 } @ql_0_pair()"));
+        assert!(rendered.contains("insertvalue { i1, i64 } undef, i1 true, 0"));
+        assert!(rendered.contains("i64 42, 1"));
+        assert!(rendered.contains("ret { i1, i64 }"));
     }
 
     #[test]
@@ -2760,6 +2906,32 @@ async fn helper() -> Void {
         assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
         assert!(rendered.contains("call void @qlrt_task_result_release(ptr %t"));
         assert!(!rendered.contains("load void"));
+    }
+
+    #[test]
+    fn emits_await_lowering_for_tuple_async_results() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> (Bool, Int) {
+    return (true, 1)
+}
+
+async fn helper() -> (Bool, Int) {
+    return await worker()
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define { i1, i64 } @ql_1_helper__async_body(ptr %frame)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { i1, i64 }, ptr %t"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %t"));
     }
 
     #[test]

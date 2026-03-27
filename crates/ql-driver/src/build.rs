@@ -1267,6 +1267,61 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_supported_async_tuple_library_bodies() {
+        let dir = TestDir::new("ql-driver-staticlib-async-tuple");
+        let source = dir.write(
+            "async_pair.ql",
+            r#"
+async fn worker() -> (Bool, Int) {
+    return (true, 1)
+}
+
+async fn helper() -> (Bool, Int) {
+    return await worker()
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_pair.lib"
+        } else {
+            "artifacts/libasync_pair.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "static library build with supported async tuple library bodies should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+        let leftovers = fs::read_dir(output.parent().expect("output should have a parent"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen."))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "successful async tuple static library emission should clean up intermediate artifacts"
+        );
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_async_export_header_sidecar() {
         let dir = TestDir::new("ql-driver-staticlib-async-export-header");
         let source = dir.write(
@@ -1899,20 +1954,25 @@ async fn helper() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_async_library_result_layout_diagnostics_without_runtime_noise() {
+    fn build_file_surfaces_async_struct_result_layout_diagnostics_without_runtime_noise() {
         let dir = TestDir::new("ql-driver-async-library-result-layout");
         let source = dir.write(
-            "async_tuple_result_library.ql",
+            "async_struct_result_library.ql",
             r#"
-async fn worker() -> (Int, Int) {
-    return (1, 2)
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+async fn worker() -> Pair {
+    return Pair { left: 1, right: 2 }
 }
 "#,
         );
         let output = dir.path().join(if cfg!(windows) {
-            "artifacts/async_tuple_result_library.lib"
+            "artifacts/async_struct_result_library.lib"
         } else {
-            "artifacts/libasync_tuple_result_library.a"
+            "artifacts/libasync_struct_result_library.a"
         });
 
         let error = build_file(
@@ -1932,7 +1992,7 @@ async fn worker() -> (Int, Int) {
 
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message
-                == "LLVM IR backend foundation does not support async task result type `(Int, Int)` yet"
+                == "LLVM IR backend foundation does not support async task result type `Pair` yet"
         }));
         assert!(diagnostics.iter().all(|diagnostic| {
             diagnostic.message != "LLVM IR backend foundation does not support `async fn` yet"
