@@ -24,6 +24,8 @@
 - 已补充 `crates/ql-lsp/tests/bridge.rs` 的 async 桥接回归
 - 已在 `ql-typeck` 增补 `for await` 上下文约束：非 `async fn` 内使用会给出显式诊断
 - 已补充 `crates/ql-typeck/tests/async_typing.rs` 的 `for await` 边界回归
+- 已在 `ql-typeck` 收紧 `await` / `spawn` 操作数约束：当前仅允许直接作用于 call expression，非调用操作数会给出显式诊断
+- 已补充 `crates/ql-typeck/tests/async_typing.rs` 的非调用操作数回归（`await value` / `spawn value`）
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 
 ## 分阶段实现建议

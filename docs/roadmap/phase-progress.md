@@ -720,10 +720,12 @@ P6 当前仍刻意未完成：
 - 新增 `ql-lsp` async 桥接回归测试，锁住 bridge 行为
 - `ql-typeck` 新增 `for await` 的 async 上下文约束（非 `async fn` 显式诊断）
 - 新增 `ql-typeck` 的 `for await` 边界回归测试
+- `ql-typeck` 新增 `await` / `spawn` 操作数形态约束：当前要求操作数必须是 call expression
+- 新增 `ql-typeck` 的 `await` / `spawn` 非调用操作数回归测试
 
 ### 下一步（P7.1 延续）
 
-- 细化 `await` / `spawn` / `for await` 与后续 MIR/runtime 接口的类型约束（仍保持 conservative）
+- 把 `await` / `spawn` 的当前 call-expression 约束继续下沉到 MIR/runtime 接口契约（仍保持 conservative）
 - 评估是否将 async 上下文桥接能力通过受控实验接口暴露给 editor（保持协议低风险）
 - 在不扩大 surface 的前提下继续按切片补回归
 

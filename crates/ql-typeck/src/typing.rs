@@ -324,6 +324,18 @@ impl<'a> Checker<'a> {
                     );
                     return Ty::Unknown;
                 }
+                if !matches!(&self.module.expr(operand).kind, ExprKind::Call { .. }) {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "`await` currently requires a call expression operand".to_string(),
+                        )
+                        .with_label(
+                            Label::new(self.module.expr(expr_id).span)
+                                .with_message("`await` used with a non-call operand"),
+                        ),
+                    );
+                    return Ty::Unknown;
+                }
 
                 operand_ty
             }
@@ -335,6 +347,19 @@ impl<'a> Checker<'a> {
                                 Label::new(self.module.expr(expr_id).span)
                                     .with_message("`spawn` used here"),
                             ),
+                    );
+                    return Ty::Unknown;
+                }
+
+                if !matches!(&self.module.expr(operand).kind, ExprKind::Call { .. }) {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "`spawn` currently requires a call expression operand".to_string(),
+                        )
+                        .with_label(
+                            Label::new(self.module.expr(expr_id).span)
+                                .with_message("`spawn` used with a non-call operand"),
+                        ),
                     );
                     return Ty::Unknown;
                 }

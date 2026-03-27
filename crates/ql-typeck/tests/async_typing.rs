@@ -67,6 +67,49 @@ async fn main() -> Int {
 }
 
 #[test]
+fn reports_await_non_call_operand_inside_async_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let value = worker()
+    return await value
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"`await` currently requires a call expression operand".to_string()),
+        "expected await operand-shape diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_spawn_non_call_operand_inside_async_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let value = worker()
+    spawn value
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"`spawn` currently requires a call expression operand".to_string()),
+        "expected spawn operand-shape diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_for_await_outside_async_functions() {
     let diagnostics = diagnostic_messages(
         r#"
