@@ -52,9 +52,13 @@
 - 已在 `crates/ql-cli/tests/ffi.rs` 增补 committed example 回归：会复制 `examples/ffi-rust` 后执行 `cargo run --quiet`，锁住示例本身的可运行性
 - 已新增 `crates/ql-runtime`：当前仓库已有最小 runtime/executor 抽象地基，提供 `Task` / `JoinHandle` / `Executor` trait 和单线程 `InlineExecutor`
 - 已补充 `crates/ql-runtime/tests/executor.rs`：锁住 run-to-completion、`spawn` + `join`、`block_on` 以及单线程执行顺序
+- 已在 `crates/ql-runtime` 固定第一批稳定 capability 名称：`async-function-bodies`、`task-spawn`、`task-await`、`async-iteration`
+- 已在 `ql-analysis` 暴露 `runtime_requirements()`：当前会按源码顺序枚举 `async fn`、`spawn`、`await`、`for await` 对应的 runtime 需求，为后续 driver/codegen 接线提供共享 truth surface
+- 已补充 `crates/ql-analysis/tests/queries.rs` 的 runtime requirement 回归：覆盖 capability 顺序、精确 operator span，以及“仅声明无 body 的 async method 不计入 lowering 需求”的边界
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
+- 当前 driver / codegen 还没有消费这份 runtime requirement surface，仍保持结构化 unsupported 边界；这一层抽象先被固定下来，再逐步接入后端
 - 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、显式字面量 `if true` / `if false`、显式字面量 `match true/false`、非字面量 `Bool` / enum `match` 上的字面量 guard、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、更广义的常量传播、更一般的 guard-sensitive `match` 与 unreachable 细化仍待后续切片
 - 当前 loop-control 已具备 analysis/LSP 的只读桥接，但还未扩展到公开 editor 协议 capability；继续保持低风险桥接策略
 

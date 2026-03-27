@@ -59,7 +59,7 @@ Current Rust workspace status:
 - `crates/ql-parser`: modular parser for the current Phase 1 slice
 - `crates/ql-fmt`: formatter for the current frontend slice
 - `crates/ql-diagnostics`: shared semantic and parser diagnostics model plus text renderer
-- `crates/ql-analysis`: shared parse/HIR/resolve/typeck analysis entry plus same-file query, completion, rename, and semantic-token scaffolding for CLI and LSP
+- `crates/ql-analysis`: shared parse/HIR/resolve/typeck analysis entry plus runtime-requirement summaries and same-file query, completion, rename, and semantic-token scaffolding for CLI and LSP
 - `crates/ql-lsp`: minimal `qlsp` server for hover, go-to-definition, same-file find-references, conservative same-file completion/rename, semantic tokens, and diagnostics over stdio
 - `crates/ql-hir`: AST -> HIR lowering with stable IDs and semantic normalization
 - `crates/ql-mir`: Phase 3 structural MIR with explicit CFG, cleanup actions, and textual dumps
@@ -92,6 +92,7 @@ Current semantic baseline in `ql check`:
 - `ql-analysis` now also lowers structural MIR after resolution so later ownership and codegen passes share one stable mid-level snapshot
 - `ql-analysis` now also runs the first ownership-facts pass and exposes rendered ownership state for CLI and future IDE tooling
 - `ql-analysis` now also exposes minimal position-based semantic queries for symbol lookup, hover, go-to-definition, same-file find-references, conservative same-file completion/rename style tooling, and source-backed semantic tokens
+- `ql-analysis` now also exposes source-ordered runtime requirements for the current async surface, so later driver/codegen/runtime work can share one stable truth source for `async fn`, `spawn`, `await`, and `for await`
 - local import aliases that point at same-file enum items now also forward variant-token hover / definition / references / completion / same-file rename / semantic tokens through that shared query layer, without pretending that a real module graph already exists
 - local import aliases that point at same-file struct items now also forward struct-literal field checking plus explicit/shorthand field-label query and rename follow-through through the shared type/query layers, while same-file struct or enum pattern roots also canonicalize those aliases back to the underlying local item when that is semantically safe
 - local import aliases that point at same-file function / const / static items now also reuse the shared type-checking value/call surface, so callable argument mismatches and non-callable value diagnostics no longer silently degrade to `unknown`

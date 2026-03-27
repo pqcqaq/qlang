@@ -753,7 +753,10 @@ P6 当前仍刻意未完成：
 - 仓库已提交 `examples/ffi-rust`：真实 Cargo host 通过 `build.rs` 编译 sibling Qlang 源码并链接 `staticlib`，同时 `ql-cli` FFI 集成测试也已回归锁住该示例的可运行性
 - 新增 `crates/ql-runtime`：当前仓库已有最小 runtime/executor 抽象地基，提供 `Task` / `JoinHandle` / `Executor` trait 和单线程 `InlineExecutor`
 - `crates/ql-runtime/tests/executor.rs` 已锁住 run-to-completion、`spawn` + `join`、`block_on` 与单线程执行顺序
+- `crates/ql-runtime` 已固定第一批稳定 capability 名称：`async-function-bodies`、`task-spawn`、`task-await`、`async-iteration`
+- `ql-analysis` 已暴露 `runtime_requirements()`，按源码顺序枚举当前 async surface 对应的 runtime 需求，并补上 operator span / declaration-vs-definition 边界回归
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
+- 当前 driver / backend 仍未消费这份 runtime requirement surface，继续保持结构化 unsupported 边界，避免在 hook contract 未冻结前提前绑死 lowering
 
 ### 下一步（P7.1 延续）
 
