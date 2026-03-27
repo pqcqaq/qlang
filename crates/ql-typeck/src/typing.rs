@@ -863,11 +863,22 @@ impl<'a> Checker<'a> {
                 .unwrap_or_else(ControlFlowSummary::returns),
             StmtKind::Let { value, .. } | StmtKind::Defer(value) => self.expr_flow(*value),
             StmtKind::While { condition, body } => {
-                self.expr_flow(*condition).then(ControlFlowSummary {
-                    falls_through: true,
-                    returns: self.block_flow(*body).returns,
-                    ..ControlFlowSummary::default()
-                })
+                let condition_flow = self.expr_flow(*condition);
+                let body_flow = self.block_flow(*body);
+                let loop_flow = match self.bool_literal(*condition) {
+                    Some(true) => ControlFlowSummary {
+                        falls_through: body_flow.breaks,
+                        returns: body_flow.returns,
+                        ..ControlFlowSummary::default()
+                    },
+                    Some(false) => ControlFlowSummary::normal(),
+                    None => ControlFlowSummary {
+                        falls_through: true,
+                        returns: body_flow.returns,
+                        ..ControlFlowSummary::default()
+                    },
+                };
+                condition_flow.then(loop_flow)
             }
             StmtKind::Loop { body } => {
                 let body_flow = self.block_flow(*body);
@@ -894,6 +905,13 @@ impl<'a> Checker<'a> {
         match arg {
             CallArg::Positional(expr_id) => self.expr_flow(*expr_id),
             CallArg::Named { value, .. } => self.expr_flow(*value),
+        }
+    }
+
+    fn bool_literal(&self, expr_id: ExprId) -> Option<bool> {
+        match &self.module.expr(expr_id).kind {
+            ExprKind::Bool(value) => Some(*value),
+            _ => None,
         }
     }
 
