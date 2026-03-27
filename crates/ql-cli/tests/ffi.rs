@@ -119,6 +119,35 @@ fn ffi_exports_link_from_rust_cargo_static_harnesses() {
 }
 
 #[test]
+fn ffi_rust_example_cargo_host_runs() {
+    let workspace_root = workspace_root();
+    let example_root = workspace_root.join("examples/ffi-rust");
+    let host_manifest = example_root.join("host/Cargo.toml");
+    assert!(
+        host_manifest.is_file(),
+        "expected committed Rust FFI example manifest at `{}`",
+        host_manifest.display()
+    );
+
+    let Some(cargo) = resolve_program_from_env_or_path("CARGO", &cargo_candidates()) else {
+        eprintln!(
+            "skipping committed Rust FFI example test: no cargo found on PATH and `CARGO` is not set"
+        );
+        return;
+    };
+    if resolve_program_from_env_or_path("QLANG_AR", &archiver_candidates()).is_none() {
+        eprintln!(
+            "skipping committed Rust FFI example test: no archive tool found on PATH and `QLANG_AR` is not set"
+        );
+        return;
+    }
+
+    if let Err(message) = run_committed_rust_example(&workspace_root, &cargo) {
+        panic!("{message}");
+    }
+}
+
+#[test]
 fn ffi_exports_load_from_c_dynamic_harnesses() {
     let workspace_root = workspace_root();
     let fixture_root = workspace_root.join("tests/ffi/pass");
@@ -679,6 +708,51 @@ fn write_rust_cargo_project(
     Ok(())
 }
 
+fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination).map_err(|error| {
+        format!(
+            "create example directory `{}` from `{}`: {error}",
+            destination.display(),
+            source.display()
+        )
+    })?;
+
+    for entry in fs::read_dir(source)
+        .map_err(|error| format!("read example directory `{}`: {error}", source.display()))?
+    {
+        let entry = entry.map_err(|error| {
+            format!(
+                "read example directory entry under `{}`: {error}",
+                source.display()
+            )
+        })?;
+        let entry_type = entry.file_type().map_err(|error| {
+            format!(
+                "read file type for example entry `{}`: {error}",
+                entry.path().display()
+            )
+        })?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if entry_type.is_dir() {
+            copy_directory_recursive(&source_path, &destination_path)?;
+            continue;
+        }
+        if !entry_type.is_file() {
+            continue;
+        }
+        fs::copy(&source_path, &destination_path).map_err(|error| {
+            format!(
+                "copy example file `{}` -> `{}`: {error}",
+                source_path.display(),
+                destination_path.display()
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
 fn run_ql_build(
     workspace_root: &Path,
     case_name: &str,
@@ -854,6 +928,45 @@ fn run_cargo_rust_ffi_case(
             cargo_run.status.code(),
             cargo_stdout,
             cargo_stderr
+        ));
+    }
+
+    Ok(())
+}
+
+fn run_committed_rust_example(workspace_root: &Path, cargo: &Path) -> Result<(), String> {
+    let example_root = workspace_root.join("examples/ffi-rust");
+    let temp = TempDir::new("ql-ffi-rust-example");
+    let copied_root = temp.path().join("ffi-rust");
+    copy_directory_recursive(&example_root, &copied_root)?;
+
+    let host_dir = copied_root.join("host");
+    let cargo_run = Command::new(cargo)
+        .current_dir(&host_dir)
+        .env("QLANG_BIN", env!("CARGO_BIN_EXE_ql"))
+        .env("CARGO_TARGET_DIR", host_dir.join("target"))
+        .args(["run", "--quiet"])
+        .output()
+        .unwrap_or_else(|_| {
+            panic!(
+                "run committed Rust FFI example with Cargo `{}`",
+                cargo.display()
+            )
+        });
+    let cargo_stdout = normalize(&String::from_utf8_lossy(&cargo_run.stdout));
+    let cargo_stderr = normalize(&String::from_utf8_lossy(&cargo_run.stderr));
+    if cargo_run.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[ffi-rust-example] expected committed Cargo host example to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            cargo_run.status.code(),
+            cargo_stdout,
+            cargo_stderr
+        ));
+    }
+    if !cargo_stdout.contains("q_add_two(40) = 42") {
+        return Err(format!(
+            "[ffi-rust-example] expected committed Cargo host example stdout to contain `q_add_two(40) = 42`, got:\n{}",
+            cargo_stdout
         ));
     }
 

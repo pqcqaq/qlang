@@ -48,6 +48,8 @@
 - 已在 `ql-mir` 增补 async operator lowering 回归：`await` / `spawn` 当前会作为显式 unary rvalue 保留，并消费前面物化的 call 结果；same-file import alias 的 async call 也会继续保留 `Import` callee，而不是退化成 opaque/unresolved operand
 - 已在 `crates/ql-cli/tests/ffi.rs` 增补 Rust host 静态链接集成回归：Rust harness 现在既可以直接调用 Qlang `staticlib` 导出，也可以为 Qlang 的 `extern "c"` import 提供最小 callback，实现最保守的双向互操作基线
 - 已在 `crates/ql-cli/tests/ffi.rs` 增补 Cargo-based Rust host smoke test：测试会临时生成最小 Cargo 工程，通过 `build.rs` 链接 Qlang `staticlib`，让 Rust 互操作从单文件 `rustc` 基线推进到更接近真实工作流的可复现路径
+- 已提交 `examples/ffi-rust`：仓库内现在有真实的 Cargo host 示例，`build.rs` 会编译 sibling Qlang 源码并链接生成的 `staticlib`
+- 已在 `crates/ql-cli/tests/ffi.rs` 增补 committed example 回归：会复制 `examples/ffi-rust` 后执行 `cargo run --quiet`，锁住示例本身的可运行性
 - 当前仍保持 conservative 类型策略：`spawn` 结果类型保留 `Unknown`，`await` 暂不引入 Future/effect 全类型建模
 - 当前仍不引入 first-class async callable type；`await` / `spawn` 先只接受可静态识别为 `async fn` 的调用路径，后续再结合 runtime/effect 设计决定是否放宽
 - 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、显式字面量 `if true` / `if false`、显式字面量 `match true/false`、非字面量 `Bool` / enum `match` 上的字面量 guard、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、更广义的常量传播、更一般的 guard-sensitive `match` 与 unreachable 细化仍待后续切片
@@ -75,7 +77,7 @@
 
 ### P7.4 Rust 互操作闭环
 
-- 增加 Rust host 最小示例与自动化回归
+- 在已提交 `examples/ffi-rust` 的基础上继续扩展构建矩阵与宿主场景
 - 固化 C ABI 映射和错误输出格式
 - 文档中给出可复现的构建矩阵
 

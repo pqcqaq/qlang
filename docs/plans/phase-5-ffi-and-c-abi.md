@@ -62,6 +62,7 @@ Phase 5 的任务是建立最小但真实可用的 C ABI 互操作闭环，让 Q
 - Rust static-link harness（通过稳定 C ABI 直接消费 Qlang 导出）
 - Rust static-link harness 也已覆盖“宿主提供 callback，Qlang 反向调用宿主符号”的最小导入路径
 - Cargo-based Rust host smoke test（临时生成最小 Cargo 工程并链接 Qlang `staticlib`）
+- committed `examples/ffi-rust` Cargo host sample（仓库内真实示例，`build.rs` 直接驱动 `ql build --emit staticlib`）
 - per-fixture `.header-surface` metadata
 
 ## 当前架构收益
@@ -74,6 +75,7 @@ P5 现在已经建立：
 - Rust 宿主现在也已有最小静态链接闭环，可直接复用现有 C ABI surface
 - Rust 宿主现在不仅能调用 Qlang 导出，也能为 Qlang 的 `extern "c"` import 提供最小 callback 实现
 - Rust 宿主现在还具备最小 Cargo 工作流 smoke test，不再只依赖单文件 `rustc` 调用
+- 仓库内现在还有一份可直接阅读和运行的 `examples/ffi-rust`，不再只有测试时临时生成的 Cargo 工程
 
 ## 当前仍刻意保留的边界
 
