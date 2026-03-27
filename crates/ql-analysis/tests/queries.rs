@@ -1,6 +1,8 @@
 mod support;
 
-use ql_analysis::{AsyncContextInfo, AsyncOperatorKind, SymbolKind};
+use ql_analysis::{
+    AsyncContextInfo, AsyncOperatorKind, LoopControlContextInfo, LoopControlKind, SymbolKind,
+};
 use ql_span::Span;
 
 use support::{analyzed, nth_offset, nth_span};
@@ -7230,5 +7232,189 @@ async fn main() -> Int {
             operator: AsyncOperatorKind::Await,
             in_async_function: false,
         })
+    );
+}
+
+#[test]
+fn loop_control_context_queries_follow_loop_boundaries() {
+    let source = r#"
+fn main(flag: Bool) -> Int {
+    break
+    continue
+    while flag {
+        break
+        continue
+    }
+    return 0
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "break", 1)),
+        Some(LoopControlContextInfo {
+            span: nth_span(source, "break", 1),
+            control: LoopControlKind::Break,
+            in_loop: false,
+        })
+    );
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "continue", 1)),
+        Some(LoopControlContextInfo {
+            span: nth_span(source, "continue", 1),
+            control: LoopControlKind::Continue,
+            in_loop: false,
+        })
+    );
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "break", 2)),
+        Some(LoopControlContextInfo {
+            span: nth_span(source, "break", 2),
+            control: LoopControlKind::Break,
+            in_loop: true,
+        })
+    );
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "continue", 2)),
+        Some(LoopControlContextInfo {
+            span: nth_span(source, "continue", 2),
+            control: LoopControlKind::Continue,
+            in_loop: true,
+        })
+    );
+}
+
+#[test]
+fn loop_control_context_queries_cover_methods_and_for_loops() {
+    let source = r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn sync_step(self, values: [Bool; 3]) -> Int {
+        for value in values {
+            let worker = () => {
+                break
+            }
+            continue
+        }
+        return 0
+    }
+}
+
+extend Counter {
+    fn spin(self) -> Int {
+        loop {
+            break
+        }
+        return 0
+    }
+}
+
+trait Runner {
+    fn run(self) -> Int {
+        loop {
+            break
+        }
+        return 0
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "break", 1)),
+        Some(LoopControlContextInfo {
+            span: nth_span(source, "break", 1),
+            control: LoopControlKind::Break,
+            in_loop: false,
+        })
+    );
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "continue", 1)),
+        Some(LoopControlContextInfo {
+            span: nth_span(source, "continue", 1),
+            control: LoopControlKind::Continue,
+            in_loop: true,
+        })
+    );
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "break", 2)),
+        Some(LoopControlContextInfo {
+            span: nth_span(source, "break", 2),
+            control: LoopControlKind::Break,
+            in_loop: true,
+        })
+    );
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "break", 3)),
+        Some(LoopControlContextInfo {
+            span: nth_span(source, "break", 3),
+            control: LoopControlKind::Break,
+            in_loop: true,
+        })
+    );
+}
+
+#[test]
+fn loop_control_context_queries_treat_closure_bodies_as_loop_boundaries() {
+    let source = r#"
+fn main(items: [Int; 3]) -> Int {
+    for item in items {
+        let worker = () => {
+            break
+            continue
+        }
+        continue
+    }
+    return 0
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "break", 1)),
+        Some(LoopControlContextInfo {
+            span: nth_span(source, "break", 1),
+            control: LoopControlKind::Break,
+            in_loop: false,
+        })
+    );
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "continue", 1)),
+        Some(LoopControlContextInfo {
+            span: nth_span(source, "continue", 1),
+            control: LoopControlKind::Continue,
+            in_loop: false,
+        })
+    );
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "continue", 2)),
+        Some(LoopControlContextInfo {
+            span: nth_span(source, "continue", 2),
+            control: LoopControlKind::Continue,
+            in_loop: true,
+        })
+    );
+}
+
+#[test]
+fn loop_control_context_queries_return_none_outside_break_or_continue() {
+    let source = r#"
+fn main() -> Int {
+    let value = 1
+    return value
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    assert_eq!(
+        analysis.loop_control_context_at(nth_offset(source, "value", 2)),
+        None
     );
 }

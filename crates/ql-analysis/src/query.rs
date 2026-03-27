@@ -117,6 +117,21 @@ pub struct AsyncContextInfo {
     pub in_async_function: bool,
 }
 
+/// Loop-control operator forms represented in same-file semantic queries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoopControlKind {
+    Break,
+    Continue,
+}
+
+/// Loop-control semantic context for one source operator occurrence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoopControlContextInfo {
+    pub span: Span,
+    pub control: LoopControlKind,
+    pub in_loop: bool,
+}
+
 /// One same-file text edit for a rename operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenameEdit {
@@ -174,6 +189,7 @@ pub(crate) struct QueryIndex {
     field_shorthand_occurrences: HashMap<FieldTarget, Vec<FieldShorthandOccurrence>>,
     binding_shorthand_occurrences: HashMap<SymbolKey, Vec<BindingShorthandOccurrence>>,
     async_contexts: Vec<AsyncContextInfo>,
+    loop_control_contexts: Vec<LoopControlContextInfo>,
     completion_sites: Vec<CompletionSite>,
     completion_scopes: HashMap<ScopeId, CompletionScope>,
     semantic_completion_sites: Vec<SemanticCompletionSite>,
@@ -190,6 +206,7 @@ impl QueryIndex {
         builder.index_definitions();
         builder.index_uses();
         builder.index_async_contexts();
+        builder.index_loop_control_contexts();
         builder.index_completion_support();
         builder.finish()
     }
@@ -203,6 +220,13 @@ impl QueryIndex {
 
     pub(crate) fn async_context_at(&self, offset: usize) -> Option<AsyncContextInfo> {
         self.async_contexts
+            .iter()
+            .find(|entry| entry.span.contains(offset))
+            .cloned()
+    }
+
+    pub(crate) fn loop_control_context_at(&self, offset: usize) -> Option<LoopControlContextInfo> {
+        self.loop_control_contexts
             .iter()
             .find(|entry| entry.span.contains(offset))
             .cloned()
@@ -492,6 +516,7 @@ struct QueryIndexBuilder<'a> {
     field_shorthand_occurrences: HashMap<FieldTarget, Vec<FieldShorthandOccurrence>>,
     binding_shorthand_occurrences: HashMap<SymbolKey, Vec<BindingShorthandOccurrence>>,
     async_contexts: Vec<AsyncContextInfo>,
+    loop_control_contexts: Vec<LoopControlContextInfo>,
     completion_sites: Vec<CompletionSite>,
     completion_scopes: HashMap<ScopeId, CompletionScope>,
     module_completion_scope: Option<ScopeId>,
@@ -530,6 +555,7 @@ impl<'a> QueryIndexBuilder<'a> {
             field_shorthand_occurrences: HashMap::new(),
             binding_shorthand_occurrences: HashMap::new(),
             async_contexts: Vec::new(),
+            loop_control_contexts: Vec::new(),
             completion_sites: Vec::new(),
             completion_scopes: HashMap::new(),
             module_completion_scope: None,
@@ -565,12 +591,17 @@ impl<'a> QueryIndexBuilder<'a> {
             .sort_by_key(|entry| (entry.span.len(), entry.span.start, entry.span.end));
         self.async_contexts
             .dedup_by(|left, right| left.span == right.span && left.operator == right.operator);
+        self.loop_control_contexts
+            .sort_by_key(|entry| (entry.span.len(), entry.span.start, entry.span.end));
+        self.loop_control_contexts
+            .dedup_by(|left, right| left.span == right.span && left.control == right.control);
 
         QueryIndex {
             occurrences: self.occurrences,
             field_shorthand_occurrences: self.field_shorthand_occurrences,
             binding_shorthand_occurrences: self.binding_shorthand_occurrences,
             async_contexts: self.async_contexts,
+            loop_control_contexts: self.loop_control_contexts,
             completion_sites: self.completion_sites,
             completion_scopes: self.completion_scopes,
             semantic_completion_sites: self.semantic_completion_sites,
@@ -593,6 +624,12 @@ impl<'a> QueryIndexBuilder<'a> {
     fn index_async_contexts(&mut self) {
         for &item_id in &self.module.items {
             self.index_item_async_contexts(item_id);
+        }
+    }
+
+    fn index_loop_control_contexts(&mut self) {
+        for &item_id in &self.module.items {
+            self.index_item_loop_control_contexts(item_id);
         }
     }
 
@@ -630,6 +667,43 @@ impl<'a> QueryIndexBuilder<'a> {
     fn index_function_async_contexts(&mut self, function: &Function) {
         if let Some(body) = function.body {
             self.index_block_async_contexts(body);
+        }
+    }
+
+    fn index_item_loop_control_contexts(&mut self, item_id: ItemId) {
+        match &self.module.item(item_id).kind {
+            ItemKind::Function(function) => self.index_function_loop_control_contexts(function),
+            ItemKind::Trait(trait_decl) => {
+                for method in &trait_decl.methods {
+                    self.index_function_loop_control_contexts(method);
+                }
+            }
+            ItemKind::Impl(impl_block) => {
+                for method in &impl_block.methods {
+                    self.index_function_loop_control_contexts(method);
+                }
+            }
+            ItemKind::Extend(extend_block) => {
+                for method in &extend_block.methods {
+                    self.index_function_loop_control_contexts(method);
+                }
+            }
+            ItemKind::ExternBlock(extern_block) => {
+                for function in &extern_block.functions {
+                    self.index_function_loop_control_contexts(function);
+                }
+            }
+            ItemKind::Const(_)
+            | ItemKind::Static(_)
+            | ItemKind::Struct(_)
+            | ItemKind::Enum(_)
+            | ItemKind::TypeAlias(_) => {}
+        }
+    }
+
+    fn index_function_loop_control_contexts(&mut self, function: &Function) {
+        if let Some(body) = function.body {
+            self.index_block_loop_control_contexts(body, 0);
         }
     }
 
@@ -758,6 +832,141 @@ impl<'a> QueryIndexBuilder<'a> {
             span,
             operator,
             in_async_function: self.resolution.expr_is_in_async_function(expr_id),
+        });
+    }
+
+    fn index_block_loop_control_contexts(&mut self, block_id: BlockId, loop_depth: usize) {
+        let block = self.module.block(block_id);
+        for &stmt_id in &block.statements {
+            let stmt = self.module.stmt(stmt_id);
+            match &stmt.kind {
+                ql_hir::StmtKind::Let { value, .. } => {
+                    self.index_expr_loop_control_contexts(*value, loop_depth);
+                }
+                ql_hir::StmtKind::Return(expr) => {
+                    if let Some(expr) = expr {
+                        self.index_expr_loop_control_contexts(*expr, loop_depth);
+                    }
+                }
+                ql_hir::StmtKind::Defer(expr) => {
+                    self.index_expr_loop_control_contexts(*expr, loop_depth);
+                }
+                ql_hir::StmtKind::Break => {
+                    self.record_loop_control_context(stmt.span, LoopControlKind::Break, loop_depth);
+                }
+                ql_hir::StmtKind::Continue => {
+                    self.record_loop_control_context(
+                        stmt.span,
+                        LoopControlKind::Continue,
+                        loop_depth,
+                    );
+                }
+                ql_hir::StmtKind::While { condition, body } => {
+                    self.index_expr_loop_control_contexts(*condition, loop_depth);
+                    self.index_block_loop_control_contexts(*body, loop_depth + 1);
+                }
+                ql_hir::StmtKind::Loop { body } => {
+                    self.index_block_loop_control_contexts(*body, loop_depth + 1);
+                }
+                ql_hir::StmtKind::For { iterable, body, .. } => {
+                    self.index_expr_loop_control_contexts(*iterable, loop_depth);
+                    self.index_block_loop_control_contexts(*body, loop_depth + 1);
+                }
+                ql_hir::StmtKind::Expr { expr, .. } => {
+                    self.index_expr_loop_control_contexts(*expr, loop_depth);
+                }
+            }
+        }
+
+        if let Some(expr) = block.tail {
+            self.index_expr_loop_control_contexts(expr, loop_depth);
+        }
+    }
+
+    fn index_expr_loop_control_contexts(&mut self, expr_id: ExprId, loop_depth: usize) {
+        let expr = self.module.expr(expr_id);
+        match &expr.kind {
+            ExprKind::Name(_)
+            | ExprKind::Integer(_)
+            | ExprKind::String { .. }
+            | ExprKind::Bool(_)
+            | ExprKind::NoneLiteral => {}
+            ExprKind::Tuple(items) | ExprKind::Array(items) => {
+                for &item in items {
+                    self.index_expr_loop_control_contexts(item, loop_depth);
+                }
+            }
+            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
+                self.index_block_loop_control_contexts(*block_id, loop_depth);
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.index_expr_loop_control_contexts(*condition, loop_depth);
+                self.index_block_loop_control_contexts(*then_branch, loop_depth);
+                if let Some(expr) = else_branch {
+                    self.index_expr_loop_control_contexts(*expr, loop_depth);
+                }
+            }
+            ExprKind::Match { value, arms } => {
+                self.index_expr_loop_control_contexts(*value, loop_depth);
+                for arm in arms {
+                    if let Some(guard) = arm.guard {
+                        self.index_expr_loop_control_contexts(guard, loop_depth);
+                    }
+                    self.index_expr_loop_control_contexts(arm.body, loop_depth);
+                }
+            }
+            ExprKind::Closure { body, .. } => self.index_expr_loop_control_contexts(*body, 0),
+            ExprKind::Call { callee, args } => {
+                self.index_expr_loop_control_contexts(*callee, loop_depth);
+                for arg in args {
+                    match arg {
+                        ql_hir::CallArg::Positional(expr) => {
+                            self.index_expr_loop_control_contexts(*expr, loop_depth);
+                        }
+                        ql_hir::CallArg::Named { value, .. } => {
+                            self.index_expr_loop_control_contexts(*value, loop_depth);
+                        }
+                    }
+                }
+            }
+            ExprKind::Member { object, .. } => {
+                self.index_expr_loop_control_contexts(*object, loop_depth);
+            }
+            ExprKind::Bracket { target, items } => {
+                self.index_expr_loop_control_contexts(*target, loop_depth);
+                for &item in items {
+                    self.index_expr_loop_control_contexts(item, loop_depth);
+                }
+            }
+            ExprKind::StructLiteral { fields, .. } => {
+                for field in fields {
+                    self.index_expr_loop_control_contexts(field.value, loop_depth);
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.index_expr_loop_control_contexts(*left, loop_depth);
+                self.index_expr_loop_control_contexts(*right, loop_depth);
+            }
+            ExprKind::Unary { expr, .. } | ExprKind::Question(expr) => {
+                self.index_expr_loop_control_contexts(*expr, loop_depth);
+            }
+        }
+    }
+
+    fn record_loop_control_context(
+        &mut self,
+        span: Span,
+        control: LoopControlKind,
+        loop_depth: usize,
+    ) {
+        self.loop_control_contexts.push(LoopControlContextInfo {
+            span: self.root_span(span),
+            control,
+            in_loop: loop_depth > 0,
         });
     }
 

@@ -14,8 +14,8 @@ use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
 use query::QueryIndex;
 pub use query::{
     AsyncContextInfo, AsyncOperatorKind, CompletionItem, DefinitionTarget, HoverInfo,
-    ReferenceTarget, RenameEdit, RenameError, RenameResult, RenameTarget, SemanticTokenOccurrence,
-    SymbolKind,
+    LoopControlContextInfo, LoopControlKind, ReferenceTarget, RenameEdit, RenameError,
+    RenameResult, RenameTarget, SemanticTokenOccurrence, SymbolKind,
 };
 
 /// Parsed-and-lowered semantic analysis snapshot shared by CLI and future LSP work.
@@ -97,6 +97,11 @@ impl Analysis {
     /// Return async semantic context for `await` / `spawn` / `for await` at `offset`.
     pub fn async_context_at(&self, offset: usize) -> Option<AsyncContextInfo> {
         self.index.async_context_at(offset)
+    }
+
+    /// Return loop-control semantic context for `break` / `continue` at `offset`.
+    pub fn loop_control_context_at(&self, offset: usize) -> Option<LoopControlContextInfo> {
+        self.index.loop_control_context_at(offset)
     }
 
     /// Return the definition site for the symbol covering `offset`, when the target lives in source.
