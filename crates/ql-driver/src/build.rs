@@ -1463,7 +1463,7 @@ fn main() -> Int {
         let source = dir.write(
             "async_main.ql",
             r#"
-fn worker() -> Int {
+async fn worker() -> Int {
     return 1
 }
 
@@ -1545,7 +1545,7 @@ extern "c" pub fn q_export() -> Int {
     return 1
 }
 
-fn worker() -> Int {
+async fn worker() -> Int {
     return 1
 }
 
@@ -1584,6 +1584,57 @@ async fn helper() -> Int {
             !diagnostic.message.contains(
                 "requires at least one public top-level `extern \"c\"` function definition",
             )
+        }));
+    }
+
+    #[test]
+    fn build_file_surfaces_match_lowering_diagnostics() {
+        let dir = TestDir::new("ql-driver-match-unsupported");
+        let source = dir.write(
+            "match_main.ql",
+            r#"
+fn main() -> Int {
+    let flag = true
+    return match flag {
+        true => 1,
+        false => 0,
+    }
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("match codegen rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "LLVM IR backend foundation does not support `match` lowering yet"
+        }));
+    }
+
+    #[test]
+    fn build_file_surfaces_for_lowering_diagnostics() {
+        let dir = TestDir::new("ql-driver-for-unsupported");
+        let source = dir.write(
+            "for_main.ql",
+            r#"
+fn main() -> Int {
+    for value in 0 {
+        break
+    }
+    return 0
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("for codegen rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "LLVM IR backend foundation does not support `for` lowering yet"
         }));
     }
 

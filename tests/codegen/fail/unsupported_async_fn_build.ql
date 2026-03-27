@@ -1,4 +1,4 @@
-fn worker() -> Int {
+async fn worker() -> Int {
     return 1
 }
 

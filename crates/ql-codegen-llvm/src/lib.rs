@@ -1819,4 +1819,41 @@ fn main() -> Int {
             message == "LLVM IR backend foundation does not support closure values yet"
         }));
     }
+
+    #[test]
+    fn rejects_unsupported_match_lowering() {
+        let messages = emit_error(
+            r#"
+fn main() -> Int {
+    let flag = true
+    return match flag {
+        true => 1,
+        false => 0,
+    }
+}
+"#,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message == "LLVM IR backend foundation does not support `match` lowering yet"
+        }));
+    }
+
+    #[test]
+    fn rejects_unsupported_for_lowering() {
+        let messages = emit_error(
+            r#"
+fn main() -> Int {
+    for value in 0 {
+        break
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message == "LLVM IR backend foundation does not support `for` lowering yet"
+        }));
+    }
 }
