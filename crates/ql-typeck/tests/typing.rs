@@ -431,6 +431,85 @@ fn main() -> Int {
 }
 
 #[test]
+fn reports_break_and_continue_outside_loops() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    break
+    continue
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"`break` is only allowed inside loop bodies".to_string()),
+        "expected break-outside-loop diagnostic, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(&"`continue` is only allowed inside loop bodies".to_string()),
+        "expected continue-outside-loop diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_break_and_continue_inside_loop_bodies() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    loop {
+        break
+    }
+
+    while true {
+        continue
+    }
+
+    for value in [1, 2, 3] {
+        break
+    }
+
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn closures_do_not_inherit_loop_control_contexts() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    loop {
+        let stop = () => {
+            break
+        }
+        let skip = () => {
+            continue
+        }
+        break
+    }
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"`break` is only allowed inside loop bodies".to_string()),
+        "expected closure break diagnostic, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(&"`continue` is only allowed inside loop bodies".to_string()),
+        "expected closure continue diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_tuple_pattern_arity_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"

@@ -47,6 +47,7 @@ struct Checker<'a> {
     self_is_mutable: bool,
     current_return: Option<Ty>,
     in_async_function: bool,
+    loop_depth: usize,
 }
 
 impl<'a> Checker<'a> {
@@ -65,6 +66,7 @@ impl<'a> Checker<'a> {
             self_is_mutable: false,
             current_return: None,
             in_async_function: false,
+            loop_depth: 0,
         }
     }
 
@@ -137,6 +139,7 @@ impl<'a> Checker<'a> {
         let old_self_is_mutable = self.self_is_mutable;
         let old_return = self.current_return.clone();
         let old_in_async_function = self.in_async_function;
+        let old_loop_depth = self.loop_depth;
         let old_param_types = std::mem::take(&mut self.param_types);
 
         self.self_type = self_type;
@@ -157,6 +160,7 @@ impl<'a> Checker<'a> {
                 .unwrap_or_else(void_ty),
         );
         self.in_async_function = function.is_async;
+        self.loop_depth = 0;
 
         if let Some(scope) = function_scope(function, self.resolution) {
             for (index, param) in function.params.iter().enumerate() {
@@ -193,6 +197,7 @@ impl<'a> Checker<'a> {
         self.self_is_mutable = old_self_is_mutable;
         self.current_return = old_return;
         self.in_async_function = old_in_async_function;
+        self.loop_depth = old_loop_depth;
         self.param_types = old_param_types;
     }
 
@@ -224,13 +229,42 @@ impl<'a> Checker<'a> {
                 StmtKind::Defer(expr) => {
                     self.check_expr(*expr, None);
                 }
-                StmtKind::Break | StmtKind::Continue => {}
+                StmtKind::Break => {
+                    if self.loop_depth == 0 {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "`break` is only allowed inside loop bodies".to_string(),
+                            )
+                            .with_label(
+                                Label::new(self.module.stmt(stmt_id).span)
+                                    .with_message("`break` used here"),
+                            ),
+                        );
+                    }
+                }
+                StmtKind::Continue => {
+                    if self.loop_depth == 0 {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                "`continue` is only allowed inside loop bodies".to_string(),
+                            )
+                            .with_label(
+                                Label::new(self.module.stmt(stmt_id).span)
+                                    .with_message("`continue` used here"),
+                            ),
+                        );
+                    }
+                }
                 StmtKind::While { condition, body } => {
                     self.check_bool_condition(*condition, "while condition");
+                    self.loop_depth += 1;
                     self.check_block(*body);
+                    self.loop_depth -= 1;
                 }
                 StmtKind::Loop { body } => {
+                    self.loop_depth += 1;
                     self.check_block(*body);
+                    self.loop_depth -= 1;
                 }
                 StmtKind::For {
                     is_await,
@@ -252,7 +286,9 @@ impl<'a> Checker<'a> {
                     }
                     self.check_expr(*iterable, None);
                     self.bind_pattern(*pattern, &Ty::Unknown);
+                    self.loop_depth += 1;
                     self.check_block(*body);
+                    self.loop_depth -= 1;
                 }
                 StmtKind::Expr { expr, .. } => {
                     self.check_expr(*expr, None);
@@ -599,13 +635,16 @@ impl<'a> Checker<'a> {
         };
         let old_return = self.current_return.clone();
         let old_in_async_function = self.in_async_function;
+        let old_loop_depth = self.loop_depth;
         // Closures are not `async` today, so their bodies must not inherit an outer
-        // function's async context.
+        // function's async context or loop-control statements.
         self.current_return = expected_ret.cloned();
         self.in_async_function = false;
+        self.loop_depth = 0;
         let body_ty = self.check_expr(body, expected_ret);
         self.current_return = old_return;
         self.in_async_function = old_in_async_function;
+        self.loop_depth = old_loop_depth;
         let body_guarantees_return = self.expr_guarantees_return(body);
         let closure_ret = match expected_ret {
             // Explicit `return` statements are checked against the callable
