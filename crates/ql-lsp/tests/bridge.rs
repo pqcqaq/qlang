@@ -2085,6 +2085,51 @@ fn read(value: Int) -> Int {
 }
 
 #[test]
+fn hover_and_definition_bridge_keep_deeper_struct_like_shorthand_tokens_on_import_alias_symbols() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+use source_value as source
+
+struct Point {
+    source: Int,
+}
+
+const source_value: Int = 1
+
+fn read() -> Int {
+    let built = Point.Scope.Config { source }
+    return source
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let shorthand = source
+        .find("{ source }")
+        .map(|offset| offset + 2)
+        .expect("deeper shorthand struct literal field should exist");
+    let shorthand_position =
+        span_to_range(source, Span::new(shorthand, shorthand + "source".len())).start;
+
+    let hover = hover_for_analysis(source, &analysis, shorthand_position)
+        .expect("deeper import shorthand token hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown content");
+    };
+    assert!(markup.value.contains("**import** `source`"));
+    assert!(markup.value.contains("import source_value"));
+
+    let definition = definition_for_analysis(&uri, source, &analysis, shorthand_position)
+        .expect("deeper import shorthand token definition should exist");
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("expected scalar definition location");
+    };
+    assert_eq!(location.uri, uri);
+    assert_eq!(
+        location.range,
+        span_to_range(source, alias_span(source, "source"))
+    );
+}
+
+#[test]
 fn rename_bridge_keeps_deeper_struct_like_shorthand_binding_edits_raw() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
