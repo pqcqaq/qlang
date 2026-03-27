@@ -719,6 +719,7 @@ P6 当前仍刻意未完成：
 - `ql-lsp` bridge 新增 `async_context_for_analysis` 只读桥接（位置 -> async 运算符上下文）
 - 新增 `ql-lsp` async 桥接回归测试，锁住 bridge 行为
 - `ql-analysis` / `ql-lsp` async 查询桥接已覆盖 `for await` 运算符上下文（当前锚定 `await` 关键字 span）
+- `ql-resolve` / `ql-typeck` / `ql-analysis` / `ql-lsp` 新增 `impl` / `extend` 方法面的 async 回归：锁住方法体内 `await` / `spawn` / `for await` 的边界与查询语义
 - `ql-typeck` 新增 `for await` 的 async 上下文约束（非 `async fn` 显式诊断）
 - 新增 `ql-typeck` 的 `for await` 边界回归测试
 - `ql-typeck` 新增 `await` / `spawn` 操作数形态约束：当前要求操作数必须是 call expression
