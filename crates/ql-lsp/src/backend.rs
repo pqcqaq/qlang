@@ -1,18 +1,21 @@
 use ql_analysis::{Analysis, analyze_source};
 use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::{
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, Location, MessageType, OneOf,
-    PrepareRenameResponse, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities,
-    ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, Url, WorkspaceEdit,
+    CompletionOptions, CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability, InitializeParams,
+    InitializeResult, InitializedParams, Location, MessageType, OneOf, PrepareRenameResponse,
+    ReferenceParams, RenameOptions, RenameParams, SemanticTokensFullOptions, SemanticTokensOptions,
+    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, Url, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 
 use crate::bridge::{
-    definition_for_analysis, diagnostics_to_lsp, hover_for_analysis, prepare_rename_for_analysis,
-    references_for_analysis, rename_for_analysis,
+    completion_for_analysis, definition_for_analysis, diagnostics_to_lsp, hover_for_analysis,
+    prepare_rename_for_analysis, references_for_analysis, rename_for_analysis,
+    semantic_tokens_for_analysis, semantic_tokens_legend,
 };
 use crate::store::DocumentStore;
 
@@ -67,6 +70,17 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
+                completion_provider: Some(CompletionOptions::default()),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: semantic_tokens_legend(),
+                            range: None,
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            ..Default::default()
+                        },
+                    ),
+                ),
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
                     work_done_progress_options: Default::default(),
@@ -149,6 +163,28 @@ impl LanguageServer for Backend {
             position,
             params.context.include_declaration,
         ))
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+            return Ok(None);
+        };
+
+        Ok(completion_for_analysis(&source, &analysis, position))
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let uri = params.text_document.uri;
+        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+            return Ok(None);
+        };
+
+        Ok(Some(semantic_tokens_for_analysis(&source, &analysis)))
     }
 
     async fn prepare_rename(

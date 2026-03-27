@@ -13,8 +13,8 @@ use ql_resolve::{ResolutionMap, resolve_module};
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
 use query::QueryIndex;
 pub use query::{
-    DefinitionTarget, HoverInfo, ReferenceTarget, RenameEdit, RenameError, RenameResult,
-    RenameTarget, SymbolKind,
+    CompletionItem, DefinitionTarget, HoverInfo, ReferenceTarget, RenameEdit, RenameError,
+    RenameResult, RenameTarget, SemanticTokenOccurrence, SymbolKind,
 };
 
 /// Parsed-and-lowered semantic analysis snapshot shared by CLI and future LSP work.
@@ -81,7 +81,8 @@ impl Analysis {
     /// - expression queries cover root bindings plus struct fields, unique method members, and
     ///   enum variant tokens, but still do not model deeper member chains or module-path semantics
     /// - builtin types can hover but have no source definition span
-    /// - import aliases are now source-backed within the current file, but deeper module graphs
+    /// - import aliases are now source-backed within the current file, and local aliases that
+    ///   point at local enum items can forward variant-token queries, but deeper module graphs
     ///   still are not resolved beyond the imported root binding
     pub fn symbol_at(&self, offset: usize) -> Option<HoverInfo> {
         self.index.symbol_at(offset)
@@ -114,6 +115,28 @@ impl Analysis {
         new_name: &str,
     ) -> Result<Option<RenameResult>, RenameError> {
         self.index.rename_at(offset, new_name)
+    }
+
+    /// Return visible completion candidates at `offset`.
+    ///
+    /// This currently stays conservative on purpose:
+    /// - only same-file completion is supported
+    /// - lexical-scope completion currently covers value and type positions already represented in HIR
+    /// - member completion currently covers already-parsed member tokens whose receiver type is
+    ///   stable, plus same-file parsed enum variant paths, including local import aliases that
+    ///   point at local enum items
+    /// - ambiguous member surfaces, parse-error tolerant completion, and cross-file project indexing
+    ///   are still intentionally deferred
+    pub fn completions_at(&self, offset: usize) -> Option<Vec<CompletionItem>> {
+        self.index.completions_at(offset)
+    }
+
+    /// Return source-backed semantic-token occurrences for the current file.
+    ///
+    /// This intentionally reuses the same conservative query surface as hover/definition/references:
+    /// only tokens with stable source-backed semantic identity are emitted.
+    pub fn semantic_tokens(&self) -> Vec<SemanticTokenOccurrence> {
+        self.index.semantic_tokens()
     }
 
     pub fn render_diagnostics(&self, path: &Path, source: &str) -> String {
@@ -250,6 +273,136 @@ fn main() -> Int {
                 .map(ToString::to_string)
                 .as_deref(),
             Some("Int")
+        );
+    }
+
+    #[test]
+    fn exposes_array_and_index_types_for_queries() {
+        let analysis = analyze_source(
+            r#"
+fn main() -> Int {
+    let values = [1, 2, 3]
+    let first = values[0]
+    return first
+}
+"#,
+        )
+        .expect("source should analyze");
+
+        let function = analysis
+            .hir()
+            .items
+            .iter()
+            .find_map(|&item_id| match &analysis.hir().item(item_id).kind {
+                ItemKind::Function(function) if function.name == "main" => Some(function),
+                _ => None,
+            })
+            .expect("main function should exist");
+        let body = function.body.expect("main should have a body");
+        let block = analysis.hir().block(body);
+
+        let values_local = match &analysis.hir().stmt(block.statements[0]).kind {
+            StmtKind::Let { pattern, .. } => match &analysis.hir().pattern(*pattern).kind {
+                ql_hir::PatternKind::Binding(local_id) => *local_id,
+                _ => panic!("expected binding pattern"),
+            },
+            _ => panic!("expected let statement"),
+        };
+        let (first_local, first_value_expr) = match &analysis.hir().stmt(block.statements[1]).kind {
+            StmtKind::Let { pattern, value, .. } => {
+                let local_id = match &analysis.hir().pattern(*pattern).kind {
+                    ql_hir::PatternKind::Binding(local_id) => *local_id,
+                    _ => panic!("expected binding pattern"),
+                };
+                (local_id, *value)
+            }
+            _ => panic!("expected second let statement"),
+        };
+        let return_expr = match &analysis.hir().stmt(block.statements[2]).kind {
+            StmtKind::Return(Some(expr_id)) => *expr_id,
+            _ => panic!("expected return statement with expression"),
+        };
+
+        assert_eq!(
+            analysis
+                .local_ty(values_local)
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("[Int; 3]")
+        );
+        assert_eq!(
+            analysis
+                .expr_ty(first_value_expr)
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("Int")
+        );
+        assert_eq!(
+            analysis
+                .local_ty(first_local)
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("Int")
+        );
+        assert_eq!(
+            analysis
+                .expr_ty(return_expr)
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("Int")
+        );
+    }
+
+    #[test]
+    fn exposes_tuple_hex_index_types_for_queries() {
+        let analysis = analyze_source(
+            r#"
+fn main() -> Int {
+    let pair = (1, "ql")
+    let second = pair[0x1]
+    return 0
+}
+"#,
+        )
+        .expect("source should analyze");
+
+        let function = analysis
+            .hir()
+            .items
+            .iter()
+            .find_map(|&item_id| match &analysis.hir().item(item_id).kind {
+                ItemKind::Function(function) if function.name == "main" => Some(function),
+                _ => None,
+            })
+            .expect("main function should exist");
+        let body = function.body.expect("main should have a body");
+        let block = analysis.hir().block(body);
+
+        let (second_local, second_value_expr) = match &analysis.hir().stmt(block.statements[1]).kind
+        {
+            StmtKind::Let { pattern, value, .. } => {
+                let local_id = match &analysis.hir().pattern(*pattern).kind {
+                    ql_hir::PatternKind::Binding(local_id) => *local_id,
+                    _ => panic!("expected binding pattern"),
+                };
+                (local_id, *value)
+            }
+            _ => panic!("expected second let statement"),
+        };
+
+        assert_eq!(
+            analysis
+                .expr_ty(second_value_expr)
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("String")
+        );
+        assert_eq!(
+            analysis
+                .local_ty(second_local)
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("String")
         );
     }
 

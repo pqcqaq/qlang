@@ -219,6 +219,278 @@ fn main() -> Int {
 }
 
 #[test]
+fn accepts_array_literals_and_array_indexing() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let values = [1, 2, 3]
+    return values[0] + values[1]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_assignment_to_mutable_bindings() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    var (left, right) = (1, 2)
+    left = right
+    return left
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_assignment_to_mutable_receiver_self() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn replace(var self, next: Counter) -> Counter {
+        self = next
+        return self
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_assignment_to_immutable_local_bindings() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let value = 1
+    value = 2
+    return value
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"cannot assign to immutable local `value`; declare it with `var`".to_string()
+        )
+    );
+}
+
+#[test]
+fn reports_assignment_to_immutable_parameters() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main(value: Int) -> Int {
+    value = 2
+    return value
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"cannot assign to immutable parameter `value`".to_string()));
+}
+
+#[test]
+fn reports_assignment_to_immutable_receiver_self() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    fn replace(self, next: Counter) -> Counter {
+        self = next
+        return self
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"cannot assign to immutable receiver `self`; use `var self`".to_string())
+    );
+}
+
+#[test]
+fn accepts_declared_array_types_in_function_signatures() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn take_first(values: [Int; 3]) -> Int {
+    return values[0]
+}
+
+fn main() -> Int {
+    return take_first([1, 2, 3])
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_tuple_indexing_with_integer_literals() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let pair = (1, "ql")
+    let first = pair[0]
+    return first
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_tuple_indexing_with_hexadecimal_integer_literals() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let pair = (1, 2)
+    let second = pair[0x1]
+    return second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_array_literal_item_type_mismatches() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let values = [1, "x"]
+    return 0
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"array literal item has type mismatch: expected `Int`, found `String`".to_string()
+    ));
+}
+
+#[test]
+fn reports_array_literal_item_type_mismatches_against_declared_array_types() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn take(values: [Int; 2]) -> Int {
+    return values[0]
+}
+
+fn main() -> Int {
+    return take(["x", "y"])
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"array literal item has type mismatch: expected `Int`, found `String`".to_string()
+    ));
+}
+
+#[test]
+fn reports_declared_array_length_mismatches() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn take_first(values: [Int; 3]) -> Int {
+    return values[0]
+}
+
+fn main() -> Int {
+    return take_first([1, 2])
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"call argument has type mismatch: expected `[Int; 3]`, found `[Int; 2]`".to_string()
+    ));
+}
+
+#[test]
+fn reports_non_int_array_indices() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let values = [1, 2, 3]
+    return values["x"]
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"array index must have type `Int`, found `String`".to_string()));
+}
+
+#[test]
+fn reports_tuple_index_out_of_bounds() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let pair = (1, 2)
+    return pair[2]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"tuple index `2` is out of bounds for tuple of length 2".to_string())
+    );
+}
+
+#[test]
+fn keeps_dynamic_tuple_indexing_deferred() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main(index: Int) -> Int {
+    let pair = (1, 2)
+    pair[index]
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "dynamic tuple indexing should stay deferred for now, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_unknown_struct_members() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -347,6 +619,153 @@ fn main() -> User {
 }
 
 #[test]
+fn accepts_struct_literals_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use User as Person
+
+struct User {
+    name: String,
+    age: Int = 0,
+}
+
+fn main() -> User {
+    return Person { name: "ql" }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_struct_literal_shape_errors_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use User as Person
+
+struct User {
+    name: String,
+    age: Int = 0,
+}
+
+fn main() -> User {
+    return Person { age: "old", missing: 1 }
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"struct literal field has type mismatch: expected `Int`, found `String`".to_string()
+    ));
+    assert!(diagnostics.contains(&"unknown field `missing` in struct literal".to_string()));
+    assert!(diagnostics.contains(&"missing required field `name` in struct literal".to_string()));
+}
+
+#[test]
+fn accepts_enum_struct_variant_literals() {
+    let diagnostics = diagnostic_messages(
+        r#"
+enum Command {
+    Config {
+        retries: Int,
+        enabled: Bool,
+    },
+}
+
+fn main() -> Command {
+    return Command.Config { retries: 3, enabled: false }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_enum_struct_variant_literals_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Command as Cmd
+
+enum Command {
+    Config {
+        retries: Int,
+        enabled: Bool,
+    },
+}
+
+fn main() -> Command {
+    return Cmd.Config { retries: 3, enabled: false }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_enum_struct_variant_literal_shape_and_field_type_errors() {
+    let diagnostics = diagnostic_messages(
+        r#"
+enum Command {
+    Config {
+        retries: Int,
+        name: String,
+        enabled: Bool,
+    },
+}
+
+fn main() -> Command {
+    return Command.Config { retries: "old", missing: 1 }
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"struct literal field has type mismatch: expected `Int`, found `String`".to_string()
+    ));
+    assert!(diagnostics.contains(&"unknown field `missing` in struct literal".to_string()));
+    assert!(diagnostics.contains(&"missing required field `name` in struct literal".to_string()));
+}
+
+#[test]
+fn reports_enum_struct_variant_literal_shape_errors_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Command as Cmd
+
+enum Command {
+    Config {
+        retries: Int,
+        name: String,
+        enabled: Bool,
+    },
+}
+
+fn main() -> Command {
+    return Cmd.Config { retries: "old", missing: 1 }
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"struct literal field has type mismatch: expected `Int`, found `String`".to_string()
+    ));
+    assert!(diagnostics.contains(&"unknown field `missing` in struct literal".to_string()));
+    assert!(diagnostics.contains(&"missing required field `name` in struct literal".to_string()));
+}
+
+#[test]
 fn reports_pattern_root_type_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -370,6 +789,99 @@ fn main() -> Int {
             &"struct pattern has type mismatch: expected `User`, found `Point`".to_string()
         )
     );
+}
+
+#[test]
+fn accepts_struct_patterns_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Point as P
+
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+fn main(point: Point) -> Int {
+    match point {
+        P { x, y } => x + y,
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_unknown_struct_pattern_fields() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Point {
+    x: Int,
+}
+
+fn main(point: Point) -> Int {
+    match point {
+        Point { missing } => 0,
+    }
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"unknown field `missing` in struct pattern".to_string()));
+}
+
+#[test]
+fn reports_pattern_root_type_mismatches_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Point as P
+
+struct User {
+    name: String,
+}
+
+struct Point {
+    x: Int,
+}
+
+fn main() -> Int {
+    let P { x } = User { name: "ql" }
+    return x
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"struct pattern has type mismatch: expected `User`, found `Point`".to_string()
+        )
+    );
+}
+
+#[test]
+fn reports_unknown_struct_pattern_fields_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Point as P
+
+struct Point {
+    x: Int,
+}
+
+fn main(point: Point) -> Int {
+    match point {
+        P { missing } => 0,
+    }
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"unknown field `missing` in struct pattern".to_string()));
 }
 
 #[test]
@@ -398,6 +910,127 @@ fn main() -> Int {
     assert!(diagnostics.contains(
         &"tuple-struct pattern has type mismatch: expected `User`, found `Result`".to_string()
     ));
+}
+
+#[test]
+fn accepts_variant_struct_patterns_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Result as Res
+
+enum Result {
+    Ok {
+        value: Int,
+    },
+    Err {
+        code: Int,
+    },
+}
+
+fn main(result: Result) -> Int {
+    match result {
+        Res.Ok { value } => value,
+        Res.Err { code } => code,
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_unknown_variant_struct_pattern_fields_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Result as Res
+
+enum Result {
+    Ok {
+        value: Int,
+    },
+    Err {
+        code: Int,
+    },
+}
+
+fn main(result: Result) -> Int {
+    match result {
+        Res.Ok { missing } => 0,
+        _ => 0,
+    }
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"unknown field `missing` in struct pattern".to_string()));
+}
+
+#[test]
+fn reports_variant_pattern_type_mismatches_through_same_file_import_aliases() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use Result as Res
+
+struct User {
+    name: String,
+}
+
+enum Result {
+    Ok(Int),
+    Err(String),
+}
+
+fn main() -> Int {
+    let user = User { name: "ql" }
+    match user {
+        Res.Ok(value) => value,
+        _ => 0,
+    }
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"tuple-struct pattern has type mismatch: expected `User`, found `Result`".to_string()
+    ));
+}
+
+#[test]
+fn accepts_comparison_for_compatible_numeric_operands() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main(left: Int, right: Int) -> Bool {
+    return left < right
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_comparison_operand_mismatches_for_incompatible_numeric_types() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main(left: Int, right: UInt) -> Bool {
+    return left < right
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"comparison operator `<` expects compatible numeric operands, found `Int` and `UInt`"
+                .to_string()
+        )
+    );
 }
 
 #[test]

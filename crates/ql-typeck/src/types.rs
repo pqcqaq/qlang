@@ -1,13 +1,17 @@
 use std::fmt;
 
 use ql_hir::{Function, FunctionRef, ItemId, ItemKind, Module, Param, TypeId, TypeKind};
-use ql_resolve::{BuiltinType, ResolutionMap, TypeResolution};
+use ql_resolve::{BuiltinType, ImportBinding, ResolutionMap, TypeResolution};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ty {
     Unknown,
     Builtin(BuiltinType),
     Generic(String),
+    Array {
+        element: Box<Ty>,
+        len: usize,
+    },
     Item {
         item_id: ItemId,
         name: String,
@@ -68,6 +72,16 @@ impl Ty {
             (Ty::Unknown, _) | (_, Ty::Unknown) => true,
             (Ty::Builtin(left), Ty::Builtin(right)) => left == right,
             (Ty::Generic(_), _) | (_, Ty::Generic(_)) => true,
+            (
+                Ty::Array {
+                    element: left_element,
+                    len: left_len,
+                },
+                Ty::Array {
+                    element: right_element,
+                    len: right_len,
+                },
+            ) => left_len == right_len && left_element.compatible_with(right_element),
             (
                 Ty::Item {
                     item_id: left_item,
@@ -186,6 +200,7 @@ impl fmt::Display for Ty {
             Ty::Unknown => f.write_str("<unknown>"),
             Ty::Builtin(builtin) => f.write_str(builtin_name(*builtin)),
             Ty::Generic(name) => f.write_str(name),
+            Ty::Array { element, len } => write!(f, "[{element}; {len}]"),
             Ty::Item { name, args, .. } => write_named(f, name, args),
             Ty::Import { path, args } | Ty::Named { path, args } => write_named(f, path, args),
             Ty::Pointer { is_const, inner } => {
@@ -229,6 +244,10 @@ pub fn lower_type(module: &Module, resolution: &ResolutionMap, type_id: TypeId) 
             is_const: *is_const,
             inner: Box::new(lower_type(module, resolution, *inner)),
         },
+        TypeKind::Array { element, len } => Ty::Array {
+            element: Box::new(lower_type(module, resolution, *element)),
+            len: *len,
+        },
         TypeKind::Named { path, args } => {
             let args = args
                 .iter()
@@ -242,10 +261,20 @@ pub fn lower_type(module: &Module, resolution: &ResolutionMap, type_id: TypeId) 
                     name: item_display_name(module, *item_id),
                     args,
                 },
-                Some(TypeResolution::Import(import_binding)) => Ty::Import {
-                    path: import_binding.path.segments.join("."),
-                    args,
-                },
+                Some(TypeResolution::Import(import_binding)) => {
+                    if let Some(item_id) = local_item_for_import_binding(module, import_binding) {
+                        Ty::Item {
+                            item_id,
+                            name: item_display_name(module, item_id),
+                            args,
+                        }
+                    } else {
+                        Ty::Import {
+                            path: import_binding.path.segments.join("."),
+                            args,
+                        }
+                    }
+                }
                 None => Ty::Named {
                     path: path.segments.join("."),
                     args,
@@ -266,6 +295,29 @@ pub fn lower_type(module: &Module, resolution: &ResolutionMap, type_id: TypeId) 
             ret: Box::new(lower_type(module, resolution, *ret)),
         },
     }
+}
+
+pub(crate) fn local_item_for_import_binding(
+    module: &Module,
+    import_binding: &ImportBinding,
+) -> Option<ItemId> {
+    let [name] = import_binding.path.segments.as_slice() else {
+        return None;
+    };
+
+    module
+        .items
+        .iter()
+        .copied()
+        .find(|item_id| match &module.item(*item_id).kind {
+            ItemKind::Function(function) => function.name == *name,
+            ItemKind::Const(global) | ItemKind::Static(global) => global.name == *name,
+            ItemKind::Struct(struct_decl) => struct_decl.name == *name,
+            ItemKind::Enum(enum_decl) => enum_decl.name == *name,
+            ItemKind::Trait(trait_decl) => trait_decl.name == *name,
+            ItemKind::TypeAlias(alias) => alias.name == *name,
+            ItemKind::Impl(_) | ItemKind::Extend(_) | ItemKind::ExternBlock(_) => false,
+        })
 }
 
 pub fn item_display_name(module: &Module, item_id: ItemId) -> String {

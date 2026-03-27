@@ -3,13 +3,13 @@ use std::collections::{HashMap, HashSet};
 use ql_ast::BinaryOp;
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{
-    BlockId, CallArg, ExprId, ExprKind, Function, ItemKind, LocalId, MatchArm, Module, Param,
-    PatternId, PatternKind, StmtKind, VariantFields,
+    BlockId, CallArg, ExprId, ExprKind, Function, ItemId, ItemKind, LocalId, MatchArm, Module,
+    Param, PatternId, PatternKind, StmtKind, VariantFields,
 };
 use ql_resolve::{ParamBinding, ResolutionMap, TypeResolution, ValueResolution};
 
 use crate::checker::{FieldTarget, MemberTarget, MethodTarget};
-use crate::types::{Ty, item_display_name, lower_type, void_ty};
+use crate::types::{Ty, item_display_name, local_item_for_import_binding, lower_type, void_ty};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TypingResult {
@@ -40,9 +40,11 @@ struct Checker<'a> {
     expr_types: HashMap<ExprId, Ty>,
     pattern_types: HashMap<PatternId, Ty>,
     local_types: HashMap<LocalId, Ty>,
+    mutable_locals: HashSet<LocalId>,
     member_targets: HashMap<ExprId, MemberTarget>,
     param_types: HashMap<ParamBinding, Ty>,
     self_type: Option<Ty>,
+    self_is_mutable: bool,
     current_return: Option<Ty>,
 }
 
@@ -55,9 +57,11 @@ impl<'a> Checker<'a> {
             expr_types: HashMap::new(),
             pattern_types: HashMap::new(),
             local_types: HashMap::new(),
+            mutable_locals: HashSet::new(),
             member_targets: HashMap::new(),
             param_types: HashMap::new(),
             self_type: None,
+            self_is_mutable: false,
             current_return: None,
         }
     }
@@ -128,10 +132,21 @@ impl<'a> Checker<'a> {
 
     fn check_function(&mut self, function: &Function, self_type: Option<Ty>) {
         let old_self = self.self_type.clone();
+        let old_self_is_mutable = self.self_is_mutable;
         let old_return = self.current_return.clone();
         let old_param_types = std::mem::take(&mut self.param_types);
 
         self.self_type = self_type;
+        self.self_is_mutable = function
+            .params
+            .first()
+            .and_then(|param| match param {
+                Param::Receiver(receiver) => {
+                    Some(matches!(receiver.kind, ql_ast::ReceiverKind::Mutable))
+                }
+                Param::Regular(_) => None,
+            })
+            .unwrap_or(false);
         self.current_return = Some(
             function
                 .return_type
@@ -163,6 +178,7 @@ impl<'a> Checker<'a> {
         }
 
         self.self_type = old_self;
+        self.self_is_mutable = old_self_is_mutable;
         self.current_return = old_return;
         self.param_types = old_param_types;
     }
@@ -172,9 +188,16 @@ impl<'a> Checker<'a> {
         for &stmt_id in &block.statements {
             let stmt = self.module.stmt(stmt_id);
             match &stmt.kind {
-                StmtKind::Let { pattern, value, .. } => {
+                StmtKind::Let {
+                    mutable,
+                    pattern,
+                    value,
+                } => {
                     let value_ty = self.check_expr(*value, None);
                     self.bind_pattern(*pattern, &value_ty);
+                    if *mutable {
+                        self.record_mutable_pattern_bindings(*pattern);
+                    }
                 }
                 StmtKind::Return(expr) => {
                     let expected_return = self.current_return.clone();
@@ -233,12 +256,7 @@ impl<'a> Checker<'a> {
                     .map(|&item| self.check_expr(item, None))
                     .collect(),
             ),
-            ExprKind::Array(items) => {
-                for &item in items {
-                    self.check_expr(item, None);
-                }
-                Ty::Unknown
-            }
+            ExprKind::Array(items) => self.check_array_literal(expr_id, items, expected),
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self.check_block(*block_id),
             ExprKind::If {
                 condition,
@@ -261,13 +279,7 @@ impl<'a> Checker<'a> {
             ExprKind::Closure { params, body, .. } => self.check_closure(params, *body, expected),
             ExprKind::Call { callee, args } => self.check_call(expr_id, *callee, args),
             ExprKind::Member { object, field, .. } => self.check_member(expr_id, *object, field),
-            ExprKind::Bracket { target, items } => {
-                self.check_expr(*target, None);
-                for &item in items {
-                    self.check_expr(item, None);
-                }
-                Ty::Unknown
-            }
+            ExprKind::Bracket { target, items } => self.check_bracket(expr_id, *target, items),
             ExprKind::StructLiteral { .. } => self.check_struct_literal(expr_id),
             ExprKind::Binary { left, op, right } => self.check_binary(expr_id, *left, *op, *right),
             ExprKind::Unary { expr, .. } => self.check_expr(*expr, None),
@@ -315,6 +327,147 @@ impl<'a> Checker<'a> {
                         Label::new(self.module.expr(expr_id).span).with_message("condition here"),
                     ),
             );
+        }
+    }
+
+    fn check_array_literal(
+        &mut self,
+        expr_id: ExprId,
+        items: &[ExprId],
+        expected: Option<&Ty>,
+    ) -> Ty {
+        let expected_array = match expected {
+            Some(Ty::Array { element, len }) => Some((element.as_ref(), *len)),
+            _ => None,
+        };
+        let mut element_ty = expected_array
+            .map(|(element, _)| element.clone())
+            .unwrap_or(Ty::Unknown);
+
+        for &item in items {
+            let item_expected = expected_array
+                .map(|(element, _)| element)
+                .or_else(|| (!element_ty.is_unknown()).then_some(&element_ty));
+            let item_ty = self.check_expr(item, item_expected);
+
+            if expected_array.is_none() && element_ty.is_unknown() {
+                element_ty = item_ty;
+                continue;
+            }
+
+            if item_ty.is_unknown() {
+                continue;
+            }
+
+            let expected_element = expected_array
+                .map(|(element, _)| element)
+                .unwrap_or(&element_ty);
+            if !expected_element.compatible_with(&item_ty) {
+                self.report_type_mismatch(item, expected_element, &item_ty, "array literal item");
+            }
+        }
+
+        if let Some((_, expected_len)) = expected_array
+            && items.len() != expected_len
+        {
+            self.diagnostics.push(
+                Diagnostic::error(format!(
+                    "array literal has length mismatch: expected {} item(s), found {}",
+                    expected_len,
+                    items.len()
+                ))
+                .with_label(
+                    Label::new(self.module.expr(expr_id).span).with_message("array literal here"),
+                ),
+            );
+        }
+
+        Ty::Array {
+            element: Box::new(element_ty),
+            len: items.len(),
+        }
+    }
+
+    fn check_bracket(&mut self, expr_id: ExprId, target: ExprId, items: &[ExprId]) -> Ty {
+        let target_ty = self.check_expr(target, None);
+
+        if items.len() != 1 {
+            for &item in items {
+                self.check_expr(item, None);
+            }
+            return Ty::Unknown;
+        }
+
+        let index_expr = items[0];
+
+        match &target_ty {
+            Ty::Array { element, .. } => {
+                let index_ty =
+                    self.check_expr(index_expr, Some(&Ty::Builtin(ql_resolve::BuiltinType::Int)));
+                if !index_ty.is_unknown()
+                    && !index_ty.compatible_with(&Ty::Builtin(ql_resolve::BuiltinType::Int))
+                {
+                    self.diagnostics.push(
+                        Diagnostic::error(format!(
+                            "array index must have type `Int`, found `{index_ty}`"
+                        ))
+                        .with_label(
+                            Label::new(self.module.expr(index_expr).span)
+                                .with_message("index expression here"),
+                        ),
+                    );
+                    return Ty::Unknown;
+                }
+
+                element.as_ref().clone()
+            }
+            Ty::Tuple(tuple_items) => {
+                let index_ty =
+                    self.check_expr(index_expr, Some(&Ty::Builtin(ql_resolve::BuiltinType::Int)));
+                if !index_ty.is_unknown()
+                    && !index_ty.compatible_with(&Ty::Builtin(ql_resolve::BuiltinType::Int))
+                {
+                    self.diagnostics.push(
+                        Diagnostic::error(format!(
+                            "tuple index must have type `Int`, found `{index_ty}`"
+                        ))
+                        .with_label(
+                            Label::new(self.module.expr(index_expr).span)
+                                .with_message("index expression here"),
+                        ),
+                    );
+                    return Ty::Unknown;
+                }
+
+                let ExprKind::Integer(raw_index) = &self.module.expr(index_expr).kind else {
+                    return Ty::Unknown;
+                };
+                let Some(index) = ql_ast::parse_usize_literal(raw_index) else {
+                    return Ty::Unknown;
+                };
+
+                if let Some(item_ty) = tuple_items.get(index) {
+                    item_ty.clone()
+                } else {
+                    self.diagnostics.push(
+                        Diagnostic::error(format!(
+                            "tuple index `{index}` is out of bounds for tuple of length {}",
+                            tuple_items.len()
+                        ))
+                        .with_label(
+                            Label::new(self.module.expr(expr_id).span)
+                                .with_message("index expression here"),
+                        ),
+                    );
+                    Ty::Unknown
+                }
+            }
+            _ => {
+                for &item in items {
+                    self.check_expr(item, None);
+                }
+                Ty::Unknown
+            }
         }
     }
 
@@ -622,31 +775,64 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn item_id_for_value_resolution(&self, resolution: &ValueResolution) -> Option<ItemId> {
+        match resolution {
+            ValueResolution::Item(item_id) => Some(*item_id),
+            ValueResolution::Import(import_binding) => {
+                local_item_for_import_binding(self.module, import_binding)
+            }
+            _ => None,
+        }
+    }
+
+    fn item_id_for_type_resolution(&self, resolution: &TypeResolution) -> Option<ItemId> {
+        match resolution {
+            TypeResolution::Item(item_id) => Some(*item_id),
+            TypeResolution::Import(import_binding) => {
+                local_item_for_import_binding(self.module, import_binding)
+            }
+            _ => None,
+        }
+    }
+
     fn check_struct_literal(&mut self, expr_id: ExprId) -> Ty {
         let expr = self.module.expr(expr_id);
         let ExprKind::StructLiteral { path, fields } = &expr.kind else {
             return Ty::Unknown;
         };
 
-        let root_ty = match self.resolution.struct_literal_resolution(expr_id) {
-            Some(TypeResolution::Item(item_id)) => Ty::Item {
-                item_id: *item_id,
-                name: item_display_name(self.module, *item_id),
+        let root_ty = if let Some(item_id) = self
+            .resolution
+            .struct_literal_resolution(expr_id)
+            .and_then(|resolution| self.item_id_for_type_resolution(resolution))
+        {
+            Ty::Item {
+                item_id,
+                name: item_display_name(self.module, item_id),
                 args: Vec::new(),
-            },
-            Some(TypeResolution::Import(import_binding)) => Ty::Import {
-                path: import_binding.path.segments.join("."),
-                args: Vec::new(),
-            },
-            Some(TypeResolution::Builtin(builtin)) => Ty::Builtin(*builtin),
-            Some(TypeResolution::Generic(_)) => Ty::Generic(path.segments.join(".")),
-            None => Ty::Named {
-                path: path.segments.join("."),
-                args: Vec::new(),
-            },
+            }
+        } else {
+            match self.resolution.struct_literal_resolution(expr_id) {
+                Some(TypeResolution::Import(import_binding)) => Ty::Import {
+                    path: import_binding.path.segments.join("."),
+                    args: Vec::new(),
+                },
+                Some(TypeResolution::Builtin(builtin)) => Ty::Builtin(*builtin),
+                Some(TypeResolution::Generic(_)) => Ty::Generic(path.segments.join(".")),
+                None => Ty::Named {
+                    path: path.segments.join("."),
+                    args: Vec::new(),
+                },
+                Some(TypeResolution::Item(_)) => unreachable!("local items are handled above"),
+            }
         };
 
-        let Some(fields_info) = self.struct_field_map(&root_ty) else {
+        let Some(fields_info) = self
+            .resolution
+            .struct_literal_resolution(expr_id)
+            .and_then(|resolution| self.item_id_for_type_resolution(resolution))
+            .and_then(|item_id| self.field_infos_for_item_path(item_id, path))
+        else {
             for field in fields {
                 self.check_expr(field.value, None);
             }
@@ -686,32 +872,18 @@ impl<'a> Checker<'a> {
 
     fn check_binary(&mut self, expr_id: ExprId, left: ExprId, op: BinaryOp, right: ExprId) -> Ty {
         let left_ty = self.check_expr(left, None);
-        let right_ty = self.check_expr(right, None);
 
         match op {
             BinaryOp::Assign => {
+                self.check_assignment_target(left);
+                let right_ty = self.check_expr(right, Some(&left_ty));
                 self.report_type_mismatch(right, &left_ty, &right_ty, "assignment");
                 Ty::Unknown
             }
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
-                if left_ty.is_unknown() && right_ty.is_unknown() {
-                    return Ty::Unknown;
-                }
-                if left_ty.is_numeric()
-                    && right_ty.is_numeric()
-                    && left_ty.compatible_with(&right_ty)
-                {
-                    return if left_ty.is_unknown() {
-                        right_ty
-                    } else {
-                        left_ty
-                    };
-                }
-                if left_ty.is_unknown() && right_ty.is_numeric() {
-                    return right_ty;
-                }
-                if right_ty.is_unknown() && left_ty.is_numeric() {
-                    return left_ty;
+                let right_ty = self.check_expr(right, None);
+                if let Some(result_ty) = self.compatible_numeric_result_ty(&left_ty, &right_ty) {
+                    return result_ty;
                 }
                 self.diagnostics.push(
                     Diagnostic::error(format!(
@@ -727,6 +899,7 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
             BinaryOp::EqEq | BinaryOp::BangEq => {
+                let right_ty = self.check_expr(right, None);
                 if left_ty.compatible_with(&right_ty) {
                     Ty::Builtin(ql_resolve::BuiltinType::Bool)
                 } else {
@@ -746,14 +919,13 @@ impl<'a> Checker<'a> {
                 }
             }
             BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Lt | BinaryOp::LtEq => {
-                if (left_ty.is_numeric() || left_ty.is_unknown())
-                    && (right_ty.is_numeric() || right_ty.is_unknown())
-                {
+                let right_ty = self.check_expr(right, None);
+                if self.has_compatible_numeric_operands(&left_ty, &right_ty) {
                     Ty::Builtin(ql_resolve::BuiltinType::Bool)
                 } else {
                     self.diagnostics.push(
                         Diagnostic::error(format!(
-                            "comparison operator `{}` expects numeric operands, found `{}` and `{}`",
+                            "comparison operator `{}` expects compatible numeric operands, found `{}` and `{}`",
                             op_text(op),
                             left_ty,
                             right_ty
@@ -767,6 +939,75 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+    }
+
+    fn check_assignment_target(&mut self, expr_id: ExprId) {
+        let expr = self.module.expr(expr_id);
+        let ExprKind::Name(name) = &expr.kind else {
+            return;
+        };
+
+        match self.resolution.expr_resolution(expr_id) {
+            Some(ValueResolution::Local(local_id)) if self.mutable_locals.contains(local_id) => {}
+            Some(ValueResolution::Local(_)) => {
+                self.diagnostics.push(
+                    Diagnostic::error(format!(
+                        "cannot assign to immutable local `{name}`; declare it with `var`"
+                    ))
+                    .with_label(Label::new(expr.span).with_message("assignment target here")),
+                );
+            }
+            Some(ValueResolution::Param(_)) => {
+                self.diagnostics.push(
+                    Diagnostic::error(format!("cannot assign to immutable parameter `{name}`"))
+                        .with_label(Label::new(expr.span).with_message("assignment target here")),
+                );
+            }
+            Some(ValueResolution::SelfValue) if self.self_is_mutable => {}
+            Some(ValueResolution::SelfValue) => {
+                self.diagnostics.push(
+                    Diagnostic::error("cannot assign to immutable receiver `self`; use `var self`")
+                        .with_label(Label::new(expr.span).with_message("assignment target here")),
+                );
+            }
+            Some(ValueResolution::Function(_))
+            | Some(ValueResolution::Item(_))
+            | Some(ValueResolution::Import(_))
+            | None => {}
+        }
+    }
+
+    fn compatible_numeric_result_ty(&self, left_ty: &Ty, right_ty: &Ty) -> Option<Ty> {
+        if left_ty.is_unknown() && right_ty.is_unknown() {
+            return Some(Ty::Unknown);
+        }
+        if left_ty.is_numeric() && right_ty.is_numeric() && left_ty.compatible_with(right_ty) {
+            return Some(if left_ty.is_unknown() {
+                right_ty.clone()
+            } else {
+                left_ty.clone()
+            });
+        }
+        if left_ty.is_unknown() && right_ty.is_numeric() {
+            return Some(right_ty.clone());
+        }
+        if right_ty.is_unknown() && left_ty.is_numeric() {
+            return Some(left_ty.clone());
+        }
+        None
+    }
+
+    fn has_compatible_numeric_operands(&self, left_ty: &Ty, right_ty: &Ty) -> bool {
+        if left_ty.is_unknown() && right_ty.is_unknown() {
+            return true;
+        }
+        if left_ty.is_unknown() && right_ty.is_numeric() {
+            return true;
+        }
+        if right_ty.is_unknown() && left_ty.is_numeric() {
+            return true;
+        }
+        left_ty.is_numeric() && right_ty.is_numeric() && left_ty.compatible_with(right_ty)
     }
 
     fn check_match(
@@ -860,13 +1101,23 @@ impl<'a> Checker<'a> {
                 self.check_pattern_root(pattern_id, expected, "struct pattern");
                 let field_types = self.struct_pattern_fields(pattern_id);
                 for field in fields {
-                    let field_ty = field_types
-                        .as_ref()
-                        .and_then(|field_types| {
-                            field_types.iter().find(|info| info.name == field.name)
-                        })
-                        .map(|info| info.ty.clone())
-                        .unwrap_or(Ty::Unknown);
+                    let field_ty = if let Some(field_types) = field_types.as_ref() {
+                        if let Some(info) = field_types.iter().find(|info| info.name == field.name)
+                        {
+                            info.ty.clone()
+                        } else {
+                            self.diagnostics.push(
+                                Diagnostic::error(format!(
+                                    "unknown field `{}` in struct pattern",
+                                    field.name
+                                ))
+                                .with_label(Label::new(field.name_span).with_message("field here")),
+                            );
+                            Ty::Unknown
+                        }
+                    } else {
+                        Ty::Unknown
+                    };
                     self.bind_pattern(field.pattern, &field_ty);
                 }
             }
@@ -898,6 +1149,31 @@ impl<'a> Checker<'a> {
                 );
             }
             PatternKind::NoneLiteral | PatternKind::Wildcard => {}
+        }
+    }
+
+    fn record_mutable_pattern_bindings(&mut self, pattern_id: PatternId) {
+        let pattern = self.module.pattern(pattern_id);
+        match &pattern.kind {
+            PatternKind::Binding(local_id) => {
+                self.mutable_locals.insert(*local_id);
+            }
+            PatternKind::Tuple(items) | PatternKind::TupleStruct { items, .. } => {
+                for &item in items {
+                    self.record_mutable_pattern_bindings(item);
+                }
+            }
+            PatternKind::Struct { fields, .. } => {
+                for field in fields {
+                    self.record_mutable_pattern_bindings(field.pattern);
+                }
+            }
+            PatternKind::Path(_)
+            | PatternKind::Integer(_)
+            | PatternKind::String(_)
+            | PatternKind::Bool(_)
+            | PatternKind::NoneLiteral
+            | PatternKind::Wildcard => {}
         }
     }
 
@@ -950,20 +1226,20 @@ impl<'a> Checker<'a> {
             _ => return None,
         };
 
-        let Some(ValueResolution::Item(item_id)) = self.resolution.pattern_resolution(pattern_id)
-        else {
-            return None;
-        };
+        let item_id = self
+            .resolution
+            .pattern_resolution(pattern_id)
+            .and_then(|resolution| self.item_id_for_value_resolution(resolution))?;
 
-        match &self.module.item(*item_id).kind {
+        match &self.module.item(item_id).kind {
             ItemKind::Struct(_) if path.segments.len() == 1 => Some(Ty::Item {
-                item_id: *item_id,
-                name: item_display_name(self.module, *item_id),
+                item_id,
+                name: item_display_name(self.module, item_id),
                 args: Vec::new(),
             }),
             ItemKind::Enum(_) if path.segments.len() >= 2 => Some(Ty::Item {
-                item_id: *item_id,
-                name: item_display_name(self.module, *item_id),
+                item_id,
+                name: item_display_name(self.module, item_id),
                 args: Vec::new(),
             }),
             _ => None,
@@ -976,12 +1252,12 @@ impl<'a> Checker<'a> {
             return None;
         };
 
-        let Some(ValueResolution::Item(item_id)) = self.resolution.pattern_resolution(pattern_id)
-        else {
-            return None;
-        };
+        let item_id = self
+            .resolution
+            .pattern_resolution(pattern_id)
+            .and_then(|resolution| self.item_id_for_value_resolution(resolution))?;
 
-        match &self.module.item(*item_id).kind {
+        match &self.module.item(item_id).kind {
             ItemKind::Enum(enum_decl) if path.segments.len() >= 2 => {
                 let variant_name = path.segments.last()?;
                 let variant = enum_decl
@@ -1008,12 +1284,20 @@ impl<'a> Checker<'a> {
             return None;
         };
 
-        let Some(ValueResolution::Item(item_id)) = self.resolution.pattern_resolution(pattern_id)
-        else {
-            return None;
-        };
+        let item_id = self
+            .resolution
+            .pattern_resolution(pattern_id)
+            .and_then(|resolution| self.item_id_for_value_resolution(resolution))?;
 
-        match &self.module.item(*item_id).kind {
+        self.field_infos_for_item_path(item_id, path)
+    }
+
+    fn field_infos_for_item_path(
+        &self,
+        item_id: ItemId,
+        path: &ql_ast::Path,
+    ) -> Option<Vec<FieldInfo>> {
+        match &self.module.item(item_id).kind {
             ItemKind::Struct(struct_decl) if path.segments.len() == 1 => Some(
                 struct_decl
                     .fields
@@ -1047,28 +1331,6 @@ impl<'a> Checker<'a> {
             }
             _ => None,
         }
-    }
-
-    fn struct_field_map(&self, root_ty: &Ty) -> Option<Vec<FieldInfo>> {
-        let Ty::Item { item_id, .. } = root_ty else {
-            return None;
-        };
-
-        let ItemKind::Struct(struct_decl) = &self.module.item(*item_id).kind else {
-            return None;
-        };
-
-        Some(
-            struct_decl
-                .fields
-                .iter()
-                .map(|field| FieldInfo {
-                    name: field.name.clone(),
-                    ty: lower_type(self.module, self.resolution, field.ty),
-                    has_default: field.default.is_some(),
-                })
-                .collect(),
-        )
     }
 
     fn unify_branch_types(&mut self, expr_id: ExprId, left: Ty, right: Ty, context: &str) -> Ty {

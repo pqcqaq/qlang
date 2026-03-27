@@ -290,6 +290,11 @@ impl Lowerer {
                 is_const: *is_const,
                 inner: self.lower_type_expr(inner),
             },
+            ast::TypeExprKind::Array { element, len } => TypeKind::Array {
+                element: self.lower_type_expr(element),
+                len: ast::parse_usize_literal(len)
+                    .expect("parser should validate array length literals"),
+            },
             ast::TypeExprKind::Named { path, args } => TypeKind::Named {
                 path: path.clone(),
                 args: args.iter().map(|arg| self.lower_type_expr(arg)).collect(),

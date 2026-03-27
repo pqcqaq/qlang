@@ -6,9 +6,11 @@ use ql_diagnostics::{
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
-    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, GotoDefinitionResponse, Hover,
-    HoverContents, Location, MarkupContent, MarkupKind, Position, PrepareRenameResponse, Range,
-    TextEdit, Url, WorkspaceEdit,
+    CompletionItem as LspCompletionItem, CompletionItemKind, CompletionResponse,
+    CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
+    GotoDefinitionResponse, Hover, HoverContents, Location, MarkupContent, MarkupKind, Position,
+    PrepareRenameResponse, Range, SemanticToken, SemanticTokenType, SemanticTokens,
+    SemanticTokensLegend, SemanticTokensResult, TextEdit, Url, WorkspaceEdit,
 };
 
 pub fn position_to_offset(source: &str, position: Position) -> Option<usize> {
@@ -99,6 +101,93 @@ pub fn references_for_analysis(
             .map(|reference| Location::new(uri.clone(), span_to_range(source, reference.span)))
             .collect(),
     )
+}
+
+pub fn completion_for_analysis(
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<CompletionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let replace_span = completion_replace_span(source, offset);
+    let prefix = source
+        .get(replace_span.start..offset)
+        .unwrap_or_default()
+        .to_owned();
+    let items = analysis
+        .completions_at(offset)?
+        .into_iter()
+        .filter(|item| completion_matches_prefix(&item.label, &item.insert_text, &prefix))
+        .map(|item| LspCompletionItem {
+            label: item.label.clone(),
+            kind: Some(completion_item_kind(item.kind)),
+            detail: Some(item.detail),
+            documentation: item
+                .ty
+                .map(|ty| tower_lsp::lsp_types::Documentation::String(format!("Type: `{ty}`"))),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
+                span_to_range(source, replace_span),
+                item.insert_text,
+            ))),
+            ..Default::default()
+        })
+        .collect::<Vec<_>>();
+
+    Some(CompletionResponse::Array(items))
+}
+
+pub fn semantic_tokens_legend() -> SemanticTokensLegend {
+    SemanticTokensLegend {
+        token_types: vec![
+            SemanticTokenType::NAMESPACE,
+            SemanticTokenType::TYPE,
+            SemanticTokenType::CLASS,
+            SemanticTokenType::ENUM,
+            SemanticTokenType::ENUM_MEMBER,
+            SemanticTokenType::INTERFACE,
+            SemanticTokenType::TYPE_PARAMETER,
+            SemanticTokenType::PARAMETER,
+            SemanticTokenType::VARIABLE,
+            SemanticTokenType::PROPERTY,
+            SemanticTokenType::FUNCTION,
+            SemanticTokenType::METHOD,
+        ],
+        token_modifiers: Vec::new(),
+    }
+}
+
+pub fn semantic_tokens_for_analysis(source: &str, analysis: &Analysis) -> SemanticTokensResult {
+    let mut data = Vec::new();
+    let mut previous_line = 0u32;
+    let mut previous_start = 0u32;
+
+    for token in analysis.semantic_tokens() {
+        let start = offset_to_position(source, token.span.start);
+        let delta_line = start.line - previous_line;
+        let delta_start = if delta_line == 0 {
+            start.character - previous_start
+        } else {
+            start.character
+        };
+        let length = semantic_token_length(source, token.span);
+        let token_type = semantic_token_kind_index(token.kind);
+
+        data.push(SemanticToken {
+            delta_line,
+            delta_start,
+            length,
+            token_type,
+            token_modifiers_bitset: 0,
+        });
+
+        previous_line = start.line;
+        previous_start = start.character;
+    }
+
+    SemanticTokensResult::Tokens(SemanticTokens {
+        result_id: None,
+        data,
+    })
 }
 
 pub fn prepare_rename_for_analysis(
@@ -231,6 +320,82 @@ fn symbol_kind_name(kind: SymbolKind) -> &'static str {
         SymbolKind::BuiltinType => "builtin type",
         SymbolKind::Import => "import",
     }
+}
+
+fn completion_replace_span(source: &str, offset: usize) -> Span {
+    let mut start = offset.min(source.len());
+    while start > 0 {
+        let Some(ch) = source[..start].chars().next_back() else {
+            break;
+        };
+        if !is_completion_identifier_char(ch) {
+            break;
+        }
+        start -= ch.len_utf8();
+    }
+
+    let mut end = offset.min(source.len());
+    while end < source.len() {
+        let Some(ch) = source[end..].chars().next() else {
+            break;
+        };
+        if !is_completion_identifier_char(ch) {
+            break;
+        }
+        end += ch.len_utf8();
+    }
+
+    Span::new(start, end)
+}
+
+fn completion_matches_prefix(label: &str, insert_text: &str, prefix: &str) -> bool {
+    prefix.is_empty() || label.starts_with(prefix) || insert_text.starts_with(prefix)
+}
+
+const fn completion_item_kind(kind: SymbolKind) -> CompletionItemKind {
+    match kind {
+        SymbolKind::Function | SymbolKind::Method => CompletionItemKind::FUNCTION,
+        SymbolKind::Const | SymbolKind::Static => CompletionItemKind::CONSTANT,
+        SymbolKind::Struct => CompletionItemKind::STRUCT,
+        SymbolKind::Enum => CompletionItemKind::ENUM,
+        SymbolKind::Variant => CompletionItemKind::ENUM_MEMBER,
+        SymbolKind::Trait => CompletionItemKind::INTERFACE,
+        SymbolKind::TypeAlias | SymbolKind::BuiltinType => CompletionItemKind::CLASS,
+        SymbolKind::Field => CompletionItemKind::FIELD,
+        SymbolKind::Local | SymbolKind::Parameter | SymbolKind::SelfParameter => {
+            CompletionItemKind::VARIABLE
+        }
+        SymbolKind::Generic => CompletionItemKind::TYPE_PARAMETER,
+        SymbolKind::Import => CompletionItemKind::MODULE,
+    }
+}
+
+const fn semantic_token_kind_index(kind: SymbolKind) -> u32 {
+    match kind {
+        SymbolKind::Import => 0,
+        SymbolKind::BuiltinType | SymbolKind::TypeAlias => 1,
+        SymbolKind::Struct => 2,
+        SymbolKind::Enum => 3,
+        SymbolKind::Variant => 4,
+        SymbolKind::Trait => 5,
+        SymbolKind::Generic => 6,
+        SymbolKind::Parameter => 7,
+        SymbolKind::Local | SymbolKind::SelfParameter => 8,
+        SymbolKind::Field => 9,
+        SymbolKind::Function | SymbolKind::Const | SymbolKind::Static => 10,
+        SymbolKind::Method => 11,
+    }
+}
+
+fn semantic_token_length(source: &str, span: Span) -> u32 {
+    source[span.start..span.end]
+        .chars()
+        .map(|ch| ch.len_utf16() as u32)
+        .sum()
+}
+
+fn is_completion_identifier_char(ch: char) -> bool {
+    ch == '_' || ch == '`' || ch.is_ascii_alphanumeric()
 }
 
 fn offset_to_position(source: &str, offset: usize) -> Position {

@@ -369,6 +369,13 @@ fn format_type(ty: &TypeExpr, out: &mut String) {
             }
             format_type(inner, out);
         }
+        TypeExprKind::Array { element, len } => {
+            out.push('[');
+            format_type(element, out);
+            out.push_str("; ");
+            out.push_str(len);
+            out.push(']');
+        }
         TypeExprKind::Named { path, args } => {
             format_path(path, out);
             if !args.is_empty() {
@@ -875,5 +882,21 @@ fn tupled(value: (Int,)) -> (Int,) {
         assert_eq!(formatted, reformatted);
         assert!(formatted.contains("fn tupled(value: (Int,)) -> (Int,)"));
         assert!(formatted.contains("let single = (value,)"));
+    }
+
+    #[test]
+    fn formatter_preserves_array_type_syntax() {
+        let formatted = format_source(
+            r#"
+fn takes(values:[Int;0x3])->[Int;0x3]{
+    return values
+}
+"#,
+        )
+        .expect("format array types");
+        let reformatted = format_source(&formatted).expect("format array types again");
+
+        assert_eq!(formatted, reformatted);
+        assert!(formatted.contains("fn takes(values: [Int; 0x3]) -> [Int; 0x3]"));
     }
 }

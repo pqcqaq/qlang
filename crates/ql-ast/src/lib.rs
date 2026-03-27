@@ -288,6 +288,10 @@ pub enum TypeExprKind {
         is_const: bool,
         inner: Box<TypeExpr>,
     },
+    Array {
+        element: Box<TypeExpr>,
+        len: String,
+    },
     Named {
         path: Path,
         args: Vec<TypeExpr>,
@@ -512,4 +516,27 @@ pub enum UnaryOp {
     Neg,
     Await,
     Spawn,
+}
+
+/// Parse a lexer-style integer literal into `usize` when representable.
+pub fn parse_usize_literal(text: &str) -> Option<usize> {
+    let normalized = text.replace('_', "");
+    if let Some(rest) = normalized
+        .strip_prefix("0x")
+        .or_else(|| normalized.strip_prefix("0X"))
+    {
+        usize::from_str_radix(rest, 16).ok()
+    } else if let Some(rest) = normalized
+        .strip_prefix("0b")
+        .or_else(|| normalized.strip_prefix("0B"))
+    {
+        usize::from_str_radix(rest, 2).ok()
+    } else if let Some(rest) = normalized
+        .strip_prefix("0o")
+        .or_else(|| normalized.strip_prefix("0O"))
+    {
+        usize::from_str_radix(rest, 8).ok()
+    } else {
+        normalized.parse::<usize>().ok()
+    }
 }

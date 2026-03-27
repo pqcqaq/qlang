@@ -1,3 +1,6 @@
+error: tests/ui/semantic_duplicate_named_arg.ql:2:5: unresolved value `run`
+      run(left: 1, left: 2)
+      ^^^ could not resolve this value in the current scope
 error: tests/ui/semantic_duplicate_named_arg.ql:2:18: duplicate named call argument `left`
       run(left: 1, left: 2)
           ^^^^ first seen here

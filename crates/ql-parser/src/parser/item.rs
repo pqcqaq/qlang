@@ -6,6 +6,7 @@ use ql_ast::{
 use ql_lexer::TokenKind;
 
 use super::Parser;
+use crate::ParseError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FunctionBodyMode {
@@ -589,6 +590,28 @@ impl Parser {
                 TypeExprKind::Pointer {
                     is_const,
                     inner: Box::new(inner),
+                },
+            ));
+        }
+
+        if self.eat(TokenKind::LBracket) {
+            let element = self.parse_type()?;
+            self.expect(TokenKind::Semi, "expected `;` after array element type")?;
+            let len = self.expect(TokenKind::Int, "expected array length after `;`")?;
+            if ql_ast::parse_usize_literal(&len.text).is_none() {
+                self.errors.push(ParseError {
+                    message: "array length literal must fit in `usize`".into(),
+                    span: len.span,
+                });
+                return Err(());
+            }
+            self.expect(TokenKind::RBracket, "expected `]` after array type")?;
+
+            return Ok(TypeExpr::new(
+                self.span_from(start),
+                TypeExprKind::Array {
+                    element: Box::new(element),
+                    len: len.text,
                 },
             ));
         }

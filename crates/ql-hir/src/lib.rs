@@ -305,6 +305,7 @@ pub struct Type {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeKind {
     Pointer { is_const: bool, inner: TypeId },
+    Array { element: TypeId, len: usize },
     Named { path: Path, args: Vec<TypeId> },
     Tuple(Vec<TypeId>),
     Callable { params: Vec<TypeId>, ret: TypeId },

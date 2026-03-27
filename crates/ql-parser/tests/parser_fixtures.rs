@@ -254,6 +254,45 @@ fn preserves_single_element_tuple_types() {
 }
 
 #[test]
+fn parses_array_types_in_function_signatures() {
+    let source = "fn takes(values: [Int; 0b11]) -> [String; 0x1] { return [\"ok\"] }";
+    let module = parse_source(source).expect("array types should parse");
+    let function = match &module.items[0].kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+
+    assert!(matches!(
+        function.params.first(),
+        Some(Param::Regular { ty, .. })
+            if matches!(
+                &ty.kind,
+                TypeExprKind::Array { element, len }
+                    if len == "0b11"
+                        && matches!(
+                            &element.kind,
+                            TypeExprKind::Named { path, args }
+                                if path.segments.as_slice() == ["Int"] && args.is_empty()
+                        )
+            )
+    ));
+    assert!(matches!(
+        function.return_type.as_ref(),
+        Some(ty)
+            if matches!(
+                &ty.kind,
+                TypeExprKind::Array { element, len }
+                    if len == "0x1"
+                        && matches!(
+                            &element.kind,
+                            TypeExprKind::Named { path, args }
+                                if path.segments.as_slice() == ["String"] && args.is_empty()
+                        )
+            )
+    ));
+}
+
+#[test]
 fn attaches_spans_to_nested_nodes() {
     let source = "fn main() { let value = 1 }";
     let module = parse_source(source).expect("span fixture should parse");

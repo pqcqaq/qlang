@@ -58,3 +58,19 @@ fn main() -> Int {
         "error: sample.ql:3:5: return value has type mismatch: expected `Int`, found `String`"
     ));
 }
+
+#[test]
+fn rendered_assignment_immutability_diagnostics_anchor_to_the_target() {
+    let source = r#"
+fn main() -> Int {
+    let value = 1
+    value = 2
+    return value
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(rendered.contains(
+        "error: sample.ql:4:5: cannot assign to immutable local `value`; declare it with `var`"
+    ));
+}

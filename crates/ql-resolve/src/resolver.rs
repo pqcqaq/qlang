@@ -315,9 +315,14 @@ impl<'module> Resolver<'module> {
         let ty = self.module.ty(type_id);
         match &ty.kind {
             TypeKind::Pointer { inner, .. } => self.resolve_type(*inner, scope),
+            TypeKind::Array { element, .. } => self.resolve_type(*element, scope),
             TypeKind::Named { path, args } => {
                 if let Some(resolution) = self.lookup_type_path(path, scope) {
                     self.resolution.type_paths.insert(type_id, resolution);
+                } else if let Some((name, span)) = single_segment_path_root(path) {
+                    self.resolution
+                        .diagnostics
+                        .push(unresolved_type_diagnostic(name, span));
                 }
                 for &arg in args {
                     self.resolve_type(arg, scope);
@@ -397,11 +402,19 @@ impl<'module> Resolver<'module> {
             PatternKind::Path(path) => {
                 if let Some(resolution) = self.lookup_value_path(path, scope) {
                     self.resolution.pattern_paths.insert(pattern_id, resolution);
+                } else if let Some((name, span)) = single_segment_path_root(path) {
+                    self.resolution
+                        .diagnostics
+                        .push(unresolved_value_diagnostic(name, span));
                 }
             }
             PatternKind::TupleStruct { path, items } => {
                 if let Some(resolution) = self.lookup_value_path(path, scope) {
                     self.resolution.pattern_paths.insert(pattern_id, resolution);
+                } else if let Some((name, span)) = single_segment_path_root(path) {
+                    self.resolution
+                        .diagnostics
+                        .push(unresolved_value_diagnostic(name, span));
                 }
                 for &item in items {
                     self.resolve_pattern(item, scope);
@@ -410,6 +423,10 @@ impl<'module> Resolver<'module> {
             PatternKind::Struct { path, fields, .. } => {
                 if let Some(resolution) = self.lookup_value_path(path, scope) {
                     self.resolution.pattern_paths.insert(pattern_id, resolution);
+                } else if let Some((name, span)) = single_segment_path_root(path) {
+                    self.resolution
+                        .diagnostics
+                        .push(unresolved_value_diagnostic(name, span));
                 }
                 for field in fields {
                     self.resolve_pattern(field.pattern, scope);
@@ -462,7 +479,10 @@ impl<'module> Resolver<'module> {
                     .resolution
                     .diagnostics
                     .push(invalid_self_diagnostic(expr.span)),
-                None => {}
+                None => self
+                    .resolution
+                    .diagnostics
+                    .push(unresolved_value_diagnostic(name, expr.span)),
             },
             ExprKind::Integer(_)
             | ExprKind::String { .. }
@@ -515,11 +535,10 @@ impl<'module> Resolver<'module> {
                 }
             }
             ExprKind::Member { object, .. } => {
-                self.resolve_expr(*object, scope);
-                if let Some(path) = self.expr_path(expr_id)
-                    && let Some(resolution) = self.lookup_value_path(&path, scope)
-                {
-                    self.resolution.value_paths.insert(expr_id, resolution);
+                if self.expr_path(expr_id).is_some() {
+                    self.resolve_path_like_expr(expr_id, scope);
+                } else {
+                    self.resolve_expr(*object, scope);
                 }
             }
             ExprKind::Bracket { target, items } => {
@@ -533,6 +552,10 @@ impl<'module> Resolver<'module> {
                     self.resolution
                         .struct_literal_paths
                         .insert(expr_id, resolution);
+                } else if let Some((name, span)) = single_segment_path_root(path) {
+                    self.resolution
+                        .diagnostics
+                        .push(unresolved_type_diagnostic(name, span));
                 }
                 self.resolve_struct_literal_fields(fields, scope);
             }
@@ -559,6 +582,33 @@ impl<'module> Resolver<'module> {
     fn resolve_struct_literal_fields(&mut self, fields: &[StructLiteralField], scope: ScopeId) {
         for field in fields {
             self.resolve_expr(field.value, scope);
+        }
+    }
+
+    fn resolve_path_like_expr(&mut self, expr_id: ExprId, scope: ScopeId) {
+        self.resolution.expr_scopes.insert(expr_id, scope);
+
+        let expr = self.module.expr(expr_id);
+        match &expr.kind {
+            ExprKind::Name(name) => match self.lookup_value_name(name, scope) {
+                Some(resolution) => {
+                    self.resolution.value_paths.insert(expr_id, resolution);
+                }
+                None if name == "self" => self
+                    .resolution
+                    .diagnostics
+                    .push(invalid_self_diagnostic(expr.span)),
+                None => {}
+            },
+            ExprKind::Member { object, .. } => {
+                self.resolve_path_like_expr(*object, scope);
+                if let Some(path) = self.expr_path(expr_id)
+                    && let Some(resolution) = self.lookup_value_path(&path, scope)
+                {
+                    self.resolution.value_paths.insert(expr_id, resolution);
+                }
+            }
+            _ => self.resolve_expr(expr_id, scope),
         }
     }
 
@@ -694,4 +744,24 @@ fn builtin_types() -> &'static [(&'static str, BuiltinType)] {
 fn invalid_self_diagnostic(span: ql_span::Span) -> Diagnostic {
     Diagnostic::error("invalid use of `self` outside a method receiver scope")
         .with_label(Label::new(span).with_message("`self` is only available inside methods"))
+}
+
+fn unresolved_value_diagnostic(name: &str, span: ql_span::Span) -> Diagnostic {
+    Diagnostic::error(format!("unresolved value `{name}`")).with_label(
+        Label::new(span).with_message("could not resolve this value in the current scope"),
+    )
+}
+
+fn unresolved_type_diagnostic(name: &str, span: ql_span::Span) -> Diagnostic {
+    Diagnostic::error(format!("unresolved type `{name}`")).with_label(
+        Label::new(span).with_message("could not resolve this type in the current scope"),
+    )
+}
+
+fn single_segment_path_root(path: &Path) -> Option<(&str, ql_span::Span)> {
+    let [name] = path.segments.as_slice() else {
+        return None;
+    };
+    let span = path.first_segment_span()?;
+    Some((name.as_str(), span))
 }

@@ -273,3 +273,92 @@ fn main() -> Int {
         }))
     );
 }
+
+#[test]
+fn reports_unresolved_bare_value_names() {
+    let (module, resolution) = resolved(
+        r#"
+fn main() -> Int {
+    missing
+}
+"#,
+    );
+
+    let function = find_function(&module, "main");
+    let body = module.block(function.body.expect("function should have a body"));
+    let tail = body
+        .tail
+        .expect("function body should have a tail expression");
+
+    assert_eq!(
+        resolution.expr_resolution(tail),
+        None,
+        "unresolved bare names should stay unresolved in the map"
+    );
+    assert!(
+        resolution
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message == "unresolved value `missing`"),
+        "resolver should emit a conservative unresolved-value diagnostic for bare names"
+    );
+}
+
+#[test]
+fn reports_unresolved_single_segment_pattern_roots() {
+    let (module, resolution) = resolved(
+        r#"
+enum Command {
+    Retry,
+}
+
+fn classify(command: Command) -> Int {
+    match command {
+        Missing => 0,
+        _ => 1,
+    }
+}
+"#,
+    );
+
+    let function = find_function(&module, "classify");
+    let body = module.block(function.body.expect("function should have a body"));
+    let tail = body
+        .tail
+        .expect("function body should have a tail expression");
+    let ExprKind::Match { arms, .. } = &module.expr(tail).kind else {
+        panic!("function tail should be a match expression");
+    };
+
+    assert_eq!(
+        resolution.pattern_resolution(arms[0].pattern),
+        None,
+        "unresolved bare pattern roots should stay unresolved in the map"
+    );
+    assert!(
+        resolution
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message == "unresolved value `Missing`"),
+        "single-segment pattern roots should emit a conservative unresolved-value diagnostic"
+    );
+}
+
+#[test]
+fn defers_multi_segment_value_path_diagnostics_until_module_resolution_exists() {
+    let (_, resolution) = resolved(
+        r#"
+fn main() -> Int {
+    pkg.value
+}
+"#,
+    );
+
+    assert!(
+        resolution
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.message != "unresolved value `pkg`"),
+        "multi-segment value paths should stay out of scope until module-path resolution exists"
+    );
+}
