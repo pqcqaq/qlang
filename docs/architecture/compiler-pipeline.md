@@ -109,6 +109,7 @@ source
 - 新增 struct member existence checking
 - 新增 same-file local import alias value/callable typing：同文件单段 alias 指向 function / const / static 时，会复用本地 item 的 value type 与 callable signature
 - 新增 ambiguous method member diagnostics：当前同名多 candidate 的成员方法访问会给出显式 type diagnostics，而不是静默退化成 `unknown`
+- 新增 invalid projection receiver diagnostics：已知不支持 member/index 语义的接收者现在会显式报错，而不是静默退化成 `unknown`
 - 新增 pattern root / literal compatibility checking
 - 新增 struct pattern unknown-field checking，并复用 same-file local import alias -> local item 的 canonicalization
 
@@ -117,6 +118,7 @@ source
 - 未解析成员调用、通用索引协议、import prelude 细节时，表达式类型会主动退化为 `unknown`；当前只对源码层 fixed array、inferred array 和 constant tuple index 开放一层 typing
 - `=` 当前只对 bare mutable binding 开放真实可写语义；field/index 写入仍未开放，但已经有显式 unsupported diagnostics，不再静默伪装成“可能可用”
 - local import alias 的 value/callable typing 当前仍只限 same-file、single-segment、可规范化到本地 function / const / static item 的场景；foreign import 与更深 module graph 仍然延后
+- invalid projection receiver diagnostics 当前也只在“类型已知且明确不支持当前语义”时触发；`unknown` / generic / deeper import-module 相关场景仍保持保守，不提前下结论
 - ambiguous method 的 type diagnostics 已开放，但 query / completion / rename 仍只接受唯一 candidate，不提前伪造模糊成员 truth surface
 - bare single-segment unresolved diagnostics 已落地，但 multi-segment unresolved global / unresolved type diagnostics 仍然延后
 - 完整 trait solving、泛型实参推断、effect checking 和 flow-sensitive narrowing 还未开始

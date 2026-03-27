@@ -301,6 +301,41 @@ fn main() -> Int {
 }
 
 #[test]
+fn reports_invalid_member_access_on_non_item_values() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let value = 1
+    value.name
+    return 0
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"member access is not supported on type `Int`".to_string()));
+}
+
+#[test]
+fn reports_invalid_index_access_on_non_indexable_values() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let value = 1
+    value[0]
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"indexing is not supported on type `Int`; only arrays and tuples are indexable"
+                .to_string()
+        )
+    );
+}
+
+#[test]
 fn accepts_array_literals_and_array_indexing() {
     let diagnostics = diagnostic_messages(
         r#"

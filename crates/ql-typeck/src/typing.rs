@@ -479,6 +479,17 @@ impl<'a> Checker<'a> {
                 for &item in items {
                     self.check_expr(item, None);
                 }
+                if self.should_report_invalid_index_target(&target_ty) {
+                    self.diagnostics.push(
+                        Diagnostic::error(format!(
+                            "indexing is not supported on type `{target_ty}`; only arrays and tuples are indexable"
+                        ))
+                        .with_label(
+                            Label::new(self.module.expr(expr_id).span)
+                                .with_message("index access here"),
+                        ),
+                    );
+                }
                 Ty::Unknown
             }
         }
@@ -552,6 +563,17 @@ impl<'a> Checker<'a> {
     fn check_member(&mut self, expr_id: ExprId, object: ExprId, field: &str) -> Ty {
         let object_ty = self.check_expr(object, None);
         let Ty::Item { .. } = &object_ty else {
+            if self.should_report_invalid_member_receiver(&object_ty) {
+                self.diagnostics.push(
+                    Diagnostic::error(format!(
+                        "member access is not supported on type `{object_ty}`"
+                    ))
+                    .with_label(
+                        Label::new(self.module.expr(expr_id).span)
+                            .with_message("member access here"),
+                    ),
+                );
+            }
             return Ty::Unknown;
         };
 
@@ -589,6 +611,24 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
         }
+    }
+
+    fn should_report_invalid_member_receiver(&self, ty: &Ty) -> bool {
+        matches!(
+            ty,
+            Ty::Builtin(_)
+                | Ty::Array { .. }
+                | Ty::Pointer { .. }
+                | Ty::Tuple(_)
+                | Ty::Callable { .. }
+        )
+    }
+
+    fn should_report_invalid_index_target(&self, ty: &Ty) -> bool {
+        matches!(
+            ty,
+            Ty::Builtin(_) | Ty::Pointer { .. } | Ty::Callable { .. } | Ty::Item { .. }
+        )
     }
 
     fn select_member_target(&self, object_ty: &Ty, field: &str) -> SelectedMember {

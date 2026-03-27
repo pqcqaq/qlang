@@ -140,3 +140,23 @@ fn main() -> Int {
 
     assert!(rendered.contains("error: sample.ql:7:12: cannot call value of type `Int`"));
 }
+
+#[test]
+fn rendered_invalid_projection_receiver_diagnostics_anchor_to_the_projection_site() {
+    let source = r#"
+fn main() -> Int {
+    let value = 1
+    value.name;
+    value[0];
+    return 0
+}
+"#;
+    let rendered = rendered_diagnostics(source);
+
+    assert!(
+        rendered.contains("error: sample.ql:4:5: member access is not supported on type `Int`")
+    );
+    assert!(rendered.contains(
+        "error: sample.ql:5:5: indexing is not supported on type `Int`; only arrays and tuples are indexable"
+    ));
+}

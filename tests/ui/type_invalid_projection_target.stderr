@@ -1,0 +1,6 @@
+error: tests/ui/type_invalid_projection_target.ql:3:5: member access is not supported on type `Int`
+      value.name;
+      ^^^^^^^^ member access here
+error: tests/ui/type_invalid_projection_target.ql:4:5: indexing is not supported on type `Int`; only arrays and tuples are indexable
+      value[0];
+      ^^^^^^^^ index access here
