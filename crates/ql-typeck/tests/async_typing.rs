@@ -409,6 +409,37 @@ async fn main(flag: Bool) -> Wrap {
 }
 
 #[test]
+fn accepts_reassigning_zero_sized_helper_consumed_task_handles() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var task = worker()
+    let forwarded = forward(task)
+    task = worker()
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected helper-consumed zero-sized task handle reassignment to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_passing_async_calls_to_task_handle_parameters() {
     let diagnostics = diagnostic_messages(
         r#"

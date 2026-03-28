@@ -555,6 +555,37 @@ async fn main() -> Int {
 }
 
 #[test]
+fn reassigning_a_zero_sized_helper_consumed_task_handle_makes_it_available_again() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var task = worker()
+    let forwarded = forward(task)
+    task = worker()
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_deferred_cleanup_use_after_helper_consumes_task_handle() {
     let diagnostics = diagnostic_messages(
         r#"
