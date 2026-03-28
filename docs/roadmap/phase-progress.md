@@ -744,6 +744,7 @@ P6 当前仍刻意未完成：
 - `ql-driver` 新增 async backend 拒绝路径回归：语义层通过后，codegen 仍会稳定给出 `async fn` unsupported 诊断
 - `ql-cli` codegen 黑盒快照新增 `unsupported_async_fn_build`：锁住终端侧 async backend 拒绝输出
 - `ql-driver` / `ql-cli` 进一步补齐 `dylib` async 拒绝回归：即使存在合法导出，也会优先返回 `async fn` unsupported 诊断
+- `ql-driver` 新增 cleanup + async 混合诊断回归：同一文件里同时出现 `defer` 和 `async fn` 时，cleanup lowering 失败与 `async fn` unsupported 现在都会各自稳定只出现一次，不再互相吞掉或额外放大
 - `ql-driver` / `ql-cli` 新增 `async + generic` 并存回归：锁住多条 backend unsupported 诊断的聚合稳定性
 - `ql-driver` / `ql-cli` 新增 `async + unsafe fn body` 并存回归：锁住签名级多条 backend unsupported 诊断的聚合稳定性与终端输出
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 新增结构化 MIR terminator 的 backend 拒绝回归：`match` lowering unsupported 与 `for` lowering unsupported 现在都有后端单测、driver 回归和 CLI 失败快照覆盖
