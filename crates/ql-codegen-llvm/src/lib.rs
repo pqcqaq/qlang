@@ -5473,4 +5473,54 @@ fn main() -> Int {
             1
         );
     }
+
+    #[test]
+    fn dedupes_cleanup_and_for_await_lowering_diagnostics() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+extern "c" fn first()
+
+async fn helper() -> Int {
+    defer first()
+    for await value in [1, 2, 3] {
+        break
+    }
+    return 0
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    message.as_str()
+                        == "LLVM IR backend foundation does not support cleanup lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    message.as_str()
+                        == "LLVM IR backend foundation does not support `for await` lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert!(messages.iter().all(|message| {
+            message != "LLVM IR backend foundation does not support `for` lowering yet"
+                && message != "LLVM IR backend foundation does not support array values yet"
+                && !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
+        }));
+    }
 }

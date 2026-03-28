@@ -3531,6 +3531,74 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_cleanup_and_for_await_codegen_diagnostics_once_each() {
+        let dir = TestDir::new("ql-driver-cleanup-for-await-unsupported");
+        let source = dir.write(
+            "cleanup_for_await.ql",
+            r#"
+extern "c" fn first()
+
+async fn helper() -> Int {
+    defer first()
+    for await value in [1, 2, 3] {
+        break
+    }
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/cleanup_for_await.lib"
+        } else {
+            "artifacts/libcleanup_for_await.a"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("cleanup and for-await codegen rejection should return diagnostics");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support cleanup lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support `for await` lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            !diagnostic
+                .message
+                .contains("could not resolve LLVM type for local")
+                && !diagnostic
+                    .message
+                    .contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
     fn build_file_rejects_dynamic_libraries_without_public_extern_c_exports() {
         let dir = TestDir::new("ql-driver-dylib-no-exports");
         let source = dir.write(
