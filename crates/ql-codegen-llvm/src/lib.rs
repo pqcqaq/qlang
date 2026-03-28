@@ -5204,6 +5204,52 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn emits_chained_await_lowering_for_nested_aggregate_task_handle_async_results() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Pending {
+    task: Task[Int],
+    value: Int,
+}
+
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Pending; 2] {
+    return [
+        Pending { task: left(), value: 10 },
+        Pending { task: right(), value: 20 },
+    ]
+}
+
+async fn helper() -> Int {
+    let pending = await outer()
+    let first = await pending[0].task
+    let second = await pending[1].task
+    return first + second + pending[0].value + pending[1].value
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("@qlrt_task_await").count() >= 3);
+        assert!(rendered.contains("load [2 x { ptr, i64 }], ptr %t"));
+        assert!(rendered.contains("getelementptr inbounds [2 x { ptr, i64 }], ptr"));
+        assert!(rendered.contains("getelementptr inbounds { ptr, i64 }, ptr"));
+        assert!(rendered.matches("load ptr, ptr").count() >= 2);
+    }
+
+    #[test]
     fn emits_await_lowering_for_bound_task_handle_helpers() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,

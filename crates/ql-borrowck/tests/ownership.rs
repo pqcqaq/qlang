@@ -2430,6 +2430,120 @@ async fn main() -> Int {
 }
 
 #[test]
+fn allows_awaiting_nested_aggregate_task_handles_from_awaited_payload() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Pending {
+    task: Task[Int],
+    value: Int,
+}
+
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Pending; 2] {
+    return [
+        Pending { task: left(), value: 10 },
+        Pending { task: right(), value: 20 },
+    ]
+}
+
+async fn main() -> Int {
+    let pending = await outer()
+    let first = await pending[0].task
+    let second = await pending[1].task
+    return first + second + pending[0].value + pending[1].value
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected nested awaited aggregate payload task handles to stay independently usable, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_reawaiting_same_nested_aggregate_task_handle_payload() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Pending {
+    task: Task[Int],
+    value: Int,
+}
+
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Pending; 2] {
+    return [
+        Pending { task: left(), value: 10 },
+        Pending { task: right(), value: 20 },
+    ]
+}
+
+async fn main() -> Int {
+    let pending = await outer()
+    let first = await pending[0].task
+    return await pending[0].task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `pending[0].task` was used after move".to_string())
+            || diagnostics.contains(&"local `pending` was used after move".to_string()),
+        "expected nested aggregate payload projection to remain move-tracked, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn renders_nested_aggregate_task_handle_payload_consumes_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Pending {
+    task: Task[Int],
+    value: Int,
+}
+
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Pending; 2] {
+    return [
+        Pending { task: left(), value: 10 },
+        Pending { task: right(), value: 20 },
+    ]
+}
+
+async fn main() -> Int {
+    let tasks = outer()
+    let pending = await tasks
+    let first = await pending[0].task
+    return await pending[1].task
+}
+"#,
+    );
+
+    assert_eq!(rendered.matches("consume(await task handle)").count(), 3);
+}
+
+#[test]
 fn renders_bound_zero_sized_helper_spawn_task_handle_consumes_for_debugging() {
     let rendered = render_output(
         r#"

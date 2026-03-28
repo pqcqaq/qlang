@@ -1524,6 +1524,66 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_nested_aggregate_task_handle_async_results() {
+        let dir = TestDir::new("ql-driver-staticlib-async-nested-aggregate-task-handle");
+        let source = dir.write(
+            "async_nested_aggregate_task_handle.ql",
+            r#"
+struct Pending {
+    task: Task[Int],
+    value: Int,
+}
+
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Pending; 2] {
+    return [
+        Pending { task: left(), value: 10 },
+        Pending { task: right(), value: 20 },
+    ]
+}
+
+async fn helper() -> Int {
+    let pending = await outer()
+    let first = await pending[0].task
+    let second = await pending[1].task
+    return first + second + pending[0].value + pending[1].value
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_nested_aggregate_task_handle.lib"
+        } else {
+            "artifacts/libasync_nested_aggregate_task_handle.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "static library build with nested aggregate task-handle async results should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_bound_task_handle_helpers() {
         let dir = TestDir::new("ql-driver-staticlib-async-bound-task-handle-helper");
         let source = dir.write(
