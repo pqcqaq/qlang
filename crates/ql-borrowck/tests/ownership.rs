@@ -1769,7 +1769,7 @@ async fn main() -> Int {
 }
 
 #[test]
-fn reports_use_after_awaiting_projected_task_handle_from_tuple() {
+fn allows_awaiting_sibling_projected_task_handles_from_tuple() {
     let diagnostics = diagnostic_messages(
         r#"
 async fn worker() -> Int {
@@ -1785,8 +1785,54 @@ async fn main() -> Int {
     );
 
     assert!(
+        diagnostics.is_empty(),
+        "expected sibling projected task-handle awaits to be accepted, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_reawaiting_same_projected_task_handle_from_tuple() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let pair = (worker(), worker())
+    let first = await pair[0]
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
         diagnostics.contains(&"local `pair` was used after move".to_string()),
-        "expected projected task-handle await to consume the tuple base local, got {diagnostics:?}"
+        "expected re-awaiting the same projected task handle to report a move, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_awaiting_sibling_projected_task_handle_after_conditional_tuple_move() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main(flag: Bool) -> Int {
+    let pair = (worker(), worker())
+    if flag {
+        let first = await pair[0]
+    }
+    return await pair[1]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected conditional projected move on a sibling tuple element to be accepted, got {diagnostics:?}"
     );
 }
 
@@ -1817,7 +1863,34 @@ async fn main() -> Int {
 }
 
 #[test]
-fn reports_use_after_awaiting_projected_task_handle_from_struct_field() {
+fn allows_awaiting_sibling_projected_task_handles_from_struct_fields() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct TaskPair {
+    left: Task[Int],
+    right: Task[Int],
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let pair = TaskPair { left: worker(), right: worker() }
+    let first = await pair.left
+    return await pair.right
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected sibling projected struct-field task handles to remain independently usable, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_awaiting_same_projected_task_handle_from_struct_field() {
     let diagnostics = diagnostic_messages(
         r#"
 struct TaskPair {
@@ -1840,6 +1913,109 @@ async fn main() -> Int {
     assert!(
         diagnostics.contains(&"local `pair` was used after move".to_string()),
         "expected projected struct-field task-handle await to consume the struct base local, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reading_sibling_value_field_after_awaiting_projected_task_handle() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct TaskPair {
+    task: Task[Int],
+    value: Int,
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let pair = TaskPair { task: worker(), value: 7 }
+    let first = await pair.task
+    return pair.value
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected sibling non-task field reads to remain usable after consuming a projected task handle, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_projected_task_handle_from_tuple_after_await() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    var pair = (worker(), worker())
+    let first = await pair[0]
+    pair[0] = worker()
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected tuple projection reinitialization to restore the task handle path, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_conditionally_reinitializing_projected_task_handle_before_branch_join() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main(flag: Bool) -> Int {
+    var pair = (worker(), worker())
+    if flag {
+        let first = await pair[0]
+        pair[0] = worker()
+    }
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected conditional tuple projection reinitialization to clear maybe-moved facts, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_projected_task_handle_from_struct_field_after_await() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct TaskPair {
+    left: Task[Int],
+    right: Task[Int],
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    var pair = TaskPair { left: worker(), right: worker() }
+    let first = await pair.left
+    pair.left = worker()
+    return await pair.left
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected struct-field projection reinitialization to restore the task handle path, got {diagnostics:?}"
     );
 }
 

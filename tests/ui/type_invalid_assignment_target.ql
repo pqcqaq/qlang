@@ -12,7 +12,7 @@ struct Counter {
 }
 
 fn main() -> Int {
-    var counter = Counter { value: 1 }
+    let counter = Counter { value: 1 }
     var values = [1, 2, 3]
     limit = 2;
     total = 3;

@@ -230,6 +230,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "async_library_for_await_array_staticlib",
+            source_relative: "fixtures/codegen/pass/async_library_for_await_array.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "async_library_spawn_handle_staticlib",
             source_relative: "fixtures/codegen/pass/async_library_spawn_handle.ql",
             emit: "staticlib",

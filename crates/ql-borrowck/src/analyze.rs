@@ -13,7 +13,8 @@ use ql_typeck::{MemberTarget, MethodTarget, Ty, TypeckResult, lower_type};
 
 use crate::{
     BlockFacts, BodyFacts, BorrowckResult, ClosureEscape, ClosureEscapeKind, ClosureFacts,
-    LocalEvent, LocalEventKind, LocalState, MoveCertainty, MoveInfo, MoveOrigin, MoveReason,
+    LocalEvent, LocalEventKind, LocalState, MoveCertainty, MoveInfo, MoveOrigin, MovePathSegment,
+    MoveReason, PathMoveInfo,
 };
 
 pub fn analyze_module(
@@ -54,6 +55,12 @@ struct BodyAnalyzer<'a> {
     binding_locals: HashMap<hir::LocalId, MirLocalId>,
     param_locals: HashMap<usize, MirLocalId>,
     receiver_local: Option<MirLocalId>,
+}
+
+#[derive(Clone, Debug)]
+struct MoveTarget {
+    local: MirLocalId,
+    path: Vec<MovePathSegment>,
 }
 
 impl<'a> BodyAnalyzer<'a> {
@@ -206,20 +213,37 @@ impl<'a> BodyAnalyzer<'a> {
         match statement {
             StatementKind::Assign { place, value } => {
                 let mut reporter = reporter;
-                if let Some((local, reason)) = self.classify_task_handle_return_rvalue(place, value)
+                if let Some((target, reason)) =
+                    self.classify_task_handle_return_rvalue(place, value)
                 {
                     self.check_moved_use(
                         states,
-                        local,
+                        target.local,
+                        &target.path,
                         UseSite::normal(span),
                         reporter.as_deref_mut(),
                     );
-                    self.apply_consume(states, local, span, reason, reporter.as_deref_mut());
+                    self.apply_consume(
+                        states,
+                        target.local,
+                        &target.path,
+                        span,
+                        reason,
+                        reporter.as_deref_mut(),
+                    );
                 } else {
                     self.apply_rvalue(states, value, span, reporter.as_deref_mut());
                 }
                 if place.projections.is_empty() {
                     self.write_local(states, place.base, span, reporter.as_deref_mut());
+                } else if let Some(target) = self.writable_move_target_for_place(place) {
+                    self.write_move_target(
+                        states,
+                        target.local,
+                        &target.path,
+                        span,
+                        reporter.as_deref_mut(),
+                    );
                 } else {
                     self.read_place(states, place, span, reporter);
                 }
@@ -285,22 +309,30 @@ impl<'a> BodyAnalyzer<'a> {
                     self.read_operand(states, callee, span, reporter.as_deref_mut());
                 }
                 for (index, arg) in args.iter().enumerate() {
-                    if let Some((local, reason)) =
+                    if let Some((target, reason)) =
                         self.classify_task_handle_call_argument_operand(span, index, &arg.value)
                     {
                         self.check_moved_use(
                             states,
-                            local,
+                            target.local,
+                            &target.path,
                             UseSite::normal(span),
                             reporter.as_deref_mut(),
                         );
-                        self.apply_consume(states, local, span, reason, reporter.as_deref_mut());
+                        self.apply_consume(
+                            states,
+                            target.local,
+                            &target.path,
+                            span,
+                            reason,
+                            reporter.as_deref_mut(),
+                        );
                     } else {
                         self.read_operand(states, &arg.value, span, reporter.as_deref_mut());
                     }
                 }
                 if let Some((local, reason)) = pending_consume {
-                    self.apply_consume(states, local, span, reason, reporter);
+                    self.apply_consume(states, local, &[], span, reason, reporter);
                 }
             }
             Rvalue::Binary { left, right, .. } => {
@@ -310,15 +342,17 @@ impl<'a> BodyAnalyzer<'a> {
             }
             Rvalue::Unary { op, operand } => {
                 let mut reporter = reporter;
-                if let Some((local, reason)) = self.classify_task_handle_unary_operand(*op, operand)
+                if let Some((target, reason)) =
+                    self.classify_task_handle_unary_operand(*op, operand)
                 {
                     self.check_moved_use(
                         states,
-                        local,
+                        target.local,
+                        &target.path,
                         UseSite::normal(span),
                         reporter.as_deref_mut(),
                     );
-                    self.apply_consume(states, local, span, reason, reporter);
+                    self.apply_consume(states, target.local, &target.path, span, reason, reporter);
                 } else {
                     self.read_operand(states, operand, span, reporter);
                 }
@@ -374,11 +408,25 @@ impl<'a> BodyAnalyzer<'a> {
         reporter: Option<&mut Reporter>,
     ) {
         let mut reporter = reporter;
-        self.read_local(
+        let path = if place.projections.is_empty() {
+            Vec::new()
+        } else {
+            self.move_target_for_place(place)
+                .map(|target| target.path)
+                .unwrap_or_default()
+        };
+        self.check_moved_use(
             states,
             place.base,
+            &path,
             UseSite::normal(span),
             reporter.as_deref_mut(),
+        );
+        self.record_event(
+            reporter.as_deref_mut(),
+            span,
+            place.base,
+            LocalEventKind::Read,
         );
 
         for projection in &place.projections {
@@ -410,7 +458,7 @@ impl<'a> BodyAnalyzer<'a> {
         let receiver_ty = self.local_ty(place.base)?;
         let reason = self.unique_move_receiver_reason(&receiver_ty, method_name)?;
 
-        self.check_moved_use(states, place.base, UseSite::normal(span), reporter);
+        self.check_moved_use(states, place.base, &[], UseSite::normal(span), reporter);
 
         Some((place.base, reason))
     }
@@ -419,12 +467,12 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         op: UnaryOp,
         operand: &Operand,
-    ) -> Option<(MirLocalId, MoveReason)> {
-        let local = self.task_handle_local_for_operand(operand)?;
+    ) -> Option<(MoveTarget, MoveReason)> {
+        let target = self.task_handle_target_for_operand(operand)?;
 
         match op {
-            UnaryOp::Await => Some((local, MoveReason::AwaitTaskHandle)),
-            UnaryOp::Spawn => Some((local, MoveReason::SpawnTaskHandle)),
+            UnaryOp::Await => Some((target, MoveReason::AwaitTaskHandle)),
+            UnaryOp::Spawn => Some((target, MoveReason::SpawnTaskHandle)),
             UnaryOp::Neg => None,
         }
     }
@@ -433,21 +481,22 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         place: &Place,
         value: &Rvalue,
-    ) -> Option<(MirLocalId, MoveReason)> {
+    ) -> Option<(MoveTarget, MoveReason)> {
         if !place.projections.is_empty() || place.base != self.body.return_local {
             return None;
         }
         let Rvalue::Use(operand) = value else {
             return None;
         };
-        let local = self.task_handle_local_for_operand(operand)?;
-        Some((local, MoveReason::ReturnTaskHandle))
+        let target = self.task_handle_target_for_operand(operand)?;
+        Some((target, MoveReason::ReturnTaskHandle))
     }
 
     fn apply_consume(
         &self,
         states: &mut [LocalState],
         local: MirLocalId,
+        path: &[MovePathSegment],
         span: ql_span::Span,
         reason: MoveReason,
         reporter: Option<&mut Reporter>,
@@ -458,15 +507,25 @@ impl<'a> BodyAnalyzer<'a> {
             local,
             LocalEventKind::Consume(reason.clone()),
         );
-        let origin = MoveOrigin { span, reason };
+        let origin = MoveOrigin {
+            span,
+            reason,
+            path: path.to_vec(),
+        };
         let next = match &states[local.index()] {
             LocalState::Moved(existing) => LocalState::Moved(MoveInfo {
                 certainty: MoveCertainty::Definite,
                 origins: merge_origins(&existing.origins, std::slice::from_ref(&origin)),
+                path_moves: record_path_move(&existing.path_moves, path, &origin),
             }),
             LocalState::Unavailable | LocalState::Available => LocalState::Moved(MoveInfo {
                 certainty: MoveCertainty::Definite,
-                origins: vec![origin],
+                origins: vec![origin.clone()],
+                path_moves: vec![PathMoveInfo {
+                    path: path.to_vec(),
+                    certainty: MoveCertainty::Definite,
+                    origins: vec![origin],
+                }],
             }),
         };
         states[local.index()] = next;
@@ -480,7 +539,7 @@ impl<'a> BodyAnalyzer<'a> {
         reporter: Option<&mut Reporter>,
     ) {
         let mut reporter = reporter;
-        self.check_moved_use(states, local, use_site, reporter.as_deref_mut());
+        self.check_moved_use(states, local, &[], use_site, reporter.as_deref_mut());
         self.record_event(reporter, use_site.span, local, LocalEventKind::Read);
     }
 
@@ -493,6 +552,28 @@ impl<'a> BodyAnalyzer<'a> {
     ) {
         self.record_event(reporter, span, local, LocalEventKind::Write);
         states[local.index()] = LocalState::Available;
+    }
+
+    fn write_move_target(
+        &self,
+        states: &mut [LocalState],
+        local: MirLocalId,
+        path: &[MovePathSegment],
+        span: ql_span::Span,
+        reporter: Option<&mut Reporter>,
+    ) {
+        if path.is_empty() {
+            self.write_local(states, local, span, reporter);
+            return;
+        }
+
+        self.record_event(reporter, span, local, LocalEventKind::Write);
+        states[local.index()] = match &states[local.index()] {
+            LocalState::Moved(info) => rebuild_local_state_from_path_moves(
+                clear_reinitialized_path_moves(&info.path_moves, path),
+            ),
+            LocalState::Unavailable | LocalState::Available => LocalState::Available,
+        };
     }
 
     fn apply_closure_capture_effects(
@@ -509,12 +590,14 @@ impl<'a> BodyAnalyzer<'a> {
                 self.check_moved_use(
                     states,
                     capture.local,
+                    &[],
                     UseSite::move_closure_capture(capture.span),
                     reporter.as_deref_mut(),
                 );
                 self.apply_consume(
                     states,
                     capture.local,
+                    &[],
                     capture.span,
                     MoveReason::MoveClosureCapture,
                     reporter.as_deref_mut(),
@@ -534,6 +617,7 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         states: &[LocalState],
         local: MirLocalId,
+        path: &[MovePathSegment],
         use_site: UseSite,
         reporter: Option<&mut Reporter>,
     ) {
@@ -543,7 +627,13 @@ impl<'a> BodyAnalyzer<'a> {
         let LocalState::Moved(info) = &states[local.index()] else {
             return;
         };
-        if info.origins.is_empty() {
+        let (certainty, origins) = if path.is_empty() {
+            (info.certainty, info.origins.clone())
+        } else {
+            summarize_overlapping_path_moves(&info.path_moves, path)
+                .unwrap_or((MoveCertainty::Maybe, Vec::new()))
+        };
+        if origins.is_empty() {
             return;
         }
 
@@ -551,14 +641,14 @@ impl<'a> BodyAnalyzer<'a> {
         let key = DiagnosticKey {
             local,
             use_span: use_site.span,
-            certainty: info.certainty,
-            origin_spans: info.origins.iter().map(|origin| origin.span).collect(),
+            certainty,
+            origin_spans: origins.iter().map(|origin| origin.span).collect(),
         };
         if !reporter.emitted.insert(key) {
             return;
         }
 
-        let mut diagnostic = match info.certainty {
+        let mut diagnostic = match certainty {
             MoveCertainty::Definite => {
                 Diagnostic::error(format!("local `{name}` was used after move"))
             }
@@ -568,7 +658,7 @@ impl<'a> BodyAnalyzer<'a> {
         }
         .with_label(Label::new(use_site.span).with_message(use_site.label));
 
-        for origin in &info.origins {
+        for origin in &origins {
             diagnostic = diagnostic.with_label(
                 Label::new(origin.span)
                     .secondary()
@@ -576,7 +666,7 @@ impl<'a> BodyAnalyzer<'a> {
             );
         }
 
-        if info.certainty == MoveCertainty::Maybe {
+        if certainty == MoveCertainty::Maybe {
             diagnostic = diagnostic.with_note(
                 "this local is only known to be moved on some incoming paths in the current checker",
             );
@@ -703,37 +793,176 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
-    fn task_handle_local_for_operand(&self, operand: &Operand) -> Option<MirLocalId> {
+    fn move_target_for_place(&self, place: &Place) -> Option<MoveTarget> {
+        let mut current_ty = self.local_ty(place.base)?;
+        let mut path = Vec::new();
+
+        for projection in &place.projections {
+            let Some(next_ty) = self.project_place_ty_step(&current_ty, projection) else {
+                return Some(MoveTarget {
+                    local: place.base,
+                    path: Vec::new(),
+                });
+            };
+            match self.precise_move_path_step(&current_ty, projection) {
+                Some(step) => path.push(step),
+                None => {
+                    return Some(MoveTarget {
+                        local: place.base,
+                        path: Vec::new(),
+                    });
+                }
+            }
+            current_ty = next_ty;
+        }
+
+        Some(MoveTarget {
+            local: place.base,
+            path,
+        })
+    }
+
+    fn writable_move_target_for_place(&self, place: &Place) -> Option<MoveTarget> {
+        let mut current_ty = self.local_ty(place.base)?;
+        let mut path = Vec::new();
+
+        for projection in &place.projections {
+            let next_ty = self.project_place_ty_step(&current_ty, projection)?;
+            path.push(self.precise_move_path_step(&current_ty, projection)?);
+            current_ty = next_ty;
+        }
+
+        Some(MoveTarget {
+            local: place.base,
+            path,
+        })
+    }
+
+    fn precise_move_target_for_expr(&self, expr_id: hir::ExprId) -> Option<MoveTarget> {
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::Name(_) => self.direct_local_for_expr(expr_id).map(|local| MoveTarget {
+                local,
+                path: Vec::new(),
+            }),
+            hir::ExprKind::Member { object, field, .. } => {
+                let mut target = self.precise_move_target_for_expr(*object)?;
+                target.path.push(MovePathSegment::Field(field.clone()));
+                Some(target)
+            }
+            hir::ExprKind::Bracket { target, items } => {
+                if items.len() != 1 {
+                    return None;
+                }
+                let target_ty = self.typeck.expr_ty(*target)?;
+                let hir::ExprKind::Integer(raw_index) = &self.hir.expr(items[0]).kind else {
+                    return None;
+                };
+                let index = parse_usize_literal(raw_index)?;
+                if !matches!(target_ty, Ty::Tuple(_)) {
+                    return None;
+                }
+
+                let mut target = self.precise_move_target_for_expr(*target)?;
+                target.path.push(MovePathSegment::TupleIndex(index));
+                Some(target)
+            }
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
+                .hir
+                .block(*block)
+                .tail
+                .and_then(|tail| self.precise_move_target_for_expr(tail)),
+            hir::ExprKind::Question(inner) => self.precise_move_target_for_expr(*inner),
+            _ => None,
+        }
+    }
+
+    fn precise_move_path_step(
+        &self,
+        current_ty: &Ty,
+        projection: &ProjectionElem,
+    ) -> Option<MovePathSegment> {
+        match projection {
+            ProjectionElem::Field(field) => Some(MovePathSegment::Field(field.clone())),
+            ProjectionElem::TupleIndex(index) => match current_ty {
+                Ty::Tuple(_) => Some(MovePathSegment::TupleIndex(*index)),
+                _ => None,
+            },
+            ProjectionElem::Index(index) => match current_ty {
+                Ty::Tuple(_) => match &**index {
+                    Operand::Constant(Constant::Integer(raw)) => {
+                        parse_usize_literal(raw).map(MovePathSegment::TupleIndex)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            },
+        }
+    }
+
+    fn task_handle_target_for_operand(&self, operand: &Operand) -> Option<MoveTarget> {
         let Operand::Place(place) = operand else {
             return None;
         };
         if place.projections.is_empty() {
-            return self.direct_task_handle_local(place.base);
+            return self
+                .direct_task_handle_local(place.base)
+                .map(|local| MoveTarget {
+                    local,
+                    path: Vec::new(),
+                });
         }
         if matches!(self.place_ty(place)?, Ty::TaskHandle(_)) {
-            Some(place.base)
+            self.move_target_for_place(place)
         } else {
             None
         }
     }
 
-    fn task_handle_local_for_expr(&self, expr_id: hir::ExprId) -> Option<MirLocalId> {
+    fn task_handle_target_for_expr(&self, expr_id: hir::ExprId) -> Option<MoveTarget> {
         if !matches!(self.typeck.expr_ty(expr_id), Some(Ty::TaskHandle(_))) {
             return None;
+        }
+
+        if let Some(target) = self.precise_move_target_for_expr(expr_id) {
+            if target.path.is_empty() {
+                return self
+                    .direct_task_handle_local(target.local)
+                    .map(|local| MoveTarget {
+                        local,
+                        path: Vec::new(),
+                    });
+            }
+            return Some(target);
         }
 
         match &self.hir.expr(expr_id).kind {
             hir::ExprKind::Name(_) => self
                 .direct_local_for_expr(expr_id)
-                .and_then(|local| self.direct_task_handle_local(local)),
-            hir::ExprKind::Member { object, .. } => self.task_handle_local_for_expr(*object),
-            hir::ExprKind::Bracket { target, .. } => self.task_handle_local_for_expr(*target),
+                .and_then(|local| self.direct_task_handle_local(local))
+                .map(|local| MoveTarget {
+                    local,
+                    path: Vec::new(),
+                }),
+            hir::ExprKind::Member { object, .. } => {
+                self.task_handle_target_for_expr(*object)
+                    .map(|target| MoveTarget {
+                        local: target.local,
+                        path: Vec::new(),
+                    })
+            }
+            hir::ExprKind::Bracket { target, .. } => {
+                self.task_handle_target_for_expr(*target)
+                    .map(|target| MoveTarget {
+                        local: target.local,
+                        path: Vec::new(),
+                    })
+            }
             hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
                 .hir
                 .block(*block)
                 .tail
-                .and_then(|tail| self.task_handle_local_for_expr(tail)),
-            hir::ExprKind::Question(inner) => self.task_handle_local_for_expr(*inner),
+                .and_then(|tail| self.task_handle_target_for_expr(tail)),
+            hir::ExprKind::Question(inner) => self.task_handle_target_for_expr(*inner),
             _ => None,
         }
     }
@@ -742,12 +971,12 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         op: UnaryOp,
         expr_id: hir::ExprId,
-    ) -> Option<(MirLocalId, MoveReason)> {
-        let local = self.task_handle_local_for_expr(expr_id)?;
+    ) -> Option<(MoveTarget, MoveReason)> {
+        let target = self.task_handle_target_for_expr(expr_id)?;
 
         match op {
-            UnaryOp::Await => Some((local, MoveReason::AwaitTaskHandle)),
-            UnaryOp::Spawn => Some((local, MoveReason::SpawnTaskHandle)),
+            UnaryOp::Await => Some((target, MoveReason::AwaitTaskHandle)),
+            UnaryOp::Spawn => Some((target, MoveReason::SpawnTaskHandle)),
             UnaryOp::Neg => None,
         }
     }
@@ -769,12 +998,12 @@ impl<'a> BodyAnalyzer<'a> {
         call_span: ql_span::Span,
         arg_index: usize,
         operand: &Operand,
-    ) -> Option<(MirLocalId, MoveReason)> {
+    ) -> Option<(MoveTarget, MoveReason)> {
         if !self.task_handle_call_arg_should_consume(call_span, arg_index) {
             return None;
         }
-        let local = self.task_handle_local_for_operand(operand)?;
-        Some((local, MoveReason::CallTaskHandleArgument))
+        let target = self.task_handle_target_for_operand(operand)?;
+        Some((target, MoveReason::CallTaskHandleArgument))
     }
 
     fn classify_task_handle_call_argument_expr(
@@ -782,20 +1011,20 @@ impl<'a> BodyAnalyzer<'a> {
         call_span: ql_span::Span,
         arg_index: usize,
         expr_id: hir::ExprId,
-    ) -> Option<(MirLocalId, MoveReason)> {
+    ) -> Option<(MoveTarget, MoveReason)> {
         if !self.task_handle_call_arg_should_consume(call_span, arg_index) {
             return None;
         }
-        let local = self.task_handle_local_for_expr(expr_id)?;
-        Some((local, MoveReason::CallTaskHandleArgument))
+        let target = self.task_handle_target_for_expr(expr_id)?;
+        Some((target, MoveReason::CallTaskHandleArgument))
     }
 
     fn classify_task_handle_return_expr(
         &self,
         expr_id: hir::ExprId,
-    ) -> Option<(MirLocalId, MoveReason)> {
-        let local = self.task_handle_local_for_expr(expr_id)?;
-        Some((local, MoveReason::ReturnTaskHandle))
+    ) -> Option<(MoveTarget, MoveReason)> {
+        let target = self.task_handle_target_for_expr(expr_id)?;
+        Some((target, MoveReason::ReturnTaskHandle))
     }
 
     fn place_ty(&self, place: &Place) -> Option<Ty> {
@@ -1114,7 +1343,7 @@ impl<'a> BodyAnalyzer<'a> {
         let receiver_ty = self.local_ty(local)?;
         let reason = self.unique_move_receiver_reason(&receiver_ty, field)?;
 
-        self.check_moved_use(states, local, use_site.with_span(span), reporter);
+        self.check_moved_use(states, local, &[], use_site.with_span(span), reporter);
         Some((local, reason))
     }
 
@@ -1134,6 +1363,78 @@ impl<'a> BodyAnalyzer<'a> {
                 );
                 states.clone_from_slice(&result.states);
             }
+        }
+    }
+
+    fn eval_task_handle_operand_expr(
+        &self,
+        states: Vec<LocalState>,
+        expr_id: hir::ExprId,
+        reporter: Option<&mut Reporter>,
+        use_site: UseSite,
+    ) -> CleanupEval {
+        let expr = self.hir.expr(expr_id);
+        match &expr.kind {
+            hir::ExprKind::Name(_) => CleanupEval::cont(states),
+            hir::ExprKind::Member { object, .. } => {
+                if self.precise_move_target_for_expr(expr_id).is_some() {
+                    self.eval_task_handle_operand_expr(
+                        states,
+                        *object,
+                        reporter,
+                        use_site.with_span(self.hir.expr(*object).span),
+                    )
+                } else {
+                    self.eval_cleanup_expr(states, expr_id, reporter, use_site)
+                }
+            }
+            hir::ExprKind::Bracket { target, items } => {
+                if self.precise_move_target_for_expr(expr_id).is_none() {
+                    return self.eval_cleanup_expr(states, expr_id, reporter, use_site);
+                }
+                let mut reporter = reporter;
+                let target_eval = self.eval_task_handle_operand_expr(
+                    states,
+                    *target,
+                    reporter.as_deref_mut(),
+                    use_site.with_span(self.hir.expr(*target).span),
+                );
+                if !target_eval.continues {
+                    return target_eval;
+                }
+                self.eval_cleanup_exprs(target_eval.states, items, reporter, use_site)
+            }
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+                let block = self.hir.block(*block);
+                let mut states = states;
+                let mut reporter = reporter;
+                for stmt_id in &block.statements {
+                    let eval =
+                        self.eval_cleanup_stmt(states, *stmt_id, reporter.as_deref_mut(), use_site);
+                    if !eval.continues {
+                        return eval;
+                    }
+                    states = eval.states;
+                }
+
+                if let Some(tail) = block.tail {
+                    self.eval_task_handle_operand_expr(
+                        states,
+                        tail,
+                        reporter,
+                        use_site.with_span(self.hir.expr(tail).span),
+                    )
+                } else {
+                    CleanupEval::cont(states)
+                }
+            }
+            hir::ExprKind::Question(inner) => self.eval_task_handle_operand_expr(
+                states,
+                *inner,
+                reporter,
+                use_site.with_span(self.hir.expr(*inner).span),
+            ),
+            _ => self.eval_cleanup_expr(states, expr_id, reporter, use_site),
         }
     }
 
@@ -1261,18 +1562,30 @@ impl<'a> BodyAnalyzer<'a> {
                         hir::CallArg::Named { value, .. } => *value,
                     };
                     let value_span = self.hir.expr(value).span;
-                    if let Some((local, reason)) =
+                    if let Some((target, reason)) =
                         self.classify_task_handle_call_argument_expr(expr.span, index, value)
                     {
+                        let arg_eval = self.eval_task_handle_operand_expr(
+                            states,
+                            value,
+                            reporter.as_deref_mut(),
+                            use_site.with_span(value_span),
+                        );
+                        if !arg_eval.continues {
+                            return arg_eval;
+                        }
+                        states = arg_eval.states;
                         self.check_moved_use(
                             &states,
-                            local,
+                            target.local,
+                            &target.path,
                             use_site.with_span(value_span),
                             reporter.as_deref_mut(),
                         );
                         self.apply_consume(
                             &mut states,
-                            local,
+                            target.local,
+                            &target.path,
                             value_span,
                             reason,
                             reporter.as_deref_mut(),
@@ -1291,7 +1604,7 @@ impl<'a> BodyAnalyzer<'a> {
                     states = arg_eval.states;
                 }
                 if let Some((local, reason)) = pending_consume {
-                    self.apply_consume(&mut states, local, expr.span, reason, reporter);
+                    self.apply_consume(&mut states, local, &[], expr.span, reason, reporter);
                 }
                 CleanupEval::cont(states)
             }
@@ -1347,8 +1660,14 @@ impl<'a> BodyAnalyzer<'a> {
                     return value_eval;
                 }
                 states = value_eval.states;
-                if let Some(local) = target_eval.root_local {
-                    self.write_local(&mut states, local, expr.span, reporter);
+                if let Some(target) = target_eval.move_target {
+                    self.write_move_target(
+                        &mut states,
+                        target.local,
+                        &target.path,
+                        expr.span,
+                        reporter,
+                    );
                 }
                 CleanupEval::cont(states)
             }
@@ -1372,27 +1691,41 @@ impl<'a> BodyAnalyzer<'a> {
             }
             hir::ExprKind::Unary { op, expr: inner } => {
                 let mut reporter = reporter;
-                let inner_eval = self.eval_cleanup_expr(
-                    states,
-                    *inner,
-                    reporter.as_deref_mut(),
-                    use_site.with_span(self.hir.expr(*inner).span),
-                );
-                if !inner_eval.continues {
-                    return inner_eval;
-                }
+                if let Some((target, reason)) = self.classify_task_handle_unary_expr(*op, *inner) {
+                    let inner_eval = self.eval_task_handle_operand_expr(
+                        states,
+                        *inner,
+                        reporter.as_deref_mut(),
+                        use_site.with_span(self.hir.expr(*inner).span),
+                    );
+                    if !inner_eval.continues {
+                        return inner_eval;
+                    }
 
-                let mut states = inner_eval.states;
-                if let Some((local, reason)) = self.classify_task_handle_unary_expr(*op, *inner) {
+                    let mut states = inner_eval.states;
                     self.check_moved_use(
                         &states,
-                        local,
+                        target.local,
+                        &target.path,
                         use_site.with_span(expr.span),
                         reporter.as_deref_mut(),
                     );
-                    self.apply_consume(&mut states, local, expr.span, reason, reporter);
+                    self.apply_consume(
+                        &mut states,
+                        target.local,
+                        &target.path,
+                        expr.span,
+                        reason,
+                        reporter,
+                    );
+                    return CleanupEval::cont(states);
                 }
-                CleanupEval::cont(states)
+                self.eval_cleanup_expr(
+                    states,
+                    *inner,
+                    reporter,
+                    use_site.with_span(self.hir.expr(*inner).span),
+                )
             }
             hir::ExprKind::Question(inner) => self.eval_cleanup_expr(
                 states,
@@ -1470,22 +1803,33 @@ impl<'a> BodyAnalyzer<'a> {
             ),
             hir::StmtKind::Return(Some(expr)) => {
                 let expr_span = self.hir.expr(*expr).span;
-                let mut eval = self.eval_cleanup_expr(
-                    states,
-                    *expr,
-                    reporter.as_deref_mut(),
-                    use_site.with_span(expr_span),
-                );
-                if let Some((local, reason)) = self.classify_task_handle_return_expr(*expr) {
+                let mut eval = if self.classify_task_handle_return_expr(*expr).is_some() {
+                    self.eval_task_handle_operand_expr(
+                        states,
+                        *expr,
+                        reporter.as_deref_mut(),
+                        use_site.with_span(expr_span),
+                    )
+                } else {
+                    self.eval_cleanup_expr(
+                        states,
+                        *expr,
+                        reporter.as_deref_mut(),
+                        use_site.with_span(expr_span),
+                    )
+                };
+                if let Some((target, reason)) = self.classify_task_handle_return_expr(*expr) {
                     self.check_moved_use(
                         &eval.states,
-                        local,
+                        target.local,
+                        &target.path,
                         use_site.with_span(expr_span),
                         reporter.as_deref_mut(),
                     );
                     self.apply_consume(
                         &mut eval.states,
-                        local,
+                        target.local,
+                        &target.path,
                         expr_span,
                         reason,
                         reporter.as_deref_mut(),
@@ -1558,7 +1902,7 @@ impl<'a> BodyAnalyzer<'a> {
         let expr = self.hir.expr(expr_id);
         match &expr.kind {
             hir::ExprKind::Name(_) => {
-                CleanupAssignTarget::cont(states, self.direct_local_for_expr(expr_id))
+                CleanupAssignTarget::cont(states, self.precise_move_target_for_expr(expr_id))
             }
             hir::ExprKind::Member { object, .. } => {
                 let eval = self.eval_cleanup_expr(
@@ -1567,7 +1911,7 @@ impl<'a> BodyAnalyzer<'a> {
                     reporter,
                     use_site.with_span(self.hir.expr(*object).span),
                 );
-                CleanupAssignTarget::from_eval(eval, None)
+                CleanupAssignTarget::from_eval(eval, self.precise_move_target_for_expr(expr_id))
             }
             hir::ExprKind::Bracket { target, items } => {
                 let mut reporter = reporter;
@@ -1582,7 +1926,10 @@ impl<'a> BodyAnalyzer<'a> {
                 }
                 let items_eval =
                     self.eval_cleanup_exprs(target_eval.states, items, reporter, use_site);
-                CleanupAssignTarget::from_eval(items_eval, None)
+                CleanupAssignTarget::from_eval(
+                    items_eval,
+                    self.precise_move_target_for_expr(expr_id),
+                )
             }
             _ => {
                 let eval = self.eval_cleanup_expr(
@@ -1677,23 +2024,23 @@ impl CleanupEval {
 struct CleanupAssignTarget {
     states: Vec<LocalState>,
     continues: bool,
-    root_local: Option<MirLocalId>,
+    move_target: Option<MoveTarget>,
 }
 
 impl CleanupAssignTarget {
-    fn cont(states: Vec<LocalState>, root_local: Option<MirLocalId>) -> Self {
+    fn cont(states: Vec<LocalState>, move_target: Option<MoveTarget>) -> Self {
         Self {
             states,
             continues: true,
-            root_local,
+            move_target,
         }
     }
 
-    fn from_eval(eval: CleanupEval, root_local: Option<MirLocalId>) -> Self {
+    fn from_eval(eval: CleanupEval, move_target: Option<MoveTarget>) -> Self {
         Self {
             states: eval.states,
             continues: eval.continues,
-            root_local,
+            move_target,
         }
     }
 }
@@ -1837,6 +2184,7 @@ fn merge_local_state(left: &LocalState, right: &LocalState) -> LocalState {
                     _ => MoveCertainty::Maybe,
                 },
                 origins: merge_origins(&left_move.origins, &right_move.origins),
+                path_moves: merge_path_moves(&left_move.path_moves, &right_move.path_moves),
             })
         }
         (LocalState::Moved(move_info), LocalState::Available)
@@ -1845,6 +2193,7 @@ fn merge_local_state(left: &LocalState, right: &LocalState) -> LocalState {
         | (LocalState::Unavailable, LocalState::Moved(move_info)) => LocalState::Moved(MoveInfo {
             certainty: MoveCertainty::Maybe,
             origins: move_info.origins.clone(),
+            path_moves: downgrade_path_moves_to_maybe(&move_info.path_moves),
         }),
         // This slice only tracks moved-vs-usable facts. It deliberately does not
         // diagnose uninitialized/dead uses yet, so availability wins over absence here.
@@ -1864,6 +2213,153 @@ fn merge_origins(left: &[MoveOrigin], right: &[MoveOrigin]) -> Vec<MoveOrigin> {
     }
     origins.sort_by_key(|origin| (origin.span.start, origin.span.end));
     origins
+}
+
+fn record_path_move(
+    existing: &[PathMoveInfo],
+    path: &[MovePathSegment],
+    origin: &MoveOrigin,
+) -> Vec<PathMoveInfo> {
+    let mut updated = existing.to_vec();
+    if let Some(info) = updated.iter_mut().find(|info| info.path == path) {
+        info.certainty = MoveCertainty::Definite;
+        info.origins = merge_origins(&info.origins, std::slice::from_ref(origin));
+    } else {
+        updated.push(PathMoveInfo {
+            path: path.to_vec(),
+            certainty: MoveCertainty::Definite,
+            origins: vec![origin.clone()],
+        });
+    }
+    updated.sort_by(|left, right| left.path.cmp(&right.path));
+    updated
+}
+
+fn clear_reinitialized_path_moves(
+    existing: &[PathMoveInfo],
+    written_path: &[MovePathSegment],
+) -> Vec<PathMoveInfo> {
+    existing
+        .iter()
+        .filter(|info| !path_starts_with(&info.path, written_path))
+        .cloned()
+        .collect()
+}
+
+fn rebuild_local_state_from_path_moves(path_moves: Vec<PathMoveInfo>) -> LocalState {
+    if path_moves.is_empty() {
+        return LocalState::Available;
+    }
+
+    let (certainty, origins) = summarize_overlapping_path_moves(&path_moves, &[])
+        .expect("non-empty path moves should summarize to a local move state");
+    LocalState::Moved(MoveInfo {
+        certainty,
+        origins,
+        path_moves,
+    })
+}
+
+fn downgrade_path_moves_to_maybe(path_moves: &[PathMoveInfo]) -> Vec<PathMoveInfo> {
+    path_moves
+        .iter()
+        .map(|info| PathMoveInfo {
+            path: info.path.clone(),
+            certainty: MoveCertainty::Maybe,
+            origins: info.origins.clone(),
+        })
+        .collect()
+}
+
+fn merge_path_moves(left: &[PathMoveInfo], right: &[PathMoveInfo]) -> Vec<PathMoveInfo> {
+    let mut candidate_paths = left
+        .iter()
+        .map(|info| info.path.clone())
+        .collect::<Vec<_>>();
+    for info in right {
+        if !candidate_paths.contains(&info.path) {
+            candidate_paths.push(info.path.clone());
+        }
+    }
+    candidate_paths.sort();
+
+    let mut merged = Vec::new();
+    for path in candidate_paths {
+        let left_summary = summarize_overlapping_path_moves(left, &path);
+        let right_summary = summarize_overlapping_path_moves(right, &path);
+        let Some((certainty, origins)) = merge_path_move_summaries(left_summary, right_summary)
+        else {
+            continue;
+        };
+        merged.push(PathMoveInfo {
+            path,
+            certainty,
+            origins,
+        });
+    }
+    merged
+}
+
+fn merge_path_move_summaries(
+    left: Option<(MoveCertainty, Vec<MoveOrigin>)>,
+    right: Option<(MoveCertainty, Vec<MoveOrigin>)>,
+) -> Option<(MoveCertainty, Vec<MoveOrigin>)> {
+    match (left, right) {
+        (Some((left_certainty, left_origins)), Some((right_certainty, right_origins))) => Some((
+            match (left_certainty, right_certainty) {
+                (MoveCertainty::Definite, MoveCertainty::Definite) => MoveCertainty::Definite,
+                _ => MoveCertainty::Maybe,
+            },
+            merge_origins(&left_origins, &right_origins),
+        )),
+        (Some((_, origins)), None) | (None, Some((_, origins))) => {
+            Some((MoveCertainty::Maybe, origins))
+        }
+        (None, None) => None,
+    }
+}
+
+fn summarize_overlapping_path_moves(
+    path_moves: &[PathMoveInfo],
+    path: &[MovePathSegment],
+) -> Option<(MoveCertainty, Vec<MoveOrigin>)> {
+    let overlapping = path_moves
+        .iter()
+        .filter(|info| move_paths_overlap(&info.path, path))
+        .collect::<Vec<_>>();
+    if overlapping.is_empty() {
+        return None;
+    }
+
+    let certainty = if overlapping
+        .iter()
+        .any(|info| info.certainty == MoveCertainty::Definite)
+    {
+        MoveCertainty::Definite
+    } else {
+        MoveCertainty::Maybe
+    };
+
+    let mut origins = Vec::new();
+    for info in overlapping {
+        origins = merge_origins(&origins, &info.origins);
+    }
+
+    Some((certainty, origins))
+}
+
+fn move_paths_overlap(left: &[MovePathSegment], right: &[MovePathSegment]) -> bool {
+    left.iter()
+        .zip(right.iter())
+        .all(|(left_step, right_step)| left_step == right_step)
+}
+
+fn path_starts_with(path: &[MovePathSegment], prefix: &[MovePathSegment]) -> bool {
+    prefix.len() <= path.len()
+        && prefix
+            .iter()
+            .zip(path.iter())
+            .all(|(prefix_step, path_step)| prefix_step == path_step)
 }
 
 fn render_move_origin(origin: &MoveOrigin) -> String {

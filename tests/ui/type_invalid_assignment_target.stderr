@@ -10,9 +10,9 @@ error: tests/ui/type_invalid_assignment_target.ql:19:5: cannot assign to functio
 error: tests/ui/type_invalid_assignment_target.ql:20:5: cannot assign to imported binding `imported_limit`
       imported_limit = 4;
       ^^^^^^^^ assignment target here
-error: tests/ui/type_invalid_assignment_target.ql:21:5: assignment through member access is not supported yet; only bare mutable bindings can be assigned
+error: tests/ui/type_invalid_assignment_target.ql:21:5: cannot assign to immutable local `counter`; declare it with `var`
       counter.value = 5;
       ^^^^^^^^ assignment target here
-error: tests/ui/type_invalid_assignment_target.ql:22:5: assignment through indexing is not supported yet; only bare mutable bindings can be assigned
+error: tests/ui/type_invalid_assignment_target.ql:22:5: assignment through array indexing is not supported yet; only bare mutable bindings, member projections, and tuple projections can be assigned
       values[0] = 6
       ^^^^^^^^ assignment target here

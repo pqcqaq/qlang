@@ -93,6 +93,7 @@ pub enum LocalState {
 pub struct MoveInfo {
     pub certainty: MoveCertainty,
     pub origins: Vec<MoveOrigin>,
+    pub path_moves: Vec<PathMoveInfo>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -101,10 +102,24 @@ pub enum MoveCertainty {
     Maybe,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum MovePathSegment {
+    Field(String),
+    TupleIndex(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PathMoveInfo {
+    pub path: Vec<MovePathSegment>,
+    pub certainty: MoveCertainty,
+    pub origins: Vec<MoveOrigin>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MoveOrigin {
     pub span: Span,
     pub reason: MoveReason,
+    pub path: Vec<MovePathSegment>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

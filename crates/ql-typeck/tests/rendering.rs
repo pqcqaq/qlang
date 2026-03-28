@@ -147,14 +147,14 @@ fn main() -> Int {
 }
 
 #[test]
-fn rendered_unsupported_assignment_target_diagnostics_anchor_to_the_target() {
+fn rendered_projection_assignment_to_immutable_local_diagnostics_anchor_to_the_target() {
     let source = r#"
 struct Counter {
     value: Int,
 }
 
 fn main() -> Int {
-    var counter = Counter { value: 1 }
+    let counter = Counter { value: 1 }
     counter.value = 2
     return counter.value
 }
@@ -162,7 +162,7 @@ fn main() -> Int {
     let rendered = rendered_diagnostics(source);
 
     assert!(rendered.contains(
-        "error: sample.ql:8:5: assignment through member access is not supported yet; only bare mutable bindings can be assigned"
+        "error: sample.ql:8:5: cannot assign to immutable local `counter`; declare it with `var`"
     ));
 }
 

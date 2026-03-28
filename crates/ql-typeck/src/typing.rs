@@ -7,6 +7,7 @@ use ql_hir::{
     Module, Param, PatternId, PatternKind, StmtId, StmtKind, VariantFields,
 };
 use ql_resolve::{ParamBinding, ResolutionMap, TypeResolution, ValueResolution};
+use ql_span::Span;
 
 use crate::checker::{FieldTarget, MemberTarget, MethodTarget};
 use crate::types::{Ty, item_display_name, local_item_for_import_binding, lower_type, void_ty};
@@ -1796,11 +1797,20 @@ impl<'a> Checker<'a> {
     }
 
     fn check_assignment_target(&mut self, expr_id: ExprId) -> AssignmentTargetPolicy {
+        let anchor_span = self.module.expr(expr_id).span;
+        self.check_assignment_target_with_anchor(expr_id, anchor_span)
+    }
+
+    fn check_assignment_target_with_anchor(
+        &mut self,
+        expr_id: ExprId,
+        anchor_span: Span,
+    ) -> AssignmentTargetPolicy {
         let expr = self.module.expr(expr_id);
         let unsupported_target = |checker: &mut Self, message: String| {
             checker.diagnostics.push(
                 Diagnostic::error(message)
-                    .with_label(Label::new(expr.span).with_message("assignment target here")),
+                    .with_label(Label::new(anchor_span).with_message("assignment target here")),
             );
             AssignmentTargetPolicy::SkipValueType
         };
@@ -1815,7 +1825,7 @@ impl<'a> Checker<'a> {
                         Diagnostic::error(format!(
                             "cannot assign to immutable local `{name}`; declare it with `var`"
                         ))
-                        .with_label(Label::new(expr.span).with_message("assignment target here")),
+                        .with_label(Label::new(anchor_span).with_message("assignment target here")),
                     );
                     AssignmentTargetPolicy::EnforceValueType
                 }
@@ -1823,7 +1833,7 @@ impl<'a> Checker<'a> {
                     self.diagnostics.push(
                         Diagnostic::error(format!("cannot assign to immutable parameter `{name}`"))
                             .with_label(
-                                Label::new(expr.span).with_message("assignment target here"),
+                                Label::new(anchor_span).with_message("assignment target here"),
                             ),
                     );
                     AssignmentTargetPolicy::EnforceValueType
@@ -1836,7 +1846,7 @@ impl<'a> Checker<'a> {
                         Diagnostic::error(
                             "cannot assign to immutable receiver `self`; use `var self`",
                         )
-                        .with_label(Label::new(expr.span).with_message("assignment target here")),
+                        .with_label(Label::new(anchor_span).with_message("assignment target here")),
                     );
                     AssignmentTargetPolicy::EnforceValueType
                 }
@@ -1863,19 +1873,52 @@ impl<'a> Checker<'a> {
                 }
                 None => AssignmentTargetPolicy::SkipValueType,
             },
-            ExprKind::Member { .. } => unsupported_target(
-                self,
-                "assignment through member access is not supported yet; only bare mutable bindings can be assigned"
-                    .to_string(),
-            ),
-            ExprKind::Bracket { .. } => unsupported_target(
-                self,
-                "assignment through indexing is not supported yet; only bare mutable bindings can be assigned"
-                    .to_string(),
-            ),
+            ExprKind::Member { object, .. } => {
+                if self
+                    .expr_types
+                    .get(&expr_id)
+                    .is_none_or(|ty| ty.is_unknown())
+                {
+                    AssignmentTargetPolicy::SkipValueType
+                } else {
+                    self.check_assignment_target_with_anchor(*object, anchor_span)
+                }
+            }
+            ExprKind::Bracket { target, items } => {
+                let Some(target_ty) = self.expr_types.get(target) else {
+                    return AssignmentTargetPolicy::SkipValueType;
+                };
+                if target_ty.is_unknown() {
+                    return AssignmentTargetPolicy::SkipValueType;
+                }
+
+                match target_ty {
+                    Ty::Tuple(_) if items.len() == 1 => {
+                        if matches!(self.module.expr(items[0]).kind, ExprKind::Integer(_)) {
+                            self.check_assignment_target_with_anchor(*target, anchor_span)
+                        } else {
+                            unsupported_target(
+                                self,
+                                "assignment through tuple indexing currently requires an integer literal index"
+                                    .to_string(),
+                            )
+                        }
+                    }
+                    Ty::Array { .. } => unsupported_target(
+                        self,
+                        "assignment through array indexing is not supported yet; only bare mutable bindings, member projections, and tuple projections can be assigned"
+                            .to_string(),
+                    ),
+                    _ => unsupported_target(
+                        self,
+                        "assignment through indexing is not supported yet; only tuple projections can be assigned"
+                            .to_string(),
+                    ),
+                }
+            }
             _ => unsupported_target(
                 self,
-                "this assignment target is not supported yet; only bare mutable bindings can be assigned"
+                "this assignment target is not supported yet; only bare mutable bindings, member projections, and tuple projections can be assigned"
                     .to_string(),
             ),
         }

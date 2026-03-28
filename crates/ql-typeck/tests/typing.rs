@@ -1415,7 +1415,7 @@ fn main() -> Int {
 }
 
 #[test]
-fn reports_unsupported_member_assignment_targets() {
+fn accepts_member_assignment_targets_on_mutable_locals() {
     let diagnostics = diagnostic_messages(
         r#"
 struct Counter {
@@ -1430,14 +1430,32 @@ fn main() -> Int {
 "#,
     );
 
-    assert!(diagnostics.contains(
-        &"assignment through member access is not supported yet; only bare mutable bindings can be assigned"
-            .to_string()
-    ));
+    assert!(
+        diagnostics.is_empty(),
+        "expected mutable member assignment to type-check, got {diagnostics:?}"
+    );
 }
 
 #[test]
-fn reports_unsupported_index_assignment_targets() {
+fn accepts_tuple_index_assignment_targets_on_mutable_locals() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    var pair = (1, 2)
+    pair[0] = 4
+    return pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected mutable tuple-index assignment to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_unsupported_array_index_assignment_targets() {
     let diagnostics = diagnostic_messages(
         r#"
 fn main() -> Int {
@@ -1449,7 +1467,7 @@ fn main() -> Int {
     );
 
     assert!(diagnostics.contains(
-        &"assignment through indexing is not supported yet; only bare mutable bindings can be assigned"
+        &"assignment through array indexing is not supported yet; only bare mutable bindings, member projections, and tuple projections can be assigned"
             .to_string()
     ));
 }

@@ -101,6 +101,7 @@ struct PreparedFunction {
     signature: FunctionSignature,
     local_types: HashMap<mir::LocalId, Ty>,
     async_task_handles: HashMap<mir::LocalId, AsyncTaskHandleInfo>,
+    supported_for_loops: HashMap<mir::BasicBlockId, SupportedForLoopLowering>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,6 +115,15 @@ struct LoweredValue {
     ty: Ty,
     llvm_ty: String,
     repr: String,
+}
+
+#[derive(Clone, Debug)]
+struct SupportedForLoopLowering {
+    iterable_place: Place,
+    item_local: mir::LocalId,
+    element_ty: Ty,
+    array_len: usize,
+    body_target: mir::BasicBlockId,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -550,36 +560,45 @@ impl<'a> ModuleEmitter<'a> {
         let mut diagnostics = Vec::new();
         let mut local_types = self.seed_local_types(body, &signature, &mut diagnostics);
         let async_task_handles = self.collect_async_task_handles(body);
-        let unsupported_for_iterable_locals = collect_unsupported_for_iterable_locals(body);
-        self.propagate_expected_temp_local_types(body, &mut local_types);
+        let mut supported_for_loops = HashMap::new();
+        self.propagate_expected_temp_local_types(body, &mut local_types, &async_task_handles);
 
-        for block in body.blocks() {
+        for block_id in body.block_ids() {
+            let block = body.block(block_id);
             for statement_id in &block.statements {
                 let statement = body.statement(*statement_id);
                 match &statement.kind {
                     StatementKind::Assign { place, value } => {
-                        self.require_direct_place(statement.span, place, &mut diagnostics);
-                        if unsupported_for_iterable_locals.contains(&place.base) {
-                            continue;
-                        }
-                        let expected_ty = local_types.get(&place.base);
+                        let expected_ty = self.assignment_place_type(
+                            body,
+                            place,
+                            &local_types,
+                            &async_task_handles,
+                            statement.span,
+                            &mut diagnostics,
+                        );
                         let mut infer = TypeInferenceContext {
                             body,
                             local_types: &local_types,
                             async_task_handles: &async_task_handles,
                             diagnostics: &mut diagnostics,
                         };
-                        if let Some(ty) =
-                            self.infer_rvalue_type(value, expected_ty, &mut infer, statement.span)
-                        {
-                            local_types.entry(place.base).or_insert(ty);
+                        if let Some(ty) = self.infer_rvalue_type(
+                            value,
+                            expected_ty.as_ref(),
+                            &mut infer,
+                            statement.span,
+                        ) {
+                            if place.projections.is_empty() {
+                                local_types.entry(place.base).or_insert(ty);
+                            }
                         }
                     }
                     StatementKind::BindPattern {
                         pattern, source, ..
                     } => {
                         self.require_binding_pattern(*pattern, statement.span, &mut diagnostics);
-                        let _ = self.infer_operand_type(
+                        let source_ty = self.infer_operand_type(
                             body,
                             source,
                             &local_types,
@@ -587,6 +606,11 @@ impl<'a> ModuleEmitter<'a> {
                             &mut diagnostics,
                             statement.span,
                         );
+                        if let (Some(binding_local), Some(source_ty)) =
+                            (self.binding_local_for_pattern(body, *pattern), source_ty)
+                        {
+                            seed_inferred_local_type(&mut local_types, binding_local, source_ty);
+                        }
                     }
                     StatementKind::Eval { value } => {
                         let mut infer = TypeInferenceContext {
@@ -633,14 +657,52 @@ impl<'a> ModuleEmitter<'a> {
                     block.terminator.span,
                     "LLVM IR backend foundation does not support `match` lowering yet",
                 )),
-                TerminatorKind::ForLoop { is_await, .. } => diagnostics.push(unsupported(
-                    block.terminator.span,
-                    if *is_await {
-                        "LLVM IR backend foundation does not support `for await` lowering yet"
-                    } else {
-                        "LLVM IR backend foundation does not support `for` lowering yet"
-                    },
-                )),
+                TerminatorKind::ForLoop {
+                    iterable,
+                    item_local,
+                    is_await,
+                    body_target,
+                    ..
+                } => {
+                    if !*is_await {
+                        diagnostics.push(unsupported(
+                            block.terminator.span,
+                            "LLVM IR backend foundation does not support `for` lowering yet",
+                        ));
+                        continue;
+                    }
+
+                    let mut scratch = Vec::new();
+                    let iterable_ty = self.infer_operand_type(
+                        body,
+                        iterable,
+                        &local_types,
+                        &async_task_handles,
+                        &mut scratch,
+                        block.terminator.span,
+                    );
+                    let (Operand::Place(iterable_place), Some(Ty::Array { element, len })) =
+                        (iterable, iterable_ty)
+                    else {
+                        diagnostics.push(unsupported(
+                            block.terminator.span,
+                            "LLVM IR backend foundation does not support `for await` lowering yet",
+                        ));
+                        continue;
+                    };
+                    let element_ty = element.as_ref().clone();
+                    seed_inferred_local_type(&mut local_types, *item_local, element_ty.clone());
+                    supported_for_loops.insert(
+                        block_id,
+                        SupportedForLoopLowering {
+                            iterable_place: iterable_place.clone(),
+                            item_local: *item_local,
+                            element_ty,
+                            array_len: len,
+                            body_target: *body_target,
+                        },
+                    );
+                }
             }
         }
 
@@ -674,6 +736,7 @@ impl<'a> ModuleEmitter<'a> {
                 signature,
                 local_types,
                 async_task_handles,
+                supported_for_loops,
             })
         } else {
             Err(dedupe_diagnostics(diagnostics))
@@ -684,6 +747,7 @@ impl<'a> ModuleEmitter<'a> {
         &self,
         body: &mir::MirBody,
         local_types: &mut HashMap<mir::LocalId, Ty>,
+        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
     ) {
         let max_passes = body.locals().len().max(1);
         for _ in 0..max_passes {
@@ -691,7 +755,12 @@ impl<'a> ModuleEmitter<'a> {
             for block in body.blocks() {
                 for statement_id in &block.statements {
                     let statement = body.statement(*statement_id);
-                    self.propagate_expected_temp_types_from_statement(body, statement, local_types);
+                    self.propagate_expected_temp_types_from_statement(
+                        body,
+                        statement,
+                        local_types,
+                        async_task_handles,
+                    );
                 }
             }
             if local_types.len() == before {
@@ -705,10 +774,19 @@ impl<'a> ModuleEmitter<'a> {
         body: &mir::MirBody,
         statement: &mir::Statement,
         local_types: &mut HashMap<mir::LocalId, Ty>,
+        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
     ) {
         match &statement.kind {
             StatementKind::Assign { place, value } => {
-                if let Some(expected_ty) = local_types.get(&place.base).cloned() {
+                let mut diagnostics = Vec::new();
+                if let Some(expected_ty) = self.infer_place_type(
+                    body,
+                    place,
+                    local_types,
+                    async_task_handles,
+                    &mut diagnostics,
+                    statement.span,
+                ) {
                     self.seed_expected_temp_from_rvalue(body, value, &expected_ty, local_types);
                 }
                 self.seed_expected_temp_from_call_args(body, value, local_types);
@@ -1671,20 +1749,87 @@ impl<'a> ModuleEmitter<'a> {
         }
     }
 
-    fn require_direct_place(
+    fn assignment_place_type(
         &self,
-        span: Span,
+        body: &mir::MirBody,
         place: &Place,
+        local_types: &HashMap<mir::LocalId, Ty>,
+        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
+        span: Span,
         diagnostics: &mut Vec<Diagnostic>,
-    ) -> bool {
-        if !place.projections.is_empty() {
-            diagnostics.push(unsupported(
-                span,
-                "LLVM IR backend foundation does not support field or index projections yet",
-            ));
-            return false;
+    ) -> Option<Ty> {
+        if place.projections.is_empty() {
+            return local_types.get(&place.base).cloned().or_else(|| {
+                async_task_handles
+                    .get(&place.base)
+                    .map(|handle| Ty::TaskHandle(Box::new(handle.result_ty.clone())))
+            });
         }
-        true
+
+        let mut current_ty = self.resolve_place_base_type(
+            body,
+            place,
+            local_types,
+            async_task_handles,
+            diagnostics,
+            span,
+        )?;
+
+        for projection in &place.projections {
+            if let mir::ProjectionElem::Index(index) = projection {
+                let index_ty = self.infer_operand_type(
+                    body,
+                    index,
+                    local_types,
+                    async_task_handles,
+                    diagnostics,
+                    span,
+                )?;
+                if !index_ty.is_unknown()
+                    && !Ty::Builtin(BuiltinType::Int).compatible_with(&index_ty)
+                {
+                    diagnostics.push(unsupported(
+                        span,
+                        format!(
+                            "LLVM IR backend foundation currently requires index projections to use `Int`, found `{index_ty}`"
+                        ),
+                    ));
+                    return None;
+                }
+            }
+
+            let step = match self.resolve_projection_step(&current_ty, projection, span) {
+                Ok(step) => step,
+                Err(error) => {
+                    diagnostics.push(error);
+                    return None;
+                }
+            };
+
+            match (&projection, &step) {
+                (mir::ProjectionElem::Field(_), ResolvedProjectionStep::Field { .. })
+                | (mir::ProjectionElem::TupleIndex(_), ResolvedProjectionStep::TupleIndex { .. })
+                | (mir::ProjectionElem::Index(_), ResolvedProjectionStep::TupleIndex { .. }) => {}
+                (mir::ProjectionElem::Index(_), ResolvedProjectionStep::ArrayIndex { .. }) => {
+                    diagnostics.push(unsupported(
+                        span,
+                        "LLVM IR backend foundation does not support array element assignment yet",
+                    ));
+                    return None;
+                }
+                _ => {
+                    diagnostics.push(unsupported(
+                        span,
+                        "LLVM IR backend foundation does not support this assignment place yet",
+                    ));
+                    return None;
+                }
+            }
+
+            current_ty = step.output_ty();
+        }
+
+        Some(current_ty)
     }
 
     fn require_binding_pattern(
@@ -2008,6 +2153,15 @@ impl<'a> ModuleEmitter<'a> {
                 llvm_ty
             );
         }
+        for block_id in body.block_ids() {
+            if function.supported_for_loops.contains_key(&block_id) {
+                let _ = writeln!(
+                    output,
+                    "  {} = alloca i64",
+                    for_await_index_slot_name(block_id)
+                );
+            }
+        }
 
         for local_id in body.local_ids() {
             let local = body.local(local_id);
@@ -2046,6 +2200,15 @@ impl<'a> ModuleEmitter<'a> {
                 llvm_slot_name(body, local_id)
             );
         }
+        for block_id in body.block_ids() {
+            if function.supported_for_loops.contains_key(&block_id) {
+                let _ = writeln!(
+                    output,
+                    "  store i64 -1, ptr {}",
+                    for_await_index_slot_name(block_id)
+                );
+            }
+        }
 
         let _ = writeln!(output, "  br label %bb{}", body.entry.index());
 
@@ -2062,7 +2225,13 @@ impl<'a> ModuleEmitter<'a> {
             for statement_id in &block.statements {
                 renderer.render_statement(output, body.statement(*statement_id));
             }
-            renderer.render_terminator(output, &block.terminator);
+            renderer.render_terminator(output, block_id, &block.terminator);
+        }
+        for block_id in body.block_ids() {
+            let Some(loop_lowering) = function.supported_for_loops.get(&block_id) else {
+                continue;
+            };
+            renderer.render_for_await_setup_block(output, block_id, loop_lowering);
         }
 
         output.push_str("}\n");
@@ -2337,17 +2506,20 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
     fn render_statement(&mut self, output: &mut String, statement: &mir::Statement) {
         match &statement.kind {
             StatementKind::Assign { place, value } => {
-                let expected_ty = self.prepared.local_types.get(&place.base);
+                let expected_ty = self.prepared_place_type(place, statement.span);
                 if let Some(rendered) =
-                    self.render_rvalue(output, value, expected_ty, statement.span)
+                    self.render_rvalue(output, value, expected_ty.as_ref(), statement.span)
                     && !is_void_ty(&rendered.ty)
                 {
+                    let target_ptr = if place.projections.is_empty() {
+                        llvm_slot_name(self.body, place.base)
+                    } else {
+                        self.render_place_pointer(output, place, statement.span).0
+                    };
                     let _ = writeln!(
                         output,
                         "  store {} {}, ptr {}",
-                        rendered.llvm_ty,
-                        rendered.repr,
-                        llvm_slot_name(self.body, place.base)
+                        rendered.llvm_ty, rendered.repr, target_ptr
                     );
                 }
             }
@@ -2387,9 +2559,29 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
-    fn render_terminator(&mut self, output: &mut String, terminator: &mir::Terminator) {
+    fn render_terminator(
+        &mut self,
+        output: &mut String,
+        block_id: mir::BasicBlockId,
+        terminator: &mir::Terminator,
+    ) {
         match &terminator.kind {
             TerminatorKind::Goto { target } => {
+                if self.prepared.supported_for_loops.contains_key(target) {
+                    let current = self.fresh_temp();
+                    let next = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {current} = load i64, ptr {}",
+                        for_await_index_slot_name(*target)
+                    );
+                    let _ = writeln!(output, "  {next} = add i64 {current}, 1");
+                    let _ = writeln!(
+                        output,
+                        "  store i64 {next}, ptr {}",
+                        for_await_index_slot_name(*target)
+                    );
+                }
                 let _ = writeln!(output, "  br label %bb{}", target.index());
             }
             TerminatorKind::Branch {
@@ -2427,8 +2619,38 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             TerminatorKind::Terminate => {
                 output.push_str("  unreachable\n");
             }
-            TerminatorKind::Match { .. } | TerminatorKind::ForLoop { .. } => {
+            TerminatorKind::Match { .. } => {
                 panic!("prepared functions should not contain unsupported terminators")
+            }
+            TerminatorKind::ForLoop { exit_target, .. } => {
+                let loop_lowering = self
+                    .prepared
+                    .supported_for_loops
+                    .get(&block_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "prepared `for await` at block {:?} should have lowering metadata",
+                            block_id
+                        )
+                    });
+                let index = self.fresh_temp();
+                let continue_flag = self.fresh_temp();
+                let _ = writeln!(
+                    output,
+                    "  {index} = load i64, ptr {}",
+                    for_await_index_slot_name(block_id)
+                );
+                let _ = writeln!(
+                    output,
+                    "  {continue_flag} = icmp ult i64 {index}, {}",
+                    loop_lowering.array_len
+                );
+                let _ = writeln!(
+                    output,
+                    "  br i1 {continue_flag}, label %{}, label %bb{}",
+                    for_await_setup_block_name(block_id),
+                    exit_target.index()
+                );
             }
         }
     }
@@ -2985,6 +3207,23 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn prepared_place_type(&self, place: &Place, span: Span) -> Option<Ty> {
+        let mut diagnostics = Vec::new();
+        let ty = self.emitter.infer_place_type(
+            self.body,
+            place,
+            &self.prepared.local_types,
+            &self.prepared.async_task_handles,
+            &mut diagnostics,
+            span,
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "prepared place at {span:?} should have a resolved type without diagnostics: {diagnostics:?}"
+        );
+        ty
+    }
+
     fn render_place_pointer(
         &mut self,
         output: &mut String,
@@ -3063,6 +3302,52 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         let index = self.next_temp;
         self.next_temp += 1;
         format!("%t{index}")
+    }
+
+    fn render_for_await_setup_block(
+        &mut self,
+        output: &mut String,
+        block_id: mir::BasicBlockId,
+        loop_lowering: &SupportedForLoopLowering,
+    ) {
+        let span = self.body.block(block_id).terminator.span;
+        let _ = writeln!(output, "{}:", for_await_setup_block_name(block_id));
+        let index = self.fresh_temp();
+        let _ = writeln!(
+            output,
+            "  {index} = load i64, ptr {}",
+            for_await_index_slot_name(block_id)
+        );
+        let (iterable_ptr, iterable_ty) =
+            self.render_place_pointer(output, &loop_lowering.iterable_place, span);
+        let array_llvm_ty = self
+            .emitter
+            .lower_llvm_type(&iterable_ty, span, "for-await iterable type")
+            .expect("prepared for-await iterable should have a lowered LLVM type");
+        let element_ptr = self.fresh_temp();
+        let _ = writeln!(
+            output,
+            "  {element_ptr} = getelementptr inbounds {array_llvm_ty}, ptr {iterable_ptr}, i64 0, i64 {index}"
+        );
+        let element_llvm_ty = self
+            .emitter
+            .lower_llvm_type(&loop_lowering.element_ty, span, "for-await item type")
+            .expect("prepared for-await item should have a lowered LLVM type");
+        let element = self.fresh_temp();
+        let _ = writeln!(
+            output,
+            "  {element} = load {element_llvm_ty}, ptr {element_ptr}"
+        );
+        let _ = writeln!(
+            output,
+            "  store {element_llvm_ty} {element}, ptr {}",
+            llvm_slot_name(self.body, loop_lowering.item_local)
+        );
+        let _ = writeln!(
+            output,
+            "  br label %bb{}",
+            loop_lowering.body_target.index()
+        );
     }
 }
 
@@ -3208,17 +3493,28 @@ fn align_to(value: u64, align: u64) -> u64 {
     }
 }
 
-fn collect_unsupported_for_iterable_locals(body: &mir::MirBody) -> HashSet<mir::LocalId> {
-    let mut locals = HashSet::new();
-    for block in body.blocks() {
-        let TerminatorKind::ForLoop { iterable, .. } = &block.terminator.kind else {
-            continue;
-        };
-        if let Operand::Place(place) = iterable {
-            locals.insert(place.base);
+fn seed_inferred_local_type(
+    local_types: &mut HashMap<mir::LocalId, Ty>,
+    local_id: mir::LocalId,
+    ty: Ty,
+) {
+    if ty.is_unknown() {
+        return;
+    }
+    match local_types.get(&local_id) {
+        Some(existing) if !existing.is_unknown() => {}
+        _ => {
+            local_types.insert(local_id, ty);
         }
     }
-    locals
+}
+
+fn for_await_index_slot_name(block_id: mir::BasicBlockId) -> String {
+    format!("%for_await_index_bb{}", block_id.index())
+}
+
+fn for_await_setup_block_name(block_id: mir::BasicBlockId) -> String {
+    format!("bb{}_for_await_setup", block_id.index())
 }
 
 fn arithmetic_opcode(op: BinaryOp, ty: &Ty) -> &'static str {
@@ -4136,6 +4432,47 @@ fn pick_array(outer: Outer, index: Int) -> Int {
         assert!(rendered.contains("getelementptr inbounds { { i64, i64 }, [2 x i64] }, ptr"));
         assert!(rendered.contains("getelementptr inbounds { i64, i64 }, ptr"));
         assert!(rendered.contains("getelementptr inbounds [2 x i64], ptr"));
+    }
+
+    #[test]
+    fn emits_struct_field_projection_writes() {
+        let rendered = emit_library(
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+fn write_right() -> Int {
+    var pair = Pair { left: 1, right: 2 }
+    pair.right = 7
+    return pair.right
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @ql_1_write_right()"));
+        assert!(rendered.contains("getelementptr inbounds { i64, i64 }, ptr"));
+        assert!(rendered.contains("i32 0, i32 1"));
+        assert!(rendered.contains("store i64 7, ptr %t"));
+    }
+
+    #[test]
+    fn emits_tuple_index_projection_writes() {
+        let rendered = emit_library(
+            r#"
+fn write_first() -> Int {
+    var pair = (1, 2)
+    pair[0] = 9
+    return pair[0]
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @ql_0_write_first()"));
+        assert!(rendered.contains("getelementptr inbounds { i64, i64 }, ptr"));
+        assert!(rendered.contains("i32 0, i32 0"));
+        assert!(rendered.contains("store i64 9, ptr %t"));
     }
 
     #[test]
@@ -5743,7 +6080,35 @@ async fn helper() -> Wrap {
     }
 
     #[test]
-    fn rejects_unsupported_for_await_lowering_without_iterable_noise() {
+    fn emits_for_await_lowering_for_fixed_array_async_library_bodies() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn helper() -> Int {
+    var total = 0
+    for await value in [1, 2, 3] {
+        total = total + value
+    }
+    return total
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("declare ptr @qlrt_async_iter_next(ptr)"));
+        assert!(rendered.contains("store i64 -1, ptr %for_await_index_bb"));
+        assert!(rendered.contains("icmp ult i64"));
+        assert!(rendered.contains("for_await_setup"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn rejects_unsupported_for_await_lowering_for_non_array_iterables_without_iterable_noise() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
             RuntimeCapability::AsyncIteration,
@@ -5751,7 +6116,7 @@ async fn helper() -> Wrap {
         let messages = emit_error_with_runtime_hooks(
             r#"
 async fn helper() -> Int {
-    for await value in [1, 2, 3] {
+    for await value in (1, 2, 3) {
         break
     }
     return 0
@@ -6041,7 +6406,7 @@ extern "c" fn first()
 
 async fn helper() -> Int {
     defer first()
-    for await value in [1, 2, 3] {
+    for await value in (1, 2, 3) {
         break
     }
     return 0

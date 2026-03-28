@@ -104,15 +104,16 @@
 - backend 已支持最小 async body wrapper、frame scaffold、loadable `await`、task-handle-aware `spawn`
 - projected task-handle operand 已支持 tuple index / struct field 只读投影路径
 - `staticlib` 已开放第一条受控 async library build 子集
+- `for await` 已开放首个受控 lowering 竖切片：当前仅支持 `staticlib` async library body 内对 fixed array iterable 的 lowering
 - `examples/ffi-rust` 与对应回归测试已经建立
 
 ### 当前仍刻意未开放
 
 这些边界仍然应该明确写成“未完成”，而不是模糊描述成“后面再看”：
 
-- projection-sensitive ownership / partial-place move tracking
-- projection assignment lowering
-- `for await` lowering
+- 更广义的 projection-sensitive ownership / partial-place move tracking（当前已开放 tuple/struct-field task-handle path 的只读 consume 与同路径 write/reinit；更广义 projection、array element 与动态 index 仍未开放）
+- 更广义的 projection assignment lowering（当前仅开放 tuple index / struct-field projection write/reinit）
+- 更广义的 `for await` lowering（当前仅开放 `staticlib` async library body 内的 fixed array iterable）
 - cancellation / polling / drop 语义
 - generic async ABI 与 layout substitution
 - async `dylib` 构建承诺
@@ -147,7 +148,7 @@
 只有在前几步稳定之后，才考虑是否继续扩大公开能力：
 
 - 是否放宽更多 `await` / `spawn` payload 路径
-- 是否推进 `for await`
+- 是否把 `for await` 从 fixed array 扩到更广 iterable / build surface
 - 是否开放 async `dylib` 或 program build
 - 是否开放更广义的 async callable / effect surface
 

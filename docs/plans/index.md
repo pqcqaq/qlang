@@ -42,3 +42,5 @@
 这意味着后续开发的主任务已经不是“重新搭骨架”，而是沿着现有分层继续扩展。
 
 当前最活跃的主线是 [Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop)。如果你要接着推进 async/runtime 相关工作，优先从该文档恢复上下文。
+
+基于 2026-03-28 Serena 记忆整理的近期执行优先级清单见 [Phase 7 近期优先级计划](/plans/2026-03-28-phase-7-next-priorities)。
