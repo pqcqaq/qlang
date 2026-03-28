@@ -410,6 +410,37 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn allows_conditionally_returning_zero_sized_task_handles_from_helpers() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn choose(flag: Bool, first: Task[Wrap], second: Task[Wrap]) -> Task[Wrap] {
+    if flag {
+        return first
+    }
+    return second
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Wrap {
+    return await choose(flag, worker(), worker())
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_named_task_handle_helper_argument_as_move() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -445,6 +476,40 @@ async fn worker() -> Int {
 }
 
 async fn main(flag: Bool) -> Int {
+    let task = worker()
+    if flag {
+        forward(task)
+    } else {
+        worker()
+    }
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"local `task` may have been moved on another control-flow path".to_string())
+    );
+}
+
+#[test]
+fn reports_maybe_moved_after_conditionally_passing_zero_sized_task_handle_to_helper() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Wrap {
     let task = worker()
     if flag {
         forward(task)

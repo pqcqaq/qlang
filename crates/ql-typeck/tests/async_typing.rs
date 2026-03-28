@@ -378,6 +378,37 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn accepts_conditionally_returning_zero_sized_task_handles_from_helpers() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn choose(flag: Bool, first: Task[Wrap], second: Task[Wrap]) -> Task[Wrap] {
+    if flag {
+        return first
+    }
+    return second
+}
+
+async fn main(flag: Bool) -> Wrap {
+    return await choose(flag, worker(), worker())
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected conditional zero-sized Task helper returns to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_passing_async_calls_to_task_handle_parameters() {
     let diagnostics = diagnostic_messages(
         r#"
