@@ -541,6 +541,37 @@ async fn main() -> Int {
 }
 
 #[test]
+fn reports_deferred_cleanup_use_after_returning_zero_sized_task_handle() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn sink(task: Task[Wrap]) -> Void {
+    return
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    defer sink(task)
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let forwarded = forward(worker())
+    return await forwarded
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `task` was used after move".to_string()));
+}
+
+#[test]
 fn closure_captures_read_moved_direct_locals() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -960,6 +991,33 @@ async fn worker() -> Int {
 }
 
 async fn main() -> Int {
+    let forwarded = forward(worker())
+    return await forwarded
+}
+"#,
+    );
+
+    assert!(rendered.contains("consume(return task handle)"));
+    assert!(rendered.contains("consume(await task handle)"));
+}
+
+#[test]
+fn renders_zero_sized_return_task_handle_consumes_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
     let forwarded = forward(worker())
     return await forwarded
 }

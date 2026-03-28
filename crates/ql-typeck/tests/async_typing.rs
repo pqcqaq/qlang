@@ -264,6 +264,35 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn allows_spawning_zero_sized_task_handle_helpers_inside_async_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    return worker()
+}
+
+async fn main() -> Wrap {
+    let task = spawn schedule()
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected zero-sized task-handle helper calls to be spawnable, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_returning_zero_sized_async_task_handles_through_explicit_task_types() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -288,6 +317,35 @@ async fn main() -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected explicit zero-sized Task-return helper flow to succeed, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_returning_zero_sized_local_task_handles_through_explicit_task_types() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    let task = worker()
+    return task
+}
+
+async fn main() -> Wrap {
+    return await schedule()
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected explicit zero-sized local-return Task helper flow to succeed, got {diagnostics:?}"
     );
 }
 
