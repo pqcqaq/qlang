@@ -5586,6 +5586,48 @@ fn main() -> Int {
     }
 
     #[test]
+    fn dedupes_cleanup_and_for_lowering_diagnostics() {
+        let messages = emit_error(
+            r#"
+extern "c" fn first()
+
+fn main() -> Int {
+    defer first()
+    for value in 0 {
+        break
+    }
+    return 0
+}
+"#,
+        );
+
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    message.as_str()
+                        == "LLVM IR backend foundation does not support cleanup lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    message.as_str()
+                        == "LLVM IR backend foundation does not support `for` lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert!(messages.iter().all(|message| {
+            !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
     fn dedupes_cleanup_and_for_await_lowering_diagnostics() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
