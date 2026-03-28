@@ -5462,6 +5462,62 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn rejects_cleanup_and_projected_spawn_diagnostics_without_task_handle_resolution_noise() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+        ]);
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+extern "c" fn first()
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    defer first()
+    let pair = (worker(), 1)
+    spawn pair[0]
+    return 0
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message == "LLVM IR backend foundation does not support cleanup lowering yet"
+        }));
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    **message
+                        == "LLVM IR backend foundation does not support cleanup lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    **message
+                        == "LLVM IR backend foundation does not support field or index projections yet"
+                })
+                .count(),
+            1
+        );
+        assert!(messages.iter().all(|message| {
+            message
+                != "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`"
+                && !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
     fn rejects_projected_spawn_operands_without_task_handle_resolution_noise() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,

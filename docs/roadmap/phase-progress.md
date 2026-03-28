@@ -747,6 +747,7 @@ P6 当前仍刻意未完成：
 - `ql-driver` 新增 cleanup + async 混合诊断回归：同一文件里同时出现 `defer` 和 `async fn` 时，cleanup lowering 失败与 `async fn` unsupported 现在都会各自稳定只出现一次，不再互相吞掉或额外放大
 - `ql-driver` / `ql-codegen-llvm` 新增 cleanup + `for await` 混合诊断回归：同一文件里同时出现 `defer` 与 `for await` 时，cleanup lowering 失败与 `for await` unsupported 现在都会各自稳定只出现一次，不再互相吞掉或额外放大
 - `ql-codegen-llvm` 新增 cleanup + projected await 混合诊断回归：同一文件里同时出现 `defer` 与 `await pair[0]` 时，cleanup lowering 失败与 projected await 的 field/index projection unsupported 现在都会各自稳定只出现一次，不再互相吞掉或额外放大
+- `ql-driver` / `ql-codegen-llvm` 新增 cleanup + projected spawn 混合诊断回归：同一文件里同时出现 `defer` 与 `spawn pair[0]` 时，cleanup lowering 失败与 projected spawn 的 field/index projection unsupported 现在都会各自稳定只出现一次，不再互相吞掉或额外放大
 - `ql-driver` / `ql-cli` 新增 `async + generic` 并存回归：锁住多条 backend unsupported 诊断的聚合稳定性
 - `ql-driver` / `ql-cli` 新增 `async + unsafe fn body` 并存回归：锁住签名级多条 backend unsupported 诊断的聚合稳定性与终端输出
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 新增结构化 MIR terminator 的 backend 拒绝回归：`match` lowering unsupported 与 `for` lowering unsupported 现在都有后端单测、driver 回归和 CLI 失败快照覆盖
