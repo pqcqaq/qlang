@@ -105,7 +105,7 @@
 - projected task-handle operand 已支持 tuple index / fixed-array literal index / struct field 只读投影路径
 - `staticlib` 已开放第一条受控 async library build 子集
 - `dylib` 已开放最小受控 async library build 子集：当前允许带内部 async helper 的 library body 通过，但公开导出面仍收敛在同步 `extern "c"` C ABI surface
-- `for await` 已开放首个受控 lowering 竖切片：当前仅支持 `staticlib` async library body 内对 fixed array iterable 的 lowering
+- `for await` 已开放首个受控 lowering 竖切片：当前支持 library-mode async body 内对 fixed array iterable 的 lowering（`staticlib` 与最小 async `dylib` 子集）
 - `examples/ffi-rust` 与对应回归测试已经建立
 
 ### 当前仍刻意未开放
@@ -114,7 +114,7 @@
 
 - 更广义的 projection-sensitive ownership / partial-place move tracking（当前已开放 tuple/struct-field task-handle path 的只读 consume 与同路径 write/reinit，以及 fixed-array literal index task-handle path 的只读 consume；更广义 projection、动态 index 与 array element write 仍未开放）
 - 更广义的 projection assignment lowering（当前仅开放 tuple index / struct-field projection write/reinit）
-- 更广义的 `for await` lowering（当前仅开放 `staticlib` async library body 内的 fixed array iterable）
+- 更广义的 `for await` lowering（当前仅开放 library-mode async body 内的 fixed array iterable）
 - cancellation / polling / drop 语义
 - generic async ABI 与 layout substitution
 - 更广义的 async `dylib` 构建承诺（当前仅开放带同步 `extern "c"` 导出面的最小 library-style async body 子集）

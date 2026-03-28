@@ -142,6 +142,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: Some("tests/codegen/pass/ffi_export_async.h"),
         },
         PassCase {
+            name: "ffi_export_async_for_await_array_dylib",
+            source_relative: "fixtures/codegen/pass/ffi_export_async_for_await_array.ql",
+            emit: "dylib",
+            expected_relative: "tests/codegen/pass/extern_c_export.dylib.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "minimal_library_staticlib",
             source_relative: "fixtures/codegen/pass/minimal_library.ql",
             emit: "staticlib",
@@ -740,10 +751,10 @@ fn codegen_snapshots_match() {
             extra_args: &[],
         },
         FailCase {
-            name: "unsupported_async_fn_dylib_build",
-            source_relative: "tests/codegen/fail/unsupported_async_fn_dylib_build.ql",
+            name: "unsupported_async_for_await_dylib_build",
+            source_relative: "tests/codegen/fail/unsupported_async_for_await_dylib_build.ql",
             emit: "dylib",
-            expected_stderr_relative: "tests/codegen/fail/unsupported_async_fn_dylib_build.stderr",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_async_for_await_dylib_build.stderr",
             extra_args: &[],
         },
         FailCase {

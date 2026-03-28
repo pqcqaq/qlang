@@ -353,7 +353,11 @@ fn runtime_requirement_message(
         {
             None
         }
-        RuntimeCapability::AsyncIteration if emit == BuildEmit::StaticLibrary => None,
+        RuntimeCapability::AsyncIteration
+            if matches!(emit, BuildEmit::StaticLibrary | BuildEmit::DynamicLibrary) =>
+        {
+            None
+        }
         RuntimeCapability::AsyncFunctionBodies => {
             Some("LLVM IR backend foundation does not support `async fn` yet")
         }
@@ -4860,8 +4864,8 @@ async fn helper() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_async_for_await_diagnostics_for_dylib_with_exports() {
-        let dir = TestDir::new("ql-driver-async-for-await-dylib-unsupported");
+    fn build_file_writes_dynamic_library_with_fixed_array_for_await_bodies() {
+        let dir = TestDir::new("ql-driver-async-for-await-dylib-array");
         let source = dir.write(
             "async_for_await_dylib.ql",
             r#"
@@ -4889,6 +4893,57 @@ async fn helper() -> Int {
             "artifacts/libasync_for_await_dylib.so"
         });
 
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::DynamicLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_dynamic_library_invocation(&dir, &["q_export"])),
+                    ..ToolchainOptions::default()
+                },
+            },
+        )
+        .expect("dynamic library build with fixed-array for-await should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated dynamic library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-dylib");
+    }
+
+    #[test]
+    fn build_file_surfaces_async_for_await_diagnostics_for_dylib_non_array_iterables() {
+        let dir = TestDir::new("ql-driver-async-for-await-dylib-non-array");
+        let source = dir.write(
+            "async_for_await_dylib_non_array.ql",
+            r#"
+extern "c" pub fn q_export() -> Int {
+    return 1
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    for await value in (1, 2, 3) {
+        break
+    }
+    return await worker()
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_for_await_dylib_non_array.dll"
+        } else if cfg!(target_os = "macos") {
+            "artifacts/libasync_for_await_dylib_non_array.dylib"
+        } else {
+            "artifacts/libasync_for_await_dylib_non_array.so"
+        });
+
         let error = build_file(
             &source,
             &BuildOptions {
@@ -4899,7 +4954,7 @@ async fn helper() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect_err("dynamic library build with for-await should still fail");
+        .expect_err("dynamic library build with non-array for-await should still fail");
         let diagnostics = error
             .diagnostics()
             .expect("async for-await codegen rejection should return diagnostics");

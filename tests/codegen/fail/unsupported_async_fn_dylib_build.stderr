@@ -1,3 +1,0 @@
-error: tests/codegen/fail/unsupported_async_fn_dylib_build.ql:10:9: LLVM IR backend foundation does not support `for await` lowering yet
-      for await value in [1, 2, 3] {
-          ^^^^^
