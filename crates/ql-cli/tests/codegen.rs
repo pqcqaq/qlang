@@ -219,6 +219,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "async_library_task_handle_tuple_payload_staticlib",
+            source_relative: "fixtures/codegen/pass/async_library_task_handle_tuple_payload.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "async_library_recursive_aggregate_params_staticlib",
             source_relative: "fixtures/codegen/pass/async_library_recursive_aggregate_params.ql",
             emit: "staticlib",

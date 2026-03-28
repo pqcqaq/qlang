@@ -237,6 +237,72 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn accepts_awaiting_tuple_task_handle_aggregate_async_results() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> (Task[Int], Task[Int]) {
+    return (left(), right())
+}
+
+async fn main() -> Int {
+    let pair = await outer()
+    let first = await pair[0]
+    let second = await pair[1]
+    return first + second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected tuple aggregate task-handle async results to support sibling awaits, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_awaiting_struct_task_handle_aggregate_async_results() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    first: Task[Wrap],
+    second: Task[Wrap],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn outer() -> Pending {
+    return Pending { first: worker(), second: worker() }
+}
+
+async fn main() -> Wrap {
+    let pending = await outer()
+    await pending.first
+    return await pending.second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected struct aggregate task-handle async results to support sibling awaits, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_spawning_task_handle_helpers_inside_async_functions() {
     let diagnostics = diagnostic_messages(
         r#"

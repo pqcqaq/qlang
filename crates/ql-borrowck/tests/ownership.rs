@@ -2200,6 +2200,102 @@ async fn main() -> Int {
 }
 
 #[test]
+fn allows_awaiting_sibling_task_handles_from_awaited_tuple_payload() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> (Task[Int], Task[Int]) {
+    return (left(), right())
+}
+
+async fn main() -> Int {
+    let pending = outer()
+    let pair = await pending
+    let first = await pair[0]
+    let second = await pair[1]
+    return first + second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected awaited tuple payload sibling task handles to stay independently usable, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_reawaiting_same_task_handle_from_awaited_tuple_payload() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> (Task[Int], Task[Int]) {
+    return (left(), right())
+}
+
+async fn main() -> Int {
+    let pair = await outer()
+    let first = await pair[0]
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `pair[0]` was used after move".to_string())
+            || diagnostics.contains(&"local `pair` was used after move".to_string()),
+        "expected awaited tuple payload projection to remain move-tracked, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn renders_awaited_struct_task_handle_payload_consumes_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    first: Task[Wrap],
+    second: Task[Wrap],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn outer() -> Pending {
+    return Pending { first: worker(), second: worker() }
+}
+
+async fn main() -> Wrap {
+    let pending = outer()
+    let value = await pending
+    await value.first
+    return await value.second
+}
+"#,
+    );
+
+    assert_eq!(rendered.matches("consume(await task handle)").count(), 3);
+}
+
+#[test]
 fn renders_bound_zero_sized_helper_spawn_task_handle_consumes_for_debugging() {
     let rendered = render_output(
         r#"

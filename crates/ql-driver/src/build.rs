@@ -1420,6 +1420,58 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_tuple_task_handle_aggregate_async_results() {
+        let dir = TestDir::new("ql-driver-staticlib-async-tuple-task-handle-aggregate");
+        let source = dir.write(
+            "async_tuple_task_handle_aggregate.ql",
+            r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> (Task[Int], Task[Int]) {
+    return (left(), right())
+}
+
+async fn helper() -> Int {
+    let pair = await outer()
+    let first = await pair[0]
+    let second = await pair[1]
+    return first + second
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_tuple_task_handle_aggregate.lib"
+        } else {
+            "artifacts/libasync_tuple_task_handle_aggregate.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "static library build with tuple task-handle aggregate async results should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_bound_task_handle_helpers() {
         let dir = TestDir::new("ql-driver-staticlib-async-bound-task-handle-helper");
         let source = dir.write(
@@ -1599,6 +1651,62 @@ async fn helper() -> Wrap {
 
         let artifact = build_file(&source, &options).expect(
             "static library build with nested zero-sized task-handle async results should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_struct_task_handle_aggregate_async_results() {
+        let dir = TestDir::new("ql-driver-staticlib-async-struct-task-handle-aggregate");
+        let source = dir.write(
+            "async_struct_task_handle_aggregate.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    first: Task[Wrap],
+    second: Task[Wrap],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn outer() -> Pending {
+    return Pending { first: worker(), second: worker() }
+}
+
+async fn helper() -> Wrap {
+    let pending = await outer()
+    await pending.first
+    return await pending.second
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_struct_task_handle_aggregate.lib"
+        } else {
+            "artifacts/libasync_struct_task_handle_aggregate.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "static library build with struct task-handle aggregate async results should succeed",
         );
         let rendered =
             fs::read_to_string(&artifact.path).expect("read generated static library placeholder");

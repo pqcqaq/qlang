@@ -5087,6 +5087,85 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn emits_chained_await_lowering_for_tuple_task_handle_aggregate_async_results() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> (Task[Int], Task[Int]) {
+    return (left(), right())
+}
+
+async fn helper() -> Int {
+    let pair = await outer()
+    let first = await pair[0]
+    let second = await pair[1]
+    return first + second
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @ql_2_outer()"));
+        assert!(rendered.matches("@qlrt_task_await").count() >= 3);
+        assert!(rendered.contains("load { ptr, ptr }, ptr %t"));
+        assert!(rendered.contains("getelementptr inbounds { ptr, ptr }, ptr"));
+        assert!(rendered.matches("load ptr, ptr").count() >= 2);
+    }
+
+    #[test]
+    fn emits_chained_await_lowering_for_struct_task_handle_aggregate_async_results() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    first: Task[Wrap],
+    second: Task[Wrap],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn outer() -> Pending {
+    return Pending { first: worker(), second: worker() }
+}
+
+async fn helper() -> Wrap {
+    let pending = await outer()
+    await pending.first
+    return await pending.second
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("@qlrt_task_await").count() >= 3);
+        assert!(rendered.contains("load { ptr, ptr }, ptr %t"));
+        assert!(rendered.contains("getelementptr inbounds { ptr, ptr }, ptr"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+    }
+
+    #[test]
     fn emits_await_lowering_for_bound_task_handle_helpers() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
