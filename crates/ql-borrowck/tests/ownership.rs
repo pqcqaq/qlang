@@ -2340,6 +2340,96 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn allows_awaiting_sibling_task_handles_from_awaited_array_payload() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Task[Int]; 2] {
+    return [left(), right()]
+}
+
+async fn main() -> Int {
+    let tasks = await outer()
+    let first = await tasks[0]
+    let second = await tasks[1]
+    return first + second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected awaited array payload sibling task handles to stay independently usable, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_reawaiting_same_task_handle_from_awaited_array_payload() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Task[Int]; 2] {
+    return [left(), right()]
+}
+
+async fn main() -> Int {
+    let tasks = await outer()
+    let first = await tasks[0]
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks[0]` was used after move".to_string())
+            || diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected awaited array payload projection to remain move-tracked, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn renders_awaited_array_task_handle_payload_consumes_for_debugging() {
+    let rendered = render_output(
+        r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Task[Int]; 2] {
+    return [left(), right()]
+}
+
+async fn main() -> Int {
+    let tasks = outer()
+    let pending = await tasks
+    let first = await pending[0]
+    return await pending[1]
+}
+"#,
+    );
+
+    assert_eq!(rendered.matches("consume(await task handle)").count(), 3);
+}
+
+#[test]
 fn renders_bound_zero_sized_helper_spawn_task_handle_consumes_for_debugging() {
     let rendered = render_output(
         r#"

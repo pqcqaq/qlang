@@ -5166,6 +5166,44 @@ async fn helper() -> Wrap {
     }
 
     #[test]
+    fn emits_chained_await_lowering_for_array_task_handle_aggregate_async_results() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Task[Int]; 2] {
+    return [left(), right()]
+}
+
+async fn helper() -> Int {
+    let tasks = await outer()
+    let first = await tasks[0]
+    let second = await tasks[1]
+    return first + second
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @ql_2_outer()"));
+        assert!(rendered.matches("@qlrt_task_await").count() >= 3);
+        assert!(rendered.contains("load [2 x ptr], ptr %t"));
+        assert!(rendered.contains("getelementptr inbounds [2 x ptr], ptr"));
+        assert!(rendered.matches("load ptr, ptr").count() >= 2);
+    }
+
+    #[test]
     fn emits_await_lowering_for_bound_task_handle_helpers() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,

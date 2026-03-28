@@ -303,6 +303,37 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn accepts_awaiting_fixed_array_task_handle_aggregate_async_results() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Task[Int]; 2] {
+    return [left(), right()]
+}
+
+async fn main() -> Int {
+    let tasks = await outer()
+    let first = await tasks[0]
+    let second = await tasks[1]
+    return first + second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected fixed-array aggregate task-handle async results to support sibling awaits, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_spawning_task_handle_helpers_inside_async_functions() {
     let diagnostics = diagnostic_messages(
         r#"
