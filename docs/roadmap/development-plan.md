@@ -102,7 +102,7 @@
 - `ql-runtime` 已提供最小 `Task` / `JoinHandle` / `Executor` / `InlineExecutor`
 - runtime hook ABI skeleton 已存在，并被 `ql-driver` / `ql-codegen-llvm` 共享消费
 - backend 已支持最小 async body wrapper、frame scaffold、loadable `await`（当前已覆盖 scalar / `Task[T]` / 递归可加载 aggregate payload，以及 aggregate payload 内继续携带 `Task[T]` 的受控子集）、task-handle-aware `spawn`
-- projected task-handle operand 已支持 tuple index / struct field 只读投影路径
+- projected task-handle operand 已支持 tuple index / fixed-array literal index / struct field 只读投影路径
 - `staticlib` 已开放第一条受控 async library build 子集
 - `dylib` 已开放最小受控 async library build 子集：当前允许带内部 async helper 的 library body 通过，但公开导出面仍收敛在同步 `extern "c"` C ABI surface
 - `for await` 已开放首个受控 lowering 竖切片：当前仅支持 `staticlib` async library body 内对 fixed array iterable 的 lowering
@@ -112,7 +112,7 @@
 
 这些边界仍然应该明确写成“未完成”，而不是模糊描述成“后面再看”：
 
-- 更广义的 projection-sensitive ownership / partial-place move tracking（当前已开放 tuple/struct-field task-handle path 的只读 consume 与同路径 write/reinit；更广义 projection、array element 与动态 index 仍未开放）
+- 更广义的 projection-sensitive ownership / partial-place move tracking（当前已开放 tuple/struct-field task-handle path 的只读 consume 与同路径 write/reinit，以及 fixed-array literal index task-handle path 的只读 consume；更广义 projection、动态 index 与 array element write 仍未开放）
 - 更广义的 projection assignment lowering（当前仅开放 tuple index / struct-field projection write/reinit）
 - 更广义的 `for await` lowering（当前仅开放 `staticlib` async library body 内的 fixed array iterable）
 - cancellation / polling / drop 语义

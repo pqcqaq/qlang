@@ -6072,6 +6072,37 @@ async fn helper() -> Wrap {
     }
 
     #[test]
+    fn emits_await_lowering_for_projected_zero_sized_task_handle_array_elements() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = [worker(), worker()]
+    return await pair[0]
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("getelementptr inbounds [2 x ptr], ptr"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+        assert!(!rendered.contains("does not support field or index projections yet"));
+    }
+
+    #[test]
     fn emits_spawn_lowering_for_projected_zero_sized_task_handle_tuple_elements() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
@@ -6098,6 +6129,40 @@ async fn helper() -> Wrap {
             &runtime_hooks,
         );
 
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+        assert!(!rendered.contains("does not support field or index projections yet"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_projected_zero_sized_task_handle_array_elements() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = [worker(), worker()]
+    let running = spawn pair[0]
+    return await running
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("getelementptr inbounds [2 x ptr], ptr"));
         assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
         assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
         assert!(rendered.contains("load { [0 x i64] }, ptr"));

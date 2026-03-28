@@ -1051,6 +1051,31 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn accepts_awaiting_projected_zero_sized_task_handles_from_fixed_arrays() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let pair = [worker(), worker()]
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected fixed-array projected zero-sized task-handle await flow to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_spawning_projected_zero_sized_task_handles_from_tuples() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -1073,6 +1098,32 @@ async fn main() -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected projected zero-sized task-handle spawn flow to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_spawning_projected_zero_sized_task_handles_from_fixed_arrays() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let pair = [worker(), worker()]
+    let running = spawn pair[0]
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected fixed-array projected zero-sized task-handle spawn flow to type-check, got {diagnostics:?}"
     );
 }
 

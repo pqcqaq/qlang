@@ -1791,6 +1791,28 @@ async fn main() -> Int {
 }
 
 #[test]
+fn allows_awaiting_sibling_projected_task_handles_from_fixed_arrays() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let pair = [worker(), worker()]
+    let first = await pair[0]
+    return await pair[1]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected sibling projected fixed-array task-handle awaits to be accepted, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_use_after_reawaiting_same_projected_task_handle_from_tuple() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -1809,6 +1831,28 @@ async fn main() -> Int {
     assert!(
         diagnostics.contains(&"local `pair` was used after move".to_string()),
         "expected re-awaiting the same projected task handle to report a move, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_reawaiting_same_projected_task_handle_from_fixed_array() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let pair = [worker(), worker()]
+    let first = await pair[0]
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `pair` was used after move".to_string()),
+        "expected re-awaiting the same fixed-array projected task handle to report a move, got {diagnostics:?}"
     );
 }
 

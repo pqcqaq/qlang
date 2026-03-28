@@ -87,7 +87,7 @@ P4/P5 地基已经落地，且当前正在保守扩展 Phase 7 async library/sta
 - 标量整数 / `Bool` / `Void`
 - direct function call
 - 保守的 async `staticlib` 子集：async library body、scalar/tuple/array/struct/void `await`、task-handle-aware `spawn`
-- projected task-handle operand：tuple index / struct-field 只读投影（例如 `await pair[0]`、`spawn pair.task`）
+- projected task-handle operand：tuple index / fixed-array literal index / struct-field 只读投影（例如 `await pair[0]`、`await tasks[0]`、`spawn pair.task`）
 - arithmetic / compare / branch / return
 - `.ll` 文本产物始终可用
 - `.obj` / `.o` / 基础 `.exe` 产物依赖 clang-style compiler

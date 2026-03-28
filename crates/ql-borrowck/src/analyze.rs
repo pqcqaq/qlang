@@ -858,12 +858,12 @@ impl<'a> BodyAnalyzer<'a> {
                     return None;
                 };
                 let index = parse_usize_literal(raw_index)?;
-                if !matches!(target_ty, Ty::Tuple(_)) {
-                    return None;
-                }
-
                 let mut target = self.precise_move_target_for_expr(*target)?;
-                target.path.push(MovePathSegment::TupleIndex(index));
+                target.path.push(match target_ty {
+                    Ty::Tuple(_) => MovePathSegment::TupleIndex(index),
+                    Ty::Array { .. } => MovePathSegment::ArrayIndex(index),
+                    _ => return None,
+                });
                 Some(target)
             }
             hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
@@ -888,6 +888,12 @@ impl<'a> BodyAnalyzer<'a> {
                 _ => None,
             },
             ProjectionElem::Index(index) => match current_ty {
+                Ty::Array { .. } => match &**index {
+                    Operand::Constant(Constant::Integer(raw)) => {
+                        parse_usize_literal(raw).map(MovePathSegment::ArrayIndex)
+                    }
+                    _ => None,
+                },
                 Ty::Tuple(_) => match &**index {
                     Operand::Constant(Constant::Integer(raw)) => {
                         parse_usize_literal(raw).map(MovePathSegment::TupleIndex)

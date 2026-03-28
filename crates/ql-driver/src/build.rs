@@ -2852,6 +2852,147 @@ async fn helper() -> Wrap {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_projected_zero_sized_task_handle_array_await() {
+        let dir = TestDir::new("ql-driver-async-projected-await-task-handle-array");
+        let source = dir.write(
+            "async_projected_task_handle_array_await.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = [worker(), worker()]
+    return await pair[0]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_projected_task_handle_array_await.lib"
+        } else {
+            "artifacts/libasync_projected_task_handle_array_await.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with projected fixed-array task-handle await should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_projected_zero_sized_task_handle_array_spawn() {
+        let dir = TestDir::new("ql-driver-async-projected-spawn-task-handle-array");
+        let source = dir.write(
+            "async_projected_task_handle_array_spawn.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = [worker(), worker()]
+    let running = spawn pair[0]
+    return await running
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_projected_task_handle_array_spawn.lib"
+        } else {
+            "artifacts/libasync_projected_task_handle_array_spawn.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with projected fixed-array task-handle spawn should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_sibling_projected_zero_sized_task_handle_array_awaits()
+    {
+        let dir = TestDir::new("ql-driver-async-projected-sibling-await-task-handle-array");
+        let source = dir.write(
+            "async_projected_task_handle_array_sibling_awaits.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = [worker(), worker()]
+    let first = await pair[0]
+    return await pair[1]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_projected_task_handle_array_sibling_awaits.lib"
+        } else {
+            "artifacts/libasync_projected_task_handle_array_sibling_awaits.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with sibling projected fixed-array awaits should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_projected_zero_sized_task_handle_struct_field_await() {
         let dir = TestDir::new("ql-driver-async-projected-await-task-handle-struct-field");
         let source = dir.write(

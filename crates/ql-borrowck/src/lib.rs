@@ -106,6 +106,7 @@ pub enum MoveCertainty {
 pub enum MovePathSegment {
     Field(String),
     TupleIndex(usize),
+    ArrayIndex(usize),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
