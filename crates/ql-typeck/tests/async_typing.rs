@@ -208,6 +208,32 @@ async fn main() -> Int {
 }
 
 #[test]
+fn allows_spawning_bound_task_handle_helpers_inside_async_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn main() -> Int {
+    let task = schedule()
+    let running = spawn task
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected bound task-handle helpers to be spawnable, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_passing_async_calls_to_task_handle_parameters() {
     let diagnostics = diagnostic_messages(
         r#"

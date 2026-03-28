@@ -82,7 +82,7 @@ enum AsyncTaskResultLayout {
     Void,
     Loadable {
         llvm_ty: String,
-        size: u64,
+        _size: u64,
         align: u64,
     },
 }
@@ -551,6 +551,7 @@ impl<'a> ModuleEmitter<'a> {
         let mut local_types = self.seed_local_types(body, &signature, &mut diagnostics);
         let async_task_handles = self.collect_async_task_handles(body);
         let unsupported_for_iterable_locals = collect_unsupported_for_iterable_locals(body);
+        self.propagate_expected_temp_local_types(body, &mut local_types);
 
         for block in body.blocks() {
             for statement_id in &block.statements {
@@ -677,6 +678,237 @@ impl<'a> ModuleEmitter<'a> {
         } else {
             Err(dedupe_diagnostics(diagnostics))
         }
+    }
+
+    fn propagate_expected_temp_local_types(
+        &self,
+        body: &mir::MirBody,
+        local_types: &mut HashMap<mir::LocalId, Ty>,
+    ) {
+        let max_passes = body.locals().len().max(1);
+        for _ in 0..max_passes {
+            let before = local_types.len();
+            for block in body.blocks() {
+                for statement_id in &block.statements {
+                    let statement = body.statement(*statement_id);
+                    self.propagate_expected_temp_types_from_statement(body, statement, local_types);
+                }
+            }
+            if local_types.len() == before {
+                break;
+            }
+        }
+    }
+
+    fn propagate_expected_temp_types_from_statement(
+        &self,
+        body: &mir::MirBody,
+        statement: &mir::Statement,
+        local_types: &mut HashMap<mir::LocalId, Ty>,
+    ) {
+        match &statement.kind {
+            StatementKind::Assign { place, value } => {
+                if let Some(expected_ty) = local_types.get(&place.base).cloned() {
+                    self.seed_expected_temp_from_rvalue(body, value, &expected_ty, local_types);
+                }
+                self.seed_expected_temp_from_call_args(body, value, local_types);
+            }
+            StatementKind::BindPattern {
+                pattern, source, ..
+            } => {
+                if let Some(expected_ty) = self
+                    .binding_local_for_pattern(body, *pattern)
+                    .and_then(|binding_local| local_types.get(&binding_local).cloned())
+                {
+                    self.seed_expected_temp_from_operand(body, source, &expected_ty, local_types);
+                }
+            }
+            StatementKind::Eval { value } => {
+                self.seed_expected_temp_from_call_args(body, value, local_types);
+            }
+            StatementKind::StorageLive { .. }
+            | StatementKind::StorageDead { .. }
+            | StatementKind::RegisterCleanup { .. }
+            | StatementKind::RunCleanup { .. } => {}
+        }
+    }
+
+    fn seed_expected_temp_from_rvalue(
+        &self,
+        body: &mir::MirBody,
+        value: &Rvalue,
+        expected_ty: &Ty,
+        local_types: &mut HashMap<mir::LocalId, Ty>,
+    ) {
+        match value {
+            Rvalue::Use(operand) => {
+                self.seed_expected_temp_from_operand(body, operand, expected_ty, local_types);
+            }
+            Rvalue::Tuple(items) => {
+                self.seed_expected_temp_from_tuple_items(body, items, expected_ty, local_types);
+            }
+            Rvalue::Array(items) => {
+                self.seed_expected_temp_from_array_items(body, items, expected_ty, local_types);
+            }
+            Rvalue::AggregateStruct { fields, .. } => {
+                self.seed_expected_temp_from_struct_fields(body, fields, expected_ty, local_types);
+            }
+            Rvalue::Call { .. }
+            | Rvalue::Binary { .. }
+            | Rvalue::Unary { .. }
+            | Rvalue::Closure { .. }
+            | Rvalue::Question(_)
+            | Rvalue::OpaqueExpr(_) => {}
+        }
+    }
+
+    fn seed_expected_temp_from_call_args(
+        &self,
+        body: &mir::MirBody,
+        value: &Rvalue,
+        local_types: &mut HashMap<mir::LocalId, Ty>,
+    ) {
+        let Rvalue::Call { callee, args } = value else {
+            return;
+        };
+        let Operand::Constant(Constant::Function { function, .. }) = callee else {
+            return;
+        };
+        let Some(signature) = self.signatures.get(function) else {
+            return;
+        };
+
+        for (arg, param) in args.iter().zip(signature.params.iter()) {
+            self.seed_expected_temp_from_operand(body, &arg.value, &param.ty, local_types);
+        }
+    }
+
+    fn seed_expected_temp_from_operand(
+        &self,
+        body: &mir::MirBody,
+        operand: &Operand,
+        expected_ty: &Ty,
+        local_types: &mut HashMap<mir::LocalId, Ty>,
+    ) {
+        let Operand::Place(place) = operand else {
+            return;
+        };
+        if !place.projections.is_empty() {
+            return;
+        }
+        self.seed_direct_temp_local_type(body, place.base, expected_ty, local_types);
+    }
+
+    fn seed_expected_temp_from_tuple_items(
+        &self,
+        body: &mir::MirBody,
+        items: &[Operand],
+        expected_ty: &Ty,
+        local_types: &mut HashMap<mir::LocalId, Ty>,
+    ) {
+        let Ty::Tuple(expected_items) = expected_ty else {
+            return;
+        };
+        for (item, expected_item_ty) in items.iter().zip(expected_items.iter()) {
+            self.seed_expected_temp_from_operand(body, item, expected_item_ty, local_types);
+        }
+    }
+
+    fn seed_expected_temp_from_array_items(
+        &self,
+        body: &mir::MirBody,
+        items: &[Operand],
+        expected_ty: &Ty,
+        local_types: &mut HashMap<mir::LocalId, Ty>,
+    ) {
+        let Ty::Array { element, .. } = expected_ty else {
+            return;
+        };
+        for item in items {
+            self.seed_expected_temp_from_operand(body, item, element, local_types);
+        }
+    }
+
+    fn seed_expected_temp_from_struct_fields(
+        &self,
+        body: &mir::MirBody,
+        fields: &[mir::AggregateField],
+        expected_ty: &Ty,
+        local_types: &mut HashMap<mir::LocalId, Ty>,
+    ) {
+        let Ok(field_layouts) =
+            self.struct_field_lowerings(expected_ty, Span::default(), "expected struct value type")
+        else {
+            return;
+        };
+        for field in fields {
+            let Some(expected_field_ty) = field_layouts
+                .iter()
+                .find(|info| info.name == field.name)
+                .map(|info| &info.ty)
+            else {
+                continue;
+            };
+            self.seed_expected_temp_from_operand(
+                body,
+                &field.value,
+                expected_field_ty,
+                local_types,
+            );
+        }
+    }
+
+    fn seed_direct_temp_local_type(
+        &self,
+        body: &mir::MirBody,
+        local_id: mir::LocalId,
+        expected_ty: &Ty,
+        local_types: &mut HashMap<mir::LocalId, Ty>,
+    ) {
+        if !Self::is_useful_expected_temp_type(expected_ty) {
+            return;
+        }
+        if local_types.contains_key(&local_id) {
+            return;
+        }
+        if matches!(body.local(local_id).origin, LocalOrigin::Temp { .. }) {
+            local_types.insert(local_id, expected_ty.clone());
+        }
+    }
+
+    fn is_useful_expected_temp_type(ty: &Ty) -> bool {
+        match ty {
+            Ty::Unknown | Ty::Generic(_) => false,
+            Ty::Builtin(_) => true,
+            Ty::Array { element, .. } => Self::is_useful_expected_temp_type(element),
+            Ty::Item { args, .. } | Ty::Import { args, .. } | Ty::Named { args, .. } => {
+                args.iter().all(Self::is_useful_expected_temp_type)
+            }
+            Ty::Pointer { inner, .. } | Ty::TaskHandle(inner) => {
+                Self::is_useful_expected_temp_type(inner)
+            }
+            Ty::Tuple(items) => items.iter().all(Self::is_useful_expected_temp_type),
+            Ty::Callable { params, ret } => {
+                params.iter().all(Self::is_useful_expected_temp_type)
+                    && Self::is_useful_expected_temp_type(ret)
+            }
+        }
+    }
+
+    fn binding_local_for_pattern(
+        &self,
+        body: &mir::MirBody,
+        pattern: hir::PatternId,
+    ) -> Option<mir::LocalId> {
+        let PatternKind::Binding(local) = pattern_kind(self.input.hir, pattern) else {
+            return None;
+        };
+        body.local_ids().find(|candidate| {
+            matches!(
+                body.local(*candidate).origin,
+                LocalOrigin::Binding(hir_local) if hir_local == *local
+            )
+        })
     }
 
     fn seed_local_types(
@@ -1740,10 +1972,11 @@ impl<'a> ModuleEmitter<'a> {
                 }
                 Some(AsyncTaskResultLayout::Loadable {
                     llvm_ty,
-                    size,
+                    _size: _,
                     align,
                 }) => {
-                    debug_assert!(*size > 0);
+                    // Zero-sized fixed arrays and recursive aggregates containing only
+                    // zero-sized fields are still valid loadable async results.
                     debug_assert!(*align > 0);
                     debug_assert_eq!(llvm_ty, &function.signature.body_return_llvm_ty);
                 }
@@ -1847,7 +2080,7 @@ impl<'a> ModuleEmitter<'a> {
 
         Ok(AsyncTaskResultLayout::Loadable {
             llvm_ty,
-            size: layout.size,
+            _size: layout.size,
             align: layout.align,
         })
     }
@@ -2838,7 +3071,7 @@ fn build_async_task_result_layout(
 
     Ok(AsyncTaskResultLayout::Loadable {
         llvm_ty,
-        size: layout.size,
+        _size: layout.size,
         align: layout.align,
     })
 }
@@ -3449,6 +3682,52 @@ async fn worker(pair: Pair, values: [Int; 2]) -> Int {
     }
 
     #[test]
+    fn emits_async_task_create_wrapper_with_zero_sized_recursive_aggregate_frame_fields() {
+        let runtime_hooks =
+            collect_runtime_hook_signatures([RuntimeCapability::AsyncFunctionBodies]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker(values: [Int; 0], wrap: Wrap, nested: [[Int; 0]; 1]) -> Int {
+    return 0
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i64 @ql_1_worker__async_body(ptr %frame)"));
+        assert!(rendered.contains(
+            "define ptr @ql_1_worker([0 x i64] %arg0, { [0 x i64] } %arg1, [1 x [0 x i64]] %arg2)"
+        ));
+        assert!(rendered.contains("call ptr @qlrt_async_frame_alloc(i64 0, i64 8)"));
+        assert!(rendered.contains(
+            "getelementptr inbounds { [0 x i64], { [0 x i64] }, [1 x [0 x i64]] }, ptr %async_frame, i32 0, i32 0"
+        ));
+        assert!(rendered.contains(
+            "getelementptr inbounds { [0 x i64], { [0 x i64] }, [1 x [0 x i64]] }, ptr %async_frame, i32 0, i32 1"
+        ));
+        assert!(rendered.contains(
+            "getelementptr inbounds { [0 x i64], { [0 x i64] }, [1 x [0 x i64]] }, ptr %async_frame, i32 0, i32 2"
+        ));
+        assert!(rendered.contains("store [0 x i64] %arg0, ptr %async_frame_field0"));
+        assert!(rendered.contains("store { [0 x i64] } %arg1, ptr %async_frame_field1"));
+        assert!(rendered.contains("store [1 x [0 x i64]] %arg2, ptr %async_frame_field2"));
+        assert!(rendered.contains(
+            "%async_body_frame_field0 = getelementptr inbounds { [0 x i64], { [0 x i64] }, [1 x [0 x i64]] }, ptr %frame, i32 0, i32 0"
+        ));
+        assert!(rendered.contains(
+            "%async_body_frame_field1 = getelementptr inbounds { [0 x i64], { [0 x i64] }, [1 x [0 x i64]] }, ptr %frame, i32 0, i32 1"
+        ));
+        assert!(rendered.contains(
+            "%async_body_frame_field2 = getelementptr inbounds { [0 x i64], { [0 x i64] }, [1 x [0 x i64]] }, ptr %frame, i32 0, i32 2"
+        ));
+    }
+
+    #[test]
     fn builds_async_task_result_layouts_for_void_scalar_tuple_and_array_results() {
         let void_layout =
             build_async_task_result_layout(&Ty::Builtin(BuiltinType::Void), Span::new(0, 0))
@@ -3462,11 +3741,11 @@ async fn worker(pair: Pair, values: [Int; 2]) -> Int {
         match int_layout {
             AsyncTaskResultLayout::Loadable {
                 llvm_ty,
-                size,
+                _size,
                 align,
             } => {
                 assert_eq!(llvm_ty, "i64");
-                assert_eq!(size, 8);
+                assert_eq!(_size, 8);
                 assert_eq!(align, 8);
             }
             AsyncTaskResultLayout::Void => panic!("expected scalar layout for Int"),
@@ -3483,11 +3762,11 @@ async fn worker(pair: Pair, values: [Int; 2]) -> Int {
         match tuple_layout {
             AsyncTaskResultLayout::Loadable {
                 llvm_ty,
-                size,
+                _size,
                 align,
             } => {
                 assert_eq!(llvm_ty, "{ i1, i64 }");
-                assert_eq!(size, 16);
+                assert_eq!(_size, 16);
                 assert_eq!(align, 8);
             }
             AsyncTaskResultLayout::Void => panic!("expected loadable layout for tuple result"),
@@ -3504,14 +3783,40 @@ async fn worker(pair: Pair, values: [Int; 2]) -> Int {
         match array_layout {
             AsyncTaskResultLayout::Loadable {
                 llvm_ty,
-                size,
+                _size,
                 align,
             } => {
                 assert_eq!(llvm_ty, "[3 x i64]");
-                assert_eq!(size, 24);
+                assert_eq!(_size, 24);
                 assert_eq!(align, 8);
             }
             AsyncTaskResultLayout::Void => panic!("expected loadable layout for array result"),
+        }
+    }
+
+    #[test]
+    fn builds_async_task_result_layouts_for_zero_sized_arrays() {
+        let array_layout = build_async_task_result_layout(
+            &Ty::Array {
+                element: Box::new(Ty::Builtin(BuiltinType::Int)),
+                len: 0,
+            },
+            Span::new(0, 0),
+        )
+        .expect("zero-sized array async result layout should be supported");
+        match array_layout {
+            AsyncTaskResultLayout::Loadable {
+                llvm_ty,
+                _size,
+                align,
+            } => {
+                assert_eq!(llvm_ty, "[0 x i64]");
+                assert_eq!(_size, 0);
+                assert_eq!(align, 8);
+            }
+            AsyncTaskResultLayout::Void => {
+                panic!("expected loadable layout for zero-sized array result")
+            }
         }
     }
 
@@ -3552,6 +3857,129 @@ fn values() -> [Int; 3] {
         assert!(rendered.contains("i64 2, 1"));
         assert!(rendered.contains("i64 3, 2"));
         assert!(rendered.contains("ret [3 x i64]"));
+    }
+
+    #[test]
+    fn emits_empty_array_value_lowering_when_return_type_is_known() {
+        let rendered = emit_library(
+            r#"
+fn values() -> [Int; 0] {
+    return []
+}
+"#,
+        );
+
+        assert!(
+            rendered.contains("define [0 x i64] @ql_0_values()"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("[0 x i64] zeroinitializer"), "{rendered}");
+        assert!(rendered.contains("ret [0 x i64]"), "{rendered}");
+    }
+
+    #[test]
+    fn emits_empty_array_argument_lowering_when_callee_param_type_is_known() {
+        let rendered = emit_library(
+            r#"
+fn take(values: [Int; 0]) -> Int {
+    return 0
+}
+
+fn call() -> Int {
+    return take([])
+}
+"#,
+        );
+
+        assert!(
+            rendered.contains("define i64 @ql_0_take([0 x i64] %arg0)"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("call i64 @ql_0_take(") && rendered.contains("[0 x i64]"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn emits_empty_array_lowering_inside_expected_tuple_items() {
+        let rendered = emit_library(
+            r#"
+fn pair() -> ([Int; 0], Int) {
+    return ([], 1)
+}
+"#,
+        );
+
+        assert!(
+            rendered.contains("define { [0 x i64], i64 } @ql_0_pair()"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("[0 x i64] zeroinitializer"), "{rendered}");
+        assert!(
+            rendered.contains("insertvalue { [0 x i64], i64 }"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn emits_empty_array_lowering_inside_expected_struct_fields() {
+        let rendered = emit_library(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn build() -> Wrap {
+    return Wrap { values: [] }
+}
+"#,
+        );
+
+        assert!(
+            rendered.contains("define { [0 x i64] } @ql_1_build()"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("[0 x i64] zeroinitializer"), "{rendered}");
+        assert!(rendered.contains("insertvalue { [0 x i64] }"), "{rendered}");
+    }
+
+    #[test]
+    fn emits_empty_array_lowering_inside_expected_nested_arrays() {
+        let rendered = emit_library(
+            r#"
+fn values() -> [[Int; 0]; 1] {
+    return [[]]
+}
+"#,
+        );
+
+        assert!(
+            rendered.contains("define [1 x [0 x i64]] @ql_0_values()"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("[0 x i64] zeroinitializer"), "{rendered}");
+        assert!(
+            rendered.contains("insertvalue [1 x [0 x i64]]"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_array_value_without_expected_type() {
+        let messages = emit_error(
+            r#"
+fn main() -> Int {
+    let values = []
+    return 0
+}
+"#,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message
+                == "LLVM IR backend foundation cannot infer the element type of an empty array literal without an expected array type"
+        }));
     }
 
     #[test]
@@ -3756,6 +4184,108 @@ async fn helper() -> [Int; 3] {
         assert!(rendered.contains("define [3 x i64] @ql_1_helper__async_body(ptr %frame)"));
         assert!(rendered.contains("call ptr @qlrt_task_await(ptr"));
         assert!(rendered.contains("load [3 x i64], ptr"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr"));
+    }
+
+    #[test]
+    fn emits_async_zero_sized_array_task_result_lowering() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> [Int; 0] {
+    return []
+}
+
+async fn helper() -> [Int; 0] {
+    return await worker()
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define [0 x i64] @ql_0_worker__async_body(ptr %frame)"));
+        assert!(
+            rendered.contains("store [0 x i64] zeroinitializer"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("define [0 x i64] @ql_1_helper__async_body(ptr %frame)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr"));
+        assert!(rendered.contains("load [0 x i64], ptr"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr"));
+    }
+
+    #[test]
+    fn emits_async_zero_sized_recursive_aggregate_task_result_lowering() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    return await worker()
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define { [0 x i64] } @ql_1_worker__async_body(ptr %frame)"));
+        assert!(
+            rendered.contains("store [0 x i64] zeroinitializer"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("define { [0 x i64] } @ql_2_helper__async_body(ptr %frame)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr"));
+    }
+
+    #[test]
+    fn emits_async_zero_sized_recursive_aggregate_param_lowering() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker(values: [Int; 0], wrap: Wrap, nested: [[Int; 0]; 1]) -> Int {
+    return 7
+}
+
+async fn helper() -> Int {
+    return await worker([], Wrap { values: [] }, [[]])
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains(
+            "define ptr @ql_1_worker([0 x i64] %arg0, { [0 x i64] } %arg1, [1 x [0 x i64]] %arg2)"
+        ));
+        assert!(rendered.contains("call ptr @qlrt_async_frame_alloc(i64 0, i64 8)"));
+        assert!(rendered.contains("call ptr @ql_1_worker("));
+        assert!(rendered.contains("[0 x i64] zeroinitializer"), "{rendered}");
+        assert!(rendered.contains("[1 x [0 x i64]]"), "{rendered}");
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr"));
+        assert!(rendered.contains("load i64, ptr"));
         assert!(rendered.contains("call void @qlrt_task_result_release(ptr"));
     }
 
@@ -4117,6 +4647,179 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn emits_await_lowering_for_bound_task_handle_helpers() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn helper() -> Int {
+    let task = schedule()
+    return await task
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define ptr @ql_1_schedule()"));
+        assert!(rendered.contains("call ptr @ql_1_schedule()"));
+        assert!(rendered.contains("store ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load i64, ptr %t"));
+    }
+
+    #[test]
+    fn emits_await_lowering_for_local_returned_task_handle_helpers() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    let task = worker()
+    return task
+}
+
+async fn helper() -> Int {
+    return await schedule()
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define ptr @ql_1_schedule()"));
+        assert!(rendered.contains("call ptr @ql_0_worker()"));
+        assert!(rendered.contains("store ptr %t"));
+        assert!(rendered.contains("call ptr @ql_1_schedule()"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load i64, ptr %t"));
+    }
+
+    #[test]
+    fn emits_await_lowering_for_zero_sized_recursive_aggregate_task_handle_helpers() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    return worker()
+}
+
+async fn helper() -> Wrap {
+    return await schedule()
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define ptr @ql_2_schedule()"));
+        assert!(rendered.contains("call ptr @ql_1_worker()"));
+        assert!(rendered.contains("call ptr @ql_2_schedule()"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr %t"));
+    }
+
+    #[test]
+    fn emits_await_lowering_for_bound_zero_sized_recursive_aggregate_task_handle_helpers() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    return worker()
+}
+
+async fn helper() -> Wrap {
+    let task = schedule()
+    return await task
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define ptr @ql_2_schedule()"));
+        assert!(rendered.contains("call ptr @ql_2_schedule()"));
+        assert!(rendered.contains("store ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr %t"));
+    }
+
+    #[test]
+    fn emits_await_lowering_for_local_returned_zero_sized_recursive_aggregate_task_handles() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    let task = worker()
+    return task
+}
+
+async fn helper() -> Wrap {
+    return await schedule()
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define ptr @ql_2_schedule()"));
+        assert!(rendered.contains("call ptr @ql_1_worker()"));
+        assert!(rendered.contains("store ptr %t"));
+        assert!(rendered.contains("call ptr @ql_2_schedule()"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr %t"));
+    }
+
+    #[test]
     fn emits_await_lowering_for_forwarded_task_handle_arguments() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
@@ -4147,6 +4850,43 @@ async fn helper() -> Int {
         assert!(rendered.contains("call ptr @ql_0_worker()"));
         assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
         assert!(rendered.contains("load i64, ptr %t"));
+    }
+
+    #[test]
+    fn emits_await_lowering_for_forwarded_zero_sized_recursive_aggregate_task_handles() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn helper() -> Wrap {
+    let task = worker()
+    let forwarded = forward(task)
+    return await forwarded
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define ptr @ql_2_forward(ptr %arg0)"));
+        assert!(rendered.matches("_forward(").count() >= 2);
+        assert!(rendered.contains("call ptr @ql_1_worker()"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr %t"));
     }
 
     #[test]
@@ -4309,6 +5049,39 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn emits_spawn_lowering_for_bound_zero_sized_recursive_aggregate_task_handles() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let task = worker()
+    let running = spawn task
+    return await running
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @ql_1_worker()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+    }
+
+    #[test]
     fn emits_spawn_lowering_for_task_handle_helpers() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
@@ -4337,6 +5110,113 @@ async fn helper() -> Int {
         assert!(rendered.matches("_schedule(").count() >= 2);
         assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
         assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_bound_task_handle_helpers() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn helper() -> Int {
+    let task = schedule()
+    let running = spawn task
+    return await running
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define ptr @ql_1_schedule()"));
+        assert!(rendered.contains("call ptr @ql_1_schedule()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_zero_sized_recursive_aggregate_task_handle_helpers() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    return worker()
+}
+
+async fn helper() -> Wrap {
+    let task = spawn schedule()
+    return await task
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("_schedule(").count() >= 2);
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_bound_zero_sized_recursive_aggregate_task_handle_helpers() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    return worker()
+}
+
+async fn helper() -> Wrap {
+    let task = schedule()
+    let running = spawn task
+    return await running
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define ptr @ql_2_schedule()"));
+        assert!(rendered.contains("call ptr @ql_2_schedule()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
     }
 
     #[test]
@@ -4370,6 +5250,77 @@ async fn helper() -> Int {
         assert!(rendered.matches("_forward(").count() >= 2);
         assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
         assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_forwarded_zero_sized_recursive_aggregate_task_handles() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn helper() -> Wrap {
+    let task = worker()
+    let running = spawn forward(task)
+    return await running
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define ptr @ql_2_forward(ptr %arg0)"));
+        assert!(rendered.matches("_forward(").count() >= 2);
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+    }
+
+    #[test]
+    fn emits_spawn_handle_lowering_for_zero_sized_recursive_aggregate_results() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let task = spawn worker()
+    return await task
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define { [0 x i64] } @ql_1_worker__async_body(ptr %frame)"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr"));
     }
 
     #[test]

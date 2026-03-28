@@ -205,6 +205,55 @@ async fn main() -> Int {
 }
 
 #[test]
+fn allows_spawning_bound_helper_returned_task_handles() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn main() -> Int {
+    let task = schedule()
+    let running = spawn task
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected helper-returned task handles to be spawnable after binding, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_spawning_helper_returned_task_handle() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn main() -> Int {
+    let task = schedule()
+    let running = spawn task
+    return await task
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `task` was used after move".to_string()));
+}
+
+#[test]
 fn reports_maybe_moved_task_handle_after_branch_join() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -700,6 +749,30 @@ async fn worker() -> Int {
 
 async fn main() -> Int {
     let task = worker()
+    let running = spawn task
+    return await running
+}
+"#,
+    );
+
+    assert!(rendered.contains("consume(spawn task handle)"));
+    assert!(rendered.contains("consume(await task handle)"));
+}
+
+#[test]
+fn renders_bound_helper_spawn_task_handle_consumes_for_debugging() {
+    let rendered = render_output(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+async fn main() -> Int {
+    let task = schedule()
     let running = spawn task
     return await running
 }

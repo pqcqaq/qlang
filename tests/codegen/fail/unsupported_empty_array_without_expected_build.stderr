@@ -1,0 +1,3 @@
+error: tests/codegen/fail/unsupported_empty_array_without_expected_build.ql:2:18: LLVM IR backend foundation cannot infer the element type of an empty array literal without an expected array type
+      let values = []
+                   ^^
