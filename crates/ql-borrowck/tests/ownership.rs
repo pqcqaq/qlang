@@ -1000,6 +1000,37 @@ async fn main(flag: Bool) -> Int {
 }
 
 #[test]
+fn allows_conditional_cleanup_reinitializing_zero_sized_task_handles() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Int {
+    var task = worker()
+    defer if flag { task = fresh_worker(); "" } else { "" }
+    defer await task
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn deferred_root_write_reinitializes_for_later_cleanup_reads() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -1214,6 +1245,35 @@ async fn main(flag: Bool) -> Int {
     assert!(rendered.contains("ownership main"));
     assert!(rendered.contains("consume(await task handle)"));
     assert!(rendered.contains("consume(call task handle argument)"));
+}
+
+#[test]
+fn renders_zero_sized_task_conditional_cleanup_reinitialization_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Int {
+    var task = worker()
+    defer if flag { task = fresh_worker(); "" } else { "" }
+    defer await task
+    return 0
+}
+"#,
+    );
+
+    assert!(rendered.contains("ownership main"));
+    assert!(rendered.contains("consume(await task handle)"));
 }
 
 #[test]
