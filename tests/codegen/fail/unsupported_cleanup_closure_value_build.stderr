@@ -1,0 +1,6 @@
+error: tests/codegen/fail/unsupported_cleanup_closure_value_build.ql:4:5: LLVM IR backend foundation does not support cleanup lowering yet
+      defer first()
+      ^^^^^^^^
+error: tests/codegen/fail/unsupported_cleanup_closure_value_build.ql:5:19: LLVM IR backend foundation does not support closure values yet
+      let capture = () => 1
+                    ^^^^^^^

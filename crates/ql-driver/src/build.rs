@@ -2692,6 +2692,57 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_cleanup_and_closure_value_codegen_diagnostics_once_each() {
+        let dir = TestDir::new("ql-driver-cleanup-closure-value-unsupported");
+        let source = dir.write(
+            "cleanup_closure_value.ql",
+            r#"
+extern "c" fn first()
+
+fn main() -> Int {
+    defer first()
+    let capture = () => 1
+    return 0
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("cleanup and closure value codegen rejection should return diagnostics");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support cleanup lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support closure values yet"
+                })
+                .count(),
+            1
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            !diagnostic
+                .message
+                .contains("could not resolve LLVM type for local")
+                && !diagnostic
+                    .message
+                    .contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
     fn build_file_surfaces_projected_spawn_library_diagnostics_without_backend_noise() {
         let dir = TestDir::new("ql-driver-async-projected-spawn-library-runtime");
         let source = dir.write(
