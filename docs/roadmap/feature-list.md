@@ -1,5 +1,7 @@
 # 功能清单
 
+这页是长期能力 inventory，不等于“当前已经实现的功能列表”。当前真实进度请以 [开发计划](/roadmap/development-plan) 和 [阶段进度](/roadmap/phase-progress) 为准。
+
 ## 分级规则
 
 - `P0`：没有它，语言无法作为真实原型闭环

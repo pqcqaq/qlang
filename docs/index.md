@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Qlang
   text: 给程序员简单，把复杂留给编译器
-  tagline: 一个基于 LLVM 的编译型语言预研方案，目标是把安全性、可维护性、互操作性和工具链体验统一起来。
+  tagline: 一个基于 LLVM 的编译型语言项目，当前已完成 P1-P6 地基并在推进 Phase 7 的 async、runtime 与 Rust 互操作。
   actions:
     - theme: brand
       text: 查看阶段总览
@@ -26,7 +26,7 @@ features:
 
 ## 当前结论
 
-这个仓库当前处于预研阶段，目标不是马上写一个半成品编译器，而是先把关键设计决策收敛到一套可以持续执行的方案上。
+这个仓库已经不是“只有设计稿的预研空壳”，而是一个真实的 Rust 编译器与工具链工作区。当前已经形成前端、语义、中端、后端、FFI、LSP 与文档站的稳定主干，活跃主线是保守推进的 Phase 7：async、runtime、task-handle lowering 与 Rust 互操作。
 
 当前文档给出四类结论：
 
@@ -35,11 +35,18 @@ features:
 - 编译器、LSP、格式化器、文档系统与仓库结构
 - 细化到阶段出口标准的功能清单与执行路线图
 
-当前实现已经推进到 P4 backend foundation，并在 P5 上落地了最小可用的 C 互操作闭环：稳定 `extern "c"` 导出、真实 C 宿主集成 harness、`ql ffi header` 头文件生成、library build sidecar header，以及受约束的 `ql build --emit dylib` 共享库输出。建议先看：
+当前实现状态可以概括为：
+
+- Phase 1 到 Phase 6 的基础能力已经落地
+- Phase 7 已建立最小 runtime/executor、task-handle 类型面、共享 runtime hook ABI skeleton，以及受控的 async `staticlib` 子集
+- 文档、测试和实现已经开始围绕同一份 phase 文档与回归矩阵收口
+
+建议先看：
 
 - [编译器、术语与生态入门](/getting-started/compiler-primer)
-- [P1-P6 阶段总览](/roadmap/phase-progress)
+- [P1-P7 阶段总览](/roadmap/phase-progress)
 - [开发计划](/roadmap/development-plan)
+- [Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop)
 - [实现算法与分层边界](/architecture/implementation-algorithms)
 
 ## 核心判断

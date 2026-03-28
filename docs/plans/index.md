@@ -23,9 +23,10 @@
 
 如果你想快速恢复项目状态，建议按这个顺序阅读：
 
-1. [P1-P6 阶段总览](/roadmap/phase-progress)
-2. 本页对应阶段的合并设计稿
-3. 需要追溯某个具体切片时，再进入 [`/plans/archive/index`](/plans/archive/index)
+1. [P1-P7 阶段总览](/roadmap/phase-progress)
+2. [开发计划](/roadmap/development-plan)
+3. 本页对应阶段的合并设计稿
+4. 需要追溯某个具体切片时，再进入 [`/plans/archive/index`](/plans/archive/index)
 
 ## 当前结论
 
@@ -39,3 +40,5 @@
 - 编辑器地基：same-file query / rename / completion / semantic tokens / LSP parity
 
 这意味着后续开发的主任务已经不是“重新搭骨架”，而是沿着现有分层继续扩展。
+
+当前最活跃的主线是 [Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop)。如果你要接着推进 async/runtime 相关工作，优先从该文档恢复上下文。

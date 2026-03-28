@@ -4,6 +4,6 @@ async fn worker() -> Int {
 
 async fn helper() -> Int {
     let pair = (worker(), 1)
-    spawn pair[0]
-    return 0
+    let running = spawn pair[0]
+    return await running
 }

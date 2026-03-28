@@ -74,9 +74,9 @@ Qlang 仓库结构必须同时服务于四类工作：
 └─ qlang.toml                 # Qlang workspace / package manifest
 ```
 
-## 当前已落地结构（2026-03-25）
+## 当前已落地结构（2026-03-28）
 
-当前仓库还处在早期前端阶段，已经真正落地的部分是：
+当前仓库已经不是早期前端样机，而是覆盖 P1-P6 主干并进入 Phase 7 async/runtime/staticlib/Rust interop 的真实工作区。当前根目录里最关键的已落地部分是：
 
 ```text
 .
@@ -88,7 +88,7 @@ Qlang 仓库结构必须同时服务于四类工作：
 │  ├─ ql-parser               # 按 item / expr / pattern / stmt 拆分的 parser
 │  ├─ ql-diagnostics          # 通用 diagnostics 结构与文本渲染
 │  ├─ ql-fmt                  # 基于 AST 的 formatter
-│  ├─ ql-analysis             # 统一 parse / HIR / resolve / typeck 查询入口
+│  ├─ ql-analysis             # 统一 parse / HIR / resolve / typeck / query / runtime-requirement 入口
 │  ├─ ql-hir                  # AST -> HIR lowering 与稳定 ID arena
 │  ├─ ql-mir                  # Phase 3 结构化 MIR 与 cleanup / CFG 基础层
 │  ├─ ql-borrowck             # Phase 3 ownership facts 与显式消费诊断
@@ -97,17 +97,20 @@ Qlang 仓库结构必须同时服务于四类工作：
 │  ├─ ql-runtime              # Phase 7 最小 runtime / executor 抽象
 │  ├─ ql-driver               # Phase 4 build orchestration 边界
 │  ├─ ql-codegen-llvm         # Phase 4 文本 LLVM IR 后端地基
-│  ├─ ql-lsp                  # 最小 qlsp：hover / definition / same-file references / diagnostics
-│  └─ ql-cli                  # `ql check` / `ql build` / `ql fmt` / `ql mir` / `ql ownership`
+│  ├─ ql-lsp                  # qlsp：hover / definition / same-file references / completion / rename / semantic tokens
+│  └─ ql-cli                  # `ql check` / `ql build` / `ql ffi` / `ql fmt` / `ql mir` / `ql ownership` / `ql runtime`
+├─ examples/
+│  └─ ffi-rust                # Cargo host + build.rs 静态链接 Qlang `staticlib`
 ├─ tests/
 │  ├─ ui                      # CLI 黑盒 diagnostics 快照
-│  └─ codegen                 # Phase 4 codegen / artifact 黑盒快照
+│  ├─ codegen                 # build / codegen / artifact 黑盒快照
+│  └─ ffi                     # 真实 C / Rust 宿主互操作夹具
 └─ fixtures/
    ├─ parser                  # parser / formatter 回归输入
-   └─ codegen                 # Phase 4 backend / artifact 夹具
+   └─ codegen                 # backend / artifact / async staticlib 夹具
 ```
 
-也就是说，当前目录结构不是“设计图纸”，而是已经有一个最小但真实的前端闭环，并且已经开始向语义层扩展。
+也就是说，当前目录结构承载的是一个真实的编译器/工具链工作区，而不只是前端实验场：前端、语义、中端、后端、FFI、LSP、runtime、示例和文档站都已经进入同一仓库主干。
 
 当前仓库根测试目录也已经不再只有占位设计：
 

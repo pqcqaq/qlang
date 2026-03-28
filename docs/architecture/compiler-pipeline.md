@@ -55,7 +55,7 @@ source
 - 作为 LSP 语义查询的重要基础
 - 对上层工具最友好
 
-截至 2026-03-25，HIR 的第一层地基已经实际落地，而不是停留在文档里：
+当前仓库里的 HIR 基线已经是实装状态，而不是停留在文档里：
 
 - 新增 `ql-hir` crate，负责 AST 到 HIR 的 lowering
 - HIR 中的 `item` / `type` / `block` / `stmt` / `pattern` / `expr` / `local` 全部进入独立 arena
@@ -74,7 +74,7 @@ source
 - 负责建立值命名空间和类型命名空间的第一层引用关系
 - 作为未来类型约束、LSP 查询和 go-to-definition 的共用基础
 
-截至 2026-03-25，名称解析的第一层实现也已经实际落地：
+当前仓库里的名称解析基线也已经是实装状态：
 
 - 新增 `ql-resolve` crate
 - `ql check` 流水线现在是 parser -> HIR lowering -> resolve -> semantic checks
@@ -89,7 +89,7 @@ source
 - 先做 first-pass typing，而不是一开始就做完整 Hindley-Milner / trait solver / effect system
 - 通过 `unknown` 作为受控退化点，避免在未建模模块语义、成员解析和索引协议前制造大面积假阳性
 
-截至 2026-03-25，`ql-typeck` 已经从 duplicate checker 演进为第一版真正的类型检查层：
+当前 `ql-typeck` 已经不再只是 duplicate checker，而是仓库里的真实类型检查层：
 
 - duplicate-oriented diagnostics 继续保留
 - 新增 return-value 类型检查
@@ -304,7 +304,7 @@ source
 - LLVM 只在 codegen 层出现
 - 为未来可能的解释器、WASM 或自定义后端保留空间
 
-截至 2026-03-26，这条边界已经开始进入真实实现，而不再只停留在原则层：
+当前这条 LLVM/codegen 边界已经是仓库中的真实实现，而不再只停留在原则层：
 
 - 新增 `ql-driver`，负责 build 请求、分析调用和产物输出
 - 新增 `ql-codegen-llvm`，只消费 `HIR` / `resolve` / `typeck` / `MIR`
