@@ -2584,6 +2584,60 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_cleanup_and_match_codegen_diagnostics_once_each() {
+        let dir = TestDir::new("ql-driver-cleanup-match-unsupported");
+        let source = dir.write(
+            "cleanup_match.ql",
+            r#"
+extern "c" fn first()
+
+fn main() -> Int {
+    let flag = true
+    defer first()
+    return match flag {
+        true => 1,
+        false => 0,
+    }
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("cleanup and match codegen rejection should return diagnostics");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support cleanup lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support `match` lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            !diagnostic
+                .message
+                .contains("could not resolve LLVM type for local")
+                && !diagnostic
+                    .message
+                    .contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
     fn build_file_surfaces_projected_spawn_library_diagnostics_without_backend_noise() {
         let dir = TestDir::new("ql-driver-async-projected-spawn-library-runtime");
         let source = dir.write(

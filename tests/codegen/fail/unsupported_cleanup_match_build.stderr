@@ -1,0 +1,15 @@
+error: tests/codegen/fail/unsupported_cleanup_match_build.ql:5:5: LLVM IR backend foundation does not support cleanup lowering yet
+      defer first()
+      ^^^^^^^^
+error: tests/codegen/fail/unsupported_cleanup_match_build.ql:6:12: LLVM IR backend foundation encountered an opaque expression that still needs MIR elaboration
+      return match flag {
+             ^^^^^^^^
+error: tests/codegen/fail/unsupported_cleanup_match_build.ql:6:12: LLVM IR backend foundation does not support `match` lowering yet
+      return match flag {
+             ^^^^^^^^
+error: tests/codegen/fail/unsupported_cleanup_match_build.ql:7:9: LLVM IR backend foundation only supports single-name binding patterns
+          true => 1,
+          ^^^^
+error: tests/codegen/fail/unsupported_cleanup_match_build.ql:8:9: LLVM IR backend foundation only supports single-name binding patterns
+          false => 0,
+          ^^^^^
