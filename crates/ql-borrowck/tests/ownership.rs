@@ -910,6 +910,37 @@ fn main(flag: Bool) -> String {
 }
 
 #[test]
+fn reports_maybe_moved_zero_sized_task_handle_from_conditional_cleanup() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Int {
+    var task = worker()
+    defer await task
+    defer if flag { await task } else { await fresh_worker() }
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"local `task` may have been moved on another control-flow path".to_string())
+    );
+}
+
+#[test]
 fn deferred_root_write_reinitializes_for_later_cleanup_reads() {
     let diagnostics = diagnostic_messages(
         r#"
