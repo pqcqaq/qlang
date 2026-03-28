@@ -601,6 +601,20 @@ fn codegen_snapshots_match() {
             extra_args: &[],
         },
         FailCase {
+            name: "unsupported_async_projected_await_library_build",
+            source_relative: "tests/codegen/fail/unsupported_async_projected_await_library_build.ql",
+            emit: "staticlib",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_async_projected_await_library_build.stderr",
+            extra_args: &[],
+        },
+        FailCase {
+            name: "unsupported_async_projected_spawn_library_build",
+            source_relative: "tests/codegen/fail/unsupported_async_projected_spawn_library_build.ql",
+            emit: "staticlib",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_async_projected_spawn_library_build.stderr",
+            extra_args: &[],
+        },
+        FailCase {
             name: "unsupported_deferred_multi_segment_type_build",
             source_relative: "tests/codegen/fail/unsupported_deferred_multi_segment_type_build.ql",
             emit: "dylib",

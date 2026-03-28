@@ -234,6 +234,36 @@ async fn main() -> Int {
 }
 
 #[test]
+fn allows_spawning_bound_zero_sized_task_handle_helpers_inside_async_functions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    return worker()
+}
+
+async fn main() -> Wrap {
+    let task = schedule()
+    let running = spawn task
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected bound zero-sized task-handle helpers to be spawnable, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_passing_async_calls_to_task_handle_parameters() {
     let diagnostics = diagnostic_messages(
         r#"

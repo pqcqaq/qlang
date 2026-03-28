@@ -2404,6 +2404,125 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_projected_await_library_diagnostics_without_backend_noise() {
+        let dir = TestDir::new("ql-driver-async-projected-await-library-runtime");
+        let source = dir.write(
+            "async_projected_await_library.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    let pair = (worker(), 1)
+    return await pair[0]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_projected_await_library.lib"
+        } else {
+            "artifacts/libasync_projected_await_library.a"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("projected await library rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message
+                == "LLVM IR backend foundation does not support field or index projections yet"
+        }));
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support field or index projections yet"
+                })
+                .count(),
+            1
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.message
+                != "LLVM IR backend foundation could not resolve the async task handle consumed by `await`"
+                && diagnostic.message
+                    != "LLVM IR backend foundation does not support `async fn` yet"
+        }));
+    }
+
+    #[test]
+    fn build_file_surfaces_projected_spawn_library_diagnostics_without_backend_noise() {
+        let dir = TestDir::new("ql-driver-async-projected-spawn-library-runtime");
+        let source = dir.write(
+            "async_projected_spawn_library.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    let pair = (worker(), 1)
+    spawn pair[0]
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_projected_spawn_library.lib"
+        } else {
+            "artifacts/libasync_projected_spawn_library.a"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("projected spawn library rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message
+                == "LLVM IR backend foundation does not support field or index projections yet"
+        }));
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support field or index projections yet"
+                })
+                .count(),
+            1
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.message
+                != "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`"
+                && diagnostic.message
+                    != "LLVM IR backend foundation does not support `async fn` yet"
+        }));
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_async_struct_results() {
         let dir = TestDir::new("ql-driver-staticlib-async-struct");
         let source = dir.write(

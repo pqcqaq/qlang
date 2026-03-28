@@ -254,6 +254,63 @@ async fn main() -> Int {
 }
 
 #[test]
+fn allows_spawning_bound_zero_sized_helper_returned_task_handles() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    return worker()
+}
+
+async fn main() -> Wrap {
+    let task = schedule()
+    let running = spawn task
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected zero-sized helper-returned task handles to be spawnable after binding, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_spawning_zero_sized_helper_returned_task_handle() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    return worker()
+}
+
+async fn main() -> Wrap {
+    let task = schedule()
+    let running = spawn task
+    return await task
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `task` was used after move".to_string()));
+}
+
+#[test]
 fn reports_maybe_moved_task_handle_after_branch_join() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -772,6 +829,34 @@ fn schedule() -> Task[Int] {
 }
 
 async fn main() -> Int {
+    let task = schedule()
+    let running = spawn task
+    return await running
+}
+"#,
+    );
+
+    assert!(rendered.contains("consume(spawn task handle)"));
+    assert!(rendered.contains("consume(await task handle)"));
+}
+
+#[test]
+fn renders_bound_zero_sized_helper_spawn_task_handle_consumes_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    return worker()
+}
+
+async fn main() -> Wrap {
     let task = schedule()
     let running = spawn task
     return await running

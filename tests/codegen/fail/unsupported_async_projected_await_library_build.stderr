@@ -1,0 +1,3 @@
+error: tests/codegen/fail/unsupported_async_projected_await_library_build.ql:7:12: LLVM IR backend foundation does not support field or index projections yet
+      return await pair[0]
+             ^^^^^^^^

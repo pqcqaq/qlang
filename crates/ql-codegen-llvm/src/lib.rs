@@ -1134,7 +1134,9 @@ impl<'a> ModuleEmitter<'a> {
                             ));
                         return None;
                     };
-                    self.require_direct_place(span, place, ctx.diagnostics);
+                    if !self.require_direct_place(span, place, ctx.diagnostics) {
+                        return None;
+                    }
 
                     self.resolve_task_handle_info(
                         place.base,
@@ -1168,7 +1170,9 @@ impl<'a> ModuleEmitter<'a> {
                         ));
                         return None;
                     };
-                    self.require_direct_place(span, place, ctx.diagnostics);
+                    if !self.require_direct_place(span, place, ctx.diagnostics) {
+                        return None;
+                    }
 
                     self.resolve_task_handle_info(
                         place.base,
@@ -1676,13 +1680,20 @@ impl<'a> ModuleEmitter<'a> {
         }
     }
 
-    fn require_direct_place(&self, span: Span, place: &Place, diagnostics: &mut Vec<Diagnostic>) {
+    fn require_direct_place(
+        &self,
+        span: Span,
+        place: &Place,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) -> bool {
         if !place.projections.is_empty() {
             diagnostics.push(unsupported(
                 span,
                 "LLVM IR backend foundation does not support field or index projections yet",
             ));
+            return false;
         }
+        true
     }
 
     fn require_binding_pattern(
@@ -5348,6 +5359,91 @@ async fn helper() -> Int {
         assert!(messages.iter().all(|message| {
             message != "LLVM IR backend foundation does not support `for` lowering yet"
                 && message != "LLVM IR backend foundation does not support array values yet"
+                && !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
+    fn rejects_projected_await_operands_without_task_handle_resolution_noise() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    let pair = (worker(), 1)
+    return await pair[0]
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message == "LLVM IR backend foundation does not support field or index projections yet"
+        }));
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    **message
+                        == "LLVM IR backend foundation does not support field or index projections yet"
+                })
+                .count(),
+            1
+        );
+        assert!(messages.iter().all(|message| {
+            message
+                != "LLVM IR backend foundation could not resolve the async task handle consumed by `await`"
+                && !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
+    fn rejects_projected_spawn_operands_without_task_handle_resolution_noise() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+        ]);
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    let pair = (worker(), 1)
+    spawn pair[0]
+    return 0
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(messages.iter().any(|message| {
+            message == "LLVM IR backend foundation does not support field or index projections yet"
+        }));
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    **message
+                        == "LLVM IR backend foundation does not support field or index projections yet"
+                })
+                .count(),
+            1
+        );
+        assert!(messages.iter().all(|message| {
+            message
+                != "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`"
                 && !message.contains("could not resolve LLVM type for local")
                 && !message.contains("could not infer LLVM type for MIR local")
         }));
