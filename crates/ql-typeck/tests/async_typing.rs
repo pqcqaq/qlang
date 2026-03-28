@@ -440,6 +440,41 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn accepts_reinitializing_zero_sized_task_handles_for_later_cleanup_reads() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Int {
+    var task = worker()
+    defer await task
+    defer {
+        task = fresh_worker();
+        ""
+    }
+    defer await task
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected zero-sized task handle cleanup reinitialization to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_branch_joining_zero_sized_task_handles_before_await() {
     let diagnostics = diagnostic_messages(
         r#"

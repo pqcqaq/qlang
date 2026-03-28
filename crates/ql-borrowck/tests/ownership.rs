@@ -616,6 +616,41 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn deferred_cleanup_reinitializes_zero_sized_task_handles_for_later_reads() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Int {
+    var task = worker()
+    defer await task
+    defer {
+        task = fresh_worker();
+        ""
+    }
+    defer await task
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_deferred_cleanup_use_after_helper_consumes_task_handle() {
     let diagnostics = diagnostic_messages(
         r#"
