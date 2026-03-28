@@ -1,6 +1,6 @@
 # P1-P7 阶段总览
 
-> 最后同步时间：2026-03-28
+> 最后同步时间：2026-03-29
 
 这份文档不是路线图，而是对当前已经完成与正在推进的 P1-P7 开发工作的阶段性归档。目标是回答三个问题：
 
@@ -781,9 +781,10 @@ P6 当前仍刻意未完成：
 - `ql-codegen-llvm` 已补上 empty-array expected-context lowering：当前会把具体 `[T; N]` 期望类型保守回传到 direct temp locals 与 tuple / array / struct 聚合字面量内部，因此 `return []`、`take([])`、`([], 1)`、`Wrap { values: [] }` 与 `[[]]` 这类已有 `[T; 0]` 上下文的路径现在都可稳定出 IR；没有期望数组类型的裸 `[]` 仍保持显式拒绝
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已锁住 zero-sized async parameter 回归：`[Int; 0]`、`Wrap { values: [Int; 0] }` 与 `[[Int; 0]; 1]` 这类 zero-sized aggregate 参数现在稳定走递归可加载 frame lowering，`await` 与 `staticlib` 路径都已被定向测试覆盖
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已锁住 zero-sized async result 回归：`[Int; 0]` 与只包含 zero-sized fixed-array 字段的递归 aggregate 现在仍按 loadable async result 处理，direct `await`、direct/bound `spawn` 后再 `await`、helper direct/bound `await`、helper local-`return task` / helper-forward `Task[Wrap]` 流动，以及 `spawn schedule()` / `let task = schedule(); let running = spawn task; await running` / `spawn forward(task)` 这类 helper task-handle 路径都已被定向测试覆盖
+- `ql-typeck` / `ql-borrowck` / `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已把嵌套 task-result payload 收进口径：`async fn outer() -> Task[Int]` 与 `async fn outer() -> Task[Wrap]`（其中 `Wrap` 仅含 zero-sized fixed-array 字段）现在都可稳定走 `let next = await outer(); await next` 这条 chained-await 路径，类型层会把第一次 `await` 结果继续视为 fresh task handle，borrowck 会继续对该新句柄做 consume/use-after-move 跟踪，`staticlib` codegen/driver/CLI 也已有端到端回归锁定
 - `ql-typeck` / `ql-borrowck` 现也已显式镜像 zero-sized helper `Task[Wrap]` 流动回归：`await schedule()`、`spawn schedule()`、local-return helper、bound `spawn` 后再 `await`、helper `Task[Wrap]` 参数传递、conditional helper return、conditional maybe-moved 分支、branch-join maybe-moved 分支、branch-join helper consume/reinit 分支、branch-join spawned reinit 分支、reverse-branch spawned reinit 分支、helper 内条件性 spawn-return 分支、helper-consumed 后重赋值可恢复的路径、deferred cleanup 重初始化后继续读取的路径、deferred cleanup helper-consume use-after-move、conditional cleanup maybe-moved 分支、conditional cleanup helper-consume maybe-moved 分支、conditional cleanup 重初始化路径、conditional cleanup 重初始化并消费路径、conditional cleanup 重初始化并 helper-consume use-after-move 路径、reverse-branch conditional cleanup helper-consume/reinit 路径、以及对应的 borrowck debug render 事实，现在都有前端层专门测试，不再只依赖 backend/staticlib 黑盒覆盖；当前新增的 helper 条件分支回归专门锁住的是 async helper 内条件性 `spawn` 后再 `await` 返回的 zero-sized `Task[Wrap]` 结果流，以及直接 async 调用条件分支与 branch-join spawn reinit 的同类 flow，并且这些路径现在也已在 codegen / driver 的 staticlib 路径上补齐端到端回归
 - `ql-typeck` / `ql-borrowck` 还补上了无 cleanup 的 branch-join helper consume/reinit 回归：`if flag { forward(task) } else { task = fresh_worker() }` 这类 zero-sized `Task[Wrap]` flow 现在会在 typeck 层稳定放行、在 borrowck 层稳定报出 `local \`task\` may have been moved on another control-flow path`；`ql-driver` 也已补上对应的稳定失败合同，继续补齐 task-handle 的控制流边界
-- `ql-driver` 已开放第一条 public async build 子集：`staticlib` 现在允许已被 backend 支持的 async library body、scalar/tuple/array/struct/void `await`、以及可绑定后再 `await` 的 `spawn` task handle 通过；fixed array iterable 的 `for await` 也已进入这条受控子集，而 broader async iteration surface 仍保持关闭
+- `ql-driver` 已开放第一条 public async build 子集：`staticlib` 现在允许已被 backend 支持的 async library body、scalar/task-handle/tuple/array/struct/void `await`、以及可绑定后再 `await` 的 `spawn` task handle 通过；fixed array iterable 的 `for await` 也已进入这条受控子集，而 broader async iteration surface 仍保持关闭
 - `ql-driver` / `ql-cli` 已开放最小 async `dylib` 子集：只要模块仍提供同步 `extern "c"` 顶层导出，内部 async helper、`await` 与已支持的 task-handle lowering 现在都可进入 `dylib` 构建；`for await` 在 `dylib` 上仍保持显式 unsupported
 - `ql-resolve` / `ql-typeck` 已开放首个显式 task-handle 类型面：`Task[T]` 现在作为保留类型根被接受，不再触发 unresolved-type 诊断，并映射到内部 task-handle 语义；direct async call、spawned task、局部绑定 handle 与 sync helper 返回值现在都复用同一条句柄值模型
 - `ql-typeck` 已移除 direct async call 的“必须立刻 `await` / `spawn`”限制：`let task = worker(); await task`、helper 参数传递、`return worker()` 到 `Task[T]` wrapper 等路径现在都可保守通过；当 direct async call 最终流入非 `Task[T]` 上下文时，会自然退化成普通类型不匹配，而不再依赖单独的特判诊断
@@ -794,14 +795,14 @@ P6 当前仍刻意未完成：
 - `ql-driver` / `ql-cli` 已补上 async staticlib mixed-surface 回归：带内部 async helper 的库现在也锁住了 `extern "c"` export header sidecar 路径，确保公开 C header surface 不会被 async implementation details 污染
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前共享 hook ABI 已冻结第一版 LLVM-facing contract string，但真实内存布局、结果传递协议和更细粒度调用约定仍未冻结
-- 当前 backend/driver 虽已具备 declaration + async body wrapper/frame scaffold，并已打通递归可加载 aggregate frame/result lowering、`spawn` task-handle lowering、tuple/struct-field projection read-write lowering、expected-context empty-array lowering、zero-sized async parameter/result 稳定性、fixed-array `for await` lowering、最小 async `dylib` 子集与 `staticlib` 子集开放，但更广义的 async iteration 协议、任务结果协议、frame 生命周期管理、更广义的布局协议、array element / 更广 place 的 projection write 语义与无期望类型的裸 `[]` 仍未开放
+- 当前 backend/driver 虽已具备 declaration + async body wrapper/frame scaffold，并已打通 scalar/task-handle/递归可加载 aggregate frame/result lowering、`spawn` task-handle lowering、tuple/struct-field projection read-write lowering、expected-context empty-array lowering、zero-sized async parameter/result 稳定性、fixed-array `for await` lowering、最小 async `dylib` 子集与 `staticlib` 子集开放，但更广义的 async iteration 协议、任务结果协议、frame 生命周期管理、更广义的布局协议、array element / 更广 place 的 projection write 语义与无期望类型的裸 `[]` 仍未开放
 - 当前 `async-iteration` 已不再只是纯失败合同：`staticlib` async library body 内的 fixed array `for await` 已走通最小 lowering；但共享 `qlrt_async_iter_next` hook 仍主要承担 capability/ABI 预留语义，还不代表通用 async iterator runtime 协议已经冻结
 - 当前 `Task[T]` 虽已进入显式类型面，但仍是保守的句柄抽象：还没有 cancellation、polling、scheduler hint、auto-drop 语义或更一般的 async effect/type inference 设计
 - 当前 borrowck 已对 direct-local task handle 与 tuple/struct-field projected task-handle 的 consume/write-reinit 建立最小合同；`await` / `spawn`、静态可判定的 helper `Task[T]` 参数传递、direct-local `return task`、以及 sibling projection 的控制流分支都已接入，且投影重赋值现在会按 path 恢复对应 task-handle 的可用性；但 array element assignment、动态 index / 更广义 place-sensitive handle lifecycle、以及更广义 drop/submission 协议仍待后续切片
 
 ### 下一步（P7.1 延续）
 
-- 在现有 shared hook ABI + async body wrapper/frame scaffold + scalar/tuple/array/struct/void `await` lowering + fire-and-forget `spawn` lowering + projection read-write lowering + fixed-array `for await` lowering + 最小 async `dylib`/`staticlib` 子集开放基础上，优先扩展 task result / await join 协议到更广义 payload，并评估是否继续放宽 async `dylib` surface
+- 在现有 shared hook ABI + async body wrapper/frame scaffold + scalar/task-handle/tuple/array/struct/void `await` lowering + fire-and-forget `spawn` lowering + projection read-write lowering + fixed-array `for await` lowering + 最小 async `dylib`/`staticlib` 子集开放基础上，继续把 task result / await join 协议扩到当前 nested `Task[T]` 之外的更广义 payload，并评估是否继续放宽 async `dylib` surface
 - 评估是否将 async 上下文桥接能力通过受控实验接口暴露给 editor（保持协议低风险）
 - 在不引入完整 CFG 的前提下，继续补 closure / async / return-path 的保守语义回归
 - 若后续需要把 must-return 从显式字面量 `if` 扩展到更一般的常量传播或 branch pruning，应单独设计常量/CFG 规则边界

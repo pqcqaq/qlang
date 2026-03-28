@@ -4075,7 +4075,7 @@ async fn worker(values: [Int; 0], wrap: Wrap, nested: [[Int; 0]; 1]) -> Int {
     }
 
     #[test]
-    fn builds_async_task_result_layouts_for_void_scalar_tuple_and_array_results() {
+    fn builds_async_task_result_layouts_for_void_scalar_task_handle_tuple_and_array_results() {
         let void_layout =
             build_async_task_result_layout(&Ty::Builtin(BuiltinType::Void), Span::new(0, 0))
                 .expect("void async result layout should be supported");
@@ -4096,6 +4096,26 @@ async fn worker(values: [Int; 0], wrap: Wrap, nested: [[Int; 0]; 1]) -> Int {
                 assert_eq!(align, 8);
             }
             AsyncTaskResultLayout::Void => panic!("expected scalar layout for Int"),
+        }
+
+        let task_handle_layout = build_async_task_result_layout(
+            &Ty::TaskHandle(Box::new(Ty::Builtin(BuiltinType::Int))),
+            Span::new(0, 0),
+        )
+        .expect("task-handle async result layout should be supported");
+        match task_handle_layout {
+            AsyncTaskResultLayout::Loadable {
+                llvm_ty,
+                _size,
+                align,
+            } => {
+                assert_eq!(llvm_ty, "ptr");
+                assert_eq!(_size, 8);
+                assert_eq!(align, 8);
+            }
+            AsyncTaskResultLayout::Void => {
+                panic!("expected loadable layout for task-handle result")
+            }
         }
 
         let tuple_layout = build_async_task_result_layout(
@@ -5031,6 +5051,38 @@ async fn helper() -> Int {
         assert!(rendered.contains("call ptr @ql_0_worker()"));
         assert!(rendered.contains("call ptr @ql_1_schedule()"));
         assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load i64, ptr %t"));
+    }
+
+    #[test]
+    fn emits_chained_await_lowering_for_nested_task_handle_async_results() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn outer() -> Task[Int] {
+    return worker()
+}
+
+async fn helper() -> Int {
+    let next = await outer()
+    return await next
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @ql_0_worker()"));
+        assert!(rendered.contains("call ptr @ql_1_outer()"));
+        assert!(rendered.matches("@qlrt_task_await").count() >= 2);
+        assert!(rendered.contains("load ptr, ptr %t"));
         assert!(rendered.contains("load i64, ptr %t"));
     }
 

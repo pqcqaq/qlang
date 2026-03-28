@@ -1375,6 +1375,51 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_nested_task_handle_async_results() {
+        let dir = TestDir::new("ql-driver-staticlib-async-nested-task-handle");
+        let source = dir.write(
+            "async_nested_task_handle.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn outer() -> Task[Int] {
+    return worker()
+}
+
+async fn helper() -> Int {
+    let next = await outer()
+    return await next
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_nested_task_handle.lib"
+        } else {
+            "artifacts/libasync_nested_task_handle.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("static library build with nested task-handle async results should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_bound_task_handle_helpers() {
         let dir = TestDir::new("ql-driver-staticlib-async-bound-task-handle-helper");
         let source = dir.write(
@@ -1505,6 +1550,56 @@ async fn helper() -> Wrap {
 
         let artifact = build_file(&source, &options)
             .expect("static library build with zero-sized task-handle helpers should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_nested_zero_sized_task_handle_async_results() {
+        let dir = TestDir::new("ql-driver-staticlib-async-nested-zero-sized-task-handle");
+        let source = dir.write(
+            "async_nested_zero_sized_task_handle.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn outer() -> Task[Wrap] {
+    return worker()
+}
+
+async fn helper() -> Wrap {
+    let next = await outer()
+    return await next
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_nested_zero_sized_task_handle.lib"
+        } else {
+            "artifacts/libasync_nested_zero_sized_task_handle.a"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::StaticLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                archiver: Some(mock_success_archiver_invocation(&dir)),
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "static library build with nested zero-sized task-handle async results should succeed",
+        );
         let rendered =
             fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
 

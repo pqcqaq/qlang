@@ -183,6 +183,60 @@ async fn main() -> Int {
 }
 
 #[test]
+fn accepts_awaiting_nested_task_handle_async_results() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn outer() -> Task[Int] {
+    return worker()
+}
+
+async fn main() -> Int {
+    let next = await outer()
+    return await next
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected nested task-handle async results to support chained await, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_awaiting_nested_zero_sized_task_handle_async_results() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn outer() -> Task[Wrap] {
+    return worker()
+}
+
+async fn main() -> Wrap {
+    let next = await outer()
+    return await next
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected nested zero-sized task-handle async results to support chained await, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_spawning_task_handle_helpers_inside_async_functions() {
     let diagnostics = diagnostic_messages(
         r#"

@@ -2151,6 +2151,55 @@ async fn main() -> Int {
 }
 
 #[test]
+fn renders_nested_task_handle_async_result_consumes_for_debugging() {
+    let rendered = render_output(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn outer() -> Task[Int] {
+    return worker()
+}
+
+async fn main() -> Int {
+    let pending = outer()
+    let next = await pending
+    return await next
+}
+"#,
+    );
+
+    assert_eq!(rendered.matches("consume(await task handle)").count(), 2);
+}
+
+#[test]
+fn reports_use_after_awaiting_nested_task_handle_payload_twice() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn outer() -> Task[Int] {
+    return worker()
+}
+
+async fn main() -> Int {
+    let next = await outer()
+    let first = await next
+    return await next
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `next` was used after move".to_string()),
+        "expected nested awaited task handle to remain move-tracked, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn renders_bound_zero_sized_helper_spawn_task_handle_consumes_for_debugging() {
     let rendered = render_output(
         r#"
