@@ -751,6 +751,7 @@ P6 当前仍刻意未完成：
 - `ql-driver` / `ql-codegen-llvm` 新增 cleanup + `for` 混合诊断回归：同一文件里同时出现 `defer` 与 `for` 时，cleanup lowering 失败与 `for` unsupported 现在都会各自稳定只出现一次，不再互相吞掉或额外放大
 - `ql-driver` / `ql-codegen-llvm` / `ql-cli` 新增 cleanup + `for` CLI fail snapshot：用户可见 stderr 现在也稳定只出现 cleanup lowering 失败与 `for` unsupported 两条主诊断，不再额外级联 backend noise
 - `ql-driver` / `ql-codegen-llvm` / `ql-cli` 新增 cleanup + `match` 混合诊断回归：同一文件里同时出现 `defer` 与 `match` 时，cleanup lowering 失败与 `match` unsupported 以及现有的 match elaboration / pattern diagnostics 现在都会稳定只出现一次，不再额外放大 backend noise
+- `ql-driver` / `ql-codegen-llvm` / `ql-cli` 新增 `match` + `?` 混合诊断回归：同一文件里同时出现 helper `match` 与 main `?` 时，match lowering、pattern diagnostics 与 `?` unsupported 现在都会稳定只出现一次，不再额外放大 backend noise
 - `ql-driver` / `ql-codegen-llvm` / `ql-cli` 新增 cleanup + `?` 混合诊断回归：同一文件里同时出现 `defer` 与 `?` 时，cleanup lowering 失败与 `?` unsupported 现在都会稳定只出现一次，不再额外级联 MIR elaboration noise
 - `ql-driver` / `ql-codegen-llvm` / `ql-cli` 新增 cleanup + closure value 混合诊断回归：同一文件里同时出现 `defer` 与 closure 值时，cleanup lowering 失败与 closure value unsupported 现在都会稳定只出现一次，不再额外级联 backend noise
 - `ql-driver` / `ql-cli` 新增 `async + generic` 并存回归：锁住多条 backend unsupported 诊断的聚合稳定性

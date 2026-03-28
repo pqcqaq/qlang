@@ -5437,8 +5437,7 @@ async fn helper() -> Int {
             messages
                 .iter()
                 .filter(|message| {
-                    **message
-                        == "LLVM IR backend foundation does not support cleanup lowering yet"
+                    **message == "LLVM IR backend foundation does not support cleanup lowering yet"
                 })
                 .count(),
             1
@@ -5493,8 +5492,7 @@ async fn helper() -> Int {
             messages
                 .iter()
                 .filter(|message| {
-                    **message
-                        == "LLVM IR backend foundation does not support cleanup lowering yet"
+                    **message == "LLVM IR backend foundation does not support cleanup lowering yet"
                 })
                 .count(),
             1
@@ -5660,6 +5658,70 @@ fn main() -> Int {
                 .filter(|message| {
                     message.as_str()
                         == "LLVM IR backend foundation does not support `match` lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert!(messages.iter().all(|message| {
+            !message.contains("could not resolve LLVM type for local")
+                && !message.contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
+    fn dedupes_match_and_question_mark_lowering_diagnostics() {
+        let messages = emit_error(
+            r#"
+fn helper() -> Int {
+    let flag = true
+    return match flag {
+        true => 1,
+        false => 0,
+    }
+}
+
+fn main() -> Int {
+    return helper()?
+}
+"#,
+        );
+
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    message.as_str()
+                        == "LLVM IR backend foundation encountered an opaque expression that still needs MIR elaboration"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    message.as_str()
+                        == "LLVM IR backend foundation does not support `match` lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    message.as_str()
+                        == "LLVM IR backend foundation only supports single-name binding patterns"
+                })
+                .count(),
+            2
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| {
+                    message.as_str()
+                        == "LLVM IR backend foundation does not support `?` lowering yet"
                 })
                 .count(),
             1

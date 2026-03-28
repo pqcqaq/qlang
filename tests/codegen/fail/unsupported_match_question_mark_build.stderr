@@ -1,0 +1,15 @@
+error: tests/codegen/fail/unsupported_match_question_mark_build.ql:3:12: LLVM IR backend foundation encountered an opaque expression that still needs MIR elaboration
+      return match flag {
+             ^^^^^^^^
+error: tests/codegen/fail/unsupported_match_question_mark_build.ql:3:12: LLVM IR backend foundation does not support `match` lowering yet
+      return match flag {
+             ^^^^^^^^
+error: tests/codegen/fail/unsupported_match_question_mark_build.ql:4:9: LLVM IR backend foundation only supports single-name binding patterns
+          true => 1,
+          ^^^^
+error: tests/codegen/fail/unsupported_match_question_mark_build.ql:5:9: LLVM IR backend foundation only supports single-name binding patterns
+          false => 0,
+          ^^^^^
+error: tests/codegen/fail/unsupported_match_question_mark_build.ql:10:12: LLVM IR backend foundation does not support `?` lowering yet
+      return helper()?
+             ^^^^^^^^

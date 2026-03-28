@@ -2638,6 +2638,81 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_match_and_question_mark_codegen_diagnostics_once_each() {
+        let dir = TestDir::new("ql-driver-match-question-unsupported");
+        let source = dir.write(
+            "match_question.ql",
+            r#"
+fn helper() -> Int {
+    let flag = true
+    return match flag {
+        true => 1,
+        false => 0,
+    }
+}
+
+fn main() -> Int {
+    return helper()?
+}
+"#,
+        );
+
+        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("match and question mark codegen rejection should return diagnostics");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation encountered an opaque expression that still needs MIR elaboration"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support `match` lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation only supports single-name binding patterns"
+                })
+                .count(),
+            2
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support `?` lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            !diagnostic
+                .message
+                .contains("could not resolve LLVM type for local")
+                && !diagnostic
+                    .message
+                    .contains("could not infer LLVM type for MIR local")
+        }));
+    }
+
+    #[test]
     fn build_file_surfaces_cleanup_and_question_mark_codegen_diagnostics_once_each() {
         let dir = TestDir::new("ql-driver-cleanup-question-mark-unsupported");
         let source = dir.write(
@@ -3752,7 +3827,7 @@ fn main() -> Int {
                     diagnostic.message
                         == "LLVM IR backend foundation does not support cleanup lowering yet"
                 })
-            .count(),
+                .count(),
             1
         );
     }
@@ -3795,7 +3870,8 @@ fn main() -> Int {
             diagnostics
                 .iter()
                 .filter(|diagnostic| {
-                    diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support `async fn` yet"
                 })
                 .count(),
             1
