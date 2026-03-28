@@ -989,33 +989,6 @@ impl<'a> ModuleEmitter<'a> {
         handles
     }
 
-    fn resolve_task_handle_info(
-        &self,
-        local_id: mir::LocalId,
-        local_types: &HashMap<mir::LocalId, Ty>,
-        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
-        diagnostics: &mut Vec<Diagnostic>,
-        span: Span,
-    ) -> Option<AsyncTaskHandleInfo> {
-        if let Some(handle) = async_task_handles.get(&local_id) {
-            return Some(handle.clone());
-        }
-
-        let Some(Ty::TaskHandle(result_ty)) = local_types.get(&local_id) else {
-            return None;
-        };
-        match self.build_async_task_result_layout(result_ty, span) {
-            Ok(result_layout) => Some(AsyncTaskHandleInfo {
-                result_ty: (**result_ty).clone(),
-                result_layout,
-            }),
-            Err(error) => {
-                diagnostics.push(error);
-                None
-            }
-        }
-    }
-
     fn infer_rvalue_type(
         &self,
         value: &Rvalue,
@@ -1129,30 +1102,39 @@ impl<'a> ModuleEmitter<'a> {
 
                     let Operand::Place(place) = operand else {
                         ctx.diagnostics.push(unsupported(
-                                span,
-                                "LLVM IR backend foundation currently requires `await` operands to lower through a task-handle place",
-                            ));
+                            span,
+                            "LLVM IR backend foundation currently requires `await` operands to lower through a task-handle place",
+                        ));
                         return None;
                     };
-                    if !self.require_direct_place(span, place, ctx.diagnostics) {
-                        return None;
-                    }
-
-                    self.resolve_task_handle_info(
-                        place.base,
+                    let Some(operand_ty) = self.infer_operand_type(
+                        ctx.body,
+                        operand,
                         ctx.local_types,
                         ctx.async_task_handles,
                         ctx.diagnostics,
                         span,
-                    )
-                    .map(|handle| handle.result_ty)
-                    .or_else(|| {
+                    ) else {
+                        return None;
+                    };
+                    if !place.projections.is_empty() && !matches!(operand_ty, Ty::TaskHandle(_)) {
                         ctx.diagnostics.push(unsupported(
                             span,
-                            "LLVM IR backend foundation could not resolve the async task handle consumed by `await`",
+                            "LLVM IR backend foundation does not support field or index projections yet",
                         ));
-                        None
-                    })
+                        return None;
+                    }
+
+                    match operand_ty {
+                        Ty::TaskHandle(result_ty) => Some(*result_ty),
+                        _ => {
+                            ctx.diagnostics.push(unsupported(
+                                span,
+                                "LLVM IR backend foundation could not resolve the async task handle consumed by `await`",
+                            ));
+                            None
+                        }
+                    }
                 }
                 UnaryOp::Spawn => {
                     if !self.has_runtime_hook(RuntimeHook::ExecutorSpawn) {
@@ -1170,25 +1152,34 @@ impl<'a> ModuleEmitter<'a> {
                         ));
                         return None;
                     };
-                    if !self.require_direct_place(span, place, ctx.diagnostics) {
-                        return None;
-                    }
-
-                    self.resolve_task_handle_info(
-                        place.base,
+                    let Some(operand_ty) = self.infer_operand_type(
+                        ctx.body,
+                        operand,
                         ctx.local_types,
                         ctx.async_task_handles,
                         ctx.diagnostics,
                         span,
-                    )
-                    .map(|handle| Ty::TaskHandle(Box::new(handle.result_ty)))
-                    .or_else(|| {
+                    ) else {
+                        return None;
+                    };
+                    if !place.projections.is_empty() && !matches!(operand_ty, Ty::TaskHandle(_)) {
                         ctx.diagnostics.push(unsupported(
                             span,
-                            "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`",
+                            "LLVM IR backend foundation does not support field or index projections yet",
                         ));
-                        None
-                    })
+                        return None;
+                    }
+
+                    match operand_ty {
+                        Ty::TaskHandle(result_ty) => Some(Ty::TaskHandle(result_ty)),
+                        _ => {
+                            ctx.diagnostics.push(unsupported(
+                                span,
+                                "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`",
+                            ));
+                            None
+                        }
+                    }
                 }
             },
             Rvalue::Tuple(items) => {
@@ -2483,8 +2474,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         "  {temp} = call {} @{}({rendered_args})",
                         signature.return_llvm_ty, signature.llvm_name
                     );
+                    let ty = if signature.is_async {
+                        Ty::TaskHandle(Box::new(signature.body_return_ty.clone()))
+                    } else {
+                        signature.return_ty.clone()
+                    };
                     Some(LoweredValue {
-                        ty: signature.return_ty.clone(),
+                        ty,
                         llvm_ty: signature.return_llvm_ty.clone(),
                         repr: temp,
                     })
@@ -2521,7 +2517,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 UnaryOp::Await => self.render_await(output, operand, span),
                 UnaryOp::Spawn => self.render_spawn(output, operand, span),
             },
-            Rvalue::Tuple(items) => self.render_tuple_rvalue(output, items, span),
+            Rvalue::Tuple(items) => self.render_tuple_rvalue(output, items, expected_ty, span),
             Rvalue::Array(items) => self.render_array_rvalue(output, items, expected_ty, span),
             Rvalue::AggregateStruct { path, fields } => {
                 self.render_struct_rvalue(output, path, fields, expected_ty, span)
@@ -2536,13 +2532,19 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         &mut self,
         output: &mut String,
         items: &[Operand],
+        expected_ty: Option<&Ty>,
         span: Span,
     ) -> Option<LoweredValue> {
         let rendered_items = items
             .iter()
             .map(|item| self.render_operand(output, item, span))
             .collect::<Vec<_>>();
-        let ty = Ty::Tuple(rendered_items.iter().map(|item| item.ty.clone()).collect());
+        let ty = match expected_ty {
+            Some(Ty::Tuple(expected_items)) if expected_items.len() == rendered_items.len() => {
+                Ty::Tuple(expected_items.clone())
+            }
+            _ => Ty::Tuple(rendered_items.iter().map(|item| item.ty.clone()).collect()),
+        };
         let llvm_ty = self
             .emitter
             .lower_llvm_type(&ty, span, "tuple value")
@@ -2719,6 +2721,44 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn task_handle_info_for_place(&self, place: &Place, span: Span) -> AsyncTaskHandleInfo {
+        if place.projections.is_empty() {
+            return self.task_handle_info_for_local(place.base, span);
+        }
+
+        let mut diagnostics = Vec::new();
+        let place_ty = self
+            .emitter
+            .infer_place_type(
+                self.body,
+                place,
+                &self.prepared.local_types,
+                &self.prepared.async_task_handles,
+                &mut diagnostics,
+                span,
+            )
+            .unwrap_or_else(|| {
+                panic!("prepared task-handle place at {span:?} should have a resolved type")
+            });
+
+        match place_ty {
+            Ty::TaskHandle(result_ty) => AsyncTaskHandleInfo {
+                result_ty: (*result_ty).clone(),
+                result_layout: self
+                    .emitter
+                    .build_async_task_result_layout(&result_ty, span)
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "prepared projected task-handle place at {span:?} should have a loadable async result layout"
+                        )
+                    }),
+            },
+            other => panic!(
+                "prepared projected task-handle place at {span:?} should resolve to a task handle, found `{other}`"
+            ),
+        }
+    }
+
     fn render_await(
         &mut self,
         output: &mut String,
@@ -2736,7 +2776,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         let Operand::Place(place) = operand else {
             panic!("prepared await operands should lower through task-handle places");
         };
-        let handle_info = self.task_handle_info_for_local(place.base, span);
+        let handle_info = self.task_handle_info_for_place(place, span);
         let handle = self.render_operand(output, operand, span);
         let result_ptr = self.fresh_temp();
         let _ = writeln!(
@@ -2793,7 +2833,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         let Operand::Place(place) = operand else {
             panic!("prepared spawn operands should lower through task-handle places");
         };
-        let handle_info = self.task_handle_info_for_local(place.base, span);
+        let handle_info = self.task_handle_info_for_place(place, span);
         let task = self.render_operand(output, operand, span);
         let submitted = self.fresh_temp();
         // `null` is the current placeholder for the ambient/default executor contract.
@@ -5193,6 +5233,238 @@ async fn helper() -> Wrap {
     }
 
     #[test]
+    fn emits_spawn_lowering_for_conditional_zero_sized_recursive_aggregate_task_handle_helpers() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool, task: Task[Wrap]) -> Wrap {
+    if flag {
+        let running = spawn task
+        return await running
+    }
+    return await task
+}
+
+async fn helper(flag: Bool) -> Wrap {
+    return await choose(flag, worker())
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_reverse_branch_conditional_zero_sized_recursive_aggregate_task_handle_helpers()
+     {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool, task: Task[Wrap]) -> Wrap {
+    if flag {
+        return await task
+    }
+    let running = spawn task
+    return await running
+}
+
+async fn helper(flag: Bool) -> Wrap {
+    return await choose(flag, worker())
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_conditional_zero_sized_recursive_aggregate_async_calls() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool) -> Wrap {
+    if flag {
+        let running = spawn worker();
+        return await running
+    }
+    return await worker()
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_reverse_branch_conditional_zero_sized_recursive_aggregate_async_calls()
+     {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool) -> Wrap {
+    if flag {
+        return await worker()
+    }
+    let running = spawn worker();
+    return await running
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_branch_join_reinitializing_zero_sized_recursive_aggregate_async_calls()
+     {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(flag: Bool) -> Wrap {
+    var task = worker()
+    if flag {
+        let running = spawn task
+        task = fresh_worker()
+        return await running
+    } else {
+        task = fresh_worker()
+    }
+    return await task
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_reverse_branch_join_reinitializing_zero_sized_recursive_aggregate_async_calls()
+     {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(flag: Bool) -> Wrap {
+    var task = worker()
+    if flag {
+        task = fresh_worker()
+    } else {
+        let running = spawn task
+        task = fresh_worker()
+        return await running
+    }
+    return await task
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+    }
+
+    #[test]
     fn emits_spawn_lowering_for_bound_zero_sized_recursive_aggregate_task_handle_helpers() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
@@ -5302,6 +5574,142 @@ async fn helper() -> Wrap {
     }
 
     #[test]
+    fn emits_await_lowering_for_projected_zero_sized_task_handle_tuple_elements() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = (worker(), worker())
+    return await pair[0]
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+        assert!(!rendered.contains("does not support field or index projections yet"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_projected_zero_sized_task_handle_tuple_elements() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = (worker(), worker())
+    let running = spawn pair[0]
+    return await running
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+        assert!(!rendered.contains("does not support field or index projections yet"));
+    }
+
+    #[test]
+    fn emits_await_lowering_for_projected_zero_sized_task_handle_struct_fields() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct TaskPair {
+    task: Task[Wrap],
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = TaskPair { task: worker(), value: 1 }
+    return await pair.task
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+        assert!(!rendered.contains("does not support field or index projections yet"));
+    }
+
+    #[test]
+    fn emits_spawn_lowering_for_projected_zero_sized_task_handle_struct_fields() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct TaskPair {
+    task: Task[Wrap],
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = TaskPair { task: worker(), value: 1 }
+    let running = spawn pair.task
+    return await running
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load { [0 x i64] }, ptr"));
+        assert!(!rendered.contains("does not support field or index projections yet"));
+    }
+
+    #[test]
     fn emits_spawn_handle_lowering_for_zero_sized_recursive_aggregate_results() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
@@ -5359,200 +5767,6 @@ async fn helper() -> Int {
         assert!(messages.iter().all(|message| {
             message != "LLVM IR backend foundation does not support `for` lowering yet"
                 && message != "LLVM IR backend foundation does not support array values yet"
-                && !message.contains("could not resolve LLVM type for local")
-                && !message.contains("could not infer LLVM type for MIR local")
-        }));
-    }
-
-    #[test]
-    fn rejects_projected_await_operands_without_task_handle_resolution_noise() {
-        let runtime_hooks = collect_runtime_hook_signatures([
-            RuntimeCapability::AsyncFunctionBodies,
-            RuntimeCapability::TaskAwait,
-        ]);
-        let messages = emit_error_with_runtime_hooks(
-            r#"
-async fn worker() -> Int {
-    return 1
-}
-
-async fn helper() -> Int {
-    let pair = (worker(), 1)
-    return await pair[0]
-}
-"#,
-            CodegenMode::Library,
-            &runtime_hooks,
-        );
-
-        assert!(messages.iter().any(|message| {
-            message == "LLVM IR backend foundation does not support field or index projections yet"
-        }));
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    **message
-                        == "LLVM IR backend foundation does not support field or index projections yet"
-                })
-                .count(),
-            1
-        );
-        assert!(messages.iter().all(|message| {
-            message
-                != "LLVM IR backend foundation could not resolve the async task handle consumed by `await`"
-                && !message.contains("could not resolve LLVM type for local")
-                && !message.contains("could not infer LLVM type for MIR local")
-        }));
-    }
-
-    #[test]
-    fn rejects_cleanup_and_projected_await_diagnostics_without_task_handle_resolution_noise() {
-        let runtime_hooks = collect_runtime_hook_signatures([
-            RuntimeCapability::AsyncFunctionBodies,
-            RuntimeCapability::TaskAwait,
-        ]);
-        let messages = emit_error_with_runtime_hooks(
-            r#"
-extern "c" fn first()
-
-async fn worker() -> Int {
-    return 1
-}
-
-async fn helper() -> Int {
-    defer first()
-    let pair = (worker(), 1)
-    return await pair[0]
-}
-"#,
-            CodegenMode::Library,
-            &runtime_hooks,
-        );
-
-        assert!(messages.iter().any(|message| {
-            message == "LLVM IR backend foundation does not support cleanup lowering yet"
-        }));
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    **message == "LLVM IR backend foundation does not support cleanup lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    **message
-                        == "LLVM IR backend foundation does not support field or index projections yet"
-                })
-                .count(),
-            1
-        );
-        assert!(messages.iter().all(|message| {
-            message
-                != "LLVM IR backend foundation could not resolve the async task handle consumed by `await`"
-                && !message.contains("could not resolve LLVM type for local")
-                && !message.contains("could not infer LLVM type for MIR local")
-        }));
-    }
-
-    #[test]
-    fn rejects_cleanup_and_projected_spawn_diagnostics_without_task_handle_resolution_noise() {
-        let runtime_hooks = collect_runtime_hook_signatures([
-            RuntimeCapability::AsyncFunctionBodies,
-            RuntimeCapability::TaskSpawn,
-        ]);
-        let messages = emit_error_with_runtime_hooks(
-            r#"
-extern "c" fn first()
-
-async fn worker() -> Int {
-    return 1
-}
-
-async fn helper() -> Int {
-    defer first()
-    let pair = (worker(), 1)
-    spawn pair[0]
-    return 0
-}
-"#,
-            CodegenMode::Library,
-            &runtime_hooks,
-        );
-
-        assert!(messages.iter().any(|message| {
-            message == "LLVM IR backend foundation does not support cleanup lowering yet"
-        }));
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    **message == "LLVM IR backend foundation does not support cleanup lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    **message
-                        == "LLVM IR backend foundation does not support field or index projections yet"
-                })
-                .count(),
-            1
-        );
-        assert!(messages.iter().all(|message| {
-            message
-                != "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`"
-                && !message.contains("could not resolve LLVM type for local")
-                && !message.contains("could not infer LLVM type for MIR local")
-        }));
-    }
-
-    #[test]
-    fn rejects_projected_spawn_operands_without_task_handle_resolution_noise() {
-        let runtime_hooks = collect_runtime_hook_signatures([
-            RuntimeCapability::AsyncFunctionBodies,
-            RuntimeCapability::TaskSpawn,
-        ]);
-        let messages = emit_error_with_runtime_hooks(
-            r#"
-async fn worker() -> Int {
-    return 1
-}
-
-async fn helper() -> Int {
-    let pair = (worker(), 1)
-    spawn pair[0]
-    return 0
-}
-"#,
-            CodegenMode::Library,
-            &runtime_hooks,
-        );
-
-        assert!(messages.iter().any(|message| {
-            message == "LLVM IR backend foundation does not support field or index projections yet"
-        }));
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    **message
-                        == "LLVM IR backend foundation does not support field or index projections yet"
-                })
-                .count(),
-            1
-        );
-        assert!(messages.iter().all(|message| {
-            message
-                != "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`"
                 && !message.contains("could not resolve LLVM type for local")
                 && !message.contains("could not infer LLVM type for MIR local")
         }));

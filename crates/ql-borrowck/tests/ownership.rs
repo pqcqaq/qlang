@@ -1588,6 +1588,79 @@ async fn main(flag: Bool) -> Wrap {
 }
 
 #[test]
+fn renders_zero_sized_task_helper_conditionally_returning_spawned_task_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool, task: Task[Wrap]) -> Wrap {
+    if flag {
+        let running = spawn task;
+        return await running
+    }
+    return await task
+}
+
+async fn main(flag: Bool) -> Wrap {
+    return await choose(flag, worker())
+}
+"#,
+    );
+
+    assert!(
+        rendered.contains("ownership choose"),
+        "rendered output:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("consume(await task handle)"),
+        "rendered output:\n{rendered}"
+    );
+}
+
+#[test]
+fn renders_zero_sized_task_reverse_branch_helper_conditionally_returning_spawned_task_for_debugging()
+ {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool, task: Task[Wrap]) -> Wrap {
+    if flag {
+        return await task
+    }
+    let running = spawn task;
+    return await running
+}
+
+async fn main(flag: Bool) -> Wrap {
+    return await choose(flag, worker())
+}
+"#,
+    );
+
+    assert!(
+        rendered.contains("ownership choose"),
+        "rendered output:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("consume(await task handle)"),
+        "rendered output:\n{rendered}"
+    );
+}
+
+#[test]
 fn renders_zero_sized_task_cleanup_helper_consumes_for_debugging() {
     let rendered = render_output(
         r#"
@@ -1650,6 +1723,196 @@ async fn main() -> Int {
 
     assert!(rendered.contains("consume(spawn task handle)"));
     assert!(rendered.contains("consume(await task handle)"));
+}
+
+#[test]
+fn allows_awaiting_projected_task_handle_from_tuple() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let pair = (worker(), worker())
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected projected task-handle await to be accepted, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_spawning_projected_task_handle_from_tuple() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let pair = (worker(), worker())
+    let running = spawn pair[0]
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected projected task-handle spawn to be accepted, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_awaiting_projected_task_handle_from_tuple() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let pair = (worker(), worker())
+    let first = await pair[0]
+    return await pair[1]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `pair` was used after move".to_string()),
+        "expected projected task-handle await to consume the tuple base local, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_awaiting_projected_task_handle_from_struct_field() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct TaskPair {
+    task: Task[Int],
+    value: Int,
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let pair = TaskPair { task: worker(), value: 1 }
+    return await pair.task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected projected struct-field task-handle await to be accepted, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_awaiting_projected_task_handle_from_struct_field() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct TaskPair {
+    task: Task[Int],
+    value: Int,
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let pair = TaskPair { task: worker(), value: 1 }
+    let first = await pair.task
+    return await pair.task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `pair` was used after move".to_string()),
+        "expected projected struct-field task-handle await to consume the struct base local, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn renders_zero_sized_task_conditionally_spawned_async_call_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool) -> Wrap {
+    if flag {
+        let running = spawn worker();
+        return await running
+    }
+    return await worker()
+}
+
+async fn main(flag: Bool) -> Wrap {
+    return await choose(flag)
+}
+"#,
+    );
+
+    assert!(
+        rendered.contains("ownership choose"),
+        "rendered output:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("consume(await task handle)"),
+        "rendered output:\n{rendered}"
+    );
+}
+
+#[test]
+fn renders_zero_sized_task_reverse_branch_conditionally_spawned_async_call_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool) -> Wrap {
+    if flag {
+        return await worker()
+    }
+    let running = spawn worker();
+    return await running
+}
+
+async fn main(flag: Bool) -> Wrap {
+    return await choose(flag)
+}
+"#,
+    );
+
+    assert!(
+        rendered.contains("ownership choose"),
+        "rendered output:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("consume(await task handle)"),
+        "rendered output:\n{rendered}"
+    );
 }
 
 #[test]

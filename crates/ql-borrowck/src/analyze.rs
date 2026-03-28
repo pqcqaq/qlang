@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
-use ql_ast::{BinaryOp, ReceiverKind, UnaryOp};
+use ql_ast::{BinaryOp, ReceiverKind, UnaryOp, parse_usize_literal};
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{self as hir, Function, ItemKind, Param};
 use ql_mir::{
@@ -420,7 +420,7 @@ impl<'a> BodyAnalyzer<'a> {
         op: UnaryOp,
         operand: &Operand,
     ) -> Option<(MirLocalId, MoveReason)> {
-        let local = self.direct_task_handle_local_for_operand(operand)?;
+        let local = self.task_handle_local_for_operand(operand)?;
 
         match op {
             UnaryOp::Await => Some((local, MoveReason::AwaitTaskHandle)),
@@ -440,7 +440,7 @@ impl<'a> BodyAnalyzer<'a> {
         let Rvalue::Use(operand) = value else {
             return None;
         };
-        let local = self.direct_task_handle_local_for_operand(operand)?;
+        let local = self.task_handle_local_for_operand(operand)?;
         Some((local, MoveReason::ReturnTaskHandle))
     }
 
@@ -703,19 +703,39 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
-    fn direct_task_handle_local_for_operand(&self, operand: &Operand) -> Option<MirLocalId> {
+    fn task_handle_local_for_operand(&self, operand: &Operand) -> Option<MirLocalId> {
         let Operand::Place(place) = operand else {
             return None;
         };
-        if !place.projections.is_empty() {
-            return None;
+        if place.projections.is_empty() {
+            return self.direct_task_handle_local(place.base);
         }
-        self.direct_task_handle_local(place.base)
+        if matches!(self.place_ty(place)?, Ty::TaskHandle(_)) {
+            Some(place.base)
+        } else {
+            None
+        }
     }
 
-    fn direct_task_handle_local_for_expr(&self, expr_id: hir::ExprId) -> Option<MirLocalId> {
-        let local = self.direct_local_for_expr(expr_id)?;
-        self.direct_task_handle_local(local)
+    fn task_handle_local_for_expr(&self, expr_id: hir::ExprId) -> Option<MirLocalId> {
+        if !matches!(self.typeck.expr_ty(expr_id), Some(Ty::TaskHandle(_))) {
+            return None;
+        }
+
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::Name(_) => self
+                .direct_local_for_expr(expr_id)
+                .and_then(|local| self.direct_task_handle_local(local)),
+            hir::ExprKind::Member { object, .. } => self.task_handle_local_for_expr(*object),
+            hir::ExprKind::Bracket { target, .. } => self.task_handle_local_for_expr(*target),
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
+                .hir
+                .block(*block)
+                .tail
+                .and_then(|tail| self.task_handle_local_for_expr(tail)),
+            hir::ExprKind::Question(inner) => self.task_handle_local_for_expr(*inner),
+            _ => None,
+        }
     }
 
     fn classify_task_handle_unary_expr(
@@ -723,7 +743,7 @@ impl<'a> BodyAnalyzer<'a> {
         op: UnaryOp,
         expr_id: hir::ExprId,
     ) -> Option<(MirLocalId, MoveReason)> {
-        let local = self.direct_task_handle_local_for_expr(expr_id)?;
+        let local = self.task_handle_local_for_expr(expr_id)?;
 
         match op {
             UnaryOp::Await => Some((local, MoveReason::AwaitTaskHandle)),
@@ -753,7 +773,7 @@ impl<'a> BodyAnalyzer<'a> {
         if !self.task_handle_call_arg_should_consume(call_span, arg_index) {
             return None;
         }
-        let local = self.direct_task_handle_local_for_operand(operand)?;
+        let local = self.task_handle_local_for_operand(operand)?;
         Some((local, MoveReason::CallTaskHandleArgument))
     }
 
@@ -766,7 +786,7 @@ impl<'a> BodyAnalyzer<'a> {
         if !self.task_handle_call_arg_should_consume(call_span, arg_index) {
             return None;
         }
-        let local = self.direct_task_handle_local_for_expr(expr_id)?;
+        let local = self.task_handle_local_for_expr(expr_id)?;
         Some((local, MoveReason::CallTaskHandleArgument))
     }
 
@@ -774,8 +794,48 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         expr_id: hir::ExprId,
     ) -> Option<(MirLocalId, MoveReason)> {
-        let local = self.direct_task_handle_local_for_expr(expr_id)?;
+        let local = self.task_handle_local_for_expr(expr_id)?;
         Some((local, MoveReason::ReturnTaskHandle))
+    }
+
+    fn place_ty(&self, place: &Place) -> Option<Ty> {
+        let mut current_ty = self.local_ty(place.base)?;
+
+        for projection in &place.projections {
+            current_ty = self.project_place_ty_step(&current_ty, projection)?;
+        }
+
+        Some(current_ty)
+    }
+
+    fn project_place_ty_step(&self, current_ty: &Ty, projection: &ProjectionElem) -> Option<Ty> {
+        match projection {
+            ProjectionElem::Field(field) => match current_ty {
+                Ty::Item { item_id, .. } => match &self.hir.item(*item_id).kind {
+                    ItemKind::Struct(struct_decl) => struct_decl
+                        .fields
+                        .iter()
+                        .find(|candidate| candidate.name == *field)
+                        .map(|candidate| lower_type(self.hir, self.resolution, candidate.ty)),
+                    _ => None,
+                },
+                _ => None,
+            },
+            ProjectionElem::TupleIndex(index) => match current_ty {
+                Ty::Tuple(items) => items.get(*index).cloned(),
+                _ => None,
+            },
+            ProjectionElem::Index(index) => match current_ty {
+                Ty::Array { element, .. } => Some((**element).clone()),
+                Ty::Tuple(items) => match &**index {
+                    Operand::Constant(Constant::Integer(raw)) => {
+                        parse_usize_literal(raw).and_then(|index| items.get(index).cloned())
+                    }
+                    _ => None,
+                },
+                _ => None,
+            },
+        }
     }
 
     fn analyze_closure_facts(&self) -> Vec<ClosureFacts> {

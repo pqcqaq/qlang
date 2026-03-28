@@ -2404,130 +2404,203 @@ async fn helper() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_projected_await_library_diagnostics_without_backend_noise() {
-        let dir = TestDir::new("ql-driver-async-projected-await-library-runtime");
+    fn build_file_writes_static_library_with_projected_zero_sized_task_handle_tuple_await() {
+        let dir = TestDir::new("ql-driver-async-projected-await-task-handle-tuple");
         let source = dir.write(
-            "async_projected_await_library.ql",
+            "async_projected_task_handle_tuple_await.ql",
             r#"
-async fn worker() -> Int {
-    return 1
+struct Wrap {
+    values: [Int; 0],
 }
 
-async fn helper() -> Int {
-    let pair = (worker(), 1)
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = (worker(), worker())
     return await pair[0]
 }
 "#,
         );
         let output = dir.path().join(if cfg!(windows) {
-            "artifacts/async_projected_await_library.lib"
+            "artifacts/async_projected_task_handle_tuple_await.lib"
         } else {
-            "artifacts/libasync_projected_await_library.a"
+            "artifacts/libasync_projected_task_handle_tuple_await.a"
         });
 
-        let error = build_file(
+        build_file(
             &source,
             &BuildOptions {
                 emit: BuildEmit::StaticLibrary,
                 profile: BuildProfile::Debug,
-                output: Some(output),
+                output: Some(output.clone()),
                 c_header: None,
-                toolchain: ToolchainOptions::default(),
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
             },
         )
-        .expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("projected await library rejection should return diagnostics");
+        .expect("static library build with projected task-handle await should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
 
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message
-                == "LLVM IR backend foundation does not support field or index projections yet"
-        }));
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support field or index projections yet"
-                })
-                .count(),
-            1
-        );
-        assert!(diagnostics.iter().all(|diagnostic| {
-            diagnostic.message
-                != "LLVM IR backend foundation could not resolve the async task handle consumed by `await`"
-                && diagnostic.message
-                    != "LLVM IR backend foundation does not support `async fn` yet"
-        }));
+        assert_eq!(rendered, "mock-staticlib");
     }
 
     #[test]
-    fn build_file_surfaces_cleanup_and_projected_await_codegen_diagnostics_once_each() {
-        let dir = TestDir::new("ql-driver-cleanup-projected-await-unsupported");
+    fn build_file_writes_static_library_with_projected_zero_sized_task_handle_tuple_spawn() {
+        let dir = TestDir::new("ql-driver-async-projected-spawn-task-handle-tuple");
         let source = dir.write(
-            "cleanup_projected_await.ql",
+            "async_projected_task_handle_tuple_spawn.ql",
             r#"
-extern "c" fn first()
-
-async fn worker() -> Int {
-    return 1
+struct Wrap {
+    values: [Int; 0],
 }
 
-async fn helper() -> Int {
-    defer first()
-    let pair = (worker(), 1)
-    return await pair[0]
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = (worker(), worker())
+    let running = spawn pair[0]
+    return await running
 }
 "#,
         );
         let output = dir.path().join(if cfg!(windows) {
-            "artifacts/cleanup_projected_await.lib"
+            "artifacts/async_projected_task_handle_tuple_spawn.lib"
         } else {
-            "artifacts/libcleanup_projected_await.a"
+            "artifacts/libasync_projected_task_handle_tuple_spawn.a"
         });
 
-        let error = build_file(
+        build_file(
             &source,
             &BuildOptions {
                 emit: BuildEmit::StaticLibrary,
                 profile: BuildProfile::Debug,
-                output: Some(output),
+                output: Some(output.clone()),
                 c_header: None,
-                toolchain: ToolchainOptions::default(),
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
             },
         )
-        .expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("cleanup and projected await codegen rejection should return diagnostics");
+        .expect("static library build with projected task-handle spawn should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
 
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support cleanup lowering yet"
-                })
-                .count(),
-            1
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_projected_zero_sized_task_handle_struct_field_await() {
+        let dir = TestDir::new("ql-driver-async-projected-await-task-handle-struct-field");
+        let source = dir.write(
+            "async_projected_task_handle_struct_field_await.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct TaskPair {
+    task: Task[Wrap],
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = TaskPair { task: worker(), value: 1 }
+    return await pair.task
+}
+"#,
         );
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support field or index projections yet"
-                })
-                .count(),
-            1
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_projected_task_handle_struct_field_await.lib"
+        } else {
+            "artifacts/libasync_projected_task_handle_struct_field_await.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect(
+            "static library build with projected struct-field task-handle await should succeed",
         );
-        assert!(diagnostics.iter().all(|diagnostic| {
-            diagnostic.message
-                != "LLVM IR backend foundation could not resolve the async task handle consumed by `await`"
-                && diagnostic.message
-                    != "LLVM IR backend foundation does not support `async fn` yet"
-        }));
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_projected_zero_sized_task_handle_struct_field_spawn() {
+        let dir = TestDir::new("ql-driver-async-projected-spawn-task-handle-struct-field");
+        let source = dir.write(
+            "async_projected_task_handle_struct_field_spawn.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct TaskPair {
+    task: Task[Wrap],
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let pair = TaskPair { task: worker(), value: 1 }
+    let running = spawn pair.task
+    return await running
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_projected_task_handle_struct_field_spawn.lib"
+        } else {
+            "artifacts/libasync_projected_task_handle_struct_field_spawn.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect(
+            "static library build with projected struct-field task-handle spawn should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
     }
 
     #[test]
@@ -2814,66 +2887,6 @@ fn main() -> Int {
                 && !diagnostic
                     .message
                     .contains("could not infer LLVM type for MIR local")
-        }));
-    }
-
-    #[test]
-    fn build_file_surfaces_projected_spawn_library_diagnostics_without_backend_noise() {
-        let dir = TestDir::new("ql-driver-async-projected-spawn-library-runtime");
-        let source = dir.write(
-            "async_projected_spawn_library.ql",
-            r#"
-async fn worker() -> Int {
-    return 1
-}
-
-async fn helper() -> Int {
-    let pair = (worker(), 1)
-    spawn pair[0]
-    return 0
-}
-"#,
-        );
-        let output = dir.path().join(if cfg!(windows) {
-            "artifacts/async_projected_spawn_library.lib"
-        } else {
-            "artifacts/libasync_projected_spawn_library.a"
-        });
-
-        let error = build_file(
-            &source,
-            &BuildOptions {
-                emit: BuildEmit::StaticLibrary,
-                profile: BuildProfile::Debug,
-                output: Some(output),
-                c_header: None,
-                toolchain: ToolchainOptions::default(),
-            },
-        )
-        .expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("projected spawn library rejection should return diagnostics");
-
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message
-                == "LLVM IR backend foundation does not support field or index projections yet"
-        }));
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support field or index projections yet"
-                })
-                .count(),
-            1
-        );
-        assert!(diagnostics.iter().all(|diagnostic| {
-            diagnostic.message
-                != "LLVM IR backend foundation could not resolve the async task handle consumed by `spawn`"
-                && diagnostic.message
-                    != "LLVM IR backend foundation does not support `async fn` yet"
         }));
     }
 
@@ -3380,6 +3393,357 @@ async fn helper() -> Wrap {
             fs::read_to_string(&output).expect("read generated static library placeholder");
 
         assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_conditionally_spawned_zero_sized_task_handle_helpers()
+    {
+        let dir =
+            TestDir::new("ql-driver-staticlib-async-conditional-spawn-zero-sized-task-handle");
+        let source = dir.write(
+            "async_conditional_spawn_zero_sized_task_handle.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool, task: Task[Wrap]) -> Wrap {
+    if flag {
+        let running = spawn task
+        return await running
+    }
+    return await task
+}
+
+async fn helper(flag: Bool) -> Wrap {
+    return await choose(flag, worker())
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_conditional_spawn_zero_sized_task_handle.lib"
+        } else {
+            "artifacts/libasync_conditional_spawn_zero_sized_task_handle.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with conditionally spawned zero-sized task-handle helpers should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_reverse_branch_conditionally_spawned_zero_sized_task_handle_helpers()
+     {
+        let dir = TestDir::new(
+            "ql-driver-staticlib-async-reverse-conditional-spawn-zero-sized-task-handle",
+        );
+        let source = dir.write(
+            "async_reverse_conditional_spawn_zero_sized_task_handle.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool, task: Task[Wrap]) -> Wrap {
+    if flag {
+        return await task
+    }
+    let running = spawn task
+    return await running
+}
+
+async fn helper(flag: Bool) -> Wrap {
+    return await choose(flag, worker())
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_reverse_conditional_spawn_zero_sized_task_handle.lib"
+        } else {
+            "artifacts/libasync_reverse_conditional_spawn_zero_sized_task_handle.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with reverse-branch conditionally spawned zero-sized task-handle helpers should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_conditionally_spawned_zero_sized_async_call_helpers() {
+        let dir = TestDir::new("ql-driver-staticlib-async-conditional-spawn-zero-sized-async-call");
+        let source = dir.write(
+            "async_conditional_spawn_zero_sized_async_call.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool) -> Wrap {
+    if flag {
+        let running = spawn worker();
+        return await running
+    }
+    return await worker()
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_conditional_spawn_zero_sized_async_call.lib"
+        } else {
+            "artifacts/libasync_conditional_spawn_zero_sized_async_call.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with conditionally spawned zero-sized async call helpers should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_reverse_branch_conditionally_spawned_zero_sized_async_call_helpers()
+     {
+        let dir = TestDir::new(
+            "ql-driver-staticlib-async-reverse-conditional-spawn-zero-sized-async-call",
+        );
+        let source = dir.write(
+            "async_reverse_conditional_spawn_zero_sized_async_call.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool) -> Wrap {
+    if flag {
+        return await worker()
+    }
+    let running = spawn worker();
+    return await running
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_reverse_conditional_spawn_zero_sized_async_call.lib"
+        } else {
+            "artifacts/libasync_reverse_conditional_spawn_zero_sized_async_call.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with reverse-branch conditionally spawned zero-sized async call helpers should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_surfaces_zero_sized_branch_join_helper_consume_reinit_diagnostic_once() {
+        let dir = TestDir::new("ql-driver-async-branch-join-helper-consume-reinit-unsupported");
+        let source = dir.write(
+            "async_branch_join_helper_consume_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(flag: Bool) -> Wrap {
+    var task = worker()
+    if flag {
+        forward(task)
+    } else {
+        task = fresh_worker()
+    }
+    return await task
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_branch_join_helper_consume_reinit.lib"
+        } else {
+            "artifacts/libasync_branch_join_helper_consume_reinit.a"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("branch-join helper diagnostics should be returned");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "local `task` may have been moved on another control-flow path"
+                })
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn build_file_surfaces_zero_sized_reverse_branch_join_helper_consume_reinit_diagnostic_once() {
+        let dir =
+            TestDir::new("ql-driver-async-reverse-branch-join-helper-consume-reinit-unsupported");
+        let source = dir.write(
+            "async_reverse_branch_join_helper_consume_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(flag: Bool) -> Wrap {
+    var task = worker()
+    if flag {
+        task = fresh_worker()
+    } else {
+        forward(task)
+    }
+    return await task
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_reverse_branch_join_helper_consume_reinit.lib"
+        } else {
+            "artifacts/libasync_reverse_branch_join_helper_consume_reinit.a"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("branch-join helper diagnostics should be returned");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "local `task` may have been moved on another control-flow path"
+                })
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -3940,77 +4304,6 @@ async fn helper() -> Int {
                 .filter(|diagnostic| {
                     diagnostic.message
                         == "LLVM IR backend foundation does not support `for await` lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert!(diagnostics.iter().all(|diagnostic| {
-            !diagnostic
-                .message
-                .contains("could not resolve LLVM type for local")
-                && !diagnostic
-                    .message
-                    .contains("could not infer LLVM type for MIR local")
-        }));
-    }
-
-    #[test]
-    fn build_file_surfaces_cleanup_and_projected_spawn_codegen_diagnostics_once_each() {
-        let dir = TestDir::new("ql-driver-cleanup-projected-spawn-unsupported");
-        let source = dir.write(
-            "cleanup_projected_spawn.ql",
-            r#"
-extern "c" fn first()
-
-async fn worker() -> Int {
-    return 1
-}
-
-async fn helper() -> Int {
-    defer first()
-    let pair = (worker(), 1)
-    spawn pair[0]
-    return 0
-}
-"#,
-        );
-        let output = dir.path().join(if cfg!(windows) {
-            "artifacts/cleanup_projected_spawn.lib"
-        } else {
-            "artifacts/libcleanup_projected_spawn.a"
-        });
-
-        let error = build_file(
-            &source,
-            &BuildOptions {
-                emit: BuildEmit::StaticLibrary,
-                profile: BuildProfile::Debug,
-                output: Some(output),
-                c_header: None,
-                toolchain: ToolchainOptions::default(),
-            },
-        )
-        .expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("cleanup and projected spawn codegen rejection should return diagnostics");
-
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support cleanup lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support field or index projections yet"
                 })
                 .count(),
             1

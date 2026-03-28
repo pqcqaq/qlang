@@ -814,6 +814,239 @@ async fn main(flag: Bool) -> Wrap {
 }
 
 #[test]
+fn accepts_conditionally_returning_spawned_zero_sized_task_handles_from_helpers() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool, task: Task[Wrap]) -> Wrap {
+    if flag {
+        let running = spawn task;
+        return await running
+    }
+    return await task
+}
+
+async fn main(flag: Bool) -> Wrap {
+    return await choose(flag, worker())
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected helper conditional spawned task return flow to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_reverse_branch_conditionally_returning_spawned_zero_sized_task_handles_from_helpers() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool, task: Task[Wrap]) -> Wrap {
+    if flag {
+        return await task
+    }
+    let running = spawn task;
+    return await running
+}
+
+async fn main(flag: Bool) -> Wrap {
+    return await choose(flag, worker())
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected reverse-branch helper conditional spawned task return flow to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_conditionally_returning_spawned_zero_sized_task_handles_from_async_calls() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool) -> Wrap {
+    if flag {
+        let running = spawn worker();
+        return await running
+    }
+    return await worker()
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected conditional spawned async-call flow to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_awaiting_projected_zero_sized_task_handles_from_tuples() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let pair = (worker(), worker())
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected projected zero-sized task-handle await flow to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_spawning_projected_zero_sized_task_handles_from_tuples() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let pair = (worker(), worker())
+    let running = spawn pair[0]
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected projected zero-sized task-handle spawn flow to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_awaiting_projected_zero_sized_task_handles_from_struct_fields() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct TaskPair {
+    task: Task[Wrap],
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let pair = TaskPair { task: worker(), value: 1 }
+    return await pair.task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected projected zero-sized struct-field task-handle await flow to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_spawning_projected_zero_sized_task_handles_from_struct_fields() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct TaskPair {
+    task: Task[Wrap],
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let pair = TaskPair { task: worker(), value: 1 }
+    let running = spawn pair.task
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected projected zero-sized struct-field task-handle spawn flow to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_reverse_branch_conditionally_returning_spawned_zero_sized_task_handles_from_async_calls()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool) -> Wrap {
+    if flag {
+        return await worker()
+    }
+    let running = spawn worker();
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected reverse-branch conditional spawned async-call flow to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_passing_async_calls_to_task_handle_parameters() {
     let diagnostics = diagnostic_messages(
         r#"
