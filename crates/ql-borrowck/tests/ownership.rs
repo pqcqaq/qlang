@@ -1187,6 +1187,36 @@ async fn main(flag: Bool) -> Int {
 }
 
 #[test]
+fn renders_zero_sized_task_conditional_helper_cleanup_maybe_moved_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Int {
+    var task = worker()
+    defer await task
+    defer if flag { forward(task) } else { forward(worker()) }
+    return 0
+}
+"#,
+    );
+
+    assert!(rendered.contains("ownership main"));
+    assert!(rendered.contains("consume(await task handle)"));
+    assert!(rendered.contains("consume(call task handle argument)"));
+}
+
+#[test]
 fn renders_zero_sized_task_cleanup_helper_consumes_for_debugging() {
     let rendered = render_output(
         r#"
