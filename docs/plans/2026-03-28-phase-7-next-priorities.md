@@ -1,5 +1,7 @@
 # Phase 7 Next Priorities Implementation Plan
 
+> Historical note (2026-03-29): Tasks 1-5 in this plan have now landed. This file is kept as an execution record for the 2026-03-28 planning snapshot, not as the current source of truth. Current implementation status lives in `docs/roadmap/phase-progress.md`, `docs/roadmap/development-plan.md`, and `docs/plans/phase-7-concurrency-and-rust-interop.md`.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 在当前 Phase 7 的保守 async/staticlib 闭环上，优先补齐最能继续放大 async 可用面的几个缺口。
@@ -148,4 +150,3 @@
 **Rule:**
 - 每完成一项实现任务，同步更新 roadmap/progress。
 - 任何 async 边界变化都要让文档、测试、实现三者描述一致。
-

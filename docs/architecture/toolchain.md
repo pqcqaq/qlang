@@ -86,7 +86,8 @@ P4/P5 地基已经落地，且当前正在保守扩展 Phase 7 async library/sta
 - `main` 入口
 - 标量整数 / `Bool` / `Void`
 - direct function call
-- 保守的 async `staticlib` 子集：async library body、scalar/tuple/array/struct/void `await`、task-handle-aware `spawn`
+- 保守的 async `staticlib` 子集：async library body、scalar/tuple/array/struct/void `await`、task-handle-aware `spawn`、以及 fixed-array iterable 的 `for await`
+- 最小 async `dylib` 子集：在仍通过同步 `extern "c"` 顶层导出暴露公开 ABI 时，内部 async helper / `await` / 已支持的 task-handle lowering 也可进入 library build
 - projected task-handle operand：tuple index / fixed-array literal index / struct-field 只读投影（例如 `await pair[0]`、`await tasks[0]`、`spawn pair.task`）
 - arithmetic / compare / branch / return
 - `.ll` 文本产物始终可用
@@ -95,7 +96,7 @@ P4/P5 地基已经落地，且当前正在保守扩展 Phase 7 async library/sta
 - `.lib` / `.a` 产物依赖 clang-style compiler 与 archive tool
 - codegen 会在 program mode 下把 Qlang 用户入口 lower 成内部符号，并额外生成宿主 `main` wrapper
 - `dylib` 和 `staticlib` 都走 library mode，因此当前单文件库不要求顶层 `main`
-- async public build 当前只开放 `staticlib`；program / `dylib` / `for await` 仍保持保守拒绝
+- async public build 当前已开放两条受控 library 子集：`staticlib` 支持已接入 backend 的 async library body，并为 fixed-array iterable 打开首个 `for await` lowering；`dylib` 支持不暴露 async ABI 的最小 library-style async body。async program entry、更广义 `dylib` surface，以及非 fixed-array / 非 `staticlib` 的 `for await` 仍保持保守拒绝
 - `dylib` 当前要求模块里至少存在一个 public 顶层 `extern "c"` 函数定义，避免生成没有明确导出面的共享库
 - direct `extern "c"` 调用现在会在 program mode 和 library mode 下都 lower 成 LLVM `declare @symbol` + `call @symbol`
 - 顶层 `extern "c"` 函数定义现在会 lower 成稳定 C 符号名，例如 `define i64 @q_add(...)`
@@ -118,7 +119,7 @@ P4/P5 地基已经落地，且当前正在保守扩展 Phase 7 async library/sta
 - runtime startup object
 - first-class function value lowering
 - closure lowering
-- projection assignment、`for await` 与更广义 aggregate / cleanup lowering
+- 更广义的 projection assignment（当前仅 tuple-index / struct-field write 已开放；array element assignment 仍关闭）、更广义 `for await` lowering（当前仅 `staticlib` fixed-array iterable 已开放）与更广义 aggregate / cleanup lowering
 - 任意共享库 surface、exported ABI 的 linkage/visibility 控制与 richer ABI surface
 - extern ABI 与 runtime glue 的其余部分
 
