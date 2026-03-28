@@ -1032,6 +1032,43 @@ fn main() -> String {
 }
 
 #[test]
+fn renders_zero_sized_task_cleanup_reinitialization_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Int {
+    var task = worker()
+    defer await task
+    defer {
+        task = fresh_worker();
+        ""
+    }
+    defer await task
+    return 0
+}
+"#,
+    );
+
+    assert!(rendered.contains("ownership main"));
+    assert_eq!(
+        rendered.matches("consume(await task handle)").count(),
+        2,
+        "expected both deferred await uses to be rendered, got {rendered}"
+    );
+}
+
+#[test]
 fn renders_move_closure_capture_effects_for_debugging() {
     let rendered = render_output(
         r#"
