@@ -2463,6 +2463,74 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_cleanup_and_projected_await_codegen_diagnostics_once_each() {
+        let dir = TestDir::new("ql-driver-cleanup-projected-await-unsupported");
+        let source = dir.write(
+            "cleanup_projected_await.ql",
+            r#"
+extern "c" fn first()
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    defer first()
+    let pair = (worker(), 1)
+    return await pair[0]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/cleanup_projected_await.lib"
+        } else {
+            "artifacts/libcleanup_projected_await.a"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("cleanup and projected await codegen rejection should return diagnostics");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support cleanup lowering yet"
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "LLVM IR backend foundation does not support field or index projections yet"
+                })
+                .count(),
+            1
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.message
+                != "LLVM IR backend foundation could not resolve the async task handle consumed by `await`"
+                && diagnostic.message
+                    != "LLVM IR backend foundation does not support `async fn` yet"
+        }));
+    }
+
+    #[test]
     fn build_file_surfaces_projected_spawn_library_diagnostics_without_backend_noise() {
         let dir = TestDir::new("ql-driver-async-projected-spawn-library-runtime");
         let source = dir.write(
