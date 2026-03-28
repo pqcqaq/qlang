@@ -703,6 +703,44 @@ async fn main(flag: Bool) -> Wrap {
 }
 
 #[test]
+fn accepts_branch_joining_and_helper_reinitializing_zero_sized_task_handles_before_await() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Wrap {
+    var task = worker()
+    if flag {
+        forward(task)
+    } else {
+        task = fresh_worker()
+    }
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected branch-joined zero-sized task helper consume/reinit flow to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_passing_async_calls_to_task_handle_parameters() {
     let diagnostics = diagnostic_messages(
         r#"

@@ -367,6 +367,44 @@ async fn main(flag: Bool) -> Wrap {
 }
 
 #[test]
+fn reports_maybe_moved_zero_sized_task_handle_after_branch_join_and_helper_reinit() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Wrap {
+    var task = worker()
+    if flag {
+        forward(task)
+    } else {
+        task = fresh_worker()
+    }
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"local `task` may have been moved on another control-flow path".to_string())
+    );
+}
+
+#[test]
 fn reassigning_a_task_handle_makes_it_available_again() {
     let diagnostics = diagnostic_messages(
         r#"
