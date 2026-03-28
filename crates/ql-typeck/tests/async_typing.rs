@@ -440,6 +440,36 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn accepts_branch_joining_zero_sized_task_handles_before_await() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Wrap {
+    let task = worker()
+    if flag {
+        await task
+    } else {
+        Wrap { values: [] }
+    }
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected zero-sized task handle branch join to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_passing_async_calls_to_task_handle_parameters() {
     let diagnostics = diagnostic_messages(
         r#"
