@@ -969,6 +969,37 @@ async fn main(flag: Bool) -> Int {
 }
 
 #[test]
+fn reports_maybe_moved_zero_sized_task_handle_from_conditional_helper_cleanup() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Int {
+    var task = worker()
+    defer await task
+    defer if flag { forward(task) } else { forward(worker()) }
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .contains(&"local `task` may have been moved on another control-flow path".to_string())
+    );
+}
+
+#[test]
 fn deferred_root_write_reinitializes_for_later_cleanup_reads() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -1123,6 +1154,36 @@ async fn main(flag: Bool) -> Int {
 
     assert!(rendered.contains("ownership main"));
     assert!(rendered.contains("consume(await task handle)"));
+}
+
+#[test]
+fn renders_zero_sized_task_conditional_helper_cleanup_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Int {
+    var task = worker()
+    defer await task
+    defer if flag { forward(task) } else { forward(worker()) }
+    return 0
+}
+"#,
+    );
+
+    assert!(rendered.contains("ownership main"));
+    assert!(rendered.contains("consume(await task handle)"));
+    assert!(rendered.contains("consume(call task handle argument)"));
 }
 
 #[test]
