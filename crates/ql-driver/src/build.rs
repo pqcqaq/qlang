@@ -349,11 +349,11 @@ fn runtime_requirement_message(
         RuntimeCapability::AsyncFunctionBodies
         | RuntimeCapability::TaskAwait
         | RuntimeCapability::TaskSpawn
-        | RuntimeCapability::AsyncIteration
-            if emit == BuildEmit::StaticLibrary =>
+            if matches!(emit, BuildEmit::StaticLibrary | BuildEmit::DynamicLibrary) =>
         {
             None
         }
+        RuntimeCapability::AsyncIteration if emit == BuildEmit::StaticLibrary => None,
         RuntimeCapability::AsyncFunctionBodies => {
             Some("LLVM IR backend foundation does not support `async fn` yet")
         }
@@ -1106,6 +1106,67 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
         assert_eq!(header.imported_functions, 0);
         assert!(rendered.contains("#ifndef QLANG_FFI_EXPORT_H"));
         assert!(rendered.contains("int64_t q_add(int64_t left, int64_t right);"));
+    }
+
+    #[test]
+    fn build_file_writes_dynamic_library_with_async_export_header_sidecar() {
+        let dir = TestDir::new("ql-driver-dylib-async-export-header");
+        let source = dir.write(
+            "ffi_export_async.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    return await worker()
+}
+
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/ffi_export_async.dll"
+        } else if cfg!(target_os = "macos") {
+            "artifacts/libffi_export_async.dylib"
+        } else {
+            "artifacts/libffi_export_async.so"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::DynamicLibrary,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: Some(BuildCHeaderOptions {
+                output: None,
+                surface: CHeaderSurface::Exports,
+            }),
+            toolchain: ToolchainOptions {
+                clang: Some(mock_dynamic_library_invocation(&dir, &["q_add"])),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("dynamic library build with async helpers and export header should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated dynamic library placeholder");
+        let header = artifact
+            .c_header
+            .expect("dynamic library build should return a generated export header");
+        let header_rendered = fs::read_to_string(&header.path).expect("read generated header");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-dylib");
+        assert_eq!(header.path, dir.path().join("artifacts/ffi_export_async.h"));
+        assert_eq!(header.surface, CHeaderSurface::Exports);
+        assert_eq!(header.exported_functions, 1);
+        assert_eq!(header.imported_functions, 0);
+        assert!(header_rendered.contains("#ifndef QLANG_FFI_EXPORT_ASYNC_H"));
+        assert!(header_rendered.contains("int64_t q_add(int64_t left, int64_t right);"));
+        assert!(!header_rendered.contains("worker"));
+        assert!(!header_rendered.contains("helper"));
     }
 
     #[test]
@@ -4295,8 +4356,8 @@ async unsafe fn main() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_async_function_codegen_diagnostics_for_dylib_with_exports() {
-        let dir = TestDir::new("ql-driver-async-dylib-unsupported");
+    fn build_file_writes_dynamic_library_with_supported_async_library_bodies() {
+        let dir = TestDir::new("ql-driver-async-dylib-supported");
         let source = dir.write(
             "async_dylib.ql",
             r#"
@@ -4321,6 +4382,57 @@ async fn helper() -> Int {
             "artifacts/libasync_dylib.so"
         });
 
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::DynamicLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_dynamic_library_invocation(&dir, &["q_export"])),
+                    ..ToolchainOptions::default()
+                },
+            },
+        )
+        .expect("dynamic library build with supported async library bodies should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated dynamic library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-dylib");
+    }
+
+    #[test]
+    fn build_file_surfaces_async_for_await_diagnostics_for_dylib_with_exports() {
+        let dir = TestDir::new("ql-driver-async-for-await-dylib-unsupported");
+        let source = dir.write(
+            "async_for_await_dylib.ql",
+            r#"
+extern "c" pub fn q_export() -> Int {
+    return 1
+}
+
+async fn worker() -> Int {
+    return 1
+}
+
+async fn helper() -> Int {
+    for await value in [1, 2, 3] {
+        break
+    }
+    return await worker()
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_for_await_dylib.dll"
+        } else if cfg!(target_os = "macos") {
+            "artifacts/libasync_for_await_dylib.dylib"
+        } else {
+            "artifacts/libasync_for_await_dylib.so"
+        });
+
         let error = build_file(
             &source,
             &BuildOptions {
@@ -4331,18 +4443,23 @@ async fn helper() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect_err("build should fail");
+        .expect_err("dynamic library build with for-await should still fail");
         let diagnostics = error
             .diagnostics()
-            .expect("async codegen rejection should return diagnostics");
+            .expect("async for-await codegen rejection should return diagnostics");
 
         assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
+            diagnostic.message
+                == "LLVM IR backend foundation does not support `for await` lowering yet"
         }));
         assert!(diagnostics.iter().all(|diagnostic| {
-            !diagnostic.message.contains(
-                "requires at least one public top-level `extern \"c\"` function definition",
-            )
+            !diagnostic
+                .message
+                .contains("does not support `async fn` yet")
+                && !diagnostic.message.contains("does not support `await` yet")
+                && !diagnostic.message.contains(
+                    "requires at least one public top-level `extern \"c\"` function definition",
+                )
         }));
     }
 

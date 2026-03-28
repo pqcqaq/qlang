@@ -104,6 +104,7 @@
 - backend 已支持最小 async body wrapper、frame scaffold、loadable `await`、task-handle-aware `spawn`
 - projected task-handle operand 已支持 tuple index / struct field 只读投影路径
 - `staticlib` 已开放第一条受控 async library build 子集
+- `dylib` 已开放最小受控 async library build 子集：当前允许带内部 async helper 的 library body 通过，但公开导出面仍收敛在同步 `extern "c"` C ABI surface
 - `for await` 已开放首个受控 lowering 竖切片：当前仅支持 `staticlib` async library body 内对 fixed array iterable 的 lowering
 - `examples/ffi-rust` 与对应回归测试已经建立
 
@@ -116,7 +117,7 @@
 - 更广义的 `for await` lowering（当前仅开放 `staticlib` async library body 内的 fixed array iterable）
 - cancellation / polling / drop 语义
 - generic async ABI 与 layout substitution
-- async `dylib` 构建承诺
+- 更广义的 async `dylib` 构建承诺（当前仅开放带同步 `extern "c"` 导出面的最小 library-style async body 子集）
 - async executable / program entry 构建承诺
 - 更广义的 task result transport 协议
 - 更广义的 place-sensitive task-handle lifecycle
@@ -149,7 +150,7 @@
 
 - 是否放宽更多 `await` / `spawn` payload 路径
 - 是否把 `for await` 从 fixed array 扩到更广 iterable / build surface
-- 是否开放 async `dylib` 或 program build
+- 是否把 async `dylib` 从最小 library-style 子集扩到更广 surface，或继续开放 async program build
 - 是否开放更广义的 async callable / effect surface
 
 如果这些前提还不稳定，就继续保持拒绝合同，不提前开放。
