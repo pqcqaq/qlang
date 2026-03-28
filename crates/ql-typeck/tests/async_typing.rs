@@ -264,6 +264,62 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn accepts_returning_zero_sized_async_task_handles_through_explicit_task_types() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    return worker()
+}
+
+async fn main() -> Wrap {
+    return await schedule()
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected explicit zero-sized Task-return helper flow to succeed, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_passing_zero_sized_async_calls_to_task_handle_parameters() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    return await forward(worker())
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected zero-sized task-handle parameter flow to succeed, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_passing_async_calls_to_task_handle_parameters() {
     let diagnostics = diagnostic_messages(
         r#"

@@ -383,6 +383,33 @@ async fn main() -> Int {
 }
 
 #[test]
+fn reports_use_after_passing_zero_sized_task_handle_to_helper() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let task = worker()
+    let forwarded = forward(task)
+    return await task
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `task` was used after move".to_string()));
+}
+
+#[test]
 fn reports_named_task_handle_helper_argument_as_move() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -881,6 +908,34 @@ async fn worker() -> Int {
 }
 
 async fn main() -> Int {
+    let task = worker()
+    let forwarded = forward(task)
+    return await forwarded
+}
+"#,
+    );
+
+    assert!(rendered.contains("consume(call task handle argument)"));
+    assert!(rendered.contains("consume(await task handle)"));
+}
+
+#[test]
+fn renders_zero_sized_helper_task_handle_argument_consumes_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
     let task = worker()
     let forwarded = forward(task)
     return await forwarded
