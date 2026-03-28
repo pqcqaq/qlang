@@ -1066,6 +1066,38 @@ async fn main(flag: Bool) -> Int {
 }
 
 #[test]
+fn reports_use_after_zero_sized_task_handle_from_conditional_cleanup_reinit_and_helper_consume() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+    async fn main(flag: Bool) -> Int {
+    var task = worker()
+    defer await task
+    defer if flag { task = fresh_worker(); forward(task) } else { forward(task) }
+    return 0
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(&"local `task` was used after move".to_string()));
+}
+
+#[test]
 fn deferred_root_write_reinitializes_for_later_cleanup_reads() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -1335,6 +1367,40 @@ async fn main(flag: Bool) -> Int {
     var task = worker()
     defer await task
     defer if flag { task = fresh_worker(); task } else { forward(task) }
+    return 0
+}
+"#,
+    );
+
+    assert!(rendered.contains("ownership main"));
+    assert!(rendered.contains("consume(await task handle)"));
+    assert!(rendered.contains("consume(call task handle argument)"));
+}
+
+#[test]
+fn renders_zero_sized_task_conditional_cleanup_reinit_and_helper_consume_for_debugging() {
+    let rendered = render_output(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Int {
+    var task = worker()
+    defer await task
+    defer if flag { task = fresh_worker(); forward(task) } else { forward(task) }
     return 0
 }
 "#,

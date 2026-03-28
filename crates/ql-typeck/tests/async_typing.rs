@@ -603,6 +603,41 @@ async fn main(flag: Bool) -> Int {
 }
 
 #[test]
+fn accepts_conditional_cleanup_reinitializing_and_helper_consuming_zero_sized_task_handles() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Int {
+    var task = worker()
+    defer await task
+    defer if flag { task = fresh_worker(); forward(task) } else { forward(task) }
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected conditional zero-sized task cleanup reinit/helper-consume to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_branch_joining_zero_sized_task_handles_before_await() {
     let diagnostics = diagnostic_messages(
         r#"
