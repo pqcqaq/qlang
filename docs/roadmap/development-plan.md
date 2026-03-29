@@ -112,7 +112,7 @@
 
 这些边界仍然应该明确写成“未完成”，而不是模糊描述成“后面再看”：
 
-- 更广义的 projection-sensitive ownership / partial-place move tracking（当前已开放 tuple/struct-field task-handle path 的只读 consume 与同路径 write/reinit，以及 fixed-array literal index task-handle path 的只读 consume/write-reinit；更广义 projection、动态 index 与 dynamic array element write 仍未开放）
+- 更广义的 projection-sensitive ownership / partial-place move tracking（当前已开放 tuple/struct-field task-handle path 的只读 consume 与同路径 write/reinit，以及 fixed-array literal index task-handle path 的只读 consume/write-reinit；非 `Task[...]` 元素 dynamic array assignment 已开放，但 task-handle 的 dynamic index 写入与更广义 projection 仍未开放）
 - 更广义的 projection assignment lowering（当前仅开放 tuple index / struct-field / fixed-array literal index projection write/reinit）
 - 更广义的 `for await` lowering（当前仅开放 library-mode async body 内的 fixed array iterable）
 - cancellation / polling / drop 语义

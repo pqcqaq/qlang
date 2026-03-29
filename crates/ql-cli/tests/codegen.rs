@@ -164,6 +164,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "dynamic_array_assignment_staticlib",
+            source_relative: "fixtures/codegen/pass/dynamic_array_assignment.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "async_library_scalar_await_staticlib",
             source_relative: "fixtures/codegen/pass/async_library_scalar_await.ql",
             emit: "staticlib",

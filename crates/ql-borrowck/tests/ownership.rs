@@ -2120,6 +2120,24 @@ async fn main(flag: Bool) -> Wrap {
 }
 
 #[test]
+fn allows_dynamic_array_index_assignment_for_non_task_elements() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main(index: Int) -> Int {
+    var values = [1, 2, 3]
+    values[index] = 4
+    return values[index]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected dynamic non-task array assignment to avoid borrowck regressions, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn renders_zero_sized_task_conditionally_spawned_async_call_for_debugging() {
     let rendered = render_output(
         r#"

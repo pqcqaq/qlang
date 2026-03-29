@@ -1473,7 +1473,7 @@ fn main() -> Int {
 }
 
 #[test]
-fn reports_unsupported_dynamic_array_index_assignment_targets() {
+fn accepts_dynamic_array_index_assignment_targets_on_non_task_arrays() {
     let diagnostics = diagnostic_messages(
         r#"
 fn main(index: Int) -> Int {
@@ -1485,10 +1485,8 @@ fn main(index: Int) -> Int {
     );
 
     assert!(
-        diagnostics.contains(
-            &"assignment through array indexing currently requires an integer literal index"
-                .to_string()
-        )
+        diagnostics.is_empty(),
+        "expected mutable dynamic array-index assignment on non-task elements to type-check, got {diagnostics:?}"
     );
 }
 

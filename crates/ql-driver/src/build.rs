@@ -3371,6 +3371,45 @@ async fn helper() -> Wrap {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_dynamic_non_task_array_index_assignment() {
+        let dir = TestDir::new("ql-driver-dynamic-array-index-assignment");
+        let source = dir.write(
+            "dynamic_array_index_assignment.ql",
+            r#"
+fn write_at(index: Int) -> Int {
+    var values = [1, 2, 3]
+    values[index] = 9
+    return values[index]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/dynamic_array_index_assignment.lib"
+        } else {
+            "artifacts/libdynamic_array_index_assignment.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with dynamic non-task array assignment should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_conditionally_reinitialized_projected_zero_sized_task_handle_fixed_array()
      {
         let dir =

@@ -1202,6 +1202,32 @@ async fn main(flag: Bool) -> Wrap {
 }
 
 #[test]
+fn reports_unsupported_dynamic_task_handle_array_index_assignment_targets() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    tasks[index] = worker()
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(diagnostics.contains(
+        &"assignment through task-handle array indexing currently requires an integer literal index"
+            .to_string()
+    ));
+}
+
+#[test]
 fn accepts_spawning_projected_zero_sized_task_handles_from_tuples() {
     let diagnostics = diagnostic_messages(
         r#"

@@ -1904,13 +1904,15 @@ impl<'a> Checker<'a> {
                             )
                         }
                     }
-                    Ty::Array { .. } if items.len() == 1 => {
-                        if matches!(self.module.expr(items[0]).kind, ExprKind::Integer(_)) {
+                    Ty::Array { element, .. } if items.len() == 1 => {
+                        if matches!(self.module.expr(items[0]).kind, ExprKind::Integer(_))
+                            || !matches!(element.as_ref(), Ty::TaskHandle(_))
+                        {
                             self.check_assignment_target_with_anchor(*target, anchor_span)
                         } else {
                             unsupported_target(
                                 self,
-                                "assignment through array indexing currently requires an integer literal index"
+                                "assignment through task-handle array indexing currently requires an integer literal index"
                                     .to_string(),
                             )
                         }
