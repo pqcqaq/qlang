@@ -3371,6 +3371,60 @@ async fn helper() -> Wrap {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_conditionally_reinitialized_projected_zero_sized_task_handle_fixed_array()
+     {
+        let dir =
+            TestDir::new("ql-driver-async-projected-conditional-reinit-task-handle-fixed-array");
+        let source = dir.write(
+            "async_projected_task_handle_fixed_array_conditional_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(flag: Bool) -> Wrap {
+    var tasks = [worker(), worker()]
+    if flag {
+        let first = await tasks[0]
+        tasks[0] = worker()
+    }
+    return await tasks[0]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_projected_task_handle_fixed_array_conditional_reinit.lib"
+        } else {
+            "artifacts/libasync_projected_task_handle_fixed_array_conditional_reinit.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect(
+            "static library build with conditional projected fixed-array task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_projected_zero_sized_task_handle_struct_field_spawn() {
         let dir = TestDir::new("ql-driver-async-projected-spawn-task-handle-struct-field");
         let source = dir.write(

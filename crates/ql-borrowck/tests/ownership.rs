@@ -2091,6 +2091,35 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn allows_conditionally_reinitializing_projected_task_handle_from_fixed_array_before_branch_join() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool) -> Wrap {
+    var tasks = [worker(), worker()]
+    if flag {
+        let first = await tasks[0]
+        tasks[0] = worker()
+    }
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected conditional fixed-array projection reinitialization to clear maybe-moved facts, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn renders_zero_sized_task_conditionally_spawned_async_call_for_debugging() {
     let rendered = render_output(
         r#"
