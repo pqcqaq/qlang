@@ -2064,6 +2064,33 @@ async fn main() -> Int {
 }
 
 #[test]
+fn allows_reinitializing_projected_task_handle_from_fixed_array_after_await() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var tasks = [worker(), worker()]
+    let first = await tasks[0]
+    tasks[0] = worker()
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected fixed-array projection reinitialization to restore the task handle path, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn renders_zero_sized_task_conditionally_spawned_async_call_for_debugging() {
     let rendered = render_output(
         r#"

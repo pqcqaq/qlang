@@ -1455,7 +1455,7 @@ fn main() -> Int {
 }
 
 #[test]
-fn reports_unsupported_array_index_assignment_targets() {
+fn accepts_fixed_array_literal_index_assignment_targets_on_mutable_locals() {
     let diagnostics = diagnostic_messages(
         r#"
 fn main() -> Int {
@@ -1466,10 +1466,30 @@ fn main() -> Int {
 "#,
     );
 
-    assert!(diagnostics.contains(
-        &"assignment through array indexing is not supported yet; only bare mutable bindings, member projections, and tuple projections can be assigned"
-            .to_string()
-    ));
+    assert!(
+        diagnostics.is_empty(),
+        "expected mutable fixed-array literal-index assignment to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_unsupported_dynamic_array_index_assignment_targets() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main(index: Int) -> Int {
+    var values = [1, 2, 3]
+    values[index] = 4
+    return values[index]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"assignment through array indexing currently requires an integer literal index"
+                .to_string()
+        )
+    );
 }
 
 #[test]

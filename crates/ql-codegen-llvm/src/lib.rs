@@ -1810,12 +1810,18 @@ impl<'a> ModuleEmitter<'a> {
                 (mir::ProjectionElem::Field(_), ResolvedProjectionStep::Field { .. })
                 | (mir::ProjectionElem::TupleIndex(_), ResolvedProjectionStep::TupleIndex { .. })
                 | (mir::ProjectionElem::Index(_), ResolvedProjectionStep::TupleIndex { .. }) => {}
-                (mir::ProjectionElem::Index(_), ResolvedProjectionStep::ArrayIndex { .. }) => {
-                    diagnostics.push(unsupported(
-                        span,
-                        "LLVM IR backend foundation does not support array element assignment yet",
-                    ));
-                    return None;
+                (mir::ProjectionElem::Index(index), ResolvedProjectionStep::ArrayIndex { .. }) => {
+                    match &**index {
+                        Operand::Constant(Constant::Integer(raw))
+                            if ql_ast::parse_usize_literal(raw).is_some() => {}
+                        _ => {
+                            diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation currently requires array element assignment to use a non-negative integer literal index",
+                        ));
+                            return None;
+                        }
+                    }
                 }
                 _ => {
                     diagnostics.push(unsupported(
@@ -4492,6 +4498,24 @@ fn write_first() -> Int {
         assert!(rendered.contains("define i64 @ql_0_write_first()"));
         assert!(rendered.contains("getelementptr inbounds { i64, i64 }, ptr"));
         assert!(rendered.contains("i32 0, i32 0"));
+        assert!(rendered.contains("store i64 9, ptr %t"));
+    }
+
+    #[test]
+    fn emits_array_index_projection_writes() {
+        let rendered = emit_library(
+            r#"
+fn write_first() -> Int {
+    var values = [1, 2, 3]
+    values[0] = 9
+    return values[0]
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @ql_0_write_first()"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(rendered.contains("i64 0, i64 0"));
         assert!(rendered.contains("store i64 9, ptr %t"));
     }
 

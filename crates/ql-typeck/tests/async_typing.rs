@@ -1146,6 +1146,33 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn accepts_reinitializing_projected_zero_sized_task_handles_from_fixed_arrays() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var tasks = [worker(), worker()]
+    let first = await tasks[0]
+    tasks[0] = worker()
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected fixed-array projected task-handle reinitialization to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_spawning_projected_zero_sized_task_handles_from_tuples() {
     let diagnostics = diagnostic_messages(
         r#"

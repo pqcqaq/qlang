@@ -119,7 +119,7 @@ P4/P5 地基已经落地，且当前正在保守扩展 Phase 7 async library/sta
 - runtime startup object
 - first-class function value lowering
 - closure lowering
-- 更广义的 projection assignment（当前仅 tuple-index / struct-field write 已开放；array element assignment 仍关闭）、更广义 `for await` lowering（当前仅 library-mode fixed-array iterable 已开放）与更广义 aggregate / cleanup lowering
+- 更广义的 projection assignment（当前已开放 tuple-index / struct-field / fixed-array literal-index write；dynamic array element assignment 仍关闭）、更广义 `for await` lowering（当前仅 library-mode fixed-array iterable 已开放）与更广义 aggregate / cleanup lowering
 - 任意共享库 surface、exported ABI 的 linkage/visibility 控制与 richer ABI surface
 - extern ABI 与 runtime glue 的其余部分
 
