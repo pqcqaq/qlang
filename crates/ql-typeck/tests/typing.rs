@@ -1491,6 +1491,24 @@ fn main(index: Int) -> Int {
 }
 
 #[test]
+fn accepts_nested_dynamic_array_index_assignment_targets_on_non_task_arrays() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main(row: Int, col: Int) -> Int {
+    var matrix = [[1, 2, 3], [4, 5, 6]]
+    matrix[row][col] = 9
+    return matrix[row][col]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected mutable nested dynamic array-index assignment on non-task elements to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_declared_array_types_in_function_signatures() {
     let diagnostics = diagnostic_messages(
         r#"

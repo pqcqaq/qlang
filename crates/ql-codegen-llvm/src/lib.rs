@@ -4539,6 +4539,24 @@ fn write_at(index: Int) -> Int {
     }
 
     #[test]
+    fn emits_nested_dynamic_array_index_projection_writes() {
+        let rendered = emit_library(
+            r#"
+fn write_cell(row: Int, col: Int) -> Int {
+    var matrix = [[1, 2, 3], [4, 5, 6]]
+    matrix[row][col] = 9
+    return matrix[row][col]
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @ql_0_write_cell(i64 %arg0, i64 %arg1)"));
+        assert!(rendered.contains("getelementptr inbounds [2 x [3 x i64]], ptr"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(rendered.contains("store i64 9, ptr %t"));
+    }
+
+    #[test]
     fn rejects_parameterized_async_function_bodies_without_async_frame_alloc_hook() {
         let messages = emit_error_with_runtime_hooks(
             r#"

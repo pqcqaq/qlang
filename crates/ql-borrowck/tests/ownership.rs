@@ -2138,6 +2138,24 @@ fn main(index: Int) -> Int {
 }
 
 #[test]
+fn allows_nested_dynamic_array_index_assignment_for_non_task_elements() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main(row: Int, col: Int) -> Int {
+    var matrix = [[1, 2, 3], [4, 5, 6]]
+    matrix[row][col] = 9
+    return matrix[row][col]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected nested dynamic non-task array assignment to avoid borrowck regressions, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn renders_zero_sized_task_conditionally_spawned_async_call_for_debugging() {
     let rendered = render_output(
         r#"
