@@ -2535,6 +2535,55 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_surfaces_dynamic_task_array_index_assignment_diagnostic_once() {
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-unsupported");
+        let source = dir.write(
+            "task_array_dynamic_index_assignment.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    tasks[index] = worker()
+    return await tasks[0]
+}
+"#,
+        );
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: None,
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("task-array dynamic index diagnostics should be returned");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| {
+                    diagnostic.message
+                        == "assignment through task-handle array indexing currently requires an integer literal index"
+                })
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn build_file_surfaces_function_value_diagnostics_without_panicking() {
         let dir = TestDir::new("ql-driver-function-values");
         let source = dir.write(

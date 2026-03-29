@@ -3032,6 +3032,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 })
             }
             AsyncTaskResultLayout::Loadable { llvm_ty, .. } => {
+                // INVARIANT (RuntimeHook::TaskAwait contract): result_ptr points to a
+                // contiguous, naturally aligned payload of the async return type.  The
+                // backend may immediately load the value before calling
+                // qlrt_task_result_release.  Any runtime implementation of qlrt_task_await
+                // must uphold this layout guarantee.  See RuntimeHook::TaskAwait in
+                // ql-runtime/src/lib.rs for the authoritative contract documentation.
                 let loaded = self.fresh_temp();
                 let _ = writeln!(output, "  {loaded} = load {llvm_ty}, ptr {result_ptr}");
                 let _ = writeln!(

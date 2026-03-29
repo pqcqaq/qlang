@@ -43,4 +43,6 @@
 
 当前最活跃的主线是 [Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop)。如果你要接着推进 async/runtime 相关工作，优先从该文档恢复上下文。
 
-基于 2026-03-28 Serena 记忆整理的近期执行优先级清单见 [Phase 7 近期优先级计划](/plans/2026-03-28-phase-7-next-priorities)。
+基于 2026-03-28 Serena 记忆整理的近期执行优先级清单见 [Phase 7 近期优先级计划](/plans/2026-03-28-phase-7-next-priorities)（Tasks 1-5 均已落地，P7.1 完成）。
+
+P7.1 完成后的下一步可执行切片计划见 [Phase 7 P7.2 Runtime 合同扩展与 Rust 互操作](/plans/2026-03-29-phase-7-p7.2-runtime-and-interop)。

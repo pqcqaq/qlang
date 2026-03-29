@@ -969,6 +969,13 @@ fn run_committed_rust_example(workspace_root: &Path, cargo: &Path) -> Result<(),
             cargo_stdout
         ));
     }
+    // Bidirectional: q_scale exercises a second export + a second Rust callback (q_host_multiply).
+    if !cargo_stdout.contains("q_scale(6, 7) = 42") {
+        return Err(format!(
+            "[ffi-rust-example] expected committed Cargo host example stdout to contain `q_scale(6, 7) = 42`, got:\n{}",
+            cargo_stdout
+        ));
+    }
 
     Ok(())
 }

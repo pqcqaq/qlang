@@ -102,7 +102,8 @@
 - `ql-runtime` 已提供最小 `Task` / `JoinHandle` / `Executor` / `InlineExecutor`
 - runtime hook ABI skeleton 已存在，并被 `ql-driver` / `ql-codegen-llvm` 共享消费
 - backend 已支持最小 async body wrapper、frame scaffold、loadable `await`（当前已覆盖 scalar / `Task[T]` / 递归可加载 aggregate payload，以及由 tuple / fixed-array / non-generic struct 递归构成、并在内部继续携带 `Task[T]` 的 fixed-shape payload 子集）、task-handle-aware `spawn`
-- projected task-handle operand 已支持 tuple index / fixed-array literal index / struct field 只读投影路径
+- projected task-handle operand 已支持 tuple index / fixed-array literal index / struct field 只读投影路径，以及 mutable root 下的 projection write/reinit（tuple index / struct-field / fixed-array literal index）
+- 非 `Task[...]` 元素的 dynamic array assignment 已开放并在 driver/CLI 两层锁定；`Task[...]` 动态数组索引写入已在 driver 内部单测与 CLI 黑盒层补齐显式 fail contract
 - `staticlib` 已开放第一条受控 async library build 子集
 - `dylib` 已开放最小受控 async library build 子集：当前允许带内部 async helper 的 library body 通过，但公开导出面仍收敛在同步 `extern "c"` C ABI surface
 - `for await` 已开放首个受控 lowering 竖切片：当前支持 library-mode async body 内对 fixed array iterable 的 lowering（`staticlib` 与最小 async `dylib` 子集）
@@ -112,7 +113,7 @@
 
 这些边界仍然应该明确写成“未完成”，而不是模糊描述成“后面再看”：
 
-- 更广义的 projection-sensitive ownership / partial-place move tracking（当前已开放 tuple/struct-field task-handle path 的只读 consume 与同路径 write/reinit，以及 fixed-array literal index task-handle path 的只读 consume/write-reinit；非 `Task[...]` 元素 dynamic array assignment 已开放，但 task-handle 的 dynamic index 写入与更广义 projection 仍未开放）
+- 更广义的 projection-sensitive ownership / partial-place move tracking（当前已开放 tuple/struct-field task-handle path 的只读 consume 与同路径 write/reinit，以及 fixed-array literal index task-handle path 的只读 consume/write-reinit；非 `Task[...]` 元素 dynamic array assignment 已开放；`Task[...]` 的 dynamic index 写入已有显式 fail contract 锁定，但该能力本身仍刻意未开放；更广义 projection 仍未开放）
 - 更广义的 projection assignment lowering（当前仅开放 tuple index / struct-field / fixed-array literal index projection write/reinit）
 - 更广义的 `for await` lowering（当前仅开放 library-mode async body 内的 fixed array iterable）
 - cancellation / polling / drop 语义
@@ -122,45 +123,68 @@
 - 更广义的 task result transport 协议
 - 更广义的 place-sensitive task-handle lifecycle
 
-### 推荐推进顺序
+### 推进阶段记录
 
-#### P7.1 继续收紧 task-handle 语义与 ownership 边界
+#### P7.1 收紧 task-handle 语义与 ownership 边界 ✓ 已完成（2026-03-29）
 
-优先级最高的不是继续扩新语法，而是把当前已经开放的 task-handle 路径继续收口：
+所有目标均已落地：
 
-- direct-local、helper 参数/返回值、projected operand 的 consume 事实继续锁定
-- branch-join、cleanup、helper forward/reinit 这类边界继续补定向回归
-- 继续保持“保守报错优先于过度承诺”
+- projected task-handle consume/write-reinit（tuple/struct-field/fixed-array literal index）已在 typeck/borrowck/codegen/driver/CLI 各层锁定
+- branch-join、cleanup、helper forward/reinit 定向回归均已完成
+- 非 `Task[...]` 元素 dynamic array assignment 已在 `ql-driver` 内部单测与 `ql-cli` 黑盒层锁定
+- `Task[...]` 动态数组索引赋值的 fail contract 已在 driver/CLI 两层补齐
 
-#### P7.2 扩 runtime/result/frame 合同，但继续保持最小可验证切片
+详细执行记录见 [2026-03-28 近期优先级计划](/plans/2026-03-28-phase-7-next-priorities)。
 
-- 在现有 hook ABI skeleton 上，补更完整的 task result transport 边界
-- 在现有 frame scaffold 上，逐步明确 result/frame/layout contract
-- 保持“先冻结内部合同，再扩公开能力”的顺序
+---
 
-#### P7.3 扩 Rust interop 的真实工作流矩阵
+#### P7.2 runtime hook ABI 合同细化 ✓ 已完成（2026-03-29）
 
-- 持续扩 `examples/ffi-rust`
-- 补齐 Cargo host、build matrix、错误输出和可复现说明
-- 至少维持一条 CI 可复现的 Rust host 路径
+**目标：把当前 backend 中隐含的 hook 合同假设补成显式文档和测试。**
 
-#### P7.4 谨慎评估是否扩大 async build surface
+不扩新 hook，不引入多态变体。只把”opaque ptr 指向可直接 load 的 payload”这类现有假设在 `ql-runtime` 里写成注释规约，并在单测中体现。
 
-只有在前几步稳定之后，才考虑是否继续扩大公开能力：
+已落地：
+- `ql-runtime/src/lib.rs`：每条 hook symbol 补充完整 caller/callee 生命周期约定注释，enum-level overview 展示两组生命周期，`TaskAwait` 明确”backend load assumption”
+- `ql-runtime/tests/executor.rs`：新增三项生命周期单测，14 项全通过
+- `ql-codegen-llvm/src/lib.rs`：await lowering load 位置补充 INVARIANT 注释，显式引用 `RuntimeHook::TaskAwait` 合同
 
-- 是否放宽更多 `await` / `spawn` payload 路径
-- 是否把 `for await` 从 fixed array 扩到更广 iterable / build surface
-- 是否把 async `dylib` 从最小 library-style 子集扩到更广 surface，或继续开放 async program build
-- 是否开放更广义的 async callable / effect surface
+详细任务分解见 [2026-03-29 P7.2 计划](/plans/2026-03-29-phase-7-p7.2-runtime-and-interop)。
 
-如果这些前提还不稳定，就继续保持拒绝合同，不提前开放。
+---
+
+#### P7.3 扩 Rust interop 双向工作流矩阵 ✓ 已完成（2026-03-29）
+
+**目标：把 `examples/ffi-rust` 从单向 export 示例扩展到更接近真实双向互操作的场景。**
+
+不新增 ABI surface，不引入跨 crate 模块系统。只把”Qlang 导出 + 导入 C/Rust callback”这条双向路径在示例和 CLI 集成测试中锁定。
+
+已落地：
+- `examples/ffi-rust/ql/callback_add.ql`：新增 `q_host_multiply` import 与 `q_scale` export，建立第二条独立双向路径
+- `examples/ffi-rust/host/src/main.rs`：提供两个 Rust 回调，调用两个 Qlang 导出，两条路径均验证返回 42
+- `crates/ql-cli/tests/ffi.rs`：`ffi_rust_example_cargo_host_runs` 扩展断言 `q_scale(6, 7) = 42`
+
+详细任务分解见 [2026-03-29 P7.2 计划](/plans/2026-03-29-phase-7-p7.2-runtime-and-interop)。
+
+---
+
+#### P7.4 扩大 async build surface（条件评估）
+
+以下四个方向各有明确的推进前提，满足条件前继续保持保守拒绝：
+
+| 方向 | 推进前提 |
+| ---- | ---- |
+| 放宽更多 `await`/`spawn` payload 路径 | runtime hook 合同（P7.2）已在单测层稳定，且 result layout contract 在注释中显式 |
+| 扩大 `for await` iterable surface（slice/span 或通用 iterator） | 需要单独评估 `qlrt_async_iter_next` hook 的具体合同设计；fixed-array 路径稳定后再做 |
+| 扩大 async `dylib` 或开放 async program build | 至少一条 Rust host 双向互操作路径（P7.3）已被 CI 锁定，且 hook ABI 文档已成立 |
+| 开放更广义的 async callable / effect surface | Phase 8 或更晚；需要独立 RFC，不在 Phase 7 范围内 |
 
 ### Phase 7 出口标准
 
-- `async fn` / `await` / `spawn` 在当前受控子集上有稳定语义、诊断和回归
-- 至少一条 Rust 混编路径可在 CI 中复现
-- runtime hook ABI、driver build rejection 与 backend lowering 三者不再互相漂移
-- 文档、测试、实现三者对当前 async 边界给出同一描述
+- `async fn` / `await` / `spawn` 在当前受控子集上有稳定语义、诊断和回归 ✓（P7.1 已完成）
+- 至少一条 Rust 混编路径可在 CI 中复现 ✓（`examples/ffi-rust` + CLI 集成测试已建立，P7.3 已扩展为双向双函数）
+- runtime hook ABI、driver build rejection 与 backend lowering 三者不再互相漂移 ✓（P7.2 已完成：hook 合同注释 + 单测 + INVARIANT 注释对齐）
+- 文档、测试、实现三者对当前 async 边界给出同一描述（持续维护中）
 
 ## 后续阶段
 

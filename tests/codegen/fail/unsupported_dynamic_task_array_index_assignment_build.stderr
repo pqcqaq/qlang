@@ -1,0 +1,3 @@
+error: tests/codegen/fail/unsupported_dynamic_task_array_index_assignment_build.ql:11:5: assignment through task-handle array indexing currently requires an integer literal index
+      tasks[index] = worker()
+      ^^^^^^^^ assignment target here

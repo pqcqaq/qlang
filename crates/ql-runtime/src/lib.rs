@@ -38,13 +38,121 @@ impl RuntimeCapability {
 /// These names intentionally stay at the contract level instead of committing
 /// the compiler to concrete Rust `Future` shapes, scheduler APIs, or stream
 /// protocols before Phase 7 lowering is designed end to end.
+///
+/// # Hook lifecycle overview
+///
+/// The six hooks form two distinct lifecycle groups:
+///
+/// **Frame / task creation group** (`AsyncFunctionBodies` capability):
+/// ```text
+/// [caller]  result_ptr = qlrt_async_frame_alloc(size, align)
+///           -- writes parameters into *result_ptr --
+///           task = qlrt_async_task_create(entry_fn_ptr, result_ptr)
+///           -- result_ptr ownership transferred to runtime --
+/// ```
+///
+/// **Spawn / await / release group** (`TaskSpawn` + `TaskAwait` capabilities):
+/// ```text
+/// [caller]  join_handle = qlrt_executor_spawn(executor_ptr, task)
+///           -- task ownership transferred to runtime --
+///           result_ptr  = qlrt_task_await(join_handle)
+///           -- join_handle consumed; result_ptr is caller-owned until released --
+///           loaded_val  = load <T>, ptr result_ptr          ← backend assumes this
+///           qlrt_task_result_release(result_ptr)
+///           -- result_ptr no longer valid after this call --
+/// ```
+///
+/// **Async iteration group** (`AsyncIteration` capability):
+/// ```text
+/// [caller]  next_ptr = qlrt_async_iter_next(iterator_ptr)
+///           -- iterator_ptr is borrowed for the duration of the call --
+///           -- next_ptr: null signals end-of-iteration; non-null is caller-owned --
+/// ```
+///
+/// The backend currently assumes that the `ptr` returned by `qlrt_task_await`
+/// points to a contiguous, naturally aligned payload of the async result type,
+/// and that a single `load` of that type is safe before `qlrt_task_result_release`
+/// is called.  This assumption is documented in [`RuntimeHook::TaskAwait`] and
+/// in the codegen `render_await` function, so any future runtime implementation
+/// that deviates from it must update both.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum RuntimeHook {
+    /// Allocates a heap-backed frame for carrying `async fn` parameters across
+    /// the async boundary.
+    ///
+    /// # Contract
+    /// - **Caller** provides `size` (bytes) and `align` (bytes, power of two).
+    /// - **Callee** returns a non-null `ptr` to at least `size` bytes with
+    ///   at least `align`-byte alignment.
+    /// - Ownership of the returned pointer is held by the caller until it is
+    ///   passed to [`RuntimeHook::AsyncTaskCreate`], after which the runtime
+    ///   takes ownership and the caller must not access the frame.
+    /// - The runtime is responsible for releasing the frame memory after task
+    ///   completion or cancellation.
     AsyncFrameAlloc,
+    /// Materialises an executable task from an `async fn` body pointer and an
+    /// optional parameter frame.
+    ///
+    /// # Contract
+    /// - `entry` is a function pointer with the signature `fn(ptr) -> void`
+    ///   where the `ptr` argument receives the frame on invocation.
+    /// - `frame` may be null for parameter-free `async fn`; otherwise it must
+    ///   have been returned by [`RuntimeHook::AsyncFrameAlloc`] and not yet
+    ///   released.
+    /// - **Callee** returns an opaque `ptr` representing the task handle.
+    ///   Ownership transfers to the caller, who must eventually pass it to
+    ///   [`RuntimeHook::ExecutorSpawn`].
+    /// - After this call, the caller must not access `frame` directly; the
+    ///   runtime will pass it to `entry` when the task is executed.
     AsyncTaskCreate,
+    /// Submits a task to the configured executor and returns a join handle.
+    ///
+    /// # Contract
+    /// - `executor` is an opaque `ptr` to the ambient executor context.
+    ///   The current backend passes `null` as a placeholder for the default
+    ///   implicit executor; a concrete runtime may use this to select a specific
+    ///   scheduler or thread pool.
+    /// - `task` must be a handle returned by [`RuntimeHook::AsyncTaskCreate`]
+    ///   that has not yet been spawned.  Ownership transfers to the runtime.
+    /// - **Callee** returns an opaque `ptr` join handle.  Ownership transfers
+    ///   to the caller, who must eventually pass it to [`RuntimeHook::TaskAwait`].
     ExecutorSpawn,
+    /// Blocks until the task associated with `join_handle` produces a result.
+    ///
+    /// # Contract
+    /// - `join_handle` must be a handle returned by [`RuntimeHook::ExecutorSpawn`]
+    ///   that has not yet been awaited.  Ownership is consumed by this call.
+    /// - **Callee** returns an opaque `ptr` (`result_ptr`) to the task's result
+    ///   payload.  The payload is laid out as a contiguous, naturally aligned
+    ///   value of the async function's declared return type.
+    /// - **The backend assumes** the caller may immediately `load <RetTy>, ptr
+    ///   result_ptr` after this call returns.  Any runtime implementation must
+    ///   uphold this invariant.
+    /// - Ownership of `result_ptr` transfers to the caller.  The caller must
+    ///   call [`RuntimeHook::TaskResultRelease`] exactly once after extracting
+    ///   the value, and must not access `result_ptr` afterwards.
     TaskAwait,
+    /// Releases the result payload buffer returned by [`RuntimeHook::TaskAwait`].
+    ///
+    /// # Contract
+    /// - `result` must be the exact `ptr` returned by a prior call to
+    ///   [`RuntimeHook::TaskAwait`] that has already had its value extracted.
+    /// - **Callee** frees the backing memory.  After this call the pointer is
+    ///   invalid; the caller must not read or write through it.
+    /// - This function returns `void` and has no observable output.
     TaskResultRelease,
+    /// Advances a `for await` iterator by one step.
+    ///
+    /// # Contract
+    /// - `iterator` is an opaque `ptr` to the iterator state, borrowed for the
+    ///   duration of the call.  The caller retains ownership.
+    /// - **Callee** returns a `ptr` to the next item payload, or `null` to
+    ///   signal end-of-iteration.
+    /// - When a non-null pointer is returned, ownership transfers to the caller,
+    ///   who must release it (protocol TBD; `qlrt_task_result_release` is a
+    ///   candidate but the exact hook is not yet frozen).
+    /// - The iterator protocol (`qlrt_async_iter_next` ABI) is not yet frozen;
+    ///   this hook is reserved as a capability/ABI placeholder.
     AsyncIterNext,
 }
 

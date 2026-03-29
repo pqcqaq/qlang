@@ -777,7 +777,7 @@ P6 当前仍刻意未完成：
 - `ql-codegen-llvm` 已打开首个真实 `spawn` lowering 子集：当前 backend 支持把 task-handle operand 降成 `qlrt_executor_spawn(ptr null, task)`，并返回可继续 `await` 的 task handle；当前已覆盖 direct async call、局部绑定 handle 与 sync helper 返回 handle，statement-position fire-and-forget 只是丢弃该返回句柄的特例
 - `ql-codegen-llvm` 已把最小 place projection lowering 扩到写路径：当前嵌套 struct field read、constant tuple index read、array index read 继续走统一 place/type 推导与 LLVM GEP 链 lowering，而 struct-field write、constant tuple-index write，以及非 `Task[...]` 元素的 dynamic fixed-array index write 也已复用同一条 lowering；`Task[...]` 动态数组元素赋值仍刻意保持关闭
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已打开 projected task-handle operand 支持：当投影结果本身是 `Task[T]` 时，`await pair[0]`、`spawn pair[0]`、`await tasks[0]`、`spawn tasks[0]`、`await pair.task` 与 `spawn pair.task` 现在都能稳定进入 codegen 与 `staticlib` 路径；这条支持目前已有 tuple、fixed-array literal index 与 struct-field 的端到端回归覆盖
-- `ql-typeck` / `ql-borrowck` / `ql-codegen-llvm` / `ql-driver` 已打开最小 projection write/reinit 切片：mutable root 下的 `pair[0] = ...`、`pair.left = ...` 与 `tasks[0] = ...`（当前 task-handle 仍仅 fixed-array literal index）现在会在 typeck 层稳定放行、在 borrowck 层按 projection path 清除已消费的 task-handle move 记录、在 codegen 层生成写入 projection pointer 的 store；同时非 `Task[...]` 元素的 dynamic array assignment 也已进入这条最小写路径，补齐普通数组 `values[index] = ...` 与 nested `matrix[row][col] = ...` 的端到端能力，并在 CLI 黑盒 fixture 层锁定；`Task[...]` 动态数组元素赋值仍保持显式 unsupported
+- `ql-typeck` / `ql-borrowck` / `ql-codegen-llvm` / `ql-driver` 已打开最小 projection write/reinit 切片：mutable root 下的 `pair[0] = ...`、`pair.left = ...` 与 `tasks[0] = ...`（当前 task-handle 仍仅 fixed-array literal index）现在会在 typeck 层稳定放行、在 borrowck 层按 projection path 清除已消费的 task-handle move 记录、在 codegen 层生成写入 projection pointer 的 store；同时非 `Task[...]` 元素的 dynamic array assignment 也已进入这条最小写路径，补齐普通数组 `values[index] = ...` 与 nested `matrix[row][col] = ...` 的端到端能力，并在 `ql-driver` 内部单测与 `ql-cli` 黑盒 fixture 层锁定；`Task[...]` 动态数组元素赋值仍保持显式 unsupported，且 `ql-driver` 内部回归（`build_file_surfaces_dynamic_task_array_index_assignment_diagnostic_once`）与 `ql-cli` 黑盒 fail fixture 均已补齐
 - `ql-typeck` / `ql-borrowck` / `ql-driver` / `ql-cli` 现也已补上 fixed-array literal-index projected task-handle reinit 的 branch-join 正向回归：`if flag { let first = await tasks[0]; tasks[0] = worker() } return await tasks[0]` 这类条件性重初始化路径现在在前端、borrowck、driver 与 CLI 黑盒层都有定向覆盖，避免这条刚开放的 write/reinit 子集在后续收口里静默回退
 - `ql-codegen-llvm` 已补上 empty-array expected-context lowering：当前会把具体 `[T; N]` 期望类型保守回传到 direct temp locals 与 tuple / array / struct 聚合字面量内部，因此 `return []`、`take([])`、`([], 1)`、`Wrap { values: [] }` 与 `[[]]` 这类已有 `[T; 0]` 上下文的路径现在都可稳定出 IR；没有期望数组类型的裸 `[]` 仍保持显式拒绝
 - `ql-codegen-llvm` / `ql-driver` / `ql-cli` 已锁住 zero-sized async parameter 回归：`[Int; 0]`、`Wrap { values: [Int; 0] }` 与 `[[Int; 0]; 1]` 这类 zero-sized aggregate 参数现在稳定走递归可加载 frame lowering，`await` 与 `staticlib` 路径都已被定向测试覆盖
@@ -802,16 +802,29 @@ P6 当前仍刻意未完成：
 - 当前 `Task[T]` 虽已进入显式类型面，但仍是保守的句柄抽象：还没有 cancellation、polling、scheduler hint、auto-drop 语义或更一般的 async effect/type inference 设计
 - 当前 borrowck 已对 direct-local task handle、tuple/struct-field projected task-handle 的 consume/write-reinit，以及 fixed-array literal index projected task-handle 的只读 consume/write-reinit 建立最小合同；`await` / `spawn`、静态可判定的 helper `Task[T]` 参数传递、direct-local `return task`、以及 sibling projection 的控制流分支都已接入，且 tuple/struct-field 与 fixed-array literal index 投影重赋值现在都会按 path 恢复对应 task-handle 的可用性；普通非 `Task[...]` 数组的 dynamic assignment 已可通过现有保守 borrowck 路径，但 `Task[...]` 动态索引写入、动态 index 的更精细 place-sensitive handle lifecycle、以及更广义 drop/submission 协议仍待后续切片
 
-### 下一步（P7.1 延续）
+### 下一步（P7.3 / P7.4 方向）
 
-- 在现有 shared hook ABI + async body wrapper/frame scaffold + scalar/task-handle/tuple/array/struct/void `await` lowering + fire-and-forget `spawn` lowering + projection read-write lowering + fixed-array literal index task-handle consume + fixed-array `for await` lowering + 最小 async `dylib`/`staticlib` 子集开放基础上，继续把 task result / await join 协议扩到当前 nested / recursive fixed-shape aggregate-carried `Task[T]` 之外的更广义 payload，并评估是否继续放宽 async `dylib` surface
-- 评估是否将 async 上下文桥接能力通过受控实验接口暴露给 editor（保持协议低风险）
-- 在不引入完整 CFG 的前提下，继续补 closure / async / return-path 的保守语义回归
-- 若后续需要把 must-return 从显式字面量 `if` 扩展到更一般的常量传播或 branch pruning，应单独设计常量/CFG 规则边界
-- 若后续需要把字面量 `match` 推广到更一般的常量 scrutinee、enum variant 常量判定或更强的非字面量 guard 推理，应单独设计 pattern/exhaustiveness 边界
-- 若后续需要把 must-return 从显式字面量 `while` 扩展到一般 `while` / `for` 的更强迭代推理、更广义的 guard-sensitive `match` 或完整 unreachable/CFG 收口，应单独设计 CFG/exhaustiveness slice
-- 若后续需要把 loop-control 查询真正暴露到 editor 协议面，建议延续当前 read-only bridge 路线，而不是把状态重新塞回 typeck helper
-- 在不扩大 surface 的前提下继续按切片补回归
+P7.2 两个主线任务均已完成（2026-03-29）。
+
+**P7.2 Task 1（已完成）：runtime hook ABI 合同细化**
+
+- `ql-runtime/src/lib.rs` 补充完整的 hook 生命周期规约注释：enum-level overview 展示两组生命周期（frame/task creation group、spawn/await/release group），每条 variant 补充明确的 caller/callee 约定，`TaskAwait` 明确"backend load assumption"
+- `ql-runtime/tests/executor.rs` 新增三项生命周期单测：`hook_lifecycle_create_await_result_load_release_abi_contract`、`hook_lifecycle_full_llvm_declaration_sequence_is_stable`、`async_iter_next_abi_contract_is_stable`（共 14 项单测全通过）
+- `ql-codegen-llvm/src/lib.rs` 的 await lowering load 位置补充 INVARIANT 注释，显式引用 `RuntimeHook::TaskAwait` 合同文档
+
+**P7.2 Task 2（已完成）：Rust interop 双向工作流矩阵扩展**
+
+- `examples/ffi-rust/ql/callback_add.ql` 新增 `q_host_multiply` import 与 `q_scale` export，实现两条独立的双向 FFI 路径
+- `examples/ffi-rust/host/src/main.rs` 提供两个 Rust 回调（`q_host_add`、`q_host_multiply`），调用两个 Qlang 导出（`q_add_two`、`q_scale`），两条路径均验证结果为 42
+- `crates/ql-cli/tests/ffi.rs` 的 `ffi_rust_example_cargo_host_runs` 扩展断言 `q_scale(6, 7) = 42`
+
+**边界约定（保持不变）：**
+
+- must-return 的字面量常量 `if`/`while`/`match` 收口已到位；若需扩到一般常量传播或 branch pruning，应单独设计
+- loop-control 查询若需真正暴露到 editor 协议面，应延续当前 read-only bridge 路线
+- `Task[...]` 动态数组索引写入仍保持 fail contract 关闭状态；开放时机需评估 place-sensitive lifecycle 的更广义设计
+
+详细任务分解见 [P7.2 Runtime 合同扩展与 Rust 互操作计划](/plans/2026-03-29-phase-7-p7.2-runtime-and-interop)。
 
 ## 阶段状态表
 
