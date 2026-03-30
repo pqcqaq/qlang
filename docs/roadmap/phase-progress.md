@@ -826,6 +826,7 @@ P7.2 两个主线任务与 P7.4 的首个 program-entry 切片均已完成（202
 - `crates/ql-driver/src/build.rs`：新增 executable 成功回归，覆盖 tuple / fixed-array / nested aggregate task-handle payload 在 `async fn main` 内的成功构建路径
 - `crates/ql-cli/tests/codegen.rs` + `fixtures/codegen/pass/async_program_main_task_handle_tuple_payload.ql`、`async_program_main_task_handle_array_payload.ql`、`async_program_main_nested_aggregate_task_handle_payload.ql`：补齐 CLI 黑盒 fixture，把这三类 executable program-mode payload 路径正式纳入 pass matrix
 - `crates/ql-codegen-llvm/src/lib.rs` / `crates/ql-driver/src/build.rs` / `crates/ql-cli/tests/codegen.rs` + `fixtures/codegen/pass/async_program_main_helper_task_handle_flows.ql`：新增 program-mode helper task-handle 综合回归，锁住 `await schedule()`、bound helper handle、`spawn schedule()`、forwarded helper handle 与 `spawn forward(task)` 这五条 executable 路径
+- `crates/ql-codegen-llvm/src/lib.rs` / `crates/ql-driver/src/build.rs` / `crates/ql-cli/tests/codegen.rs` + `fixtures/codegen/pass/async_program_main_zero_sized_helper_task_handle_flows.ql`：新增 program-mode zero-sized helper task-handle 综合回归，锁住 `Task[Wrap]`（其中 `Wrap` 仅含 zero-sized fixed-array 字段）经由 direct helper await、bound helper handle、`spawn schedule()`、forwarded helper handle 与 `spawn forward(task)` 这五条 executable 路径
 - 这次实现层没有新增 ABI 或 lowering 分支；新回归证明的是 program-mode async body 已经复用既有 fixed-shape aggregate/task-handle lowering，只是此前缺少显式 coverage
 
 **P7.4 Task 4（已完成评估）：`for await` iterable surface 扩展边界**

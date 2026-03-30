@@ -7240,6 +7240,81 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_zero_sized_helper_task_handle_flows_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn other() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    return worker()
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+fn score(value: Wrap) -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let direct = await schedule()
+
+    let bound = schedule()
+    let bound_value = await bound
+
+    let spawned = spawn schedule()
+    let spawned_value = await spawned
+
+    let task = other()
+    let forwarded = forward(task)
+    let forwarded_value = await forwarded
+
+    let next = worker()
+    let running = spawn forward(next)
+    let running_value = await running
+
+    return score(direct)
+        + score(bound_value)
+        + score(spawned_value)
+        + score(forwarded_value)
+        + score(running_value)
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("_schedule(").count() >= 3);
+        assert!(rendered.matches("_forward(").count() >= 3);
+        assert!(rendered.matches("_score(").count() >= 6);
+        assert!(rendered.matches("@qlrt_executor_spawn").count() >= 4);
+        assert!(rendered.matches("@qlrt_task_await").count() >= 6);
+        assert!(rendered.contains("load { [0 x i64] }, ptr %t"));
+        assert!(!rendered.contains("does not support `await` lowering yet"));
+        assert!(!rendered.contains("does not support `spawn` lowering yet"));
+    }
+
+    #[test]
     fn rejects_async_main_without_required_executor_spawn_hook() {
         // async fn main requires the executor-spawn hook; omitting it must error.
         let runtime_hooks = collect_runtime_hook_signatures([
