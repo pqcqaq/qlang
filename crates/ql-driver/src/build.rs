@@ -1887,6 +1887,69 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_zero_sized_branch_spawned_reinit() {
+        let dir = TestDir::new("ql-driver-async-exe-zero-sized-branch-spawned-reinit");
+        let source = dir.write(
+            "async_zero_sized_branch_spawned_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn fresh_worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn score(value: Wrap) -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let flag = true
+    var task = worker()
+    if flag {
+        let running = spawn task
+        task = fresh_worker()
+        let first = await running
+        return score(first)
+    } else {
+        task = fresh_worker()
+    }
+    let final_value = await task
+    return score(final_value)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_zero_sized_branch_spawned_reinit.exe"
+        } else {
+            "artifacts/async_zero_sized_branch_spawned_reinit"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with zero-sized branch spawned reinit should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_dynamic_library_with_extern_c_definition_exports() {
         let dir = TestDir::new("ql-driver-dylib-extern-export");
         let source = dir.write(
