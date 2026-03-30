@@ -1691,6 +1691,71 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_zero_sized_projected_task_handle_spawns() {
+        let dir = TestDir::new("ql-driver-async-exe-zero-sized-projected-task-handle-spawns");
+        let source = dir.write(
+            "async_zero_sized_projected_task_handle_spawns.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct TaskPair {
+    left: Task[Wrap],
+    right: Task[Wrap],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn score(value: Wrap) -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let tuple = (worker(), worker())
+    let tuple_running = spawn tuple[0]
+    let tuple_value = await tuple_running
+
+    let array = [worker(), worker()]
+    let array_running = spawn array[0]
+    let array_value = await array_running
+
+    let pair = TaskPair { left: worker(), right: worker() }
+    let struct_running = spawn pair.left
+    let struct_value = await struct_running
+
+    return score(tuple_value) + score(array_value) + score(struct_value)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_zero_sized_projected_task_handle_spawns.exe"
+        } else {
+            "artifacts/async_zero_sized_projected_task_handle_spawns"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with zero-sized projected task-handle spawns should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_dynamic_library_with_extern_c_definition_exports() {
         let dir = TestDir::new("ql-driver-dylib-extern-export");
         let source = dir.write(
