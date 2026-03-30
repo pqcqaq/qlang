@@ -170,7 +170,7 @@
 
 #### P7.4 扩大 async build surface（条件评估）
 
-首个 program-build 切片已落地：`BuildEmit::Executable` 现已开放 `async fn main` 的最小程序入口生命周期。其余三个方向仍按下述前提继续保守推进。
+首个 program-build 切片已落地：`BuildEmit::Executable` 现已开放 `async fn main` 的最小程序入口生命周期，并已锁定 `async fn main` + fixed-array `for await` 的 executable 闭环。其余三个方向仍按下述前提继续保守推进。
 
 以下四个方向各有明确的推进前提，满足条件前继续保持保守拒绝：
 
@@ -180,6 +180,32 @@
 | 扩大 `for await` iterable surface（slice/span 或通用 iterator） | 需要单独评估 `qlrt_async_iter_next` hook 的具体合同设计；fixed-array 路径稳定后再做 |
 | 扩大 async `dylib` 或开放更多 async program build surface | 至少一条 Rust host 双向互操作路径（P7.3）已被 CI 锁定，且 hook ABI 文档已成立；当前已开放 `BuildEmit::Executable` 下的 `async fn main` 最小程序入口生命周期 |
 | 开放更广义的 async callable / effect surface | Phase 8 或更晚；需要独立 RFC，不在 Phase 7 范围内 |
+
+##### P7.4 下一步执行顺序（2026-03-30 起，Task 1/2 已完成）
+
+> 目标：继续沿着“保守可验证切片”推进，但优先级从纯 toolchain 体验回到**语言可用子集本身**：先扩用户可写、可编、可测试的语言能力，再补外围 UX。
+
+1. **Task 3：放宽更多 `await` / `spawn` payload 路径**
+   - 状态：进行中（首刀已完成：`BuildEmit::Executable` 下的 nested task-handle payload，`let next = await outer(); await next`，已在 codegen / driver / CLI 三层锁定）
+   - Why：当前前端语法与类型面已经明显快于 backend executable subset，最大的语言可用性缺口不在 lexer/parser，而在“用户已经能写出的 async 程序里，哪些 payload/aggregate/path 还不能稳定编译”。
+   - Deliverables：
+     - 扩大 `await` / `spawn` 在 executable / library 两种 build mode 下共享支持的 payload 子集。
+     - 优先考虑已在 HIR/typeck/borrowck 层进入事实面的 fixed-shape aggregate / projection-sensitive 路径，而不是新开 ABI surface。
+     - 同步补 `ql-codegen-llvm` / `ql-driver` / `ql-cli` 三层回归。
+
+2. **Task 4：`for await` iterable surface 扩展评估（slice/span / dynamic array）**
+   - Why：当前 `for await` 语法、MIR 与 fixed-array lowering 都已成立，但用户可用性仍被 iterable surface 卡住；这是语言能力上的真实缺口。
+   - Deliverables：
+     - 在 `/plans/phase-7-concurrency-and-rust-interop` 或 `/plans/2026-03-29-phase-7-p7.2-runtime-and-interop` 的“延后评估区”补充短评估：
+       - slice/span 表示（length + ptr）是否进入 ABI surface
+       - `qlrt_async_iter_next` 是否继续作为 placeholder，还是冻结“返回 ptr + 终止信号”的最小协议
+       - 对 driver capability gate / runtime hook set 的影响
+
+3. **Task 5：toolchain UX：Windows 下 clang 自动发现/提示收口**
+   - Why：这是用户体验问题，重要但不应压过当前语言功能主线；放在语言子集继续扩展之后处理更合适。
+   - Deliverables：
+     - `ql-driver`：在 Windows 上尝试探测常见安装路径（例如 scoop/LLVM），并在 diagnostics 中提示“发现的候选路径/建议设置方式”。
+     - `ql-cli`：补充一条最小回归（或文档用例）锁定提示文本不漂移。
 
 ### Phase 7 出口标准
 

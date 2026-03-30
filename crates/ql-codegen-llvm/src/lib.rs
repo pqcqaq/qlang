@@ -6969,6 +6969,78 @@ async fn main() -> Void {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_fixed_array_for_await_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn main() -> Int {
+    var total = 0
+    for await value in [1, 2, 3] {
+        total = total + value
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("declare ptr @qlrt_executor_spawn(ptr, ptr)"));
+        assert!(rendered.contains("declare ptr @qlrt_task_await(ptr)"));
+        assert!(rendered.contains("declare void @qlrt_task_result_release(ptr)"));
+        assert!(rendered.contains("declare ptr @qlrt_async_iter_next(ptr)"));
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.contains("store i64 -1, ptr %for_await_index_bb"));
+        assert!(rendered.contains("icmp ult i64"));
+        assert!(rendered.contains("for_await_setup"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_async_main_entry_lifecycle_with_nested_task_handle_payload_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn outer() -> Task[Int] {
+    return worker()
+}
+
+async fn main() -> Int {
+    let next = await outer()
+    return await next
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
+        assert!(rendered.contains("load ptr, ptr %t"));
+        assert!(!rendered.contains("does not support `await` lowering yet"));
+    }
+
+    #[test]
     fn rejects_async_main_without_required_executor_spawn_hook() {
         // async fn main requires the executor-spawn hook; omitting it must error.
         let runtime_hooks = collect_runtime_hook_signatures([

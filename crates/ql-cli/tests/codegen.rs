@@ -691,6 +691,28 @@ fn codegen_snapshots_match() {
             header_surface: None,
             expected_header_relative: None,
         },
+        PassCase {
+            name: "async_program_main_for_await_array_exe",
+            source_relative: "fixtures/codegen/pass/async_program_main_for_await_array.ql",
+            emit: "exe",
+            expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
+            name: "async_program_main_nested_task_handle_exe",
+            source_relative: "fixtures/codegen/pass/async_program_main_nested_task_handle.ql",
+            emit: "exe",
+            expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
     ];
     let fail_cases = vec![
         FailCase {

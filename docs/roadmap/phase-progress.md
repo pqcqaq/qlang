@@ -813,6 +813,21 @@ P7.2 两个主线任务与 P7.4 的首个 program-entry 切片均已完成（202
 - `crates/ql-cli/tests/codegen.rs` + `fixtures/codegen/pass/async_program_main.ql`：补齐 CLI 黑盒回归，锁定 async program build 端到端成功路径
 - 当前边界仍保持保守：`llvm-ir` / `object` emit 仍通过 driver capability gate 拒绝 async runtime surface；只有 `BuildEmit::Executable` 会在 program-mode host entry 上额外注入 `async fn main` 所需 hook，并开放最小程序入口生命周期。更广义的 program bootstrap、async dylib surface 与 task result transport 仍未开放
 
+**P7.4 Task 2（已完成）：锁定 `async fn main` + fixed-array `for await` 的 executable 闭环**
+
+- `crates/ql-codegen-llvm/src/lib.rs`：新增 program-mode 单测 `emits_async_main_entry_lifecycle_with_fixed_array_for_await_in_program_mode`，锁定 async main host entry lifecycle 与 fixed-array `for await` lowering 在同一模块内共存
+- `crates/ql-driver/src/build.rs`：新增 executable 成功回归 `build_file_writes_executable_with_async_main_fixed_array_for_await`
+- `crates/ql-cli/tests/codegen.rs` + `fixtures/codegen/pass/async_program_main_for_await_array.ql`：补齐 CLI 黑盒 pass fixture，锁定 `ql build --emit exe` 的组合成功路径
+- 当前边界保持不变：仅 fixed-array iterable 被开放；non-array iterable、`llvm-ir` / `object` async surface 与更广 program bootstrap 仍关闭
+
+**下一步建议（待执行）：**
+
+- P7.4 Task 3：放宽更多 `await` / `spawn` payload 路径（优先继续扩大当前语言可编译子集；首刀已锁定 executable 下 nested task-handle payload：`let next = await outer(); await next`）
+- P7.4 Task 4：评估 `for await` iterable surface 扩展（slice/span / dynamic array）与 `qlrt_async_iter_next` 协议冻结边界
+- P7.4 Task 5：toolchain UX：Windows 下 clang 自动发现/提示收口（降低 `QLANG_CLANG` 手工配置成本）
+
+详细计划见 [开发计划](/roadmap/development-plan) 的 P7.4 小节。
+
 **P7.2 Task 1（已完成）：runtime hook ABI 合同细化**
 
 - `ql-runtime/src/lib.rs` 补充完整的 hook 生命周期规约注释：enum-level overview 展示两组生命周期（frame/task creation group、spawn/await/release group），每条 variant 补充明确的 caller/callee 约定，`TaskAwait` 明确"backend load assumption"
@@ -843,7 +858,7 @@ P7.2 两个主线任务与 P7.4 的首个 program-entry 切片均已完成（202
 | P4 | 已完成基础阶段 | LLVM backend、artifact pipeline、extern C direct-call foundation 与 codegen harness 已建立 |
 | P5 | 已完成基础阶段 | 最小 C ABI 互操作、头文件生成、sidecar header 与真实 C 宿主集成已建立 |
 | P6 | 已完成基础阶段 | same-file query / rename / completion / semantic-token / LSP parity 已系统收口 |
-| P7 | 进行中（P7.4） | 已形成保守 async library/staticlib/dylib 闭环，并开放 `async fn main` 的 executable 程序入口子集 |
+| P7 | 进行中（P7.4） | 已形成保守 async library/staticlib/dylib 闭环，并开放 `async fn main`（含 fixed-array `for await`）的 executable 程序入口子集 |
 
 ## 对后续开发的直接建议
 

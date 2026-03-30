@@ -1097,6 +1097,106 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_fixed_array_for_await() {
+        let dir = TestDir::new("ql-driver-async-exe-for-await-array");
+        let source = dir.write(
+            "async_main_for_await.ql",
+            r#"
+async fn main() -> Int {
+    var total = 0
+    for await value in [1, 2, 3] {
+        total = total + value
+    }
+    return total
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_main_for_await.exe"
+        } else {
+            "artifacts/async_main_for_await"
+        });
+        let clang = mock_success_invocation(&dir);
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(clang),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with fixed-array for-await should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+        let leftovers = fs::read_dir(output.parent().expect("output should have a parent"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen."))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "successful async executable with fixed-array for-await should clean up intermediate artifacts"
+        );
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_async_main_nested_task_handle_results() {
+        let dir = TestDir::new("ql-driver-async-exe-nested-task-handle");
+        let source = dir.write(
+            "async_nested_task_handle.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn outer() -> Task[Int] {
+    return worker()
+}
+
+async fn main() -> Int {
+    let next = await outer()
+    return await next
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_nested_task_handle.exe"
+        } else {
+            "artifacts/async_nested_task_handle"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with nested task-handle results should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_dynamic_library_with_extern_c_definition_exports() {
         let dir = TestDir::new("ql-driver-dylib-extern-export");
         let source = dir.write(

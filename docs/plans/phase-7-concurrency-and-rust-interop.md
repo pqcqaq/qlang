@@ -13,7 +13,9 @@
 - LLVM backend 已有保守 async library lowering 子集，但更广义 async/runtime 语义仍显式保守
 - C ABI 与 header 投影已经稳定，可作为 Rust 混编入口
 
-## 当前进度（2026-03-28）
+## 当前进度（2026-03-30）
+
+> 当前整体判断：**前端语法/词法与 same-file LSP 基线已经成型，当前主线瓶颈不再是“还能不能解析更多语法”，而是“已有语法里哪些能力已经进入可分析、可编译、可产出 artifact 的稳定子集”。** 因此后续优先级应继续落在 runtime / lowering / build-surface 的语言能力扩展，而不是先转向外围工具链 UX。
 
 - 已在 `ql-typeck` 落地 `await` / `spawn` 的 async 上下文约束：在非 `async fn` 内使用会给出显式诊断
 - 已补充 `crates/ql-typeck/tests/async_typing.rs`，锁住 `await` / `spawn` 边界与 async 函数内允许路径
@@ -42,6 +44,8 @@
 - 已在 `ql-analysis` / `ql-lsp` 增补 loop-control 只读查询桥接：`break` / `continue` 现在可查询当前位置是否位于 loop body；`impl` / `extend` / `trait` 方法和 closure loop-boundary 也有回归覆盖
 - 已在 `ql-driver` 补充 async backend 边界回归：当语义层允许 `async fn` 时，构建流程会在 codegen 阶段稳定返回 `async fn` unsupported 诊断
 - 已在 `ql-cli` codegen 黑盒快照中补充 `unsupported_async_fn_build` 用例，锁住用户侧 `ql build` 的 async backend 拒绝输出
+- 已开放 `BuildEmit::Executable` 下的 `async fn main` 最小程序入口生命周期：backend host `@main` wrapper 驱动 `task_create -> executor_spawn -> task_await -> result_load -> task_result_release -> trunc/ret`，并在 driver + CLI 黑盒层锁定
+- 已锁定 `BuildEmit::Executable` 下的 nested task-handle payload 组合闭环：`async fn main` 中的 `let next = await outer(); await next` 现在在 codegen / driver / CLI 三层都有专项回归，说明 executable program-entry 已可稳定承载至少一条非直接 `await` 的 task-handle 续接路径
 - 已补充 `dylib` 路径上的 async backend 回归：当前在存在合法同步 `extern "c"` 导出时，最小 library-style async body 已可稳定通过；fixed-array iterable 的 `for await` 也已进入该受控子集，而非数组 iterable 与更广义 async surface 仍会给出稳定诊断
 - 已补充 `async + generic` 并存场景回归，锁住 backend 同阶段多条 unsupported 诊断聚合行为
 - 已补充 `async + unsafe fn body` 并存场景回归，锁住 backend 对函数签名级多条 unsupported 诊断的聚合与输出顺序
