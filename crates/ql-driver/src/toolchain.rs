@@ -56,6 +56,14 @@ pub struct DiscoveredToolchain {
 }
 
 impl DiscoveredToolchain {
+    pub fn clang(&self) -> &ProgramInvocation {
+        &self.clang
+    }
+
+    pub fn archiver(&self) -> Option<&ArchiverInvocation> {
+        self.archiver.as_ref()
+    }
+
     pub fn ensure_archiver_available(&self) -> Result<(), ToolchainError> {
         if self.archiver.is_some() {
             Ok(())
@@ -246,11 +254,11 @@ fn discover_clang(options: &ToolchainOptions) -> Result<ProgramInvocation, Toolc
     }
 
     find_program_on_path(&clang_candidates())
+        .or_else(discover_clang_in_common_windows_locations)
         .map(ProgramInvocation::new)
         .ok_or_else(|| ToolchainError::NotFound {
             tool: "clang",
-            hint: "install clang on PATH or set `QLANG_CLANG` to an explicit compiler path"
-                .to_owned(),
+            hint: missing_clang_hint(),
         })
 }
 
@@ -271,10 +279,12 @@ fn discover_archiver(options: &ToolchainOptions) -> Option<ArchiverInvocation> {
         }
     }
 
-    find_named_program_on_path(&archiver_candidates()).map(|(program, flavor)| ArchiverInvocation {
-        program: ProgramInvocation::new(program),
-        flavor,
-    })
+    find_named_program_on_path(&archiver_candidates())
+        .map(|(program, flavor)| ArchiverInvocation {
+            program: ProgramInvocation::new(program),
+            flavor,
+        })
+        .or_else(discover_archiver_in_common_windows_locations)
 }
 
 fn find_program_on_path(candidates: &[&str]) -> Option<PathBuf> {
@@ -290,11 +300,38 @@ fn find_program_on_path(candidates: &[&str]) -> Option<PathBuf> {
     None
 }
 
+fn find_program_in_directories(candidates: &[&str], directories: &[PathBuf]) -> Option<PathBuf> {
+    for directory in directories {
+        for candidate in candidates {
+            let path = directory.join(candidate);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
 fn find_named_program_on_path(
     candidates: &[(&str, ArchiverFlavor)],
 ) -> Option<(PathBuf, ArchiverFlavor)> {
     let path_var = env::var_os("PATH")?;
     for directory in env::split_paths(&path_var) {
+        for (candidate, flavor) in candidates {
+            let path = directory.join(candidate);
+            if path.is_file() {
+                return Some((path, *flavor));
+            }
+        }
+    }
+    None
+}
+
+fn find_named_program_in_directories(
+    candidates: &[(&str, ArchiverFlavor)],
+    directories: &[PathBuf],
+) -> Option<(PathBuf, ArchiverFlavor)> {
+    for directory in directories {
         for (candidate, flavor) in candidates {
             let path = directory.join(candidate);
             if path.is_file() {
@@ -334,6 +371,153 @@ fn archiver_candidates() -> Vec<(&'static str, ArchiverFlavor)> {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct WindowsToolchainRoots {
+    scoop: Option<PathBuf>,
+    user_profile: Option<PathBuf>,
+    local_appdata: Option<PathBuf>,
+    program_files: Option<PathBuf>,
+    program_files_x86: Option<PathBuf>,
+}
+
+impl WindowsToolchainRoots {
+    fn from_env() -> Self {
+        Self {
+            scoop: env::var_os("SCOOP").map(PathBuf::from),
+            user_profile: env::var_os("USERPROFILE").map(PathBuf::from),
+            local_appdata: env::var_os("LOCALAPPDATA").map(PathBuf::from),
+            program_files: env::var_os("ProgramFiles").map(PathBuf::from),
+            program_files_x86: env::var_os("ProgramFiles(x86)").map(PathBuf::from),
+        }
+    }
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn windows_llvm_bin_dirs_from_roots(roots: &WindowsToolchainRoots) -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    if let Some(scoop) = &roots.scoop {
+        push_unique_path(
+            &mut directories,
+            scoop.join("apps").join("llvm").join("current").join("bin"),
+        );
+    }
+    if let Some(user_profile) = &roots.user_profile {
+        push_unique_path(
+            &mut directories,
+            user_profile
+                .join("scoop")
+                .join("apps")
+                .join("llvm")
+                .join("current")
+                .join("bin"),
+        );
+    }
+    if let Some(local_appdata) = &roots.local_appdata {
+        push_unique_path(
+            &mut directories,
+            local_appdata.join("Programs").join("LLVM").join("bin"),
+        );
+    }
+    if let Some(program_files) = &roots.program_files {
+        push_unique_path(&mut directories, program_files.join("LLVM").join("bin"));
+    }
+    if let Some(program_files_x86) = &roots.program_files_x86 {
+        push_unique_path(&mut directories, program_files_x86.join("LLVM").join("bin"));
+    }
+    directories
+}
+
+fn common_windows_llvm_bin_dirs() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        windows_llvm_bin_dirs_from_roots(&WindowsToolchainRoots::from_env())
+    } else {
+        Vec::new()
+    }
+}
+
+fn discover_clang_in_common_windows_locations() -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let directories = common_windows_llvm_bin_dirs();
+    find_program_in_directories(&clang_candidates(), &directories)
+}
+
+fn discover_archiver_in_common_windows_locations() -> Option<ArchiverInvocation> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let directories = common_windows_llvm_bin_dirs();
+    find_named_program_in_directories(&archiver_candidates(), &directories).map(
+        |(program, flavor)| ArchiverInvocation {
+            program: ProgramInvocation::new(program),
+            flavor,
+        },
+    )
+}
+
+fn suggested_program_paths(
+    candidates: &[&str],
+    directories: &[PathBuf],
+    limit: usize,
+) -> Vec<PathBuf> {
+    let mut suggestions = Vec::new();
+    for directory in directories {
+        for candidate in candidates {
+            push_unique_path(&mut suggestions, directory.join(candidate));
+            if suggestions.len() >= limit {
+                return suggestions;
+            }
+        }
+    }
+    suggestions
+}
+
+fn suggested_named_program_paths(
+    candidates: &[(&str, ArchiverFlavor)],
+    directories: &[PathBuf],
+    limit: usize,
+) -> Vec<PathBuf> {
+    let mut suggestions = Vec::new();
+    for directory in directories {
+        for (candidate, _) in candidates {
+            push_unique_path(&mut suggestions, directory.join(candidate));
+            if suggestions.len() >= limit {
+                return suggestions;
+            }
+        }
+    }
+    suggestions
+}
+
+fn render_suggested_paths(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|path| format!("`{}`", path.display()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn missing_clang_hint() -> String {
+    let mut hint =
+        "install clang on PATH or set `QLANG_CLANG` to an explicit compiler path".to_owned();
+    if cfg!(windows) {
+        let suggestions =
+            suggested_program_paths(&clang_candidates(), &common_windows_llvm_bin_dirs(), 3);
+        if !suggestions.is_empty() {
+            hint.push_str("; also checked common Windows LLVM locations such as ");
+            hint.push_str(&render_suggested_paths(&suggestions));
+        }
+        hint.push_str("; Scoop users can install LLVM with `scoop install llvm`");
+    }
+    hint
+}
+
 fn infer_archiver_flavor(program: &Path) -> ArchiverFlavor {
     let name = program
         .file_name()
@@ -357,19 +541,62 @@ fn archiver_flavor_from_override(program: &Path, style_override: Option<&str>) -
 }
 
 fn missing_archiver_error() -> ToolchainError {
+    let mut hint =
+        "install `llvm-ar`, `ar`, or a `lib.exe`-compatible archiver on PATH, or set `QLANG_AR` to an explicit archive tool"
+            .to_owned();
+    if cfg!(windows) {
+        let suggestions = suggested_named_program_paths(
+            &archiver_candidates(),
+            &common_windows_llvm_bin_dirs(),
+            4,
+        );
+        if !suggestions.is_empty() {
+            hint.push_str("; also checked common Windows LLVM locations such as ");
+            hint.push_str(&render_suggested_paths(&suggestions));
+        }
+        hint.push_str(
+            "; use `QLANG_AR_STYLE=lib|ar` when a wrapper name does not imply the archive flavor",
+        );
+    }
     ToolchainError::NotFound {
         tool: "archiver",
-        hint:
-            "install `llvm-ar`, `ar`, or a `lib.exe`-compatible archiver on PATH, or set `QLANG_AR` to an explicit archive tool"
-                .to_owned(),
+        hint,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{ArchiverFlavor, archiver_flavor_from_override};
+    use super::{
+        ArchiverFlavor, WindowsToolchainRoots, archiver_flavor_from_override,
+        find_program_in_directories, missing_archiver_error, missing_clang_hint,
+        windows_llvm_bin_dirs_from_roots,
+    };
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("{prefix}-{unique}"));
+            fs::create_dir_all(&path).expect("create temporary toolchain test directory");
+            Self { path }
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
 
     #[test]
     fn archiver_override_style_can_force_lib_flavor_for_wrappers() {
@@ -397,5 +624,61 @@ mod tests {
             archiver_flavor_from_override(Path::new("C:/LLVM/bin/llvm-ar.exe"), None),
             ArchiverFlavor::Ar
         );
+    }
+
+    #[test]
+    fn find_program_in_directories_returns_matching_candidate() {
+        let temp = TempDir::new("ql-driver-toolchain-find");
+        let bin = temp.path.join("bin");
+        fs::create_dir_all(&bin).expect("create fake bin dir");
+        let clang = bin.join("clang.cmd");
+        fs::write(&clang, "@echo off\r\n").expect("write fake clang wrapper");
+
+        let found = find_program_in_directories(&["clang.exe", "clang.cmd"], &[bin]);
+
+        assert_eq!(found, Some(clang));
+    }
+
+    #[test]
+    fn windows_llvm_bin_dirs_cover_common_install_roots_without_duplicates() {
+        let roots = WindowsToolchainRoots {
+            scoop: Some(PathBuf::from("C:/Scoop")),
+            user_profile: Some(PathBuf::from("C:/Users/alice")),
+            local_appdata: Some(PathBuf::from("C:/Users/alice/AppData/Local")),
+            program_files: Some(PathBuf::from("C:/Program Files")),
+            program_files_x86: Some(PathBuf::from("C:/Program Files (x86)")),
+        };
+
+        let dirs = windows_llvm_bin_dirs_from_roots(&roots);
+
+        assert!(dirs.contains(&PathBuf::from("C:/Scoop/apps/llvm/current/bin")));
+        assert!(dirs.contains(&PathBuf::from("C:/Users/alice/scoop/apps/llvm/current/bin")));
+        assert!(dirs.contains(&PathBuf::from(
+            "C:/Users/alice/AppData/Local/Programs/LLVM/bin"
+        )));
+        assert!(dirs.contains(&PathBuf::from("C:/Program Files/LLVM/bin")));
+        assert!(dirs.contains(&PathBuf::from("C:/Program Files (x86)/LLVM/bin")));
+        assert_eq!(dirs.len(), 5);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_clang_hint_mentions_windows_candidates() {
+        let hint = missing_clang_hint();
+
+        assert!(hint.contains("QLANG_CLANG"));
+        assert!(hint.contains("Scoop users can install LLVM with `scoop install llvm`"));
+        assert!(hint.contains("clang.exe"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn missing_archiver_hint_mentions_windows_candidates() {
+        let error = missing_archiver_error();
+        let rendered = error.to_string();
+
+        assert!(rendered.contains("QLANG_AR"));
+        assert!(rendered.contains("QLANG_AR_STYLE=lib|ar"));
+        assert!(rendered.contains("llvm-lib.exe") || rendered.contains("llvm-ar.exe"));
     }
 }

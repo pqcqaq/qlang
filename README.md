@@ -182,14 +182,15 @@ Current semantic baseline in `ql check`:
   - unsupported first-class function values now fail with structured diagnostics instead of panicking the backend
   - unsupported backend features currently fail with structured diagnostics instead of silent partial lowering
   - deferred multi-segment source-backed types now also stay preserved in backend and FFI unsupported diagnostics, so codegen/header errors report `Cmd.Scope.Config` instead of collapsing that path to a fake same-file concrete type like `Command`
-  - native artifact emission currently requires clang on PATH or an explicit `QLANG_CLANG` override
-  - static library emission currently requires an archive tool on PATH or an explicit `QLANG_AR` override
+  - native artifact emission currently requires clang on PATH, a common Windows LLVM install that `ql-driver` can auto-discover, or an explicit `QLANG_CLANG` override
+  - static library emission currently requires an archive tool on PATH, a common Windows LLVM install that `ql-driver` can auto-discover, or an explicit `QLANG_AR` override
   - on Windows, `QLANG_CLANG` should point to an invocable binary or `.cmd` wrapper rather than a raw `.ps1` script path
   - on Windows, `QLANG_AR` should point to an invocable archive binary such as `llvm-lib.exe`, `lib.exe`, or a `.cmd` wrapper
   - when `QLANG_AR` points to a wrapper whose filename does not imply the archive flavor, `QLANG_AR_STYLE=ar|lib` can pin the expected CLI style
+  - on Windows, `ql-driver` now also probes common LLVM install directories such as Scoop `llvm/current/bin`, `%LOCALAPPDATA%\Programs\LLVM\bin`, `%ProgramFiles%\LLVM\bin`, and `%ProgramFiles(x86)%\LLVM\bin`, and missing-tool diagnostics now include concrete candidate paths
   - toolchain failures preserve intermediate `.codegen.ll` and, when linking or archiving fails, intermediate `.codegen.obj` / `.codegen.o` files for debugging
   - `crates/ql-cli/tests/codegen.rs` now provides black-box codegen snapshots for `llvm-ir`, `obj`, `exe`, `dylib`, `staticlib`, library-mode `extern "c"` direct-call lowering, `extern "c"` definition exports, and build-time unsupported diagnostics
-  - `crates/ql-cli/tests/ffi.rs` now provides real C-host integration smoke tests for static-library linking, shared-library runtime loading, and imported-host staticlib callbacks when a clang-style toolchain is available
+  - `crates/ql-cli/tests/ffi.rs` now provides real C-host integration smoke tests for static-library linking, shared-library runtime loading, and imported-host staticlib callbacks when a clang-style toolchain is available, and those tests now reuse `ql-driver` toolchain discovery so their skip logic matches the real build pipeline
   - imported-host staticlib fixtures now cover both `extern "c" { ... }` and top-level `extern "c" fn ...` declarations, and can opt into `exports|imports|both` generated headers through per-fixture `.header-surface` metadata
   - `ql ffi header <file>` now emits deterministic C headers for exported, imported, or combined `extern "c"` surfaces; exports remain the default and still write `target/ql/ffi/<stem>.h`, while imports and combined surfaces default to `target/ql/ffi/<stem>.imports.h` and `target/ql/ffi/<stem>.ffi.h`
   - `ql build <file> --emit dylib|staticlib` now also supports build-side header sidecars through `--header`, `--header-surface`, and `--header-output`; when no header output is specified, the header is written next to the built library artifact but keeps the source stem, for example `libffi_export.so` + `--header` -> `ffi_export.h`

@@ -170,14 +170,14 @@
 
 #### P7.4 扩大 async build surface（条件评估）
 
-首个 program-build 切片已落地：`BuildEmit::Executable` 现已开放 `async fn main` 的最小程序入口生命周期，并已锁定 `async fn main` + fixed-array `for await` 的 executable 闭环。其余三个方向仍按下述前提继续保守推进。
+首个 program-build 切片已落地：`BuildEmit::Executable` 现已开放 `async fn main` 的最小程序入口生命周期，并已锁定 `async fn main` + fixed-array `for await` 的 executable 闭环。其余方向仍按下述前提继续保守推进，其中 Task 4 已完成 docs-first 评估并继续 deferred。
 
 以下四个方向各有明确的推进前提，满足条件前继续保持保守拒绝：
 
 | 方向 | 推进前提 |
 | ---- | ---- |
 | 放宽更多 `await`/`spawn` payload 路径 | runtime hook 合同（P7.2）已在单测层稳定，且 result layout contract 在注释中显式 |
-| 扩大 `for await` iterable surface（slice/span 或通用 iterator） | 需要单独评估 `qlrt_async_iter_next` hook 的具体合同设计；fixed-array 路径稳定后再做 |
+| 扩大 `for await` iterable surface（slice/span 或通用 iterator） | 已完成 docs-first 评估：在 `qlrt_async_iter_next` 仍是 placeholder 的前提下，继续只开放 fixed-array；只有当 `Slice[T]` / span-like view 能作为 compiler-driven fixed-shape lowering 落地，且无需冻结新的 item release 协议时，才进入下一刀实现 |
 | 扩大 async `dylib` 或开放更多 async program build surface | 至少一条 Rust host 双向互操作路径（P7.3）已被 CI 锁定，且 hook ABI 文档已成立；当前已开放 `BuildEmit::Executable` 下的 `async fn main` 最小程序入口生命周期 |
 | 开放更广义的 async callable / effect surface | Phase 8 或更晚；需要独立 RFC，不在 Phase 7 范围内 |
 
@@ -186,7 +186,7 @@
 > 目标：继续沿着“保守可验证切片”推进，但优先级从纯 toolchain 体验回到**语言可用子集本身**：先扩用户可写、可编、可测试的语言能力，再补外围 UX。
 
 1. **Task 3：放宽更多 `await` / `spawn` payload 路径**
-   - 状态：进行中（首刀已完成：`BuildEmit::Executable` 下的 nested task-handle payload，`let next = await outer(); await next`，已在 codegen / driver / CLI 三层锁定）
+   - 状态：进行中（首刀已完成：`BuildEmit::Executable` 下的 nested task-handle payload，`let next = await outer(); await next`，已在 codegen / driver / CLI 三层锁定；2026-03-30 又补齐了 tuple / fixed-array / nested aggregate task-handle payload，以及 sync-helper task-handle flow 的 executable 回归矩阵，确认 program-mode async body 已复用既有 fixed-shape / helper task-handle lowering，只是此前缺少显式 regression lock）
    - Why：当前前端语法与类型面已经明显快于 backend executable subset，最大的语言可用性缺口不在 lexer/parser，而在“用户已经能写出的 async 程序里，哪些 payload/aggregate/path 还不能稳定编译”。
    - Deliverables：
      - 扩大 `await` / `spawn` 在 executable / library 两种 build mode 下共享支持的 payload 子集。
@@ -194,18 +194,23 @@
      - 同步补 `ql-codegen-llvm` / `ql-driver` / `ql-cli` 三层回归。
 
 2. **Task 4：`for await` iterable surface 扩展评估（slice/span / dynamic array）**
-   - Why：当前 `for await` 语法、MIR 与 fixed-array lowering 都已成立，但用户可用性仍被 iterable surface 卡住；这是语言能力上的真实缺口。
+   - 状态：已完成评估（2026-03-30）
+   - Why：当前 `for await` 语法、MIR 与 fixed-array lowering 都已成立，但 backend 现状是直接对 concrete fixed-array layout 做 `getelementptr + load`，这不是 generic iterator protocol 的薄包装。先把 ABI 与 lowering 边界写清楚，比盲目再开一条 runtime-driven 路径更低风险。
+   - 结论：
+     - 保持 fixed-array 作为当前唯一 shipped iterable surface。
+     - `qlrt_async_iter_next` 继续视为 capability/ABI placeholder，不在本轮冻结通用 iterator/item release 协议。
+     - dynamic array `for await` 继续 deferred；它依赖更广的动态数组布局与生命周期事实面。
+     - 如果后续要扩面，优先单独设计 `Slice[T]` / span-like fixed-shape view，并要求继续由 compiler 侧 index/load lowering 驱动，不新增 runtime hook。
    - Deliverables：
-     - 在 `/plans/phase-7-concurrency-and-rust-interop` 或 `/plans/2026-03-29-phase-7-p7.2-runtime-and-interop` 的“延后评估区”补充短评估：
-       - slice/span 表示（length + ptr）是否进入 ABI surface
-       - `qlrt_async_iter_next` 是否继续作为 placeholder，还是冻结“返回 ptr + 终止信号”的最小协议
-       - 对 driver capability gate / runtime hook set 的影响
+     - `/plans/2026-03-29-phase-7-p7.2-runtime-and-interop` 的“延后评估区”已补充对比矩阵与结论。
+     - `/plans/phase-7-concurrency-and-rust-interop` 与本节已同步当前建议：Task 4 评估完成后保持 deferred，当前唯一立即实现项仍是 Task 3。
 
 3. **Task 5：toolchain UX：Windows 下 clang 自动发现/提示收口**
+   - 状态：已完成（2026-03-30）
    - Why：这是用户体验问题，重要但不应压过当前语言功能主线；放在语言子集继续扩展之后处理更合适。
    - Deliverables：
-     - `ql-driver`：在 Windows 上尝试探测常见安装路径（例如 scoop/LLVM），并在 diagnostics 中提示“发现的候选路径/建议设置方式”。
-     - `ql-cli`：补充一条最小回归（或文档用例）锁定提示文本不漂移。
+     - `ql-driver`：已在 Windows 上补充常见 LLVM 安装路径探测（Scoop、`%LOCALAPPDATA%\\Programs\\LLVM\\bin`、`%ProgramFiles%\\LLVM\\bin`、`%ProgramFiles(x86)%\\LLVM\\bin`），并把缺失时的 diagnostics hint 改成带候选路径的具体提示。
+     - `crates/ql-cli/tests/ffi.rs`：已改为复用 `ql-driver` 的 toolchain discover 结果，避免集成测试与真实 build pipeline 使用两套不同的 clang / archiver 判定规则。
 
 ### Phase 7 出口标准
 

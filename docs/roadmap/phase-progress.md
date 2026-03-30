@@ -820,11 +820,31 @@ P7.2 两个主线任务与 P7.4 的首个 program-entry 切片均已完成（202
 - `crates/ql-cli/tests/codegen.rs` + `fixtures/codegen/pass/async_program_main_for_await_array.ql`：补齐 CLI 黑盒 pass fixture，锁定 `ql build --emit exe` 的组合成功路径
 - 当前边界保持不变：仅 fixed-array iterable 被开放；non-array iterable、`llvm-ir` / `object` async surface 与更广 program bootstrap 仍关闭
 
+**P7.4 Task 3（进行中）：扩大 executable async payload 的 regression-locked 子集**
+
+- `crates/ql-codegen-llvm/src/lib.rs`：新增 program-mode 单测 `emits_async_main_entry_lifecycle_with_tuple_task_handle_payload_in_program_mode`、`emits_async_main_entry_lifecycle_with_array_task_handle_payload_in_program_mode`、`emits_async_main_entry_lifecycle_with_nested_aggregate_task_handle_payload_in_program_mode`
+- `crates/ql-driver/src/build.rs`：新增 executable 成功回归，覆盖 tuple / fixed-array / nested aggregate task-handle payload 在 `async fn main` 内的成功构建路径
+- `crates/ql-cli/tests/codegen.rs` + `fixtures/codegen/pass/async_program_main_task_handle_tuple_payload.ql`、`async_program_main_task_handle_array_payload.ql`、`async_program_main_nested_aggregate_task_handle_payload.ql`：补齐 CLI 黑盒 fixture，把这三类 executable program-mode payload 路径正式纳入 pass matrix
+- `crates/ql-codegen-llvm/src/lib.rs` / `crates/ql-driver/src/build.rs` / `crates/ql-cli/tests/codegen.rs` + `fixtures/codegen/pass/async_program_main_helper_task_handle_flows.ql`：新增 program-mode helper task-handle 综合回归，锁住 `await schedule()`、bound helper handle、`spawn schedule()`、forwarded helper handle 与 `spawn forward(task)` 这五条 executable 路径
+- 这次实现层没有新增 ABI 或 lowering 分支；新回归证明的是 program-mode async body 已经复用既有 fixed-shape aggregate/task-handle lowering，只是此前缺少显式 coverage
+
+**P7.4 Task 4（已完成评估）：`for await` iterable surface 扩展边界**
+
+- `docs/plans/2026-03-29-phase-7-p7.2-runtime-and-interop.md`：延后评估区已补充对比矩阵，确认当前 fixed-array `for await` lowering 直接依赖 concrete `[N x T]` layout 与 `array_len` metadata，而不是通用 iterator ABI 的别名
+- `docs/plans/phase-7-concurrency-and-rust-interop.md` / `docs/roadmap/development-plan.md`：已同步结论，明确 `qlrt_async_iter_next` 继续保留 capability/ABI placeholder 语义，不在本轮冻结 item release 协议
+- 当前判断：dynamic array `for await` 继续 deferred；如果后续要扩面，优先单独设计不新增 runtime hook 的 `Slice[T]` / span-like fixed-shape view，并继续由 compiler 侧 index/load lowering 驱动
+
+**P7.4 Task 5（已完成）：Windows toolchain UX 收口**
+
+- `crates/ql-driver/src/toolchain.rs`：Windows 下的 clang / archiver discover 现在除了 PATH 和显式 `QLANG_CLANG` / `QLANG_AR` 之外，还会 best-effort 探测常见 LLVM 安装位置（Scoop、`%LOCALAPPDATA%\\Programs\\LLVM\\bin`、`%ProgramFiles%\\LLVM\\bin`、`%ProgramFiles(x86)%\\LLVM\\bin`）
+- 同一文件的 `ToolchainError::NotFound` hint 现在会给出具体候选路径，并继续提示 `QLANG_AR_STYLE=lib|ar` 的 wrapper 风格固定方式
+- `crates/ql-cli/tests/ffi.rs`：FFI 集成测试现已复用 `ql-driver` 的 toolchain discover 结果，不再单独只按 PATH / 环境变量决定是否跳过测试
+- 当前边界仍保持保守：这是一条 best-effort LLVM 安装探测与 hint 收口，不代表已经实现完整 linker family discovery 或任意系统工具链枚举
+
 **下一步建议（待执行）：**
 
-- P7.4 Task 3：放宽更多 `await` / `spawn` payload 路径（优先继续扩大当前语言可编译子集；首刀已锁定 executable 下 nested task-handle payload：`let next = await outer(); await next`）
-- P7.4 Task 4：评估 `for await` iterable surface 扩展（slice/span / dynamic array）与 `qlrt_async_iter_next` 协议冻结边界
-- P7.4 Task 5：toolchain UX：Windows 下 clang 自动发现/提示收口（降低 `QLANG_CLANG` 手工配置成本）
+- P7.4 Task 3：继续放宽更多 `await` / `spawn` payload 路径（当前已额外锁定 executable 下 tuple / fixed-array / nested aggregate task-handle payload regression matrix）
+- 若后续重新打开 `for await` iterable surface，只建议从不新增 runtime hook 的 `Slice[T]` / span-like fixed-shape view 设计切入；dynamic array 与通用 iterator 协议继续保持 deferred
 
 详细计划见 [开发计划](/roadmap/development-plan) 的 P7.4 小节。
 

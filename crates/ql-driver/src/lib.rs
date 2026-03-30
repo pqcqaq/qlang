@@ -11,6 +11,6 @@ pub use ffi::{
     default_c_header_output_path_for_surface, emit_c_header,
 };
 pub use toolchain::{
-    ArchiverFlavor, ArchiverInvocation, ProgramInvocation, ToolchainError, ToolchainOptions,
-    discover_toolchain,
+    ArchiverFlavor, ArchiverInvocation, DiscoveredToolchain, ProgramInvocation, ToolchainError,
+    ToolchainOptions, discover_toolchain,
 };

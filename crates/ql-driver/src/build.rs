@@ -1197,6 +1197,235 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_tuple_task_handle_payload_results() {
+        let dir = TestDir::new("ql-driver-async-exe-tuple-task-handle-payload");
+        let source = dir.write(
+            "async_tuple_task_handle_payload.ql",
+            r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> (Task[Int], Task[Int]) {
+    return (left(), right())
+}
+
+async fn main() -> Int {
+    let pair = await outer()
+    let first = await pair[0]
+    let second = await pair[1]
+    return first + second
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_tuple_task_handle_payload.exe"
+        } else {
+            "artifacts/async_tuple_task_handle_payload"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with tuple task-handle payload should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_async_main_array_task_handle_payload_results() {
+        let dir = TestDir::new("ql-driver-async-exe-array-task-handle-payload");
+        let source = dir.write(
+            "async_array_task_handle_payload.ql",
+            r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Task[Int]; 2] {
+    return [left(), right()]
+}
+
+async fn main() -> Int {
+    let tasks = await outer()
+    let first = await tasks[0]
+    let second = await tasks[1]
+    return first + second
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_array_task_handle_payload.exe"
+        } else {
+            "artifacts/async_array_task_handle_payload"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with array task-handle payload should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_async_main_nested_aggregate_task_handle_payload_results() {
+        let dir = TestDir::new("ql-driver-async-exe-nested-aggregate-task-handle-payload");
+        let source = dir.write(
+            "async_nested_aggregate_task_handle_payload.ql",
+            r#"
+struct Pending {
+    task: Task[Int],
+    value: Int,
+}
+
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Pending; 2] {
+    return [
+        Pending { task: left(), value: 10 },
+        Pending { task: right(), value: 20 },
+    ]
+}
+
+async fn main() -> Int {
+    let pending = await outer()
+    let first = await pending[0].task
+    let second = await pending[1].task
+    return first + second + pending[0].value + pending[1].value
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_nested_aggregate_task_handle_payload.exe"
+        } else {
+            "artifacts/async_nested_aggregate_task_handle_payload"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with nested aggregate task-handle payload should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_async_main_helper_task_handle_flows() {
+        let dir = TestDir::new("ql-driver-async-exe-helper-task-handle-flows");
+        let source = dir.write(
+            "async_helper_task_handle_flows.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn other() -> Int {
+    return 2
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn main() -> Int {
+    let direct = await schedule()
+
+    let bound = schedule()
+    let bound_value = await bound
+
+    let spawned = spawn schedule()
+    let spawned_value = await spawned
+
+    let task = other()
+    let forwarded = forward(task)
+    let forwarded_value = await forwarded
+
+    let next = worker()
+    let running = spawn forward(next)
+    let running_value = await running
+
+    return direct + bound_value + spawned_value + forwarded_value + running_value
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_helper_task_handle_flows.exe"
+        } else {
+            "artifacts/async_helper_task_handle_flows"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with helper task-handle flows should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_dynamic_library_with_extern_c_definition_exports() {
         let dir = TestDir::new("ql-driver-dylib-extern-export");
         let source = dir.write(

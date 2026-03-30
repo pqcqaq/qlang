@@ -46,6 +46,9 @@
 - 已在 `ql-cli` codegen 黑盒快照中补充 `unsupported_async_fn_build` 用例，锁住用户侧 `ql build` 的 async backend 拒绝输出
 - 已开放 `BuildEmit::Executable` 下的 `async fn main` 最小程序入口生命周期：backend host `@main` wrapper 驱动 `task_create -> executor_spawn -> task_await -> result_load -> task_result_release -> trunc/ret`，并在 driver + CLI 黑盒层锁定
 - 已锁定 `BuildEmit::Executable` 下的 nested task-handle payload 组合闭环：`async fn main` 中的 `let next = await outer(); await next` 现在在 codegen / driver / CLI 三层都有专项回归，说明 executable program-entry 已可稳定承载至少一条非直接 `await` 的 task-handle 续接路径
+- 已补齐 `BuildEmit::Executable` 下的 aggregate task-handle payload regression matrix：tuple、fixed-array 与 nested aggregate payload（例如 `await pair[0]`、`await tasks[1]`、`await pending[0].task`）现在也已在 codegen / driver / CLI 三层有专项回归，证明 program-mode async body 继续复用既有 fixed-shape aggregate lowering，而不是只支持单一路径的 nested task handle
+- 已锁定 `BuildEmit::Executable` 下的 helper task-handle parity 路径：`await schedule()`、`let task = schedule(); await task`、`let task = spawn schedule(); await task`、`let forwarded = forward(task); await forwarded` 与 `let running = spawn forward(task); await running` 现在也已有 program-mode codegen / driver / CLI 定向回归，说明 executable async body 继续复用既有 sync-helper task-handle lowering，而不是只在 library-mode 子集里成立
+- 已完成 `for await` iterable surface 的 docs-first 评估：当前 fixed-array lowering 直接依赖 concrete `[N x T]` layout 与 index-slot metadata，`qlrt_async_iter_next` 继续保留 placeholder ABI；dynamic array 与通用 iterator 路径继续 deferred，若后续扩面，优先考虑不新增 runtime hook 的 `Slice[T]` / span-like fixed-shape view 设计
 - 已补充 `dylib` 路径上的 async backend 回归：当前在存在合法同步 `extern "c"` 导出时，最小 library-style async body 已可稳定通过；fixed-array iterable 的 `for await` 也已进入该受控子集，而非数组 iterable 与更广义 async surface 仍会给出稳定诊断
 - 已补充 `async + generic` 并存场景回归，锁住 backend 同阶段多条 unsupported 诊断聚合行为
 - 已补充 `async + unsafe fn body` 并存场景回归，锁住 backend 对函数签名级多条 unsupported 诊断的聚合与输出顺序
@@ -91,12 +94,13 @@
 - 当前 borrowck 只对 direct-local task handle 建立最小 consume 合同；`await` / `spawn`、静态可判定的 helper `Task[T]` 参数传递和 direct-local `return task` 已经接入，但更广义的 helper 返回/drop 边界、place-sensitive handle move/drop 与更广义提交协议仍待后续切片；零尺寸 `Task[Wrap]` 的 conditional cleanup 族只是在当前合同内被锁住回归，不代表更一般的 async drop 协议已开放
 - 当前 runtime crate 仍刻意不承诺 polling、cancellation、scheduler hints 或 Rust `Future` 绑定，只固定最小执行器接口
 - 当前 hook ABI skeleton 已冻结第一版 LLVM-facing contract string，但仍只使用 `ptr` 级 opaque 形态；真实内存布局、结果传递协议和更细粒度调用约定仍未冻结
+- 当前 Windows toolchain UX 已做 first-pass 收口：`ql-driver` 在 PATH / 显式 `QLANG_CLANG` / `QLANG_AR` 之外，还会 best-effort 探测常见 LLVM 安装路径（例如 Scoop 与标准 LLVM 安装目录），并在缺失诊断中附带候选路径；这改善的是 discover/hint 体验，不代表完整 linker family discovery 已完成
 - 当前 backend/driver 对这些 hook 已进入“declaration + async body wrapper + frame hydration + scalar/task-handle/tuple/array/struct/void await lowering（含递归 nested aggregate-carried task-handle payload）+ task-handle-aware spawn lowering + fixed-array literal index projected consume + fixed-array `for await` lowering + `staticlib` / 最小 `dylib` library 子集开放”阶段，但这仍不代表更广义的 async iteration 协议、任务结果协议、frame 生命周期管理或调度语义已经进入可执行阶段
 - 当前 fixed-array literal lowering 也只打开了“已有具体 expected array type”的保守路径：direct temp 与 tuple / array / struct 聚合字面量内部的 `[]` 已可在 `[T; N]` 上下文中工作，但没有期望数组类型的裸 `[]` 仍不开放
 - 当前 zero-sized async parameter 只在现有递归可加载 frame 模型内被视为合法：这锁住的是 `[Int; 0]`、`Wrap { values: [Int; 0] }` 与 `[[Int; 0]; 1]` 这类 frame 参数稳定性，不代表更广义的 capture/frame ABI 或 generic layout substitution 已经打开
 - 当前 zero-sized async result 只在现有 loadable result 模型内被视为合法：这锁住的是 `[Int; 0]` 与递归 zero-sized aggregate 的 await/staticlib 稳定性，不代表更广义的 layout substitution、result transport 协议或 drop/cancellation 语义已经打开
 - 当前 parameterless `async fn` wrapper 仍只依赖 `async-task-create` hook；带参数的 `async fn` 现在还会显式要求 `async-frame-alloc` hook 已接入，但这仍只是最小 heap-frame scaffold，不代表更完整的 frame/capture/result 设计已经冻结
-- 当前 `async-iteration` 已不再只是纯失败合同：library-mode async body 内的 fixed-array `for await` 已走通首个 lowering 竖切片；但共享 runtime hook / capability 仍主要承担 ABI 预留语义，不代表通用 async iterator 调度协议已经冻结
+- 当前 `async-iteration` 已不再只是纯失败合同：library-mode async body 内的 fixed-array `for await` 已走通首个 lowering 竖切片；但共享 runtime hook / capability 仍主要承担 ABI 预留语义，不代表通用 async iterator 调度协议已经冻结。P7.4 的 docs-first 评估结论也已明确：本轮不冻结 `qlrt_async_iter_next`，不开放 dynamic-array `for await`；若未来要扩面，优先考虑 compiler-driven 的 `Slice[T]` / span-like fixed-shape view
 - 当前仍未引入完整 CFG 级 must-return / 全路径控制流分析；本轮只把有序表达式求值、显式字面量 `if true` / `if false`、显式字面量 `match true/false`、非字面量 `Bool` / enum `match` 上的字面量 guard、`loop { return ... }`、显式字面量 `while true` / `while false` 与 break-sensitive loop body 纳入 conservative 收口，一般 `while` / `for` 的更强迭代推理、更广义的常量传播、更一般的 guard-sensitive `match` 与 unreachable 细化仍待后续切片
 - 当前 loop-control 已具备 analysis/LSP 的只读桥接，但还未扩展到公开 editor 协议 capability；继续保持低风险桥接策略
 

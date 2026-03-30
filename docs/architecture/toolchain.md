@@ -112,6 +112,8 @@ P4/P5 地基已经落地，且当前正在保守扩展 Phase 7 async library/sta
 - Windows 上如果使用 `QLANG_CLANG` 覆盖路径，建议指向 `clang.exe` 或 `.cmd` wrapper，而不是裸 `.ps1`
 - 如果使用 `QLANG_AR` 覆盖路径，建议指向 `llvm-ar` / `ar` / `llvm-lib.exe` / `lib.exe` 或对应 `.cmd` wrapper
 - 如果 `QLANG_AR` 指向的 wrapper 文件名本身看不出是 `ar` 风格还是 `lib` 风格，可以额外设置 `QLANG_AR_STYLE=ar|lib`
+- Windows 下如果 PATH 中没有 clang / archiver，`ql-driver` 现在还会 best-effort 探测常见 LLVM 安装目录，包括 Scoop 的 `llvm/current/bin`、`%LOCALAPPDATA%\\Programs\\LLVM\\bin`、`%ProgramFiles%\\LLVM\\bin` 与 `%ProgramFiles(x86)%\\LLVM\\bin`
+- 当这些位置也没有找到工具时，`ToolchainError::NotFound` 会把候选路径直接放进 hint，减少“只知道要配环境变量，但不知道应该指向哪里”的恢复成本
 
 当前明确未完成：
 
@@ -315,6 +317,7 @@ build-side sidecar 默认输出路径：
 - 用包含该头文件的真实 C harness 链接该库
 - 运行宿主可执行文件确认导出符号可被调用
 - imported-host 夹具还会通过 `both` surface header 同时拿到 imported/exported 声明，并验证 Qlang 导出函数体内的 imported C 调用能真实命中宿主实现
+- `crates/ql-cli/tests/ffi.rs` 现在直接复用 `ql-driver` 的 toolchain discover 结果，因此这些回归对 clang / archiver 的可用性判断与真实 `ql build` 路径保持一致
 - 当前 imported-host staticlib 已覆盖：
   - extern block declaration
   - top-level extern declaration

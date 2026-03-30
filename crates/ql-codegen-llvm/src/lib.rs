@@ -6926,9 +6926,11 @@ async fn main() -> Int {
         assert!(rendered.contains("declare void @qlrt_task_result_release(ptr)"));
 
         // The async body and task-create wrapper must be emitted.
-        assert!(rendered.contains("define ptr @ql_1_main__async_body(ptr %frame)") ||
-                rendered.contains("define ptr @ql_0_main__async_body(ptr %frame)") ||
-                rendered.contains("__async_body"));
+        assert!(
+            rendered.contains("define ptr @ql_1_main__async_body(ptr %frame)")
+                || rendered.contains("define ptr @ql_0_main__async_body(ptr %frame)")
+                || rendered.contains("__async_body")
+        );
         assert!(rendered.contains("define ptr @ql_") && rendered.contains("@main("));
 
         // The C entry point must drive the lifecycle.
@@ -7038,6 +7040,203 @@ async fn main() -> Int {
         assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
         assert!(rendered.contains("load ptr, ptr %t"));
         assert!(!rendered.contains("does not support `await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_async_main_entry_lifecycle_with_tuple_task_handle_payload_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> (Task[Int], Task[Int]) {
+    return (left(), right())
+}
+
+async fn main() -> Int {
+    let pair = await outer()
+    let first = await pair[0]
+    let second = await pair[1]
+    return first + second
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_task_await").count() >= 4);
+        assert!(rendered.contains("load { ptr, ptr }, ptr %t"));
+        assert!(rendered.contains("getelementptr inbounds { ptr, ptr }, ptr"));
+        assert!(rendered.matches("load ptr, ptr").count() >= 2);
+    }
+
+    #[test]
+    fn emits_async_main_entry_lifecycle_with_array_task_handle_payload_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Task[Int]; 2] {
+    return [left(), right()]
+}
+
+async fn main() -> Int {
+    let tasks = await outer()
+    let first = await tasks[0]
+    let second = await tasks[1]
+    return first + second
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_task_await").count() >= 4);
+        assert!(rendered.contains("load [2 x ptr], ptr %t"));
+        assert!(rendered.contains("getelementptr inbounds [2 x ptr], ptr"));
+        assert!(rendered.matches("load ptr, ptr").count() >= 2);
+    }
+
+    #[test]
+    fn emits_async_main_entry_lifecycle_with_nested_aggregate_task_handle_payload_in_program_mode()
+    {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Pending {
+    task: Task[Int],
+    value: Int,
+}
+
+async fn left() -> Int {
+    return 1
+}
+
+async fn right() -> Int {
+    return 2
+}
+
+async fn outer() -> [Pending; 2] {
+    return [
+        Pending { task: left(), value: 10 },
+        Pending { task: right(), value: 20 },
+    ]
+}
+
+async fn main() -> Int {
+    let pending = await outer()
+    let first = await pending[0].task
+    let second = await pending[1].task
+    return first + second + pending[0].value + pending[1].value
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_task_await").count() >= 4);
+        assert!(rendered.contains("load [2 x { ptr, i64 }], ptr %t"));
+        assert!(rendered.contains("getelementptr inbounds [2 x { ptr, i64 }], ptr"));
+        assert!(rendered.contains("getelementptr inbounds { ptr, i64 }, ptr"));
+        assert!(rendered.matches("load ptr, ptr").count() >= 2);
+    }
+
+    #[test]
+    fn emits_async_main_entry_lifecycle_with_helper_task_handle_flows_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn other() -> Int {
+    return 2
+}
+
+fn schedule() -> Task[Int] {
+    return worker()
+}
+
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn main() -> Int {
+    let direct = await schedule()
+
+    let bound = schedule()
+    let bound_value = await bound
+
+    let spawned = spawn schedule()
+    let spawned_value = await spawned
+
+    let task = other()
+    let forwarded = forward(task)
+    let forwarded_value = await forwarded
+
+    let next = worker()
+    let running = spawn forward(next)
+    let running_value = await running
+
+    return direct + bound_value + spawned_value + forwarded_value + running_value
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("_schedule(").count() >= 3);
+        assert!(rendered.matches("_forward(").count() >= 3);
+        assert!(rendered.matches("@qlrt_executor_spawn").count() >= 4);
+        assert!(rendered.matches("@qlrt_task_await").count() >= 6);
+        assert!(!rendered.contains("does not support `await` lowering yet"));
+        assert!(!rendered.contains("does not support `spawn` lowering yet"));
     }
 
     #[test]

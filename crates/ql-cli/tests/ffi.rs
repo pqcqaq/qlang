@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use ql_driver::{ToolchainOptions, discover_toolchain};
+
 #[test]
 fn ffi_exports_link_from_c_static_harnesses() {
     let workspace_root = workspace_root();
@@ -15,18 +17,19 @@ fn ffi_exports_link_from_c_static_harnesses() {
         fixture_root.display()
     );
 
-    let Some(clang) = resolve_program_from_env_or_path("QLANG_CLANG", &clang_candidates()) else {
+    let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
         eprintln!(
-            "skipping static FFI integration tests: no clang-style compiler found on PATH and `QLANG_CLANG` is not set"
+            "skipping static FFI integration tests: no clang-style compiler found via ql-driver toolchain discovery"
         );
         return;
     };
-    if resolve_program_from_env_or_path("QLANG_AR", &archiver_candidates()).is_none() {
+    if toolchain.archiver().is_none() {
         eprintln!(
-            "skipping static FFI integration tests: no archive tool found on PATH and `QLANG_AR` is not set"
+            "skipping static FFI integration tests: no archive tool found via ql-driver toolchain discovery"
         );
         return;
     }
+    let clang = toolchain.clang().program.clone();
 
     let mut failures = Vec::new();
     for case in cases {
@@ -59,9 +62,15 @@ fn ffi_exports_link_from_rust_static_harnesses() {
         );
         return;
     };
-    if resolve_program_from_env_or_path("QLANG_AR", &archiver_candidates()).is_none() {
+    let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
         eprintln!(
-            "skipping Rust static FFI integration tests: no archive tool found on PATH and `QLANG_AR` is not set"
+            "skipping Rust static FFI integration tests: no clang-style compiler found via ql-driver toolchain discovery"
+        );
+        return;
+    };
+    if toolchain.archiver().is_none() {
+        eprintln!(
+            "skipping Rust static FFI integration tests: no archive tool found via ql-driver toolchain discovery"
         );
         return;
     }
@@ -97,9 +106,15 @@ fn ffi_exports_link_from_rust_cargo_static_harnesses() {
         );
         return;
     };
-    if resolve_program_from_env_or_path("QLANG_AR", &archiver_candidates()).is_none() {
+    let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
         eprintln!(
-            "skipping Cargo-based Rust FFI integration tests: no archive tool found on PATH and `QLANG_AR` is not set"
+            "skipping Cargo-based Rust FFI integration tests: no clang-style compiler found via ql-driver toolchain discovery"
+        );
+        return;
+    };
+    if toolchain.archiver().is_none() {
+        eprintln!(
+            "skipping Cargo-based Rust FFI integration tests: no archive tool found via ql-driver toolchain discovery"
         );
         return;
     }
@@ -135,9 +150,15 @@ fn ffi_rust_example_cargo_host_runs() {
         );
         return;
     };
-    if resolve_program_from_env_or_path("QLANG_AR", &archiver_candidates()).is_none() {
+    let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
         eprintln!(
-            "skipping committed Rust FFI example test: no archive tool found on PATH and `QLANG_AR` is not set"
+            "skipping committed Rust FFI example test: no clang-style compiler found via ql-driver toolchain discovery"
+        );
+        return;
+    };
+    if toolchain.archiver().is_none() {
+        eprintln!(
+            "skipping committed Rust FFI example test: no archive tool found via ql-driver toolchain discovery"
         );
         return;
     }
@@ -158,12 +179,13 @@ fn ffi_exports_load_from_c_dynamic_harnesses() {
         fixture_root.display()
     );
 
-    let Some(clang) = resolve_program_from_env_or_path("QLANG_CLANG", &clang_candidates()) else {
+    let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
         eprintln!(
-            "skipping shared-library FFI integration tests: no clang-style compiler found on PATH and `QLANG_CLANG` is not set"
+            "skipping shared-library FFI integration tests: no clang-style compiler found via ql-driver toolchain discovery"
         );
         return;
     };
+    let clang = toolchain.clang().program.clone();
 
     let mut failures = Vec::new();
     for case in cases {
@@ -565,35 +587,6 @@ fn resolve_program_from_env_or_path(env_var: &str, candidates: &[&str]) -> Optio
     }
 
     None
-}
-
-fn clang_candidates() -> Vec<&'static str> {
-    if cfg!(windows) {
-        vec!["clang.exe", "clang.cmd", "clang.bat", "clang"]
-    } else {
-        vec!["clang"]
-    }
-}
-
-fn archiver_candidates() -> Vec<&'static str> {
-    if cfg!(windows) {
-        vec![
-            "llvm-ar.exe",
-            "llvm-ar.cmd",
-            "llvm-ar.bat",
-            "llvm-ar",
-            "llvm-lib.exe",
-            "llvm-lib.cmd",
-            "llvm-lib.bat",
-            "llvm-lib",
-            "lib.exe",
-            "lib.cmd",
-            "lib.bat",
-            "lib",
-        ]
-    } else {
-        vec!["llvm-ar", "ar"]
-    }
 }
 
 fn rustc_candidates() -> Vec<&'static str> {
