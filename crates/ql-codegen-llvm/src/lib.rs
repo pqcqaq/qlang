@@ -439,11 +439,34 @@ impl<'a> ModuleEmitter<'a> {
         if function.is_async {
             match body_style {
                 FunctionBodyStyle::Definition => {
-                    if is_entry {
-                        diagnostics.push(unsupported(
-                            function.span,
-                            "LLVM IR backend foundation does not support `async fn main` yet",
-                        ));
+                    // async fn main is now supported in program mode: the host entry wrapper
+                    // (render_host_entry_wrapper) drives the full task lifecycle
+                    // (task_create → executor_spawn → task_await → load result →
+                    // task_result_release) and returns an i32 exit code to the OS.
+                    // These extra hooks are only required when lowering the host entry.
+                    if is_entry
+                        && self.input.mode == CodegenMode::Program
+                        && (self.has_runtime_hook(RuntimeHook::TaskAwait)
+                            || self.has_runtime_hook(RuntimeHook::TaskResultRelease))
+                    {
+                        if !self.has_runtime_hook(RuntimeHook::ExecutorSpawn) {
+                            diagnostics.push(unsupported(
+                                function.span,
+                                "LLVM IR backend foundation requires the `executor-spawn` runtime hook before lowering `async fn main`",
+                            ));
+                        }
+                        if !self.has_runtime_hook(RuntimeHook::TaskAwait) {
+                            diagnostics.push(unsupported(
+                                function.span,
+                                "LLVM IR backend foundation requires the `task-await` runtime hook before lowering `async fn main`",
+                            ));
+                        }
+                        if !self.has_runtime_hook(RuntimeHook::TaskResultRelease) {
+                            diagnostics.push(unsupported(
+                                function.span,
+                                "LLVM IR backend foundation requires the `task-result-release` runtime hook before lowering `async fn main`",
+                            ));
+                        }
                     }
                     if !self.has_runtime_hook(RuntimeHook::AsyncTaskCreate) {
                         diagnostics.push(unsupported(
@@ -1944,7 +1967,79 @@ impl<'a> ModuleEmitter<'a> {
         output.push_str("define i32 @main() {\n");
         output.push_str("entry:\n");
 
-        if is_void_ty(&entry.signature.return_ty) {
+        if entry.signature.is_async
+            && self.has_runtime_hook(RuntimeHook::ExecutorSpawn)
+            && self.has_runtime_hook(RuntimeHook::TaskAwait)
+            && self.has_runtime_hook(RuntimeHook::TaskResultRelease)
+        {
+            // async fn main: drive the full task lifecycle to get the exit code.
+            //
+            // Sequence (per RuntimeHook contracts in ql-runtime/src/lib.rs):
+            //   task    = @ql_N_main()                             ← task_create wrapper
+            //   join    = qlrt_executor_spawn(null, task)          ← submit to default executor
+            //   res_ptr = qlrt_task_await(join)                    ← block until done
+            //   ret_val = load <RetTy>, ptr res_ptr                ← extract payload
+            //             qlrt_task_result_release(res_ptr)        ← free payload buffer
+            //             ret i32 (trunc ret_val / 0 for void)
+            let spawn_hook = self
+                .runtime_hook_signature(RuntimeHook::ExecutorSpawn)
+                .expect("async fn main lowering should require the executor-spawn runtime hook");
+            let await_hook = self
+                .runtime_hook_signature(RuntimeHook::TaskAwait)
+                .expect("async fn main lowering should require the task-await runtime hook");
+            let release_hook = self
+                .runtime_hook_signature(RuntimeHook::TaskResultRelease)
+                .expect(
+                    "async fn main lowering should require the task-result-release runtime hook",
+                );
+
+            // Call the task-create wrapper (returns opaque task ptr).
+            let _ = writeln!(
+                output,
+                "  %async_main_task = call ptr @{}()",
+                entry.signature.llvm_name
+            );
+            // Spawn into the default executor (null = implicit executor placeholder).
+            let _ = writeln!(
+                output,
+                "  %async_main_join = call {} @{}(ptr null, ptr %async_main_task)",
+                spawn_hook.return_type.llvm_ir(),
+                spawn_hook.hook.symbol_name(),
+            );
+            // Await the join handle; returns result_ptr.
+            let _ = writeln!(
+                output,
+                "  %async_main_res = call {} @{}(ptr %async_main_join)",
+                await_hook.return_type.llvm_ir(),
+                await_hook.hook.symbol_name(),
+            );
+
+            if is_void_ty(&entry.signature.body_return_ty) {
+                // Void async main: release the (empty) payload and return 0.
+                let _ = writeln!(
+                    output,
+                    "  call {} @{}(ptr %async_main_res)",
+                    release_hook.return_type.llvm_ir(),
+                    release_hook.hook.symbol_name(),
+                );
+                output.push_str("  ret i32 0\n");
+            } else {
+                // Load the result payload, release it, then return exit code.
+                let _ = writeln!(
+                    output,
+                    "  %async_main_ret = load {}, ptr %async_main_res",
+                    entry.signature.body_return_llvm_ty,
+                );
+                let _ = writeln!(
+                    output,
+                    "  call {} @{}(ptr %async_main_res)",
+                    release_hook.return_type.llvm_ir(),
+                    release_hook.hook.symbol_name(),
+                );
+                output.push_str("  %async_main_exit = trunc i64 %async_main_ret to i32\n");
+                output.push_str("  ret i32 %async_main_exit\n");
+            }
+        } else if is_void_ty(&entry.signature.return_ty) {
             let _ = writeln!(
                 output,
                 "  call {} @{}()",
@@ -6789,5 +6884,111 @@ async fn helper() -> Int {
                 && !message.contains("could not resolve LLVM type for local")
                 && !message.contains("could not infer LLVM type for MIR local")
         }));
+    }
+
+    // -----------------------------------------------------------------------
+    // async fn main — program-mode entry lifecycle tests (P7.4)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn emits_async_main_entry_lifecycle_in_program_mode() {
+        // async fn main drives the full task lifecycle from the C `@main` entry:
+        //   task    = @ql_N_main()                        (task-create wrapper)
+        //   join    = qlrt_executor_spawn(null, task)
+        //   res_ptr = qlrt_task_await(join)
+        //   ret_val = load i64, ptr res_ptr
+        //             qlrt_task_result_release(res_ptr)
+        //   exit    = trunc i64 ret_val to i32
+        //             ret i32 exit
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    return await worker()
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        // Runtime hooks must be declared.
+        assert!(rendered.contains("declare ptr @qlrt_async_task_create(ptr, ptr)"));
+        assert!(rendered.contains("declare ptr @qlrt_executor_spawn(ptr, ptr)"));
+        assert!(rendered.contains("declare ptr @qlrt_task_await(ptr)"));
+        assert!(rendered.contains("declare void @qlrt_task_result_release(ptr)"));
+
+        // The async body and task-create wrapper must be emitted.
+        assert!(rendered.contains("define ptr @ql_1_main__async_body(ptr %frame)") ||
+                rendered.contains("define ptr @ql_0_main__async_body(ptr %frame)") ||
+                rendered.contains("__async_body"));
+        assert!(rendered.contains("define ptr @ql_") && rendered.contains("@main("));
+
+        // The C entry point must drive the lifecycle.
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("load i64, ptr %async_main_res"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.contains("trunc i64 %async_main_ret to i32"));
+        assert!(rendered.contains("ret i32 %async_main_exit"));
+    }
+
+    #[test]
+    fn emits_async_void_main_entry_lifecycle_in_program_mode() {
+        // async fn main returning Void: the host entry skips the load and returns 0.
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn main() -> Void {
+    return
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.contains("ret i32 0"));
+        // No result load for void.
+        assert!(!rendered.contains("load i64, ptr %async_main_res"));
+    }
+
+    #[test]
+    fn rejects_async_main_without_required_executor_spawn_hook() {
+        // async fn main requires the executor-spawn hook; omitting it must error.
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            // TaskSpawn (executor-spawn) intentionally absent.
+            RuntimeCapability::TaskAwait,
+        ]);
+        let messages = emit_error_with_runtime_hooks(
+            r#"
+async fn main() -> Int {
+    return 1
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(
+            messages.iter().any(|m| m.contains("executor-spawn")),
+            "expected executor-spawn hook error, got: {messages:?}"
+        );
     }
 }

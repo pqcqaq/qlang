@@ -119,7 +119,7 @@
 - cancellation / polling / drop 语义
 - generic async ABI 与 layout substitution
 - 更广义的 async `dylib` 构建承诺（当前仅开放带同步 `extern "c"` 导出面的最小 library-style async body 子集）
-- async executable / program entry 构建承诺
+- 更广义的 async executable surface（当前仅开放 `BuildEmit::Executable` 下的 `async fn main` 最小程序入口生命周期；更复杂的 program/runtime bootstrap 仍未开放）
 - 更广义的 task result transport 协议
 - 更广义的 place-sensitive task-handle lifecycle
 
@@ -170,13 +170,15 @@
 
 #### P7.4 扩大 async build surface（条件评估）
 
+首个 program-build 切片已落地：`BuildEmit::Executable` 现已开放 `async fn main` 的最小程序入口生命周期。其余三个方向仍按下述前提继续保守推进。
+
 以下四个方向各有明确的推进前提，满足条件前继续保持保守拒绝：
 
 | 方向 | 推进前提 |
 | ---- | ---- |
 | 放宽更多 `await`/`spawn` payload 路径 | runtime hook 合同（P7.2）已在单测层稳定，且 result layout contract 在注释中显式 |
 | 扩大 `for await` iterable surface（slice/span 或通用 iterator） | 需要单独评估 `qlrt_async_iter_next` hook 的具体合同设计；fixed-array 路径稳定后再做 |
-| 扩大 async `dylib` 或开放 async program build | 至少一条 Rust host 双向互操作路径（P7.3）已被 CI 锁定，且 hook ABI 文档已成立 |
+| 扩大 async `dylib` 或开放更多 async program build surface | 至少一条 Rust host 双向互操作路径（P7.3）已被 CI 锁定，且 hook ABI 文档已成立；当前已开放 `BuildEmit::Executable` 下的 `async fn main` 最小程序入口生命周期 |
 | 开放更广义的 async callable / effect surface | Phase 8 或更晚；需要独立 RFC，不在 Phase 7 范围内 |
 
 ### Phase 7 出口标准
@@ -184,7 +186,7 @@
 - `async fn` / `await` / `spawn` 在当前受控子集上有稳定语义、诊断和回归 ✓（P7.1 已完成）
 - 至少一条 Rust 混编路径可在 CI 中复现 ✓（`examples/ffi-rust` + CLI 集成测试已建立，P7.3 已扩展为双向双函数）
 - runtime hook ABI、driver build rejection 与 backend lowering 三者不再互相漂移 ✓（P7.2 已完成：hook 合同注释 + 单测 + INVARIANT 注释对齐）
-- 文档、测试、实现三者对当前 async 边界给出同一描述（持续维护中）
+- 文档、测试、实现三者对当前 async 边界给出同一描述（持续维护中；当前已包含 `async fn main` 的 executable 程序入口子集）
 
 ## 后续阶段
 

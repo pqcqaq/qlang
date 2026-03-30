@@ -206,12 +206,30 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
     };
 
     let runtime_diagnostics = runtime_requirement_diagnostics(&analysis, options.emit);
-    let runtime_hooks = collect_runtime_hook_signatures(
-        analysis
-            .runtime_requirements()
+    let mut runtime_capabilities = analysis
+        .runtime_requirements()
+        .iter()
+        .map(|requirement| requirement.capability)
+        .collect::<Vec<_>>();
+    if options.emit == BuildEmit::Executable
+        && analysis
+            .hir()
+            .items
             .iter()
-            .map(|requirement| requirement.capability),
-    );
+            .filter_map(|&item_id| match &analysis.hir().item(item_id).kind {
+                ql_hir::ItemKind::Function(function) => Some(function),
+                _ => None,
+            })
+            .any(|function| function.name == "main" && function.is_async)
+    {
+        if !runtime_capabilities.contains(&RuntimeCapability::TaskSpawn) {
+            runtime_capabilities.push(RuntimeCapability::TaskSpawn);
+        }
+        if !runtime_capabilities.contains(&RuntimeCapability::TaskAwait) {
+            runtime_capabilities.push(RuntimeCapability::TaskAwait);
+        }
+    }
+    let runtime_hooks = collect_runtime_hook_signatures(runtime_capabilities.iter().copied());
     let module_name = default_module_name(path);
     let ir = match emit_module(CodegenInput {
         module_name: &module_name,
@@ -346,15 +364,23 @@ fn runtime_requirement_message(
     emit: BuildEmit,
 ) -> Option<&'static str> {
     match capability {
+        // All async capabilities are now open for staticlib, dylib, and executable builds.
+        // LlvmIr and Object emits remain conservatively blocked (no entry lifecycle lowering).
         RuntimeCapability::AsyncFunctionBodies
         | RuntimeCapability::TaskAwait
         | RuntimeCapability::TaskSpawn
-            if matches!(emit, BuildEmit::StaticLibrary | BuildEmit::DynamicLibrary) =>
+            if matches!(
+                emit,
+                BuildEmit::StaticLibrary | BuildEmit::DynamicLibrary | BuildEmit::Executable
+            ) =>
         {
             None
         }
         RuntimeCapability::AsyncIteration
-            if matches!(emit, BuildEmit::StaticLibrary | BuildEmit::DynamicLibrary) =>
+            if matches!(
+                emit,
+                BuildEmit::StaticLibrary | BuildEmit::DynamicLibrary | BuildEmit::Executable
+            ) =>
         {
             None
         }
@@ -1012,6 +1038,61 @@ fn main() -> Int {
         assert!(
             leftovers.is_empty(),
             "successful executable emission should clean up intermediate artifacts"
+        );
+    }
+
+    #[test]
+    fn build_file_writes_async_main_executable_with_mock_toolchain() {
+        let dir = TestDir::new("ql-driver-async-exe");
+        let source = dir.write(
+            "async_main.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    return await worker()
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_main.exe"
+        } else {
+            "artifacts/async_main"
+        });
+        let clang = mock_success_invocation(&dir);
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(clang),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact =
+            build_file(&source, &options).expect("async executable build should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+        let leftovers = fs::read_dir(output.parent().expect("output should have a parent"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen."))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "successful async executable emission should clean up intermediate artifacts"
         );
     }
 
@@ -2772,6 +2853,14 @@ async fn main() -> Int {
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message
                 == "LLVM IR backend foundation does not support `for await` lowering yet"
+        }));
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.message
+                != "LLVM IR backend foundation requires the `executor-spawn` runtime hook before lowering `async fn main`"
+                && diagnostic.message
+                    != "LLVM IR backend foundation requires the `task-await` runtime hook before lowering `async fn main`"
+                && diagnostic.message
+                    != "LLVM IR backend foundation requires the `task-result-release` runtime hook before lowering `async fn main`"
         }));
     }
 

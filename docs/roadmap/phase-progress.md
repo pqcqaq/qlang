@@ -804,7 +804,14 @@ P6 当前仍刻意未完成：
 
 ### 下一步（P7.3 / P7.4 方向）
 
-P7.2 两个主线任务均已完成（2026-03-29）。
+P7.2 两个主线任务与 P7.4 的首个 program-entry 切片均已完成（2026-03-29/30）。
+
+**P7.4 Task 1（已完成）：开放 `async fn main` 的 executable 程序入口**
+
+- `crates/ql-codegen-llvm/src/lib.rs`：移除对 `async fn main` 的统一拒绝；在 program-mode host `@main` wrapper 中补齐 `task_create -> executor_spawn -> task_await -> result_load -> task_result_release -> trunc/ret` 生命周期 lowering，并为 void-return 路径保留 `ret i32 0`
+- `crates/ql-driver/src/build.rs`：允许 `BuildEmit::Executable` 通过 async runtime capability gate；新增 driver 单测 `build_file_writes_async_main_executable_with_mock_toolchain`
+- `crates/ql-cli/tests/codegen.rs` + `fixtures/codegen/pass/async_program_main.ql`：补齐 CLI 黑盒回归，锁定 async program build 端到端成功路径
+- 当前边界仍保持保守：`llvm-ir` / `object` emit 仍通过 driver capability gate 拒绝 async runtime surface；只有 `BuildEmit::Executable` 会在 program-mode host entry 上额外注入 `async fn main` 所需 hook，并开放最小程序入口生命周期。更广义的 program bootstrap、async dylib surface 与 task result transport 仍未开放
 
 **P7.2 Task 1（已完成）：runtime hook ABI 合同细化**
 
@@ -836,7 +843,7 @@ P7.2 两个主线任务均已完成（2026-03-29）。
 | P4 | 已完成基础阶段 | LLVM backend、artifact pipeline、extern C direct-call foundation 与 codegen harness 已建立 |
 | P5 | 已完成基础阶段 | 最小 C ABI 互操作、头文件生成、sidecar header 与真实 C 宿主集成已建立 |
 | P6 | 已完成基础阶段 | same-file query / rename / completion / semantic-token / LSP parity 已系统收口 |
-| P7 | 进行中（P7.1） | 已形成保守 async library/staticlib 闭环，并继续扩展受控 backend/runtime 切片 |
+| P7 | 进行中（P7.4） | 已形成保守 async library/staticlib/dylib 闭环，并开放 `async fn main` 的 executable 程序入口子集 |
 
 ## 对后续开发的直接建议
 
