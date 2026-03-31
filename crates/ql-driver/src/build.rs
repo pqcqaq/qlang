@@ -1506,6 +1506,110 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_local_returned_task_handle_helpers() {
+        let dir = TestDir::new("ql-driver-async-exe-local-return-task-handle-helper");
+        let source = dir.write(
+            "async_local_return_task_handle.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+fn schedule() -> Task[Int] {
+    let task = worker()
+    return task
+}
+
+async fn main() -> Int {
+    let first = await schedule()
+    let second = await schedule()
+    return first + second
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_local_return_task_handle.exe"
+        } else {
+            "artifacts/async_local_return_task_handle"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with local-return task-handle helpers should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_async_main_local_returned_zero_sized_task_handle_helpers()
+     {
+        let dir = TestDir::new("ql-driver-async-exe-local-return-zero-sized-task-handle-helper");
+        let source = dir.write(
+            "async_local_return_zero_sized_task_handle.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn schedule() -> Task[Wrap] {
+    let task = worker()
+    return task
+}
+
+fn score(value: Wrap) -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let first = await schedule()
+    let second = await schedule()
+    return score(first) + score(second)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_local_return_zero_sized_task_handle.exe"
+        } else {
+            "artifacts/async_local_return_zero_sized_task_handle"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "async executable with local-return zero-sized task-handle helpers should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_executable_with_async_main_zero_sized_nested_task_handle_results() {
         let dir = TestDir::new("ql-driver-async-exe-zero-sized-nested-task-handle");
         let source = dir.write(
