@@ -3015,6 +3015,97 @@ async fn main(index: Int) -> Wrap {
 }
 
 #[test]
+fn reports_use_after_move_when_aliased_direct_task_handle_is_repackaged_into_tuple() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let task = worker()
+    let alias = task
+    let first = await task
+    let pair = (alias, worker())
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `task` was used after move".to_string()),
+        "expected repackaging an aliased moved task handle into a tuple to report a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_move_when_aliased_dynamic_task_handle_root_is_repackaged_into_tuple() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    let tasks = [worker(), worker()]
+    let alias = tasks
+    let first = await tasks[index]
+    let pair = (alias[index], worker())
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected repackaging an aliased moved dynamic task-handle element into a tuple to report a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_repackaging_aliased_projected_root_task_handle_after_source_path_reinit() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let alias = pending.tasks
+    let first = await pending.tasks[index]
+    pending.tasks[index] = worker()
+    let pair = (alias[index], worker())
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected repackaging an aliased projected-root task handle after source-path reinit to succeed, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn renders_zero_sized_task_conditionally_spawned_async_call_for_debugging() {
     let rendered = render_output(
         r#"

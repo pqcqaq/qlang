@@ -1,0 +1,5 @@
+error: tests/codegen/fail/aliased_dynamic_task_handle_root_tuple_repackage_use_after_move_build.ql:13:16: local `tasks` was used after move
+      let pair = (alias[index], worker())
+                 ^^^^^^^^ use here
+      let first = await tasks[index]
+                  ^^^^^^^^ consumed here by `await`

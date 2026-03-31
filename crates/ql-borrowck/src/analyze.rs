@@ -424,16 +424,23 @@ impl<'a> BodyAnalyzer<'a> {
         reporter: Option<&mut Reporter>,
     ) {
         let mut reporter = reporter;
-        let path = if place.projections.is_empty() {
-            Vec::new()
+        let (local, path) = if let Some(target) =
+            self.task_handle_target_for_operand(&Operand::Place(place.clone()))
+        {
+            (target.local, target.path)
+        } else if place.projections.is_empty() {
+            (place.base, Vec::new())
         } else {
-            self.move_target_for_place(place)
-                .map(|target| target.path)
-                .unwrap_or_default()
+            (
+                place.base,
+                self.move_target_for_place(place)
+                    .map(|target| target.path)
+                    .unwrap_or_default(),
+            )
         };
         self.check_moved_use(
             states,
-            place.base,
+            local,
             &path,
             UseSite::normal(span),
             reporter.as_deref_mut(),
@@ -441,7 +448,7 @@ impl<'a> BodyAnalyzer<'a> {
         self.record_event(
             reporter.as_deref_mut(),
             span,
-            place.base,
+            local,
             LocalEventKind::Read,
         );
 
@@ -555,7 +562,18 @@ impl<'a> BodyAnalyzer<'a> {
         reporter: Option<&mut Reporter>,
     ) {
         let mut reporter = reporter;
-        self.check_moved_use(states, local, &[], use_site, reporter.as_deref_mut());
+        let target = if matches!(self.local_ty(local), Some(Ty::TaskHandle(_))) {
+            self.task_handle_target_for_operand(&Operand::Place(Place {
+                base: local,
+                projections: Vec::new(),
+            }))
+        } else {
+            None
+        };
+        let (local, path) = target
+            .map(|target| (target.local, target.path))
+            .unwrap_or((local, Vec::new()));
+        self.check_moved_use(states, local, &path, use_site, reporter.as_deref_mut());
         self.record_event(reporter, use_site.span, local, LocalEventKind::Read);
     }
 
@@ -2016,6 +2034,35 @@ impl<'a> BodyAnalyzer<'a> {
         use_site: UseSite,
     ) -> CleanupEval {
         let expr = self.hir.expr(expr_id);
+        if self.precise_move_target_for_expr(expr_id).is_some()
+            && let Some(target) = self.task_handle_target_for_expr(expr_id)
+        {
+            let mut reporter = reporter;
+            let eval = self.eval_task_handle_operand_expr(
+                states,
+                expr_id,
+                reporter.as_deref_mut(),
+                use_site.with_span(expr.span),
+            );
+            if !eval.continues {
+                return eval;
+            }
+
+            self.check_moved_use(
+                &eval.states,
+                target.local,
+                &target.path,
+                use_site.with_span(expr.span),
+                reporter.as_deref_mut(),
+            );
+            self.record_event(
+                reporter,
+                expr.span,
+                target.local,
+                LocalEventKind::Read,
+            );
+            return CleanupEval::cont(eval.states);
+        }
         match &expr.kind {
             hir::ExprKind::Name(_) => {
                 if let Some(local) = self.direct_local_for_expr(expr_id) {
