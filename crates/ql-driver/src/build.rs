@@ -1554,7 +1554,7 @@ async fn main() -> Int {
 
     #[test]
     fn build_file_writes_executable_with_async_main_local_returned_zero_sized_task_handle_helpers()
-     {
+    {
         let dir = TestDir::new("ql-driver-async-exe-local-return-zero-sized-task-handle-helper");
         let source = dir.write(
             "async_local_return_zero_sized_task_handle.ql",
@@ -1901,6 +1901,57 @@ async fn main() -> Int {
 
         let artifact = build_file(&source, &options)
             .expect("async executable with recursive aggregate results should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_async_main_spawned_recursive_aggregate_results() {
+        let dir = TestDir::new("ql-driver-async-exe-spawned-recursive-aggregate-results");
+        let source = dir.write(
+            "async_spawned_recursive_aggregate_results.ql",
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+async fn worker() -> (Pair, [Int; 2]) {
+    return (Pair { left: 1, right: 2 }, [3, 4])
+}
+
+fn score(result: (Pair, [Int; 2])) -> Int {
+    return result[0].left + result[0].right + result[1][0] + result[1][1]
+}
+
+async fn main() -> Int {
+    let task = spawn worker()
+    let value = await task
+    return score(value)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_spawned_recursive_aggregate_results.exe"
+        } else {
+            "artifacts/async_spawned_recursive_aggregate_results"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with spawned recursive aggregate results should succeed");
         let rendered =
             fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
 
@@ -2562,8 +2613,9 @@ async fn main() -> Int {
             },
         };
 
-        let artifact = build_file(&source, &options)
-            .expect("async executable with zero-sized conditional async-call spawns should succeed");
+        let artifact = build_file(&source, &options).expect(
+            "async executable with zero-sized conditional async-call spawns should succeed",
+        );
         let rendered =
             fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
 
@@ -2572,8 +2624,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_executable_with_async_main_zero_sized_conditional_helper_task_handle_spawns(
-    ) {
+    fn build_file_writes_executable_with_async_main_zero_sized_conditional_helper_task_handle_spawns()
+     {
         let dir =
             TestDir::new("ql-driver-async-exe-zero-sized-conditional-helper-task-handle-spawns");
         let source = dir.write(
