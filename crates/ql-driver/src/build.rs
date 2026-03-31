@@ -2382,6 +2382,75 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_projected_task_handle_reinit() {
+        let dir = TestDir::new("ql-driver-async-exe-projected-task-handle-reinit");
+        let source = dir.write(
+            "async_projected_task_handle_reinit.ql",
+            r#"
+struct TaskPair {
+    left: Task[Int],
+    right: Task[Int],
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var tuple = (worker(1), worker(2))
+    let tuple_first = await tuple[0]
+    tuple[0] = worker(7)
+    let tuple_second = await tuple[0]
+
+    var array = [worker(3), worker(4)]
+    let array_first = await array[0]
+    array[0] = worker(8)
+    let array_second = await array[0]
+
+    var pair = TaskPair { left: worker(5), right: worker(6) }
+    let struct_first = await pair.left
+    pair.left = worker(9)
+    let struct_second = await pair.left
+
+    return score(tuple_first)
+        + score(tuple_second)
+        + score(array_first)
+        + score(array_second)
+        + score(struct_first)
+        + score(struct_second)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_projected_task_handle_reinit.exe"
+        } else {
+            "artifacts/async_projected_task_handle_reinit"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with projected task-handle reinit should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_executable_with_async_main_zero_sized_projected_task_handle_awaits() {
         let dir = TestDir::new("ql-driver-async-exe-zero-sized-projected-task-handle-awaits");
         let source = dir.write(

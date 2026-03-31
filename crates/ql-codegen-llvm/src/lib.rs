@@ -7983,6 +7983,74 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_projected_task_handle_reinit_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct TaskPair {
+    left: Task[Int],
+    right: Task[Int],
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var tuple = (worker(1), worker(2))
+    let tuple_first = await tuple[0]
+    tuple[0] = worker(7)
+    let tuple_second = await tuple[0]
+
+    var array = [worker(3), worker(4)]
+    let array_first = await array[0]
+    array[0] = worker(8)
+    let array_second = await array[0]
+
+    var pair = TaskPair { left: worker(5), right: worker(6) }
+    let struct_first = await pair.left
+    pair.left = worker(9)
+    let struct_second = await pair.left
+
+    return score(tuple_first)
+        + score(tuple_second)
+        + score(array_first)
+        + score(array_second)
+        + score(struct_first)
+        + score(struct_second)
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_task_await").count() >= 7);
+        assert!(
+            rendered
+                .matches("getelementptr inbounds { ptr, ptr }, ptr")
+                .count()
+                >= 2
+        );
+        assert!(rendered.contains("getelementptr inbounds [2 x ptr], ptr"));
+        assert!(rendered.matches("store ptr").count() >= 9);
+        assert!(rendered.matches("load i64, ptr %t").count() >= 6);
+        assert!(rendered.matches("_score(").count() >= 7);
+        assert!(!rendered.contains("does not support field or index projections yet"));
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_zero_sized_nested_task_handle_payload_in_program_mode()
     {
         let runtime_hooks = collect_runtime_hook_signatures([
