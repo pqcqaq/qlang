@@ -2899,6 +2899,122 @@ fn main(row: Int, col: Int) -> Int {
 }
 
 #[test]
+fn reports_use_after_move_for_aliased_direct_task_handle_without_reinit() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let task = worker()
+    let alias = task
+    let first = await alias
+    return await task
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `task` was used after move".to_string()),
+        "expected aliased direct task handle reuse through source local to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_aliased_direct_task_handle_through_source_local() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var task = worker()
+    let alias = task
+    let first = await alias
+    task = worker()
+    return await alias
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected aliased direct task handle reinit through source local to restore availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_move_for_aliased_dynamic_task_handle_array_root_without_reinit() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    let tasks = [worker(), worker()]
+    let alias = tasks
+    let first = await alias[index]
+    return await tasks[index]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected aliased dynamic task-handle array root reuse through source local to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_aliased_projected_root_dynamic_task_handle_array_through_source_path() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let alias = pending.tasks
+    let first = await alias[index]
+    pending.tasks[index] = worker()
+    return await alias[index]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected aliased projected-root dynamic task-handle reinit through source path to restore availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn renders_zero_sized_task_conditionally_spawned_async_call_for_debugging() {
     let rendered = render_output(
         r#"

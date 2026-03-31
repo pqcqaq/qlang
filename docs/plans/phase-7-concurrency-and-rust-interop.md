@@ -13,7 +13,7 @@
 - LLVM backend 已有保守 async library lowering 子集，但更广义 async/runtime 语义仍显式保守
 - C ABI 与 header 投影已经稳定，可作为 Rust 混编入口
 
-## 当前进度（2026-03-30）
+## 当前进度（2026-04-01）
 
 > 当前整体判断：**前端语法/词法与 same-file LSP 基线已经成型，当前主线瓶颈不再是“还能不能解析更多语法”，而是“已有语法里哪些能力已经进入可分析、可编译、可产出 artifact 的稳定子集”。** 因此后续优先级应继续落在 runtime / lowering / build-surface 的语言能力扩展，而不是先转向外围工具链 UX。
 
@@ -107,6 +107,7 @@
 - 同一条 composed stable dynamic source path 现也可继续穿过 immutable alias：`let alias = slots; await tasks[alias[row]]; tasks[slots[row]] = worker(); await tasks[alias[row]]` 这类跨源路径 consume/reinit，不再因为 alias 把 base place 换成了另一份 immutable binding 就退回 maybe-overlap，而会继续命中 stable-dynamic path 的 definite move / precise reinit 结果
 - borrowck 现也已补上最小 immutable const-backed literal normalization：当 dynamic index 来自 `let index = 0`、`let slot = Slot { value: 0 }`、`const INDEX: Int = 0` 或 `const SLOT: Slot = Slot { value: 0 }` 这类可保守折回 literal 的来源时，`tasks[index]` / `tasks[slot.value]` / `tasks[INDEX]` / `tasks[SLOT.value]` 都会和 `tasks[0]` 归并到同一 fixed-array literal path，因此 literal reuse 与 reinit/restore 的 ownership 结果不再额外退化成 generic dynamic overlap
 - borrowck 现也已补上 same immutable source alias normalization：当 dynamic index 来自 `let alias = index` 或 `let slot = Slot { value: index }` 这类不可变别名，且最终仍指向同一个稳定 source path 时，`tasks[alias]` / `tasks[slot.value]` 会和 `tasks[index]` 归并到同一 stable dynamic path，因此跨别名 reuse / reinit 的 ownership 结果不再额外退化成 generic dynamic overlap
+- borrowck / driver / CLI 现也已补上 task-handle root alias canonicalization：当 `let alias = task`、`let alias = tasks` 或 `let alias = pending.tasks` 这类 immutable alias 只是重新绑定同一条 task-handle root/source path 时，`await alias` / `await alias[index]` 不会再把 consume 记到 alias local 自身，而会继续命中 source root；因此 `await alias; await task` / `await alias[index]; await tasks[index]` 现在都会稳定报 source-root definite use-after-move，而 `task = worker()` / `pending.tasks[index] = worker()` 这类 source-local/source-path reinit 也会恢复后续 `await alias` / `await alias[index]` 的可用性
 - 已在 `ql-codegen-llvm` 打开首个真实 `spawn` lowering 子集：当前在 backend 内支持把 task-handle operand 降成“读取 task handle -> `qlrt_executor_spawn(ptr null, task)` -> 返回 task handle”，覆盖 direct async call、局部绑定 handle 与 sync helper 返回 handle 这几条路径；statement-position fire-and-forget 只是显式丢弃返回句柄的特例
 - 已在 `ql-codegen-llvm` 收紧 empty-array lowering 的 expected-context 合同：当前会把“返回槽 / 已知 direct temp use / 直调参数 / 已知 tuple-array-struct 聚合字面量”的具体 `[T; N]` 期望类型保守回传到 direct temp locals，因此 `return []`、`take([])`、`([], 1)`、`Wrap { values: [] }` 与 `[[]]` 这类已有 `[T; N]` 上下文的路径都可以稳定 lowering，而裸 `[]` 仍保持显式拒绝
 - 已在 `ql-codegen-llvm` / `ql-driver` / `ql-cli` 锁住 zero-sized async parameter 合同：`async fn worker(values: [Int; 0], wrap: Wrap { values: [Int; 0] }, nested: [[Int; 0]; 1])` 这类 zero-sized aggregate 参数现在也稳定走当前递归可加载 frame 模型，对应 wrapper/frame/`await`/`staticlib` 路径都已有回归覆盖

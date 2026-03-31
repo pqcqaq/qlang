@@ -1218,6 +1218,103 @@ impl<'a> BodyAnalyzer<'a> {
         self.precise_immutable_move_target(target)
     }
 
+    fn canonical_task_handle_move_target_for_place(
+        &self,
+        place: &Place,
+    ) -> Option<MoveTarget> {
+        let mut target = if let Some(source_place) = self.immutable_temp_places.get(&place.base) {
+            self.canonical_task_handle_move_target_for_place(source_place)?
+        } else if let Some(source_expr) = self.immutable_source_expr_for_local(place.base) {
+            self.canonical_task_handle_move_target_expr_fallback(source_expr)
+                .or_else(|| self.canonical_task_handle_move_target_for_expr(source_expr))?
+        } else {
+            MoveTarget {
+                local: place.base,
+                path: Vec::new(),
+            }
+        };
+
+        let mut current_ty = self.local_ty(place.base)?;
+        for projection in &place.projections {
+            let next_ty = self.project_place_ty_step(&current_ty, projection)?;
+            target.path.push(self.precise_move_path_step(&current_ty, projection)?);
+            current_ty = next_ty;
+        }
+
+        Some(target)
+    }
+
+    fn canonical_task_handle_move_target_for_expr(
+        &self,
+        expr_id: hir::ExprId,
+    ) -> Option<MoveTarget> {
+        if let Some(target) = self.canonical_precise_immutable_move_target_for_expr(expr_id) {
+            return Some(target);
+        }
+        self.canonical_task_handle_move_target_expr_fallback(expr_id)
+    }
+
+    fn canonical_task_handle_move_target_expr_fallback(
+        &self,
+        expr_id: hir::ExprId,
+    ) -> Option<MoveTarget> {
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::Name(_) => {
+                let local = self.direct_local_for_expr(expr_id)?;
+                if let LocalOrigin::Binding(hir_local) = &self.body.local(local).origin
+                    && let Some(value) = self.immutable_binding_values.get(hir_local).copied()
+                    && self.precise_move_target_for_expr(value).is_some()
+                    && let Some(target) =
+                        self.canonical_task_handle_move_target_expr_fallback(value)
+                {
+                    return Some(target);
+                }
+                Some(MoveTarget {
+                    local,
+                    path: Vec::new(),
+                })
+            }
+            hir::ExprKind::Member { object, field, .. } => {
+                let mut target = self
+                    .canonical_task_handle_move_target_expr_fallback(*object)
+                    .or_else(|| self.canonical_task_handle_move_target_for_expr(*object))?;
+                target.path.push(MovePathSegment::Field(field.clone()));
+                Some(target)
+            }
+            hir::ExprKind::Bracket { target, items } => {
+                if items.len() != 1 {
+                    return None;
+                }
+                let target_ty = self.typeck.expr_ty(*target)?;
+                let mut target = self
+                    .canonical_task_handle_move_target_expr_fallback(*target)
+                    .or_else(|| self.canonical_task_handle_move_target_for_expr(*target))?;
+                target
+                    .path
+                    .push(match (target_ty, &self.hir.expr(items[0]).kind) {
+                        (Ty::Tuple(_), hir::ExprKind::Integer(raw_index)) => {
+                            MovePathSegment::TupleIndex(parse_usize_literal(raw_index)?)
+                        }
+                        (Ty::Array { .. }, hir::ExprKind::Integer(raw_index)) => {
+                            MovePathSegment::ArrayIndex(parse_usize_literal(raw_index)?)
+                        }
+                        (Ty::Array { .. }, _) => self.dynamic_array_move_path_step_for_expr(items[0]),
+                        _ => return None,
+                    });
+                Some(target)
+            }
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
+                .hir
+                .block(*block)
+                .tail
+                .and_then(|tail| self.canonical_task_handle_move_target_for_expr(tail)),
+            hir::ExprKind::Question(inner) => {
+                self.canonical_task_handle_move_target_for_expr(*inner)
+            }
+            _ => None,
+        }
+    }
+
     fn project_immutable_expr_for_projection(
         &self,
         expr_id: hir::ExprId,
@@ -1353,18 +1450,29 @@ impl<'a> BodyAnalyzer<'a> {
         let Operand::Place(place) = operand else {
             return None;
         };
-        if place.projections.is_empty() {
-            return self
-                .direct_task_handle_local(place.base)
-                .map(|local| MoveTarget {
+        if !matches!(self.place_ty(place)?, Ty::TaskHandle(_)) {
+            None
+        } else if let Some(target) = self.canonical_task_handle_move_target_for_place(place) {
+            if target.path.is_empty()
+                && let Some(local) = self.direct_task_handle_local(target.local)
+            {
+                return Some(MoveTarget {
                     local,
                     path: Vec::new(),
                 });
-        }
-        if matches!(self.place_ty(place)?, Ty::TaskHandle(_)) {
-            self.move_target_for_place(place)
+            }
+            Some(target)
         } else {
-            None
+            let target = self.move_target_for_place(place)?;
+            if target.path.is_empty()
+                && let Some(local) = self.direct_task_handle_local(target.local)
+            {
+                return Some(MoveTarget {
+                    local,
+                    path: Vec::new(),
+                });
+            }
+            Some(target)
         }
     }
 
@@ -1373,14 +1481,26 @@ impl<'a> BodyAnalyzer<'a> {
             return None;
         }
 
+        if let Some(target) = self.canonical_task_handle_move_target_for_expr(expr_id) {
+            if target.path.is_empty()
+                && let Some(local) = self.direct_task_handle_local(target.local)
+            {
+                return Some(MoveTarget {
+                    local,
+                    path: Vec::new(),
+                });
+            }
+            return Some(target);
+        }
+
         if let Some(target) = self.precise_move_target_for_expr(expr_id) {
-            if target.path.is_empty() {
-                return self
-                    .direct_task_handle_local(target.local)
-                    .map(|local| MoveTarget {
-                        local,
-                        path: Vec::new(),
-                    });
+            if target.path.is_empty()
+                && let Some(local) = self.direct_task_handle_local(target.local)
+            {
+                return Some(MoveTarget {
+                    local,
+                    path: Vec::new(),
+                });
             }
             return Some(target);
         }

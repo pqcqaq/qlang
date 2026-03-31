@@ -1,0 +1,5 @@
+error: tests/codegen/fail/aliased_dynamic_task_handle_root_use_after_move_build.ql:13:12: local `tasks` was used after move
+      return await tasks[index]
+             ^^^^^^^^ use here
+      let first = await alias[index]
+                  ^^^^^^^^ consumed here by `await`

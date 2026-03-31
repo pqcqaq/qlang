@@ -5226,6 +5226,68 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_aliased_projected_root_dynamic_task_handle_reinit() {
+        let dir = TestDir::new("ql-driver-aliased-projected-root-task-array-dynamic-index-reinit");
+        let source = dir.write(
+            "aliased_projected_root_dynamic_task_handle_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(index: Int) -> Wrap {
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let slot = Slot { value: index }
+    let alias = pending.tasks
+    let first = await alias[slot.value]
+    pending.tasks[index] = worker()
+    return await alias[slot.value]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/aliased_projected_root_dynamic_task_handle_reinit.lib"
+        } else {
+            "artifacts/libaliased_projected_root_dynamic_task_handle_reinit.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect(
+            "static library build with aliased projected-root dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_same_immutable_dynamic_task_handle_reinit() {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-same-reinit");
         let source = dir.write(
@@ -5656,6 +5718,53 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
+    fn build_file_surfaces_aliased_dynamic_task_handle_array_root_use_after_move_diagnostic_once() {
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-root-alias-use-after-move");
+        let source = dir.write(
+            "task_array_dynamic_index_root_alias_use_after_move.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(index: Int) -> Wrap {
+    let tasks = [worker(), worker()]
+    let alias = tasks
+    let first = await alias[index]
+    return await tasks[index]
+}
+"#,
+        );
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: None,
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("aliased dynamic task-array diagnostics should be returned");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.message == "local `tasks` was used after move")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn build_file_surfaces_same_alias_sourced_dynamic_task_handle_array_index_use_after_move_diagnostic_once()
      {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-alias-use-after-move");
@@ -6000,6 +6109,97 @@ async fn helper() -> Int {
 
         assert_eq!(artifact.path, output);
         assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_aliased_direct_task_handle_reinit() {
+        let dir = TestDir::new("ql-driver-async-exe-aliased-direct-task-handle-reinit");
+        let source = dir.write(
+            "aliased_direct_task_handle_reinit.ql",
+            r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var task = worker(1)
+    let alias = task
+    let first = await alias
+    task = worker(first + 1)
+    return await alias
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/aliased_direct_task_handle_reinit.exe"
+        } else {
+            "artifacts/aliased_direct_task_handle_reinit"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with aliased direct task-handle reinit should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_surfaces_aliased_direct_task_handle_use_after_move_diagnostic_once() {
+        let dir = TestDir::new("ql-driver-async-aliased-direct-task-handle-use-after-move");
+        let source = dir.write(
+            "aliased_direct_task_handle_use_after_move.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let task = worker()
+    let alias = task
+    let first = await alias
+    return await task
+}
+"#,
+        );
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: None,
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("aliased direct task-handle diagnostics should be returned");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.message == "local `task` was used after move")
+                .count(),
+            1
+        );
     }
 
     #[test]

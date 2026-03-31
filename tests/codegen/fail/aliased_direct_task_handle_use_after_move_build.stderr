@@ -1,0 +1,5 @@
+error: tests/codegen/fail/aliased_direct_task_handle_use_after_move_build.ql:13:12: local `task` was used after move
+      return await task
+             ^^^^^^^^ use here
+      let first = await alias
+                  ^^^^^^^^ consumed here by `await`
