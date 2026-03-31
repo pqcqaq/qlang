@@ -1610,6 +1610,110 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_zero_sized_aggregate_results() {
+        let dir = TestDir::new("ql-driver-async-exe-zero-sized-aggregate-results");
+        let source = dir.write(
+            "async_zero_sized_aggregate_results.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn empty_values() -> [Int; 0] {
+    return []
+}
+
+async fn wrapped() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn score(values: [Int; 0], value: Wrap) -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let first = await empty_values()
+    let second = await wrapped()
+    return score(first, second)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_zero_sized_aggregate_results.exe"
+        } else {
+            "artifacts/async_zero_sized_aggregate_results"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with zero-sized aggregate results should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_spawned_zero_sized_aggregate_results() {
+        let dir = TestDir::new("ql-driver-async-exe-spawn-zero-sized-aggregate-result");
+        let source = dir.write(
+            "async_spawn_zero_sized_aggregate_result.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn score(value: Wrap) -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let task = spawn worker()
+    let first = await task
+    return score(first)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_spawn_zero_sized_aggregate_result.exe"
+        } else {
+            "artifacts/async_spawn_zero_sized_aggregate_result"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with spawned zero-sized aggregate results should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_executable_with_async_main_zero_sized_nested_task_handle_results() {
         let dir = TestDir::new("ql-driver-async-exe-zero-sized-nested-task-handle");
         let source = dir.write(
