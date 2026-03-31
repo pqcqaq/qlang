@@ -7820,6 +7820,46 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_spawned_zero_sized_recursive_aggregate_param_lowering_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker(values: [Int; 0], wrap: Wrap, nested: [[Int; 0]; 1]) -> Int {
+    return 7
+}
+
+async fn main() -> Int {
+    let task = spawn worker([], Wrap { values: [] }, [[]])
+    return await task
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains(
+            "define ptr @ql_1_worker([0 x i64] %arg0, { [0 x i64] } %arg1, [1 x [0 x i64]] %arg2)"
+        ));
+        assert!(rendered.contains("call ptr @qlrt_async_frame_alloc(i64 0, i64 8)"));
+        assert!(rendered.contains("call ptr @ql_1_worker("));
+        assert!(rendered.contains("[0 x i64] zeroinitializer"));
+        assert!(rendered.contains("[1 x [0 x i64]]"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.matches("@qlrt_executor_spawn").count() >= 2);
+        assert!(rendered.matches("@qlrt_task_await").count() >= 2);
+        assert!(rendered.contains("load i64, ptr"));
+        assert!(!rendered.contains("does not support `spawn` lowering yet"));
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_zero_sized_nested_task_handle_payload_in_program_mode()
     {
         let runtime_hooks = collect_runtime_hook_signatures([
