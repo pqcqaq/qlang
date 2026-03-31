@@ -108,6 +108,10 @@ pub enum MovePathSegment {
     TupleIndex(usize),
     ArrayIndex(usize),
     DynamicArrayIndexLocal(LocalId),
+    DynamicArrayIndexPath {
+        local: LocalId,
+        path: Vec<MovePathSegment>,
+    },
     DynamicArrayIndex,
 }
 

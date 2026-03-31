@@ -4996,6 +4996,61 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_same_projected_immutable_dynamic_task_handle_reinit() {
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-projected-reinit");
+        let source = dir.write(
+            "task_array_dynamic_index_projected_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let slot = Slot { value: index }
+    let first = await tasks[slot.value]
+    tasks[slot.value] = worker()
+    return await tasks[slot.value]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/task_array_dynamic_index_projected_reinit.lib"
+        } else {
+            "artifacts/libtask_array_dynamic_index_projected_reinit.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect(
+            "static library build with same projected immutable dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_surfaces_dynamic_task_array_index_assignment_after_consume_diagnostic_once() {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-after-consume");
         let source = dir.write(

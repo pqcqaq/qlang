@@ -2361,6 +2361,70 @@ async fn main(index: Int) -> Wrap {
 }
 
 #[test]
+fn allows_reinitializing_same_immutable_projected_dynamic_task_handle_array_index_after_await() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let slot = Slot { value: index }
+    let first = await tasks[slot.value]
+    tasks[slot.value] = worker()
+    return await tasks[slot.value]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected same immutable projected dynamic task-handle index reinitialization to restore that path, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_move_for_same_immutable_projected_dynamic_task_handle_array_index_without_reinit()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    let tasks = [worker(), worker()]
+    let slot = Slot { value: index }
+    let first = await tasks[slot.value]
+    return await tasks[slot.value]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected same immutable projected dynamic task-handle index reuse without reinit to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_dynamic_array_index_assignment_for_non_task_elements() {
     let diagnostics = diagnostic_messages(
         r#"

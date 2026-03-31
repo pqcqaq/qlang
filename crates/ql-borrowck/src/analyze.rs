@@ -927,21 +927,56 @@ impl<'a> BodyAnalyzer<'a> {
 
     fn dynamic_array_move_path_step_for_operand(&self, operand: &Operand) -> MovePathSegment {
         if let Operand::Place(place) = operand
-            && place.projections.is_empty()
-            && !self.body.local(place.base).mutable
+            && let Some(target) = self.precise_immutable_move_target_for_place(place)
         {
-            return MovePathSegment::DynamicArrayIndexLocal(place.base);
+            return self.stable_dynamic_index_segment_for_target(target);
         }
         MovePathSegment::DynamicArrayIndex
     }
 
     fn dynamic_array_move_path_step_for_expr(&self, expr_id: hir::ExprId) -> MovePathSegment {
-        if let Some(local) = self.direct_local_for_expr(expr_id)
-            && !self.body.local(local).mutable
-        {
-            return MovePathSegment::DynamicArrayIndexLocal(local);
+        if let Some(target) = self.precise_immutable_move_target_for_expr(expr_id) {
+            return self.stable_dynamic_index_segment_for_target(target);
         }
         MovePathSegment::DynamicArrayIndex
+    }
+
+    fn precise_immutable_move_target_for_place(&self, place: &Place) -> Option<MoveTarget> {
+        let target = self.move_target_for_place(place)?;
+        self.precise_immutable_move_target(target)
+    }
+
+    fn precise_immutable_move_target_for_expr(&self, expr_id: hir::ExprId) -> Option<MoveTarget> {
+        let target = self.precise_move_target_for_expr(expr_id)?;
+        self.precise_immutable_move_target(target)
+    }
+
+    fn precise_immutable_move_target(&self, target: MoveTarget) -> Option<MoveTarget> {
+        if self.body.local(target.local).mutable {
+            return None;
+        }
+        if target.path.iter().any(|segment| {
+            matches!(
+                segment,
+                MovePathSegment::DynamicArrayIndex
+                    | MovePathSegment::DynamicArrayIndexLocal(_)
+                    | MovePathSegment::DynamicArrayIndexPath { .. }
+            )
+        }) {
+            return None;
+        }
+        Some(target)
+    }
+
+    fn stable_dynamic_index_segment_for_target(&self, target: MoveTarget) -> MovePathSegment {
+        if target.path.is_empty() {
+            MovePathSegment::DynamicArrayIndexLocal(target.local)
+        } else {
+            MovePathSegment::DynamicArrayIndexPath {
+                local: target.local,
+                path: target.path,
+            }
+        }
     }
 
     fn task_handle_target_for_operand(&self, operand: &Operand) -> Option<MoveTarget> {
@@ -2491,12 +2526,40 @@ fn move_path_segment_overlap_certainty(
                 PathOverlapCertainty::Maybe
             }
         }
+        (
+            MovePathSegment::DynamicArrayIndexPath {
+                local: left_local,
+                path: left_path,
+            },
+            MovePathSegment::DynamicArrayIndexPath {
+                local: right_local,
+                path: right_path,
+            },
+        ) => {
+            if left_local == right_local && left_path == right_path {
+                PathOverlapCertainty::Definite
+            } else {
+                PathOverlapCertainty::Maybe
+            }
+        }
         (MovePathSegment::ArrayIndex(_), MovePathSegment::DynamicArrayIndex)
         | (MovePathSegment::DynamicArrayIndex, MovePathSegment::ArrayIndex(_))
         | (MovePathSegment::ArrayIndex(_), MovePathSegment::DynamicArrayIndexLocal(_))
         | (MovePathSegment::DynamicArrayIndexLocal(_), MovePathSegment::ArrayIndex(_))
+        | (MovePathSegment::ArrayIndex(_), MovePathSegment::DynamicArrayIndexPath { .. })
+        | (MovePathSegment::DynamicArrayIndexPath { .. }, MovePathSegment::ArrayIndex(_))
         | (MovePathSegment::DynamicArrayIndexLocal(_), MovePathSegment::DynamicArrayIndex)
         | (MovePathSegment::DynamicArrayIndex, MovePathSegment::DynamicArrayIndexLocal(_))
+        | (
+            MovePathSegment::DynamicArrayIndexLocal(_),
+            MovePathSegment::DynamicArrayIndexPath { .. },
+        )
+        | (
+            MovePathSegment::DynamicArrayIndexPath { .. },
+            MovePathSegment::DynamicArrayIndexLocal(_),
+        )
+        | (MovePathSegment::DynamicArrayIndexPath { .. }, MovePathSegment::DynamicArrayIndex)
+        | (MovePathSegment::DynamicArrayIndex, MovePathSegment::DynamicArrayIndexPath { .. })
         | (MovePathSegment::DynamicArrayIndex, MovePathSegment::DynamicArrayIndex) => {
             PathOverlapCertainty::Maybe
         }
