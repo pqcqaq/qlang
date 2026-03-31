@@ -1,8 +1,6 @@
-error: tests/codegen/fail/dynamic_task_array_index_assignment_after_consume_build.ql:12:18: local `tasks` may have been moved on another control-flow path
+error: tests/codegen/fail/dynamic_task_array_index_assignment_after_consume_build.ql:13:12: local `tasks` may have been moved on another control-flow path
       return await tasks[0]
-                   ^^^^^^^ use occurs here
-11 |     tasks[index] = worker()
-10 |     let first = await tasks[0]
-   |                       ^^^^^^^ consume(await task handle)
-   |
-   = note: this local is only known to be moved on some incoming paths in the current checker
+             ^^^^^^^^ use here
+      let first = await tasks[0]
+                  ^^^^^^^^ consumed here by `await`
+  note: this local is only known to be moved on some incoming paths in the current checker
