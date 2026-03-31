@@ -961,7 +961,7 @@ impl<'a> BodyAnalyzer<'a> {
     ) -> Option<usize> {
         let mut current = self.immutable_binding_initializer_for_local(place.base)?;
         for projection in &place.projections {
-            current = self.project_const_expr_for_projection(current, projection, visiting)?;
+            current = self.project_immutable_expr_for_projection(current, projection, visiting)?;
         }
         self.fixed_array_index_value_for_expr_inner(current, visiting)
     }
@@ -976,23 +976,35 @@ impl<'a> BodyAnalyzer<'a> {
         expr_id: hir::ExprId,
         visiting: &mut HashSet<hir::LocalId>,
     ) -> Option<usize> {
-        let expr_id = self.normalized_const_source_expr(expr_id, visiting)?;
+        let expr_id = self.normalized_immutable_source_expr(expr_id, visiting)?;
         match &self.hir.expr(expr_id).kind {
             hir::ExprKind::Integer(raw) => parse_usize_literal(raw),
             hir::ExprKind::Member { object, field, .. } => {
-                let projected = self.project_member_const_expr(*object, field, visiting)?;
+                let projected = self.project_member_immutable_expr(*object, field, visiting)?;
                 self.fixed_array_index_value_for_expr_inner(projected, visiting)
             }
             hir::ExprKind::Bracket { target, items } if items.len() == 1 => {
                 let index = self.fixed_array_index_value_for_expr_inner(items[0], visiting)?;
-                let projected = self.project_index_const_expr(*target, index, visiting)?;
+                let projected = self.project_index_immutable_expr(*target, index, visiting)?;
                 self.fixed_array_index_value_for_expr_inner(projected, visiting)
             }
             _ => None,
         }
     }
 
-    fn normalized_const_source_expr(
+    fn normalized_immutable_source_expr_for_place(
+        &self,
+        place: &Place,
+        visiting: &mut HashSet<hir::LocalId>,
+    ) -> Option<hir::ExprId> {
+        let mut current = self.immutable_binding_initializer_for_local(place.base)?;
+        for projection in &place.projections {
+            current = self.project_immutable_expr_for_projection(current, projection, visiting)?;
+        }
+        self.normalized_immutable_source_expr(current, visiting)
+    }
+
+    fn normalized_immutable_source_expr(
         &self,
         expr_id: hir::ExprId,
         visiting: &mut HashSet<hir::LocalId>,
@@ -1009,7 +1021,7 @@ impl<'a> BodyAnalyzer<'a> {
                 if !visiting.insert(*hir_local) {
                     return None;
                 }
-                let resolved = self.normalized_const_source_expr(value, visiting);
+                let resolved = self.normalized_immutable_source_expr(value, visiting);
                 visiting.remove(hir_local);
                 resolved
             }
@@ -1017,13 +1029,57 @@ impl<'a> BodyAnalyzer<'a> {
                 .hir
                 .block(*block)
                 .tail
-                .and_then(|tail| self.normalized_const_source_expr(tail, visiting)),
-            hir::ExprKind::Question(inner) => self.normalized_const_source_expr(*inner, visiting),
+                .and_then(|tail| self.normalized_immutable_source_expr(tail, visiting)),
+            hir::ExprKind::Question(inner) => {
+                self.normalized_immutable_source_expr(*inner, visiting)
+            }
+            hir::ExprKind::Member { object, field, .. } => {
+                let object = self.normalized_immutable_source_expr(*object, visiting)?;
+                if let Some(projected) = self.project_member_immutable_expr(object, field, visiting)
+                {
+                    self.normalized_immutable_source_expr(projected, visiting)
+                } else {
+                    Some(expr_id)
+                }
+            }
+            hir::ExprKind::Bracket { target, items } if items.len() == 1 => {
+                let target = self.normalized_immutable_source_expr(*target, visiting)?;
+                let Some(index) = self.fixed_array_index_value_for_expr_inner(items[0], visiting)
+                else {
+                    return Some(expr_id);
+                };
+                if let Some(projected) = self.project_index_immutable_expr(target, index, visiting)
+                {
+                    self.normalized_immutable_source_expr(projected, visiting)
+                } else {
+                    Some(expr_id)
+                }
+            }
             _ => Some(expr_id),
         }
     }
 
-    fn project_const_expr_for_projection(
+    fn canonical_precise_immutable_move_target_for_place(
+        &self,
+        place: &Place,
+    ) -> Option<MoveTarget> {
+        let mut visiting = HashSet::new();
+        let expr_id = self.normalized_immutable_source_expr_for_place(place, &mut visiting)?;
+        let target = self.precise_move_target_for_expr(expr_id)?;
+        self.precise_immutable_move_target(target)
+    }
+
+    fn canonical_precise_immutable_move_target_for_expr(
+        &self,
+        expr_id: hir::ExprId,
+    ) -> Option<MoveTarget> {
+        let mut visiting = HashSet::new();
+        let expr_id = self.normalized_immutable_source_expr(expr_id, &mut visiting)?;
+        let target = self.precise_move_target_for_expr(expr_id)?;
+        self.precise_immutable_move_target(target)
+    }
+
+    fn project_immutable_expr_for_projection(
         &self,
         expr_id: hir::ExprId,
         projection: &ProjectionElem,
@@ -1031,26 +1087,26 @@ impl<'a> BodyAnalyzer<'a> {
     ) -> Option<hir::ExprId> {
         match projection {
             ProjectionElem::Field(field) => {
-                self.project_member_const_expr(expr_id, field, visiting)
+                self.project_member_immutable_expr(expr_id, field, visiting)
             }
             ProjectionElem::TupleIndex(index) => {
-                self.project_index_const_expr(expr_id, *index, visiting)
+                self.project_index_immutable_expr(expr_id, *index, visiting)
             }
             ProjectionElem::Index(index) => {
                 let constant_index =
                     self.fixed_array_index_value_for_operand_inner(index, visiting)?;
-                self.project_index_const_expr(expr_id, constant_index, visiting)
+                self.project_index_immutable_expr(expr_id, constant_index, visiting)
             }
         }
     }
 
-    fn project_member_const_expr(
+    fn project_member_immutable_expr(
         &self,
         expr_id: hir::ExprId,
         field: &str,
         visiting: &mut HashSet<hir::LocalId>,
     ) -> Option<hir::ExprId> {
-        let expr_id = self.normalized_const_source_expr(expr_id, visiting)?;
+        let expr_id = self.normalized_immutable_source_expr(expr_id, visiting)?;
         match &self.hir.expr(expr_id).kind {
             hir::ExprKind::StructLiteral { fields, .. } => fields
                 .iter()
@@ -1060,13 +1116,13 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
-    fn project_index_const_expr(
+    fn project_index_immutable_expr(
         &self,
         expr_id: hir::ExprId,
         index: usize,
         visiting: &mut HashSet<hir::LocalId>,
     ) -> Option<hir::ExprId> {
-        let expr_id = self.normalized_const_source_expr(expr_id, visiting)?;
+        let expr_id = self.normalized_immutable_source_expr(expr_id, visiting)?;
         match &self.hir.expr(expr_id).kind {
             hir::ExprKind::Array(items) | hir::ExprKind::Tuple(items) => items.get(index).copied(),
             _ => None,
@@ -1076,6 +1132,11 @@ impl<'a> BodyAnalyzer<'a> {
     fn dynamic_array_move_path_step_for_operand(&self, operand: &Operand) -> MovePathSegment {
         if let Some(index) = self.fixed_array_index_value_for_operand(operand) {
             return MovePathSegment::ArrayIndex(index);
+        }
+        if let Operand::Place(place) = operand
+            && let Some(target) = self.canonical_precise_immutable_move_target_for_place(place)
+        {
+            return self.stable_dynamic_index_segment_for_target(target);
         }
         if let Operand::Place(place) = operand
             && let Some(target) = self.precise_immutable_move_target_for_place(place)
@@ -1088,6 +1149,9 @@ impl<'a> BodyAnalyzer<'a> {
     fn dynamic_array_move_path_step_for_expr(&self, expr_id: hir::ExprId) -> MovePathSegment {
         if let Some(index) = self.fixed_array_index_value_for_expr(expr_id) {
             return MovePathSegment::ArrayIndex(index);
+        }
+        if let Some(target) = self.canonical_precise_immutable_move_target_for_expr(expr_id) {
+            return self.stable_dynamic_index_segment_for_target(target);
         }
         if let Some(target) = self.precise_immutable_move_target_for_expr(expr_id) {
             return self.stable_dynamic_index_segment_for_target(target);

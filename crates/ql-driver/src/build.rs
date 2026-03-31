@@ -5270,6 +5270,62 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_same_alias_sourced_projected_dynamic_task_handle_reinit()
+     {
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-alias-sourced-reinit");
+        let source = dir.write(
+            "task_array_dynamic_index_alias_sourced_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let slot = Slot { value: index }
+    let first = await tasks[slot.value]
+    tasks[index] = worker()
+    return await tasks[slot.value]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/task_array_dynamic_index_alias_sourced_reinit.lib"
+        } else {
+            "artifacts/libtask_array_dynamic_index_alias_sourced_reinit.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect(
+            "static library build with same alias-sourced projected dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_same_projected_immutable_dynamic_task_handle_conditional_reinit()
      {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-projected-conditional-reinit");
@@ -5372,6 +5428,54 @@ async fn helper(index: Int) -> Wrap {
                     diagnostic.message
                         == "local `tasks` may have been moved on another control-flow path"
                 })
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn build_file_surfaces_same_alias_sourced_dynamic_task_handle_array_index_use_after_move_diagnostic_once()
+     {
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-alias-use-after-move");
+        let source = dir.write(
+            "task_array_dynamic_index_alias_use_after_move.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(index: Int) -> Wrap {
+    let tasks = [worker(), worker()]
+    let alias = index
+    let first = await tasks[alias]
+    return await tasks[index]
+}
+"#,
+        );
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: None,
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("alias-sourced dynamic task-array diagnostics should be returned");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.message == "local `tasks` was used after move")
                 .count(),
             1
         );

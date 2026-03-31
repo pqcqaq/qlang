@@ -2553,6 +2553,67 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn reports_use_after_move_for_same_immutable_alias_sourced_dynamic_task_handle_array_index_without_reinit()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    let tasks = [worker(), worker()]
+    let alias = index
+    let first = await tasks[alias]
+    return await tasks[index]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected same immutable alias-sourced dynamic task-handle index reuse to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_same_immutable_alias_sourced_projected_dynamic_task_handle_array_index_across_source_path()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let slot = Slot { value: index }
+    let first = await tasks[slot.value]
+    tasks[index] = worker()
+    return await tasks[slot.value]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected same immutable alias-sourced projected dynamic task-handle index reinit through source path to restore availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_dynamic_array_index_assignment_for_non_task_elements() {
     let diagnostics = diagnostic_messages(
         r#"
