@@ -2652,6 +2652,61 @@ async fn main(index: Int) -> Wrap {
 }
 
 #[test]
+fn reports_use_after_move_for_composed_stable_dynamic_task_handle_array_index_without_reinit() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(row: Int) -> Wrap {
+    let tasks = [worker(), worker()]
+    let slots = [row, row]
+    let first = await tasks[slots[row]]
+    return await tasks[slots[row]]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected composed stable dynamic task-handle index reuse without reinit to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_composed_stable_dynamic_task_handle_array_index_after_await() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(row: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let slots = [row, row]
+    let first = await tasks[slots[row]]
+    tasks[slots[row]] = worker()
+    return await tasks[slots[row]]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected composed stable dynamic task-handle index reinit to restore availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_use_after_move_for_same_const_backed_projected_root_dynamic_task_handle_array_index_and_literal_reuse()
  {
     let diagnostics = diagnostic_messages(

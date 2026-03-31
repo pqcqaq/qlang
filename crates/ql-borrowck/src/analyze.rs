@@ -1212,17 +1212,30 @@ impl<'a> BodyAnalyzer<'a> {
         if self.body.local(target.local).mutable {
             return None;
         }
-        if target.path.iter().any(|segment| {
-            matches!(
-                segment,
-                MovePathSegment::DynamicArrayIndex
-                    | MovePathSegment::DynamicArrayIndexLocal(_)
-                    | MovePathSegment::DynamicArrayIndexPath { .. }
-            )
-        }) {
+        if !target
+            .path
+            .iter()
+            .all(|segment| self.move_path_segment_is_stably_immutable(segment))
+        {
             return None;
         }
         Some(target)
+    }
+
+    fn move_path_segment_is_stably_immutable(&self, segment: &MovePathSegment) -> bool {
+        match segment {
+            MovePathSegment::Field(_)
+            | MovePathSegment::TupleIndex(_)
+            | MovePathSegment::ArrayIndex(_) => true,
+            MovePathSegment::DynamicArrayIndexLocal(local) => !self.body.local(*local).mutable,
+            MovePathSegment::DynamicArrayIndexPath { local, path } => {
+                !self.body.local(*local).mutable
+                    && path
+                        .iter()
+                        .all(|segment| self.move_path_segment_is_stably_immutable(segment))
+            }
+            MovePathSegment::DynamicArrayIndex => false,
+        }
     }
 
     fn stable_dynamic_index_segment_for_target(&self, target: MoveTarget) -> MovePathSegment {

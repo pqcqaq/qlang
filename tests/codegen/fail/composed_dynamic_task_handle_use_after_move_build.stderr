@@ -1,0 +1,5 @@
+error: tests/codegen/fail/composed_dynamic_task_handle_use_after_move_build.ql:9:12: local `tasks` was used after move
+      return await tasks[slots[row]]
+             ^^^^^^^^ use here
+      let first = await tasks[slots[row]]
+                  ^^^^^^^^ consumed here by `await`
