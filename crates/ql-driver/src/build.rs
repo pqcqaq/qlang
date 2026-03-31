@@ -2080,6 +2080,83 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_zero_sized_conditional_helper_task_handle_spawns(
+    ) {
+        let dir =
+            TestDir::new("ql-driver-async-exe-zero-sized-conditional-helper-task-handle-spawns");
+        let source = dir.write(
+            "async_zero_sized_conditional_helper_task_handle_spawns.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn choose(flag: Bool, task: Task[Wrap]) -> Wrap {
+    if flag {
+        let running = spawn task
+        return await running
+    }
+    return await task
+}
+
+async fn choose_reverse(flag: Bool, task: Task[Wrap]) -> Wrap {
+    if flag {
+        return await task
+    }
+    let running = spawn task
+    return await running
+}
+
+async fn helper(flag: Bool) -> Wrap {
+    return await choose(flag, worker())
+}
+
+async fn helper_reverse(flag: Bool) -> Wrap {
+    return await choose_reverse(flag, worker())
+}
+
+fn score(value: Wrap) -> Int {
+    return 1
+}
+
+async fn main() -> Int {
+    let first = await helper(true)
+    let second = await helper_reverse(false)
+    return score(first) + score(second)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_zero_sized_conditional_helper_task_handle_spawns.exe"
+        } else {
+            "artifacts/async_zero_sized_conditional_helper_task_handle_spawns"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "async executable with zero-sized conditional helper task-handle spawns should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_dynamic_library_with_extern_c_definition_exports() {
         let dir = TestDir::new("ql-driver-dylib-extern-export");
         let source = dir.write(
