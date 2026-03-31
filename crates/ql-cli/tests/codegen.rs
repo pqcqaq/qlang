@@ -868,6 +868,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "async_program_main_spawned_recursive_aggregate_params_exe",
+            source_relative: "fixtures/codegen/pass/async_program_main_spawned_recursive_aggregate_params.ql",
+            emit: "exe",
+            expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "async_program_main_zero_sized_aggregate_params_exe",
             source_relative: "fixtures/codegen/pass/async_program_main_zero_sized_aggregate_params.ql",
             emit: "exe",
