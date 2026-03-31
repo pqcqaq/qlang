@@ -2278,6 +2278,89 @@ async fn main(index: Int) -> Wrap {
 }
 
 #[test]
+fn allows_reinitializing_same_immutable_dynamic_task_handle_array_index_after_await() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let first = await tasks[index]
+    tasks[index] = worker()
+    return await tasks[index]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected same immutable dynamic task-handle index reinitialization to restore that path, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_conditionally_reinitializing_same_immutable_dynamic_task_handle_array_index_before_branch_join()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool, index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    if flag {
+        let first = await tasks[index]
+        tasks[index] = worker()
+    }
+    return await tasks[index]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected conditional same immutable dynamic index reinitialization to clear maybe-moved facts, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_move_for_same_immutable_dynamic_task_handle_array_index_without_reinit() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    let tasks = [worker(), worker()]
+    let first = await tasks[index]
+    return await tasks[index]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected same immutable dynamic task-handle index reuse without reinit to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_dynamic_array_index_assignment_for_non_task_elements() {
     let diagnostics = diagnostic_messages(
         r#"

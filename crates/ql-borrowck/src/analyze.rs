@@ -237,18 +237,11 @@ impl<'a> BodyAnalyzer<'a> {
                 if place.projections.is_empty() {
                     self.write_local(states, place.base, span, reporter.as_deref_mut());
                 } else if let Some(target) = self.writable_move_target_for_place(place) {
+                    self.read_place_indices(states, place, span, reporter.as_deref_mut());
                     self.write_move_target(
                         states,
                         target.local,
                         &target.path,
-                        span,
-                        reporter.as_deref_mut(),
-                    );
-                } else if let Some(local) = self.dynamic_task_handle_write_local_for_place(place) {
-                    self.read_place_indices(states, place, span, reporter.as_deref_mut());
-                    self.write_dynamic_task_handle_target(
-                        states,
-                        local,
                         span,
                         reporter.as_deref_mut(),
                     );
@@ -578,26 +571,8 @@ impl<'a> BodyAnalyzer<'a> {
         self.record_event(reporter, span, local, LocalEventKind::Write);
         states[local.index()] = match &states[local.index()] {
             LocalState::Moved(info) => rebuild_local_state_from_path_moves(
-                clear_reinitialized_path_moves(&info.path_moves, path),
+                apply_reinitialized_path_moves(&info.path_moves, path),
             ),
-            LocalState::Unavailable | LocalState::Available => LocalState::Available,
-        };
-    }
-
-    fn write_dynamic_task_handle_target(
-        &self,
-        states: &mut [LocalState],
-        local: MirLocalId,
-        span: ql_span::Span,
-        reporter: Option<&mut Reporter>,
-    ) {
-        self.record_event(reporter, span, local, LocalEventKind::Write);
-        states[local.index()] = match &states[local.index()] {
-            LocalState::Moved(info) => LocalState::Moved(MoveInfo {
-                certainty: MoveCertainty::Maybe,
-                origins: info.origins.clone(),
-                path_moves: downgrade_path_moves_to_maybe(&info.path_moves),
-            }),
             LocalState::Unavailable | LocalState::Available => LocalState::Available,
         };
     }
@@ -844,7 +819,7 @@ impl<'a> BodyAnalyzer<'a> {
                     path: Vec::new(),
                 });
             };
-            match self.read_move_path_step(&current_ty, projection) {
+            match self.precise_move_path_step(&current_ty, projection) {
                 Some(step) => path.push(step),
                 None => {
                     return Some(MoveTarget {
@@ -862,35 +837,6 @@ impl<'a> BodyAnalyzer<'a> {
         })
     }
 
-    fn read_move_path_step(
-        &self,
-        current_ty: &Ty,
-        projection: &ProjectionElem,
-    ) -> Option<MovePathSegment> {
-        match projection {
-            ProjectionElem::Field(field) => Some(MovePathSegment::Field(field.clone())),
-            ProjectionElem::TupleIndex(index) => match current_ty {
-                Ty::Tuple(_) => Some(MovePathSegment::TupleIndex(*index)),
-                _ => None,
-            },
-            ProjectionElem::Index(index) => match current_ty {
-                Ty::Array { .. } => match &**index {
-                    Operand::Constant(Constant::Integer(raw)) => {
-                        parse_usize_literal(raw).map(MovePathSegment::ArrayIndex)
-                    }
-                    _ => Some(MovePathSegment::DynamicArrayIndex),
-                },
-                Ty::Tuple(_) => match &**index {
-                    Operand::Constant(Constant::Integer(raw)) => {
-                        parse_usize_literal(raw).map(MovePathSegment::TupleIndex)
-                    }
-                    _ => None,
-                },
-                _ => None,
-            },
-        }
-    }
-
     fn writable_move_target_for_place(&self, place: &Place) -> Option<MoveTarget> {
         let mut current_ty = self.local_ty(place.base)?;
         let mut path = Vec::new();
@@ -905,32 +851,6 @@ impl<'a> BodyAnalyzer<'a> {
             local: place.base,
             path,
         })
-    }
-
-    fn dynamic_task_handle_write_local_for_place(&self, place: &Place) -> Option<MirLocalId> {
-        if !matches!(self.place_ty(place)?, Ty::TaskHandle(_)) {
-            return None;
-        }
-
-        let mut current_ty = self.local_ty(place.base)?;
-        let mut saw_dynamic_array_index = false;
-
-        for projection in &place.projections {
-            if let ProjectionElem::Index(index) = projection {
-                if matches!(current_ty, Ty::Array { .. })
-                    && !matches!(
-                        &**index,
-                        Operand::Constant(Constant::Integer(raw))
-                            if parse_usize_literal(raw).is_some()
-                    )
-                {
-                    saw_dynamic_array_index = true;
-                }
-            }
-            current_ty = self.project_place_ty_step(&current_ty, projection)?;
-        }
-
-        saw_dynamic_array_index.then_some(place.base)
     }
 
     fn precise_move_target_for_expr(&self, expr_id: hir::ExprId) -> Option<MoveTarget> {
@@ -959,7 +879,9 @@ impl<'a> BodyAnalyzer<'a> {
                         (Ty::Array { .. }, hir::ExprKind::Integer(raw_index)) => {
                             MovePathSegment::ArrayIndex(parse_usize_literal(raw_index)?)
                         }
-                        (Ty::Array { .. }, _) => MovePathSegment::DynamicArrayIndex,
+                        (Ty::Array { .. }, _) => {
+                            self.dynamic_array_move_path_step_for_expr(items[0])
+                        }
                         _ => return None,
                     });
                 Some(target)
@@ -990,7 +912,7 @@ impl<'a> BodyAnalyzer<'a> {
                     Operand::Constant(Constant::Integer(raw)) => {
                         parse_usize_literal(raw).map(MovePathSegment::ArrayIndex)
                     }
-                    _ => None,
+                    _ => Some(self.dynamic_array_move_path_step_for_operand(index)),
                 },
                 Ty::Tuple(_) => match &**index {
                     Operand::Constant(Constant::Integer(raw)) => {
@@ -1001,6 +923,25 @@ impl<'a> BodyAnalyzer<'a> {
                 _ => None,
             },
         }
+    }
+
+    fn dynamic_array_move_path_step_for_operand(&self, operand: &Operand) -> MovePathSegment {
+        if let Operand::Place(place) = operand
+            && place.projections.is_empty()
+            && !self.body.local(place.base).mutable
+        {
+            return MovePathSegment::DynamicArrayIndexLocal(place.base);
+        }
+        MovePathSegment::DynamicArrayIndex
+    }
+
+    fn dynamic_array_move_path_step_for_expr(&self, expr_id: hir::ExprId) -> MovePathSegment {
+        if let Some(local) = self.direct_local_for_expr(expr_id)
+            && !self.body.local(local).mutable
+        {
+            return MovePathSegment::DynamicArrayIndexLocal(local);
+        }
+        MovePathSegment::DynamicArrayIndex
     }
 
     fn task_handle_target_for_operand(&self, operand: &Operand) -> Option<MoveTarget> {
@@ -2339,14 +2280,23 @@ fn record_path_move(
     updated
 }
 
-fn clear_reinitialized_path_moves(
+fn apply_reinitialized_path_moves(
     existing: &[PathMoveInfo],
     written_path: &[MovePathSegment],
 ) -> Vec<PathMoveInfo> {
     existing
         .iter()
-        .filter(|info| !path_starts_with(&info.path, written_path))
-        .cloned()
+        .filter_map(
+            |info| match path_prefix_overlap_certainty(&info.path, written_path) {
+                PathOverlapCertainty::None => Some(info.clone()),
+                PathOverlapCertainty::Definite => None,
+                PathOverlapCertainty::Maybe => Some(PathMoveInfo {
+                    path: info.path.clone(),
+                    certainty: MoveCertainty::Maybe,
+                    origins: info.origins.clone(),
+                }),
+            },
+        )
         .collect()
 }
 
@@ -2455,18 +2405,36 @@ fn summarize_overlapping_path_moves(
     Some((certainty, origins))
 }
 
-fn move_paths_overlap(left: &[MovePathSegment], right: &[MovePathSegment]) -> bool {
-    left.iter()
-        .zip(right.iter())
-        .all(|(left_step, right_step)| move_path_segments_overlap(left_step, right_step))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PathOverlapCertainty {
+    None,
+    Maybe,
+    Definite,
 }
 
-fn path_starts_with(path: &[MovePathSegment], prefix: &[MovePathSegment]) -> bool {
-    prefix.len() <= path.len()
-        && prefix
-            .iter()
-            .zip(path.iter())
-            .all(|(prefix_step, path_step)| prefix_step == path_step)
+fn path_overlap_certainty(
+    left: &[MovePathSegment],
+    right: &[MovePathSegment],
+) -> PathOverlapCertainty {
+    let mut certainty = PathOverlapCertainty::Definite;
+    for (left_step, right_step) in left.iter().zip(right.iter()) {
+        match move_path_segment_overlap_certainty(left_step, right_step) {
+            PathOverlapCertainty::None => return PathOverlapCertainty::None,
+            PathOverlapCertainty::Maybe => certainty = PathOverlapCertainty::Maybe,
+            PathOverlapCertainty::Definite => {}
+        }
+    }
+    certainty
+}
+
+fn path_prefix_overlap_certainty(
+    path: &[MovePathSegment],
+    prefix: &[MovePathSegment],
+) -> PathOverlapCertainty {
+    if prefix.len() > path.len() {
+        return PathOverlapCertainty::None;
+    }
+    path_overlap_certainty(path, prefix)
 }
 
 fn overlapping_path_move_certainty(
@@ -2474,46 +2442,67 @@ fn overlapping_path_move_certainty(
     queried_path: &[MovePathSegment],
     certainty: MoveCertainty,
 ) -> Option<MoveCertainty> {
-    if !move_paths_overlap(moved_path, queried_path) {
-        return None;
-    }
-
-    if certainty == MoveCertainty::Maybe {
-        return Some(MoveCertainty::Maybe);
-    }
-
-    let compared_prefix_uses_dynamic =
-        moved_path
-            .iter()
-            .zip(queried_path.iter())
-            .any(|(moved_step, queried_step)| {
-                matches!(
-                    (moved_step, queried_step),
-                    (MovePathSegment::DynamicArrayIndex, _)
-                        | (_, MovePathSegment::DynamicArrayIndex)
-                )
-            });
-    if compared_prefix_uses_dynamic {
-        Some(MoveCertainty::Maybe)
-    } else {
-        Some(MoveCertainty::Definite)
+    match path_overlap_certainty(moved_path, queried_path) {
+        PathOverlapCertainty::None => None,
+        PathOverlapCertainty::Maybe => Some(MoveCertainty::Maybe),
+        PathOverlapCertainty::Definite => {
+            if certainty == MoveCertainty::Maybe {
+                Some(MoveCertainty::Maybe)
+            } else {
+                Some(MoveCertainty::Definite)
+            }
+        }
     }
 }
 
-fn move_path_segments_overlap(left: &MovePathSegment, right: &MovePathSegment) -> bool {
-    matches!(
-        (left, right),
+fn move_path_segment_overlap_certainty(
+    left: &MovePathSegment,
+    right: &MovePathSegment,
+) -> PathOverlapCertainty {
+    match (left, right) {
+        (MovePathSegment::Field(left), MovePathSegment::Field(right)) => {
+            if left == right {
+                PathOverlapCertainty::Definite
+            } else {
+                PathOverlapCertainty::None
+            }
+        }
+        (MovePathSegment::TupleIndex(left), MovePathSegment::TupleIndex(right)) => {
+            if left == right {
+                PathOverlapCertainty::Definite
+            } else {
+                PathOverlapCertainty::None
+            }
+        }
+        (MovePathSegment::ArrayIndex(left), MovePathSegment::ArrayIndex(right)) => {
+            if left == right {
+                PathOverlapCertainty::Definite
+            } else {
+                PathOverlapCertainty::None
+            }
+        }
         (
-            MovePathSegment::DynamicArrayIndex,
-            MovePathSegment::ArrayIndex(_)
-        ) | (
-            MovePathSegment::ArrayIndex(_),
-            MovePathSegment::DynamicArrayIndex
-        ) | (
-            MovePathSegment::DynamicArrayIndex,
-            MovePathSegment::DynamicArrayIndex
-        )
-    ) || left == right
+            MovePathSegment::DynamicArrayIndexLocal(left),
+            MovePathSegment::DynamicArrayIndexLocal(right),
+        ) => {
+            if left == right {
+                PathOverlapCertainty::Definite
+            } else {
+                PathOverlapCertainty::Maybe
+            }
+        }
+        (MovePathSegment::ArrayIndex(_), MovePathSegment::DynamicArrayIndex)
+        | (MovePathSegment::DynamicArrayIndex, MovePathSegment::ArrayIndex(_))
+        | (MovePathSegment::ArrayIndex(_), MovePathSegment::DynamicArrayIndexLocal(_))
+        | (MovePathSegment::DynamicArrayIndexLocal(_), MovePathSegment::ArrayIndex(_))
+        | (MovePathSegment::DynamicArrayIndexLocal(_), MovePathSegment::DynamicArrayIndex)
+        | (MovePathSegment::DynamicArrayIndex, MovePathSegment::DynamicArrayIndexLocal(_))
+        | (MovePathSegment::DynamicArrayIndex, MovePathSegment::DynamicArrayIndex) => {
+            PathOverlapCertainty::Maybe
+        }
+        _ if left == right => PathOverlapCertainty::Definite,
+        _ => PathOverlapCertainty::None,
+    }
 }
 
 fn render_move_origin(origin: &MoveOrigin) -> String {

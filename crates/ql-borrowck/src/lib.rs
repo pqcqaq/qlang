@@ -107,6 +107,7 @@ pub enum MovePathSegment {
     Field(String),
     TupleIndex(usize),
     ArrayIndex(usize),
+    DynamicArrayIndexLocal(LocalId),
     DynamicArrayIndex,
 }
 
