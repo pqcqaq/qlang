@@ -1909,6 +1909,95 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_recursive_aggregate_params() {
+        let dir = TestDir::new("ql-driver-async-exe-recursive-aggregate-params");
+        let source = dir.write(
+            "async_recursive_aggregate_params.ql",
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+async fn worker(pair: Pair, values: [Int; 2]) -> Int {
+    return pair.right + values[1]
+}
+
+async fn main() -> Int {
+    return await worker(Pair { left: 1, right: 2 }, [3, 4])
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_recursive_aggregate_params.exe"
+        } else {
+            "artifacts/async_recursive_aggregate_params"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with recursive aggregate params should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_async_zero_sized_aggregate_params() {
+        let dir = TestDir::new("ql-driver-async-exe-zero-sized-aggregate-params");
+        let source = dir.write(
+            "async_zero_sized_aggregate_params.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker(values: [Int; 0], wrap: Wrap, nested: [[Int; 0]; 1]) -> Int {
+    return 7
+}
+
+async fn main() -> Int {
+    return await worker([], Wrap { values: [] }, [[]])
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_zero_sized_aggregate_params.exe"
+        } else {
+            "artifacts/async_zero_sized_aggregate_params"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with zero-sized aggregate params should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_executable_with_async_main_zero_sized_nested_task_handle_results() {
         let dir = TestDir::new("ql-driver-async-exe-zero-sized-nested-task-handle");
         let source = dir.write(

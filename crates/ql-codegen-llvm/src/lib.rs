@@ -7665,6 +7665,79 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_recursive_aggregate_param_lowering_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+async fn worker(pair: Pair, values: [Int; 2]) -> Int {
+    return pair.right + values[1]
+}
+
+async fn main() -> Int {
+    return await worker(Pair { left: 1, right: 2 }, [3, 4])
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define ptr @ql_1_worker({ i64, i64 } %arg0, [2 x i64] %arg1)"));
+        assert!(rendered.contains("call ptr @qlrt_async_frame_alloc(i64 32, i64 8)"));
+        assert!(rendered.contains("store { i64, i64 } %arg0, ptr %async_frame_field0"));
+        assert!(rendered.contains("store [2 x i64] %arg1, ptr %async_frame_field1"));
+        assert!(rendered.contains("call ptr @ql_1_worker("));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr"));
+        assert!(rendered.contains("load i64, ptr"));
+        assert!(!rendered.contains("does not support `await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_async_zero_sized_recursive_aggregate_param_lowering_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker(values: [Int; 0], wrap: Wrap, nested: [[Int; 0]; 1]) -> Int {
+    return 7
+}
+
+async fn main() -> Int {
+    return await worker([], Wrap { values: [] }, [[]])
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains(
+            "define ptr @ql_1_worker([0 x i64] %arg0, { [0 x i64] } %arg1, [1 x [0 x i64]] %arg2)"
+        ));
+        assert!(rendered.contains("call ptr @qlrt_async_frame_alloc(i64 0, i64 8)"));
+        assert!(rendered.contains("call ptr @ql_1_worker("));
+        assert!(rendered.contains("[0 x i64] zeroinitializer"));
+        assert!(rendered.contains("[1 x [0 x i64]]"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr"));
+        assert!(rendered.contains("load i64, ptr"));
+        assert!(!rendered.contains("does not support `await` lowering yet"));
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_zero_sized_nested_task_handle_payload_in_program_mode()
      {
         let runtime_hooks = collect_runtime_hook_signatures([
