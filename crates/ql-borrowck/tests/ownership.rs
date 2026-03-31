@@ -2278,6 +2278,44 @@ async fn main(index: Int) -> Wrap {
 }
 
 #[test]
+fn allows_reinitializing_same_projected_root_dynamic_task_handle_array_index_after_await() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let slot = Slot { value: index }
+    let first = await pending.tasks[slot.value]
+    pending.tasks[slot.value] = worker()
+    return await pending.tasks[slot.value]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected projected-root dynamic task-handle index reinitialization to restore that path, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_reinitializing_same_immutable_dynamic_task_handle_array_index_after_await() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -2610,6 +2648,41 @@ async fn main(index: Int) -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected same immutable alias-sourced projected dynamic task-handle index reinit through source path to restore availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_use_after_move_for_same_const_backed_projected_root_dynamic_task_handle_array_index_and_literal_reuse()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+const INDEX: Int = 0
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let first = await pending.tasks[INDEX]
+    return await pending.tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `pending` was used after move".to_string()),
+        "expected const-backed projected-root dynamic task-handle index reuse through pending.tasks[0] to be a definite move, got {diagnostics:?}"
     );
 }
 

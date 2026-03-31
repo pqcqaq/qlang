@@ -1,0 +1,5 @@
+error: tests/codegen/fail/projected_root_const_dynamic_task_handle_use_after_move_build.ql:20:12: local `pending` was used after move
+      return await pending.tasks[0]
+             ^^^^^^^^ use here
+      let first = await pending.tasks[INDEX]
+                  ^^^^^^^^ consumed here by `await`

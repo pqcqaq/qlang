@@ -1124,7 +1124,7 @@ fn codegen_snapshots_match() {
     pass_cases.extend(dynamic_task_handle_pass_cases());
     pass_cases.extend(projected_dynamic_task_handle_pass_cases());
 
-    let fail_cases = vec![
+    let mut fail_cases = vec![
         FailCase {
             name: "unsupported_closure_build",
             source_relative: "tests/codegen/fail/unsupported_closure_build.ql",
@@ -1273,13 +1273,6 @@ fn codegen_snapshots_match() {
             extra_args: &[],
         },
         FailCase {
-            name: "dynamic_task_array_index_assignment_after_consume_build",
-            source_relative: "tests/codegen/fail/dynamic_task_array_index_assignment_after_consume_build.ql",
-            emit: "staticlib",
-            expected_stderr_relative: "tests/codegen/fail/dynamic_task_array_index_assignment_after_consume_build.stderr",
-            extra_args: &[],
-        },
-        FailCase {
             name: "dylib_requires_export_build",
             source_relative: "tests/codegen/fail/dylib_requires_export_build.ql",
             emit: "dylib",
@@ -1294,6 +1287,7 @@ fn codegen_snapshots_match() {
             extra_args: &["--header"],
         },
     ];
+    fail_cases.extend(dynamic_task_handle_fail_cases());
 
     let mut failures = Vec::new();
 
@@ -1330,6 +1324,24 @@ fn dynamic_task_handle_codegen_cases_match() {
     assert!(
         failures.is_empty(),
         "dynamic task-handle codegen regressions:\n\n{}",
+        failures.join("\n\n")
+    );
+}
+
+#[test]
+fn dynamic_task_handle_fail_codegen_cases_match() {
+    let workspace_root = workspace_root();
+    let mut failures = Vec::new();
+
+    for case in dynamic_task_handle_fail_cases() {
+        if let Err(message) = run_fail_case(&workspace_root, &case) {
+            failures.push(message);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "dynamic task-handle fail codegen regressions:\n\n{}",
         failures.join("\n\n")
     );
 }
@@ -1399,6 +1411,17 @@ fn projected_dynamic_task_handle_pass_cases() -> Vec<PassCase> {
             expected_header_relative: None,
         },
         PassCase {
+            name: "async_library_projected_root_dynamic_task_handle_reinit_staticlib",
+            source_relative: "fixtures/codegen/pass/async_library_projected_root_dynamic_task_handle_reinit.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "async_program_main_projected_dynamic_task_handle_reinit_exe",
             source_relative: "fixtures/codegen/pass/async_program_main_projected_dynamic_task_handle_reinit.ql",
             emit: "exe",
@@ -1419,6 +1442,36 @@ fn projected_dynamic_task_handle_pass_cases() -> Vec<PassCase> {
             archiver_style: None,
             header_surface: None,
             expected_header_relative: None,
+        },
+        PassCase {
+            name: "async_program_main_projected_root_dynamic_task_handle_reinit_exe",
+            source_relative: "fixtures/codegen/pass/async_program_main_projected_root_dynamic_task_handle_reinit.ql",
+            emit: "exe",
+            expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+    ]
+}
+
+fn dynamic_task_handle_fail_cases() -> Vec<FailCase> {
+    vec![
+        FailCase {
+            name: "dynamic_task_array_index_assignment_after_consume_build",
+            source_relative: "tests/codegen/fail/dynamic_task_array_index_assignment_after_consume_build.ql",
+            emit: "staticlib",
+            expected_stderr_relative: "tests/codegen/fail/dynamic_task_array_index_assignment_after_consume_build.stderr",
+            extra_args: &[],
+        },
+        FailCase {
+            name: "projected_root_const_dynamic_task_handle_use_after_move_build",
+            source_relative: "tests/codegen/fail/projected_root_const_dynamic_task_handle_use_after_move_build.ql",
+            emit: "staticlib",
+            expected_stderr_relative: "tests/codegen/fail/projected_root_const_dynamic_task_handle_use_after_move_build.stderr",
+            extra_args: &[],
         },
     ]
 }
