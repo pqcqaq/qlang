@@ -60,6 +60,7 @@ struct BodyAnalyzer<'a> {
     receiver_local: Option<MirLocalId>,
     bool_index_refinements: HashMap<MirLocalId, BoolIndexRefinement>,
     block_entry_index_refinements: Vec<Vec<IndexRefinement>>,
+    block_entry_index_exclusions: Vec<Vec<IndexRefinement>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -78,6 +79,8 @@ struct IndexRefinement {
 struct BoolIndexRefinement {
     when_true: Vec<IndexRefinement>,
     when_false: Vec<IndexRefinement>,
+    when_true_excluded: Vec<IndexRefinement>,
+    when_false_excluded: Vec<IndexRefinement>,
 }
 
 #[derive(Default)]
@@ -136,15 +139,20 @@ impl<'a> BodyAnalyzer<'a> {
             receiver_local,
             bool_index_refinements: HashMap::new(),
             block_entry_index_refinements: vec![Vec::new(); body.blocks().len()],
+            block_entry_index_exclusions: vec![Vec::new(); body.blocks().len()],
         };
         analyzer.bool_index_refinements = analyzer.collect_bool_index_refinements();
-        analyzer.block_entry_index_refinements =
-            analyzer.collect_block_entry_index_refinements();
+        analyzer.block_entry_index_refinements = analyzer.collect_block_entry_index_refinements();
+        analyzer.block_entry_index_exclusions = analyzer.collect_block_entry_index_exclusions();
         analyzer
     }
 
     fn block_entry_index_refinements(&self, block_id: BasicBlockId) -> &[IndexRefinement] {
         &self.block_entry_index_refinements[block_id.index()]
+    }
+
+    fn block_entry_index_exclusions(&self, block_id: BasicBlockId) -> &[IndexRefinement] {
+        &self.block_entry_index_exclusions[block_id.index()]
     }
 
     fn collect_bool_index_refinements(&self) -> HashMap<MirLocalId, BoolIndexRefinement> {
@@ -163,18 +171,19 @@ impl<'a> BodyAnalyzer<'a> {
                 let Rvalue::Binary { left, op, right } = value else {
                     continue;
                 };
-                let Some(refinement) =
-                    self.index_refinement_for_comparison_operands(left, right)
+                let Some(refinement) = self.index_refinement_for_comparison_operands(left, right)
                 else {
                     continue;
                 };
                 let entry = refinements.entry(place.base).or_default();
                 match op {
                     BinaryOp::EqEq => {
-                        entry.when_true = vec![refinement];
+                        entry.when_true = vec![refinement.clone()];
+                        entry.when_false_excluded = vec![refinement];
                     }
                     BinaryOp::BangEq => {
-                        entry.when_false = vec![refinement];
+                        entry.when_false = vec![refinement.clone()];
+                        entry.when_true_excluded = vec![refinement];
                     }
                     _ => {}
                 }
@@ -210,6 +219,37 @@ impl<'a> BodyAnalyzer<'a> {
         }
 
         entry_refinements
+    }
+
+    fn collect_block_entry_index_exclusions(&self) -> Vec<Vec<IndexRefinement>> {
+        let block_count = self.body.blocks().len();
+        let mut entry_exclusions = vec![Vec::new(); block_count];
+        let mut initialized = vec![false; block_count];
+        initialized[self.body.entry.index()] = true;
+
+        let mut worklist = VecDeque::from([self.body.entry]);
+        while let Some(block_id) = worklist.pop_front() {
+            let incoming_refinements = self.block_entry_index_refinements[block_id.index()].clone();
+            let incoming_exclusions = entry_exclusions[block_id.index()].clone();
+            for (successor, successor_exclusions) in self.successor_entry_index_exclusions(
+                block_id,
+                &incoming_refinements,
+                &incoming_exclusions,
+            ) {
+                let (merged, changed) = merge_index_exclusion_vec(
+                    initialized[successor.index()]
+                        .then_some(entry_exclusions[successor.index()].as_slice()),
+                    &successor_exclusions,
+                );
+                if changed {
+                    entry_exclusions[successor.index()] = merged;
+                    initialized[successor.index()] = true;
+                    worklist.push_back(successor);
+                }
+            }
+        }
+
+        entry_exclusions
     }
 
     fn successor_entry_index_refinements(
@@ -258,6 +298,64 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
+    fn successor_entry_index_exclusions(
+        &self,
+        block_id: BasicBlockId,
+        incoming_refinements: &[IndexRefinement],
+        incoming_exclusions: &[IndexRefinement],
+    ) -> Vec<(BasicBlockId, Vec<IndexRefinement>)> {
+        match &self.body.block(block_id).terminator.kind {
+            TerminatorKind::Goto { target } => vec![(*target, incoming_exclusions.to_vec())],
+            TerminatorKind::Branch {
+                condition,
+                then_target,
+                else_target,
+            } => {
+                let mut then_exclusions = incoming_exclusions.to_vec();
+                let mut else_exclusions = incoming_exclusions.to_vec();
+                if let Operand::Place(place) = condition
+                    && let Some(refinement) = self.bool_index_refinements.get(&place.base)
+                {
+                    then_exclusions = apply_branch_index_exclusions(
+                        &then_exclusions,
+                        incoming_refinements,
+                        &refinement.when_true,
+                        &refinement.when_true_excluded,
+                    );
+                    else_exclusions = apply_branch_index_exclusions(
+                        &else_exclusions,
+                        incoming_refinements,
+                        &refinement.when_false,
+                        &refinement.when_false_excluded,
+                    );
+                }
+                vec![
+                    (*then_target, then_exclusions),
+                    (*else_target, else_exclusions),
+                ]
+            }
+            TerminatorKind::Match {
+                arms, else_target, ..
+            } => arms
+                .iter()
+                .map(|arm| (arm.target, incoming_exclusions.to_vec()))
+                .chain(std::iter::once((
+                    *else_target,
+                    incoming_exclusions.to_vec(),
+                )))
+                .collect(),
+            TerminatorKind::ForLoop {
+                body_target,
+                exit_target,
+                ..
+            } => vec![
+                (*body_target, incoming_exclusions.to_vec()),
+                (*exit_target, incoming_exclusions.to_vec()),
+            ],
+            TerminatorKind::Return | TerminatorKind::Terminate => Vec::new(),
+        }
+    }
+
     fn index_refinement_for_comparison_operands(
         &self,
         left: &Operand,
@@ -280,6 +378,54 @@ impl<'a> BodyAnalyzer<'a> {
         Some(IndexRefinement { target, value })
     }
 
+    fn cleanup_bool_index_refinement_for_expr(&self, expr_id: hir::ExprId) -> BoolIndexRefinement {
+        let mut visiting = ImmutableSourceVisit::default();
+        let normalized_expr_id = self
+            .normalized_immutable_source_expr(expr_id, &mut visiting)
+            .unwrap_or(expr_id);
+        let hir::ExprKind::Binary { left, op, right } = &self.hir.expr(normalized_expr_id).kind
+        else {
+            return BoolIndexRefinement::default();
+        };
+        let Some(refinement) = self.index_refinement_for_comparison_exprs(*left, *right) else {
+            return BoolIndexRefinement::default();
+        };
+        match op {
+            BinaryOp::EqEq => BoolIndexRefinement {
+                when_true: vec![refinement.clone()],
+                when_false: Vec::new(),
+                when_true_excluded: Vec::new(),
+                when_false_excluded: vec![refinement],
+            },
+            BinaryOp::BangEq => BoolIndexRefinement {
+                when_true: Vec::new(),
+                when_false: vec![refinement.clone()],
+                when_true_excluded: vec![refinement],
+                when_false_excluded: Vec::new(),
+            },
+            _ => BoolIndexRefinement::default(),
+        }
+    }
+
+    fn index_refinement_for_comparison_exprs(
+        &self,
+        left: hir::ExprId,
+        right: hir::ExprId,
+    ) -> Option<IndexRefinement> {
+        self.index_refinement_for_comparison_exprs_one_way(left, right)
+            .or_else(|| self.index_refinement_for_comparison_exprs_one_way(right, left))
+    }
+
+    fn index_refinement_for_comparison_exprs_one_way(
+        &self,
+        target_expr: hir::ExprId,
+        value_expr: hir::ExprId,
+    ) -> Option<IndexRefinement> {
+        let value = self.fixed_array_index_value_for_expr(value_expr)?;
+        let target = self.canonical_precise_immutable_move_target_for_expr(target_expr)?;
+        Some(IndexRefinement { target, value })
+    }
+
     fn analyze(&self) -> (BodyFacts, Vec<Diagnostic>) {
         let local_count = self.body.locals().len();
         let initial_state = vec![LocalState::Unavailable; local_count];
@@ -297,6 +443,7 @@ impl<'a> BodyAnalyzer<'a> {
                 block_id,
                 entry_state.clone(),
                 self.block_entry_index_refinements(block_id),
+                self.block_entry_index_exclusions(block_id),
                 None,
             );
             let changed_exit = exit_states[block_id.index()]
@@ -327,6 +474,7 @@ impl<'a> BodyAnalyzer<'a> {
                 block_id,
                 entry.clone(),
                 self.block_entry_index_refinements(block_id),
+                self.block_entry_index_exclusions(block_id),
                 Some(&mut reporter),
             );
             let expected = exit_states[index]
@@ -362,6 +510,7 @@ impl<'a> BodyAnalyzer<'a> {
         block_id: BasicBlockId,
         mut states: Vec<LocalState>,
         refinements: &[IndexRefinement],
+        exclusions: &[IndexRefinement],
         mut reporter: Option<&mut Reporter>,
     ) -> Vec<LocalState> {
         let block = self.body.block(block_id);
@@ -371,6 +520,7 @@ impl<'a> BodyAnalyzer<'a> {
             self.apply_statement(
                 &mut states,
                 refinements,
+                exclusions,
                 statement.span,
                 &statement.kind,
                 reporter.as_deref_mut(),
@@ -392,6 +542,7 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         states: &mut [LocalState],
         refinements: &[IndexRefinement],
+        exclusions: &[IndexRefinement],
         span: ql_span::Span,
         statement: &StatementKind,
         reporter: Option<&mut Reporter>,
@@ -399,12 +550,8 @@ impl<'a> BodyAnalyzer<'a> {
         match statement {
             StatementKind::Assign { place, value } => {
                 let mut reporter = reporter;
-                if let Some((target, reason)) =
-                    self.classify_task_handle_return_rvalue_with_refinements(
-                        place,
-                        value,
-                        refinements,
-                    )
+                if let Some((target, reason)) = self
+                    .classify_task_handle_return_rvalue_with_refinements(place, value, refinements)
                 {
                     self.check_moved_use(
                         states,
@@ -422,13 +569,7 @@ impl<'a> BodyAnalyzer<'a> {
                         reporter.as_deref_mut(),
                     );
                 } else {
-                    self.apply_rvalue(
-                        states,
-                        refinements,
-                        value,
-                        span,
-                        reporter.as_deref_mut(),
-                    );
+                    self.apply_rvalue(states, refinements, value, span, reporter.as_deref_mut());
                 }
                 if place.projections.is_empty() {
                     self.write_local(states, place.base, span, reporter.as_deref_mut());
@@ -463,7 +604,7 @@ impl<'a> BodyAnalyzer<'a> {
             StatementKind::StorageDead { local } => states[local.index()] = LocalState::Unavailable,
             StatementKind::RegisterCleanup { .. } => {}
             StatementKind::RunCleanup { cleanup } => {
-                self.apply_cleanup(states, *cleanup, reporter);
+                self.apply_cleanup(states, refinements, exclusions, *cleanup, reporter);
             }
         }
     }
@@ -515,17 +656,11 @@ impl<'a> BodyAnalyzer<'a> {
                     reporter.as_deref_mut(),
                 );
                 if pending_consume.is_none() {
-                    self.read_operand(
-                        states,
-                        refinements,
-                        callee,
-                        span,
-                        reporter.as_deref_mut(),
-                    );
+                    self.read_operand(states, refinements, callee, span, reporter.as_deref_mut());
                 }
                 for (index, arg) in args.iter().enumerate() {
-                    if let Some((target, reason)) =
-                        self.classify_task_handle_call_argument_operand_with_refinements(
+                    if let Some((target, reason)) = self
+                        .classify_task_handle_call_argument_operand_with_refinements(
                             span,
                             index,
                             &arg.value,
@@ -568,12 +703,8 @@ impl<'a> BodyAnalyzer<'a> {
             }
             Rvalue::Unary { op, operand } => {
                 let mut reporter = reporter;
-                if let Some((target, reason)) =
-                    self.classify_task_handle_unary_operand_with_refinements(
-                        *op,
-                        operand,
-                        refinements,
-                    )
+                if let Some((target, reason)) = self
+                    .classify_task_handle_unary_operand_with_refinements(*op, operand, refinements)
                 {
                     self.check_moved_use(
                         states,
@@ -651,12 +782,11 @@ impl<'a> BodyAnalyzer<'a> {
         reporter: Option<&mut Reporter>,
     ) {
         let mut reporter = reporter;
-        let (local, path) = if let Some(target) =
-            self.task_handle_target_for_operand_with_refinements(
+        let (local, path) = if let Some(target) = self
+            .task_handle_target_for_operand_with_refinements(
                 &Operand::Place(place.clone()),
                 refinements,
-            )
-        {
+            ) {
             (target.local, target.path)
         } else if place.projections.is_empty() {
             (place.base, Vec::new())
@@ -675,22 +805,11 @@ impl<'a> BodyAnalyzer<'a> {
             UseSite::normal(span),
             reporter.as_deref_mut(),
         );
-        self.record_event(
-            reporter.as_deref_mut(),
-            span,
-            local,
-            LocalEventKind::Read,
-        );
+        self.record_event(reporter.as_deref_mut(), span, local, LocalEventKind::Read);
 
         for projection in &place.projections {
             if let ProjectionElem::Index(operand) = projection {
-                self.read_operand(
-                    states,
-                    refinements,
-                    operand,
-                    span,
-                    reporter.as_deref_mut(),
-                );
+                self.read_operand(states, refinements, operand, span, reporter.as_deref_mut());
             }
         }
     }
@@ -858,13 +977,7 @@ impl<'a> BodyAnalyzer<'a> {
     ) {
         for projection in &place.projections {
             if let ProjectionElem::Index(operand) = projection {
-                self.read_operand(
-                    states,
-                    refinements,
-                    operand,
-                    span,
-                    reporter.as_deref_mut(),
-                );
+                self.read_operand(states, refinements, operand, span, reporter.as_deref_mut());
             }
         }
     }
@@ -1169,13 +1282,22 @@ impl<'a> BodyAnalyzer<'a> {
     }
 
     fn precise_move_target_for_expr(&self, expr_id: hir::ExprId) -> Option<MoveTarget> {
+        self.precise_move_target_for_expr_with_refinements(expr_id, &[])
+    }
+
+    fn precise_move_target_for_expr_with_refinements(
+        &self,
+        expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+    ) -> Option<MoveTarget> {
         match &self.hir.expr(expr_id).kind {
             hir::ExprKind::Name(_) => self.direct_local_for_expr(expr_id).map(|local| MoveTarget {
                 local,
                 path: Vec::new(),
             }),
             hir::ExprKind::Member { object, field, .. } => {
-                let mut target = self.precise_move_target_for_expr(*object)?;
+                let mut target =
+                    self.precise_move_target_for_expr_with_refinements(*object, refinements)?;
                 target.path.push(MovePathSegment::Field(field.clone()));
                 Some(target)
             }
@@ -1184,7 +1306,8 @@ impl<'a> BodyAnalyzer<'a> {
                     return None;
                 }
                 let target_ty = self.typeck.expr_ty(*target)?;
-                let mut target = self.precise_move_target_for_expr(*target)?;
+                let mut target =
+                    self.precise_move_target_for_expr_with_refinements(*target, refinements)?;
                 target
                     .path
                     .push(match (target_ty, &self.hir.expr(items[0]).kind) {
@@ -1194,19 +1317,23 @@ impl<'a> BodyAnalyzer<'a> {
                         (Ty::Array { .. }, hir::ExprKind::Integer(raw_index)) => {
                             MovePathSegment::ArrayIndex(parse_usize_literal(raw_index)?)
                         }
-                        (Ty::Array { .. }, _) => {
-                            self.dynamic_array_move_path_step_for_expr(items[0])
-                        }
+                        (Ty::Array { .. }, _) => self
+                            .dynamic_array_move_path_step_for_expr_with_refinements(
+                                items[0],
+                                refinements,
+                            ),
                         _ => return None,
                     });
                 Some(target)
             }
-            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
-                .hir
-                .block(*block)
-                .tail
-                .and_then(|tail| self.precise_move_target_for_expr(tail)),
-            hir::ExprKind::Question(inner) => self.precise_move_target_for_expr(*inner),
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+                self.hir.block(*block).tail.and_then(|tail| {
+                    self.precise_move_target_for_expr_with_refinements(tail, refinements)
+                })
+            }
+            hir::ExprKind::Question(inner) => {
+                self.precise_move_target_for_expr_with_refinements(*inner, refinements)
+            }
             _ => None,
         }
     }
@@ -1313,6 +1440,27 @@ impl<'a> BodyAnalyzer<'a> {
     fn fixed_array_index_value_for_expr(&self, expr_id: hir::ExprId) -> Option<usize> {
         let mut visiting = ImmutableSourceVisit::default();
         self.fixed_array_index_value_for_expr_inner(expr_id, &mut visiting)
+    }
+
+    fn refined_fixed_array_index_value_for_expr(
+        &self,
+        expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+    ) -> Option<usize> {
+        self.fixed_array_index_value_for_expr(expr_id)
+            .or_else(|| self.index_refinement_value_for_expr(expr_id, refinements))
+    }
+
+    fn index_refinement_value_for_expr(
+        &self,
+        expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+    ) -> Option<usize> {
+        let target = self.canonical_precise_immutable_move_target_for_expr(expr_id)?;
+        refinements
+            .iter()
+            .find(|refinement| refinement.target == target)
+            .map(|refinement| refinement.value)
     }
 
     fn fixed_array_index_value_for_expr_inner(
@@ -1437,12 +1585,24 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         expr_id: hir::ExprId,
     ) -> Option<MoveTarget> {
+        self.canonical_precise_immutable_move_target_for_expr_with_refinements(expr_id, &[])
+    }
+
+    fn canonical_precise_immutable_move_target_for_expr_with_refinements(
+        &self,
+        expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+    ) -> Option<MoveTarget> {
         let mut visiting = ImmutableSourceVisit::default();
         let normalized_expr_id = self.normalized_immutable_source_expr(expr_id, &mut visiting)?;
-        let target = self.precise_move_target_for_expr(normalized_expr_id)?;
+        let target =
+            self.precise_move_target_for_expr_with_refinements(normalized_expr_id, refinements)?;
         let precise = self.precise_immutable_move_target(target);
         let canonical = if normalized_expr_id == expr_id {
-            self.canonical_precise_immutable_move_target_expr_fallback(expr_id)
+            self.canonical_precise_immutable_move_target_expr_fallback_with_refinements(
+                expr_id,
+                refinements,
+            )
         } else {
             None
         };
@@ -1453,14 +1613,27 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         expr_id: hir::ExprId,
     ) -> Option<MoveTarget> {
+        self.canonical_precise_immutable_move_target_expr_fallback_with_refinements(expr_id, &[])
+    }
+
+    fn canonical_precise_immutable_move_target_expr_fallback_with_refinements(
+        &self,
+        expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+    ) -> Option<MoveTarget> {
         match &self.hir.expr(expr_id).kind {
             hir::ExprKind::Name(_) => {
                 let local = self.direct_local_for_expr(expr_id)?;
                 if let LocalOrigin::Binding(hir_local) = &self.body.local(local).origin
                     && let Some(value) = self.immutable_binding_values.get(hir_local).copied()
-                    && self.precise_move_target_for_expr(value).is_some()
-                    && let Some(target) =
-                        self.canonical_precise_immutable_move_target_expr_fallback(value)
+                    && self
+                        .precise_move_target_for_expr_with_refinements(value, refinements)
+                        .is_some()
+                    && let Some(target) = self
+                        .canonical_precise_immutable_move_target_expr_fallback_with_refinements(
+                            value,
+                            refinements,
+                        )
                 {
                     return Some(target);
                 }
@@ -1471,8 +1644,16 @@ impl<'a> BodyAnalyzer<'a> {
             }
             hir::ExprKind::Member { object, field, .. } => {
                 let mut target = self
-                    .canonical_precise_immutable_move_target_expr_fallback(*object)
-                    .or_else(|| self.canonical_precise_immutable_move_target_for_expr(*object))?;
+                    .canonical_precise_immutable_move_target_expr_fallback_with_refinements(
+                        *object,
+                        refinements,
+                    )
+                    .or_else(|| {
+                        self.canonical_precise_immutable_move_target_for_expr_with_refinements(
+                            *object,
+                            refinements,
+                        )
+                    })?;
                 target.path.push(MovePathSegment::Field(field.clone()));
                 self.precise_immutable_move_target(target)
             }
@@ -1482,8 +1663,16 @@ impl<'a> BodyAnalyzer<'a> {
                 }
                 let target_ty = self.typeck.expr_ty(*target)?;
                 let mut target = self
-                    .canonical_precise_immutable_move_target_expr_fallback(*target)
-                    .or_else(|| self.canonical_precise_immutable_move_target_for_expr(*target))?;
+                    .canonical_precise_immutable_move_target_expr_fallback_with_refinements(
+                        *target,
+                        refinements,
+                    )
+                    .or_else(|| {
+                        self.canonical_precise_immutable_move_target_for_expr_with_refinements(
+                            *target,
+                            refinements,
+                        )
+                    })?;
                 target
                     .path
                     .push(match (target_ty, &self.hir.expr(items[0]).kind) {
@@ -1493,19 +1682,28 @@ impl<'a> BodyAnalyzer<'a> {
                         (Ty::Array { .. }, hir::ExprKind::Integer(raw_index)) => {
                             MovePathSegment::ArrayIndex(parse_usize_literal(raw_index)?)
                         }
-                        (Ty::Array { .. }, _) => self.dynamic_array_move_path_step_for_expr(items[0]),
+                        (Ty::Array { .. }, _) => self
+                            .dynamic_array_move_path_step_for_expr_with_refinements(
+                                items[0],
+                                refinements,
+                            ),
                         _ => return None,
                     });
                 self.precise_immutable_move_target(target)
             }
-            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
-                .hir
-                .block(*block)
-                .tail
-                .and_then(|tail| self.canonical_precise_immutable_move_target_for_expr(tail)),
-            hir::ExprKind::Question(inner) => {
-                self.canonical_precise_immutable_move_target_for_expr(*inner)
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+                self.hir.block(*block).tail.and_then(|tail| {
+                    self.canonical_precise_immutable_move_target_for_expr_with_refinements(
+                        tail,
+                        refinements,
+                    )
+                })
             }
+            hir::ExprKind::Question(inner) => self
+                .canonical_precise_immutable_move_target_for_expr_with_refinements(
+                    *inner,
+                    refinements,
+                ),
             _ => None,
         }
     }
@@ -1529,7 +1727,9 @@ impl<'a> BodyAnalyzer<'a> {
         let mut current_ty = self.local_ty(place.base)?;
         for projection in &place.projections {
             let next_ty = self.project_place_ty_step(&current_ty, projection)?;
-            target.path.push(self.precise_move_path_step(&current_ty, projection)?);
+            target
+                .path
+                .push(self.precise_move_path_step(&current_ty, projection)?);
             current_ty = next_ty;
         }
 
@@ -1559,11 +1759,13 @@ impl<'a> BodyAnalyzer<'a> {
         let mut current_ty = self.local_ty(place.base)?;
         for projection in &place.projections {
             let next_ty = self.project_place_ty_step(&current_ty, projection)?;
-            target.path.push(self.precise_move_path_step_with_refinements(
-                &current_ty,
-                projection,
-                refinements,
-            )?);
+            target
+                .path
+                .push(self.precise_move_path_step_with_refinements(
+                    &current_ty,
+                    projection,
+                    refinements,
+                )?);
             current_ty = next_ty;
         }
 
@@ -1574,24 +1776,47 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         expr_id: hir::ExprId,
     ) -> Option<MoveTarget> {
-        if let Some(target) = self.canonical_precise_immutable_move_target_for_expr(expr_id) {
+        self.canonical_task_handle_move_target_for_expr_with_refinements(expr_id, &[])
+    }
+
+    fn canonical_task_handle_move_target_for_expr_with_refinements(
+        &self,
+        expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+    ) -> Option<MoveTarget> {
+        if let Some(target) = self
+            .canonical_precise_immutable_move_target_for_expr_with_refinements(expr_id, refinements)
+        {
             return Some(target);
         }
-        self.canonical_task_handle_move_target_expr_fallback(expr_id)
+        self.canonical_task_handle_move_target_expr_fallback_with_refinements(expr_id, refinements)
     }
 
     fn canonical_task_handle_move_target_expr_fallback(
         &self,
         expr_id: hir::ExprId,
     ) -> Option<MoveTarget> {
+        self.canonical_task_handle_move_target_expr_fallback_with_refinements(expr_id, &[])
+    }
+
+    fn canonical_task_handle_move_target_expr_fallback_with_refinements(
+        &self,
+        expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+    ) -> Option<MoveTarget> {
         match &self.hir.expr(expr_id).kind {
             hir::ExprKind::Name(_) => {
                 let local = self.direct_local_for_expr(expr_id)?;
                 if let LocalOrigin::Binding(hir_local) = &self.body.local(local).origin
                     && let Some(value) = self.immutable_binding_values.get(hir_local).copied()
-                    && self.precise_move_target_for_expr(value).is_some()
-                    && let Some(target) =
-                        self.canonical_task_handle_move_target_expr_fallback(value)
+                    && self
+                        .precise_move_target_for_expr_with_refinements(value, refinements)
+                        .is_some()
+                    && let Some(target) = self
+                        .canonical_task_handle_move_target_expr_fallback_with_refinements(
+                            value,
+                            refinements,
+                        )
                 {
                     return Some(target);
                 }
@@ -1602,8 +1827,16 @@ impl<'a> BodyAnalyzer<'a> {
             }
             hir::ExprKind::Member { object, field, .. } => {
                 let mut target = self
-                    .canonical_task_handle_move_target_expr_fallback(*object)
-                    .or_else(|| self.canonical_task_handle_move_target_for_expr(*object))?;
+                    .canonical_task_handle_move_target_expr_fallback_with_refinements(
+                        *object,
+                        refinements,
+                    )
+                    .or_else(|| {
+                        self.canonical_task_handle_move_target_for_expr_with_refinements(
+                            *object,
+                            refinements,
+                        )
+                    })?;
                 target.path.push(MovePathSegment::Field(field.clone()));
                 Some(target)
             }
@@ -1613,8 +1846,16 @@ impl<'a> BodyAnalyzer<'a> {
                 }
                 let target_ty = self.typeck.expr_ty(*target)?;
                 let mut target = self
-                    .canonical_task_handle_move_target_expr_fallback(*target)
-                    .or_else(|| self.canonical_task_handle_move_target_for_expr(*target))?;
+                    .canonical_task_handle_move_target_expr_fallback_with_refinements(
+                        *target,
+                        refinements,
+                    )
+                    .or_else(|| {
+                        self.canonical_task_handle_move_target_for_expr_with_refinements(
+                            *target,
+                            refinements,
+                        )
+                    })?;
                 target
                     .path
                     .push(match (target_ty, &self.hir.expr(items[0]).kind) {
@@ -1624,19 +1865,25 @@ impl<'a> BodyAnalyzer<'a> {
                         (Ty::Array { .. }, hir::ExprKind::Integer(raw_index)) => {
                             MovePathSegment::ArrayIndex(parse_usize_literal(raw_index)?)
                         }
-                        (Ty::Array { .. }, _) => self.dynamic_array_move_path_step_for_expr(items[0]),
+                        (Ty::Array { .. }, _) => self
+                            .dynamic_array_move_path_step_for_expr_with_refinements(
+                                items[0],
+                                refinements,
+                            ),
                         _ => return None,
                     });
                 Some(target)
             }
-            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
-                .hir
-                .block(*block)
-                .tail
-                .and_then(|tail| self.canonical_task_handle_move_target_for_expr(tail)),
-            hir::ExprKind::Question(inner) => {
-                self.canonical_task_handle_move_target_for_expr(*inner)
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+                self.hir.block(*block).tail.and_then(|tail| {
+                    self.canonical_task_handle_move_target_for_expr_with_refinements(
+                        tail,
+                        refinements,
+                    )
+                })
             }
+            hir::ExprKind::Question(inner) => self
+                .canonical_task_handle_move_target_for_expr_with_refinements(*inner, refinements),
             _ => None,
         }
     }
@@ -1696,8 +1943,7 @@ impl<'a> BodyAnalyzer<'a> {
         operand: &Operand,
         refinements: &[IndexRefinement],
     ) -> MovePathSegment {
-        if let Some(index) =
-            self.refined_fixed_array_index_value_for_operand(operand, refinements)
+        if let Some(index) = self.refined_fixed_array_index_value_for_operand(operand, refinements)
         {
             return MovePathSegment::ArrayIndex(index);
         }
@@ -1714,8 +1960,12 @@ impl<'a> BodyAnalyzer<'a> {
         MovePathSegment::DynamicArrayIndex
     }
 
-    fn dynamic_array_move_path_step_for_expr(&self, expr_id: hir::ExprId) -> MovePathSegment {
-        if let Some(index) = self.fixed_array_index_value_for_expr(expr_id) {
+    fn dynamic_array_move_path_step_for_expr_with_refinements(
+        &self,
+        expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+    ) -> MovePathSegment {
+        if let Some(index) = self.refined_fixed_array_index_value_for_expr(expr_id, refinements) {
             return MovePathSegment::ArrayIndex(index);
         }
         if let Some(target) = self.canonical_precise_immutable_move_target_for_expr(expr_id) {
@@ -1818,12 +2068,18 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
-    fn task_handle_target_for_expr(&self, expr_id: hir::ExprId) -> Option<MoveTarget> {
+    fn task_handle_target_for_expr_with_refinements(
+        &self,
+        expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+    ) -> Option<MoveTarget> {
         if !matches!(self.typeck.expr_ty(expr_id), Some(Ty::TaskHandle(_))) {
             return None;
         }
 
-        if let Some(target) = self.canonical_task_handle_move_target_for_expr(expr_id) {
+        if let Some(target) =
+            self.canonical_task_handle_move_target_for_expr_with_refinements(expr_id, refinements)
+        {
             if target.path.is_empty()
                 && let Some(local) = self.direct_task_handle_local(target.local)
             {
@@ -1835,7 +2091,9 @@ impl<'a> BodyAnalyzer<'a> {
             return Some(target);
         }
 
-        if let Some(target) = self.precise_move_target_for_expr(expr_id) {
+        if let Some(target) =
+            self.precise_move_target_for_expr_with_refinements(expr_id, refinements)
+        {
             if target.path.is_empty()
                 && let Some(local) = self.direct_task_handle_local(target.local)
             {
@@ -1855,36 +2113,37 @@ impl<'a> BodyAnalyzer<'a> {
                     local,
                     path: Vec::new(),
                 }),
-            hir::ExprKind::Member { object, .. } => {
-                self.task_handle_target_for_expr(*object)
-                    .map(|target| MoveTarget {
-                        local: target.local,
-                        path: Vec::new(),
-                    })
+            hir::ExprKind::Member { object, .. } => self
+                .task_handle_target_for_expr_with_refinements(*object, refinements)
+                .map(|target| MoveTarget {
+                    local: target.local,
+                    path: Vec::new(),
+                }),
+            hir::ExprKind::Bracket { target, .. } => self
+                .task_handle_target_for_expr_with_refinements(*target, refinements)
+                .map(|target| MoveTarget {
+                    local: target.local,
+                    path: Vec::new(),
+                }),
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+                self.hir.block(*block).tail.and_then(|tail| {
+                    self.task_handle_target_for_expr_with_refinements(tail, refinements)
+                })
             }
-            hir::ExprKind::Bracket { target, .. } => {
-                self.task_handle_target_for_expr(*target)
-                    .map(|target| MoveTarget {
-                        local: target.local,
-                        path: Vec::new(),
-                    })
+            hir::ExprKind::Question(inner) => {
+                self.task_handle_target_for_expr_with_refinements(*inner, refinements)
             }
-            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
-                .hir
-                .block(*block)
-                .tail
-                .and_then(|tail| self.task_handle_target_for_expr(tail)),
-            hir::ExprKind::Question(inner) => self.task_handle_target_for_expr(*inner),
             _ => None,
         }
     }
 
-    fn classify_task_handle_unary_expr(
+    fn classify_task_handle_unary_expr_with_refinements(
         &self,
         op: UnaryOp,
         expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
     ) -> Option<(MoveTarget, MoveReason)> {
-        let target = self.task_handle_target_for_expr(expr_id)?;
+        let target = self.task_handle_target_for_expr_with_refinements(expr_id, refinements)?;
 
         match op {
             UnaryOp::Await => Some((target, MoveReason::AwaitTaskHandle)),
@@ -1919,24 +2178,26 @@ impl<'a> BodyAnalyzer<'a> {
         Some((target, MoveReason::CallTaskHandleArgument))
     }
 
-    fn classify_task_handle_call_argument_expr(
+    fn classify_task_handle_call_argument_expr_with_refinements(
         &self,
         call_span: ql_span::Span,
         arg_index: usize,
         expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
     ) -> Option<(MoveTarget, MoveReason)> {
         if !self.task_handle_call_arg_should_consume(call_span, arg_index) {
             return None;
         }
-        let target = self.task_handle_target_for_expr(expr_id)?;
+        let target = self.task_handle_target_for_expr_with_refinements(expr_id, refinements)?;
         Some((target, MoveReason::CallTaskHandleArgument))
     }
 
-    fn classify_task_handle_return_expr(
+    fn classify_task_handle_return_expr_with_refinements(
         &self,
         expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
     ) -> Option<(MoveTarget, MoveReason)> {
-        let target = self.task_handle_target_for_expr(expr_id)?;
+        let target = self.task_handle_target_for_expr_with_refinements(expr_id, refinements)?;
         Some((target, MoveReason::ReturnTaskHandle))
     }
 
@@ -2263,6 +2524,8 @@ impl<'a> BodyAnalyzer<'a> {
     fn apply_cleanup(
         &self,
         states: &mut [LocalState],
+        refinements: &[IndexRefinement],
+        exclusions: &[IndexRefinement],
         cleanup: CleanupId,
         reporter: Option<&mut Reporter>,
     ) {
@@ -2271,6 +2534,8 @@ impl<'a> BodyAnalyzer<'a> {
                 let result = self.eval_cleanup_expr(
                     states.to_vec(),
                     *expr,
+                    refinements,
+                    exclusions,
                     reporter,
                     UseSite::deferred(self.hir.expr(*expr).span),
                 );
@@ -2283,6 +2548,8 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         states: Vec<LocalState>,
         expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+        exclusions: &[IndexRefinement],
         reporter: Option<&mut Reporter>,
         use_site: UseSite,
     ) -> CleanupEval {
@@ -2290,40 +2557,77 @@ impl<'a> BodyAnalyzer<'a> {
         match &expr.kind {
             hir::ExprKind::Name(_) => CleanupEval::cont(states),
             hir::ExprKind::Member { object, .. } => {
-                if self.precise_move_target_for_expr(expr_id).is_some() {
+                if self
+                    .precise_move_target_for_expr_with_refinements(expr_id, refinements)
+                    .is_some()
+                {
                     self.eval_task_handle_operand_expr(
                         states,
                         *object,
+                        refinements,
+                        exclusions,
                         reporter,
                         use_site.with_span(self.hir.expr(*object).span),
                     )
                 } else {
-                    self.eval_cleanup_expr(states, expr_id, reporter, use_site)
+                    self.eval_cleanup_expr(
+                        states,
+                        expr_id,
+                        refinements,
+                        exclusions,
+                        reporter,
+                        use_site,
+                    )
                 }
             }
             hir::ExprKind::Bracket { target, items } => {
-                if self.precise_move_target_for_expr(expr_id).is_none() {
-                    return self.eval_cleanup_expr(states, expr_id, reporter, use_site);
+                if self
+                    .precise_move_target_for_expr_with_refinements(expr_id, refinements)
+                    .is_none()
+                {
+                    return self.eval_cleanup_expr(
+                        states,
+                        expr_id,
+                        refinements,
+                        exclusions,
+                        reporter,
+                        use_site,
+                    );
                 }
                 let mut reporter = reporter;
                 let target_eval = self.eval_task_handle_operand_expr(
                     states,
                     *target,
+                    refinements,
+                    exclusions,
                     reporter.as_deref_mut(),
                     use_site.with_span(self.hir.expr(*target).span),
                 );
                 if !target_eval.continues {
                     return target_eval;
                 }
-                self.eval_cleanup_exprs(target_eval.states, items, reporter, use_site)
+                self.eval_cleanup_exprs(
+                    target_eval.states,
+                    items,
+                    refinements,
+                    exclusions,
+                    reporter,
+                    use_site,
+                )
             }
             hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
                 let block = self.hir.block(*block);
                 let mut states = states;
                 let mut reporter = reporter;
                 for stmt_id in &block.statements {
-                    let eval =
-                        self.eval_cleanup_stmt(states, *stmt_id, reporter.as_deref_mut(), use_site);
+                    let eval = self.eval_cleanup_stmt(
+                        states,
+                        *stmt_id,
+                        refinements,
+                        exclusions,
+                        reporter.as_deref_mut(),
+                        use_site,
+                    );
                     if !eval.continues {
                         return eval;
                     }
@@ -2334,6 +2638,8 @@ impl<'a> BodyAnalyzer<'a> {
                     self.eval_task_handle_operand_expr(
                         states,
                         tail,
+                        refinements,
+                        exclusions,
                         reporter,
                         use_site.with_span(self.hir.expr(tail).span),
                     )
@@ -2344,10 +2650,14 @@ impl<'a> BodyAnalyzer<'a> {
             hir::ExprKind::Question(inner) => self.eval_task_handle_operand_expr(
                 states,
                 *inner,
+                refinements,
+                exclusions,
                 reporter,
                 use_site.with_span(self.hir.expr(*inner).span),
             ),
-            _ => self.eval_cleanup_expr(states, expr_id, reporter, use_site),
+            _ => {
+                self.eval_cleanup_expr(states, expr_id, refinements, exclusions, reporter, use_site)
+            }
         }
     }
 
@@ -2355,17 +2665,24 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         states: Vec<LocalState>,
         expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+        exclusions: &[IndexRefinement],
         reporter: Option<&mut Reporter>,
         use_site: UseSite,
     ) -> CleanupEval {
         let expr = self.hir.expr(expr_id);
-        if self.precise_move_target_for_expr(expr_id).is_some()
-            && let Some(target) = self.task_handle_target_for_expr(expr_id)
+        if self
+            .precise_move_target_for_expr_with_refinements(expr_id, refinements)
+            .is_some()
+            && let Some(target) =
+                self.task_handle_target_for_expr_with_refinements(expr_id, refinements)
         {
             let mut reporter = reporter;
             let eval = self.eval_task_handle_operand_expr(
                 states,
                 expr_id,
+                refinements,
+                exclusions,
                 reporter.as_deref_mut(),
                 use_site.with_span(expr.span),
             );
@@ -2380,12 +2697,7 @@ impl<'a> BodyAnalyzer<'a> {
                 use_site.with_span(expr.span),
                 reporter.as_deref_mut(),
             );
-            self.record_event(
-                reporter,
-                expr.span,
-                target.local,
-                LocalEventKind::Read,
-            );
+            self.record_event(reporter, expr.span, target.local, LocalEventKind::Read);
             return CleanupEval::cont(eval.states);
         }
         match &expr.kind {
@@ -2401,10 +2713,10 @@ impl<'a> BodyAnalyzer<'a> {
             | hir::ExprKind::NoneLiteral
             | hir::ExprKind::Closure { .. } => CleanupEval::cont(states),
             hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => {
-                self.eval_cleanup_exprs(states, items, reporter, use_site)
+                self.eval_cleanup_exprs(states, items, refinements, exclusions, reporter, use_site)
             }
             hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
-                self.eval_cleanup_block(states, *block, reporter, use_site)
+                self.eval_cleanup_block(states, *block, refinements, exclusions, reporter, use_site)
             }
             hir::ExprKind::If {
                 condition,
@@ -2415,26 +2727,71 @@ impl<'a> BodyAnalyzer<'a> {
                 let condition_eval = self.eval_cleanup_expr(
                     states,
                     *condition,
+                    refinements,
+                    exclusions,
                     reporter.as_deref_mut(),
                     use_site.with_span(self.hir.expr(*condition).span),
                 );
                 if !condition_eval.continues {
                     return condition_eval;
                 }
-
-                let then_eval = self.eval_cleanup_block(
-                    condition_eval.states.clone(),
-                    *then_branch,
-                    reporter.as_deref_mut(),
-                    use_site,
+                let condition_refinement = self.cleanup_bool_index_refinement_for_expr(*condition);
+                let then_impossible = branch_index_constraints_conflict(
+                    refinements,
+                    exclusions,
+                    &condition_refinement.when_true,
+                    &condition_refinement.when_true_excluded,
                 );
-                let else_eval = if let Some(else_expr) = else_branch {
-                    self.eval_cleanup_expr(
-                        condition_eval.states,
-                        *else_expr,
-                        reporter,
-                        use_site.with_span(self.hir.expr(*else_expr).span),
+                let else_impossible = branch_index_constraints_conflict(
+                    refinements,
+                    exclusions,
+                    &condition_refinement.when_false,
+                    &condition_refinement.when_false_excluded,
+                );
+                let then_refinements =
+                    apply_branch_index_refinements(refinements, &condition_refinement.when_true);
+                let then_exclusions = apply_branch_index_exclusions(
+                    exclusions,
+                    refinements,
+                    &condition_refinement.when_true,
+                    &condition_refinement.when_true_excluded,
+                );
+                let else_refinements =
+                    apply_branch_index_refinements(refinements, &condition_refinement.when_false);
+                let else_exclusions = apply_branch_index_exclusions(
+                    exclusions,
+                    refinements,
+                    &condition_refinement.when_false,
+                    &condition_refinement.when_false_excluded,
+                );
+
+                let then_eval = if then_impossible {
+                    CleanupEval::stop(condition_eval.states.clone())
+                } else {
+                    self.eval_cleanup_block(
+                        condition_eval.states.clone(),
+                        *then_branch,
+                        &then_refinements,
+                        &then_exclusions,
+                        reporter.as_deref_mut(),
+                        use_site,
                     )
+                };
+                let else_eval = if let Some(else_expr) = else_branch {
+                    if else_impossible {
+                        CleanupEval::stop(condition_eval.states)
+                    } else {
+                        self.eval_cleanup_expr(
+                            condition_eval.states,
+                            *else_expr,
+                            &else_refinements,
+                            &else_exclusions,
+                            reporter,
+                            use_site.with_span(self.hir.expr(*else_expr).span),
+                        )
+                    }
+                } else if else_impossible {
+                    CleanupEval::stop(condition_eval.states)
                 } else {
                     CleanupEval::cont(condition_eval.states)
                 };
@@ -2445,6 +2802,8 @@ impl<'a> BodyAnalyzer<'a> {
                 let scrutinee_eval = self.eval_cleanup_expr(
                     states,
                     *value,
+                    refinements,
+                    exclusions,
                     reporter.as_deref_mut(),
                     use_site.with_span(self.hir.expr(*value).span),
                 );
@@ -2455,18 +2814,44 @@ impl<'a> BodyAnalyzer<'a> {
                 let mut arm_results = Vec::with_capacity(arms.len());
                 for arm in arms {
                     let mut arm_eval = CleanupEval::cont(scrutinee_eval.states.clone());
+                    let mut arm_refinements = refinements.to_vec();
+                    let mut arm_exclusions = exclusions.to_vec();
                     if let Some(guard) = arm.guard {
                         arm_eval = self.eval_cleanup_expr(
                             arm_eval.states,
                             guard,
+                            refinements,
+                            exclusions,
                             reporter.as_deref_mut(),
                             use_site.with_span(self.hir.expr(guard).span),
+                        );
+                        let guard_refinement = self.cleanup_bool_index_refinement_for_expr(guard);
+                        if branch_index_constraints_conflict(
+                            refinements,
+                            exclusions,
+                            &guard_refinement.when_true,
+                            &guard_refinement.when_true_excluded,
+                        ) {
+                            arm_results.push(CleanupEval::stop(arm_eval.states));
+                            continue;
+                        }
+                        arm_refinements = apply_branch_index_refinements(
+                            refinements,
+                            &guard_refinement.when_true,
+                        );
+                        arm_exclusions = apply_branch_index_exclusions(
+                            exclusions,
+                            refinements,
+                            &guard_refinement.when_true,
+                            &guard_refinement.when_true_excluded,
                         );
                     }
                     if arm_eval.continues {
                         arm_eval = self.eval_cleanup_expr(
                             arm_eval.states,
                             arm.body,
+                            &arm_refinements,
+                            &arm_exclusions,
                             reporter.as_deref_mut(),
                             use_site.with_span(self.hir.expr(arm.body).span),
                         );
@@ -2490,6 +2875,8 @@ impl<'a> BodyAnalyzer<'a> {
                     let callee_eval = self.eval_cleanup_expr(
                         states,
                         *callee,
+                        refinements,
+                        exclusions,
                         reporter.as_deref_mut(),
                         use_site.with_span(self.hir.expr(*callee).span),
                     );
@@ -2504,12 +2891,19 @@ impl<'a> BodyAnalyzer<'a> {
                         hir::CallArg::Named { value, .. } => *value,
                     };
                     let value_span = self.hir.expr(value).span;
-                    if let Some((target, reason)) =
-                        self.classify_task_handle_call_argument_expr(expr.span, index, value)
+                    if let Some((target, reason)) = self
+                        .classify_task_handle_call_argument_expr_with_refinements(
+                            expr.span,
+                            index,
+                            value,
+                            refinements,
+                        )
                     {
                         let arg_eval = self.eval_task_handle_operand_expr(
                             states,
                             value,
+                            refinements,
+                            exclusions,
                             reporter.as_deref_mut(),
                             use_site.with_span(value_span),
                         );
@@ -2537,6 +2931,8 @@ impl<'a> BodyAnalyzer<'a> {
                     let arg_eval = self.eval_cleanup_expr(
                         states,
                         value,
+                        refinements,
+                        exclusions,
                         reporter.as_deref_mut(),
                         use_site.with_span(value_span),
                     );
@@ -2553,6 +2949,8 @@ impl<'a> BodyAnalyzer<'a> {
             hir::ExprKind::Member { object, .. } => self.eval_cleanup_expr(
                 states,
                 *object,
+                refinements,
+                exclusions,
                 reporter,
                 use_site.with_span(self.hir.expr(*object).span),
             ),
@@ -2561,17 +2959,28 @@ impl<'a> BodyAnalyzer<'a> {
                 let target_eval = self.eval_cleanup_expr(
                     states,
                     *target,
+                    refinements,
+                    exclusions,
                     reporter.as_deref_mut(),
                     use_site.with_span(self.hir.expr(*target).span),
                 );
                 if !target_eval.continues {
                     return target_eval;
                 }
-                self.eval_cleanup_exprs(target_eval.states, items, reporter, use_site)
+                self.eval_cleanup_exprs(
+                    target_eval.states,
+                    items,
+                    refinements,
+                    exclusions,
+                    reporter,
+                    use_site,
+                )
             }
             hir::ExprKind::StructLiteral { fields, .. } => self.eval_cleanup_exprs(
                 states,
                 &fields.iter().map(|field| field.value).collect::<Vec<_>>(),
+                refinements,
+                exclusions,
                 reporter,
                 use_site,
             ),
@@ -2584,6 +2993,8 @@ impl<'a> BodyAnalyzer<'a> {
                 let target_eval = self.eval_cleanup_assign_target(
                     states,
                     *left,
+                    refinements,
+                    exclusions,
                     reporter.as_deref_mut(),
                     use_site,
                 );
@@ -2595,6 +3006,8 @@ impl<'a> BodyAnalyzer<'a> {
                 let value_eval = self.eval_cleanup_expr(
                     states,
                     *right,
+                    refinements,
+                    exclusions,
                     reporter.as_deref_mut(),
                     use_site.with_span(self.hir.expr(*right).span),
                 );
@@ -2618,6 +3031,8 @@ impl<'a> BodyAnalyzer<'a> {
                 let left_eval = self.eval_cleanup_expr(
                     states,
                     *left,
+                    refinements,
+                    exclusions,
                     reporter.as_deref_mut(),
                     use_site.with_span(self.hir.expr(*left).span),
                 );
@@ -2627,16 +3042,22 @@ impl<'a> BodyAnalyzer<'a> {
                 self.eval_cleanup_expr(
                     left_eval.states,
                     *right,
+                    refinements,
+                    exclusions,
                     reporter,
                     use_site.with_span(self.hir.expr(*right).span),
                 )
             }
             hir::ExprKind::Unary { op, expr: inner } => {
                 let mut reporter = reporter;
-                if let Some((target, reason)) = self.classify_task_handle_unary_expr(*op, *inner) {
+                if let Some((target, reason)) =
+                    self.classify_task_handle_unary_expr_with_refinements(*op, *inner, refinements)
+                {
                     let inner_eval = self.eval_task_handle_operand_expr(
                         states,
                         *inner,
+                        refinements,
+                        exclusions,
                         reporter.as_deref_mut(),
                         use_site.with_span(self.hir.expr(*inner).span),
                     );
@@ -2665,6 +3086,8 @@ impl<'a> BodyAnalyzer<'a> {
                 self.eval_cleanup_expr(
                     states,
                     *inner,
+                    refinements,
+                    exclusions,
                     reporter,
                     use_site.with_span(self.hir.expr(*inner).span),
                 )
@@ -2672,6 +3095,8 @@ impl<'a> BodyAnalyzer<'a> {
             hir::ExprKind::Question(inner) => self.eval_cleanup_expr(
                 states,
                 *inner,
+                refinements,
+                exclusions,
                 reporter,
                 use_site.with_span(self.hir.expr(*inner).span),
             ),
@@ -2682,6 +3107,8 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         mut states: Vec<LocalState>,
         exprs: &[hir::ExprId],
+        refinements: &[IndexRefinement],
+        exclusions: &[IndexRefinement],
         mut reporter: Option<&mut Reporter>,
         use_site: UseSite,
     ) -> CleanupEval {
@@ -2689,6 +3116,8 @@ impl<'a> BodyAnalyzer<'a> {
             let eval = self.eval_cleanup_expr(
                 states,
                 *expr,
+                refinements,
+                exclusions,
                 reporter.as_deref_mut(),
                 use_site.with_span(self.hir.expr(*expr).span),
             );
@@ -2704,12 +3133,21 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         mut states: Vec<LocalState>,
         block_id: hir::BlockId,
+        refinements: &[IndexRefinement],
+        exclusions: &[IndexRefinement],
         mut reporter: Option<&mut Reporter>,
         use_site: UseSite,
     ) -> CleanupEval {
         let block = self.hir.block(block_id);
         for stmt_id in &block.statements {
-            let eval = self.eval_cleanup_stmt(states, *stmt_id, reporter.as_deref_mut(), use_site);
+            let eval = self.eval_cleanup_stmt(
+                states,
+                *stmt_id,
+                refinements,
+                exclusions,
+                reporter.as_deref_mut(),
+                use_site,
+            );
             if !eval.continues {
                 return eval;
             }
@@ -2720,6 +3158,8 @@ impl<'a> BodyAnalyzer<'a> {
             self.eval_cleanup_expr(
                 states,
                 tail,
+                refinements,
+                exclusions,
                 reporter,
                 use_site.with_span(self.hir.expr(tail).span),
             )
@@ -2732,6 +3172,8 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         states: Vec<LocalState>,
         stmt_id: hir::StmtId,
+        refinements: &[IndexRefinement],
+        exclusions: &[IndexRefinement],
         mut reporter: Option<&mut Reporter>,
         use_site: UseSite,
     ) -> CleanupEval {
@@ -2740,15 +3182,22 @@ impl<'a> BodyAnalyzer<'a> {
             hir::StmtKind::Let { value, .. } => self.eval_cleanup_expr(
                 states,
                 *value,
+                refinements,
+                exclusions,
                 reporter,
                 use_site.with_span(self.hir.expr(*value).span),
             ),
             hir::StmtKind::Return(Some(expr)) => {
                 let expr_span = self.hir.expr(*expr).span;
-                let mut eval = if self.classify_task_handle_return_expr(*expr).is_some() {
+                let mut eval = if self
+                    .classify_task_handle_return_expr_with_refinements(*expr, refinements)
+                    .is_some()
+                {
                     self.eval_task_handle_operand_expr(
                         states,
                         *expr,
+                        refinements,
+                        exclusions,
                         reporter.as_deref_mut(),
                         use_site.with_span(expr_span),
                     )
@@ -2756,11 +3205,15 @@ impl<'a> BodyAnalyzer<'a> {
                     self.eval_cleanup_expr(
                         states,
                         *expr,
+                        refinements,
+                        exclusions,
                         reporter.as_deref_mut(),
                         use_site.with_span(expr_span),
                     )
                 };
-                if let Some((target, reason)) = self.classify_task_handle_return_expr(*expr) {
+                if let Some((target, reason)) =
+                    self.classify_task_handle_return_expr_with_refinements(*expr, refinements)
+                {
                     self.check_moved_use(
                         &eval.states,
                         target.local,
@@ -2788,15 +3241,40 @@ impl<'a> BodyAnalyzer<'a> {
                 let condition_eval = self.eval_cleanup_expr(
                     states,
                     *condition,
+                    refinements,
+                    exclusions,
                     reporter.as_deref_mut(),
                     use_site.with_span(self.hir.expr(*condition).span),
                 );
                 if !condition_eval.continues {
                     return condition_eval;
                 }
+                if branch_index_constraints_conflict(
+                    refinements,
+                    exclusions,
+                    &self
+                        .cleanup_bool_index_refinement_for_expr(*condition)
+                        .when_true,
+                    &self
+                        .cleanup_bool_index_refinement_for_expr(*condition)
+                        .when_true_excluded,
+                ) {
+                    return CleanupEval::cont(condition_eval.states);
+                }
+                let condition_refinement = self.cleanup_bool_index_refinement_for_expr(*condition);
+                let body_refinements =
+                    apply_branch_index_refinements(refinements, &condition_refinement.when_true);
+                let body_exclusions = apply_branch_index_exclusions(
+                    exclusions,
+                    refinements,
+                    &condition_refinement.when_true,
+                    &condition_refinement.when_true_excluded,
+                );
                 let body_eval = self.eval_cleanup_block(
                     condition_eval.states.clone(),
                     *body,
+                    &body_refinements,
+                    &body_exclusions,
                     reporter,
                     use_site,
                 );
@@ -2805,12 +3283,14 @@ impl<'a> BodyAnalyzer<'a> {
                 )
             }
             hir::StmtKind::Loop { body } => {
-                self.eval_cleanup_block(states, *body, reporter, use_site)
+                self.eval_cleanup_block(states, *body, refinements, exclusions, reporter, use_site)
             }
             hir::StmtKind::For { iterable, body, .. } => {
                 let iterable_eval = self.eval_cleanup_expr(
                     states,
                     *iterable,
+                    refinements,
+                    exclusions,
                     reporter.as_deref_mut(),
                     use_site.with_span(self.hir.expr(*iterable).span),
                 );
@@ -2820,6 +3300,8 @@ impl<'a> BodyAnalyzer<'a> {
                 let body_eval = self.eval_cleanup_block(
                     iterable_eval.states.clone(),
                     *body,
+                    refinements,
+                    exclusions,
                     reporter,
                     use_site,
                 );
@@ -2828,6 +3310,8 @@ impl<'a> BodyAnalyzer<'a> {
             hir::StmtKind::Expr { expr, .. } => self.eval_cleanup_expr(
                 states,
                 *expr,
+                refinements,
+                exclusions,
                 reporter,
                 use_site.with_span(self.hir.expr(*expr).span),
             ),
@@ -2838,45 +3322,63 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         states: Vec<LocalState>,
         expr_id: hir::ExprId,
+        refinements: &[IndexRefinement],
+        exclusions: &[IndexRefinement],
         reporter: Option<&mut Reporter>,
         use_site: UseSite,
     ) -> CleanupAssignTarget {
         let expr = self.hir.expr(expr_id);
         match &expr.kind {
-            hir::ExprKind::Name(_) => {
-                CleanupAssignTarget::cont(states, self.precise_move_target_for_expr(expr_id))
-            }
+            hir::ExprKind::Name(_) => CleanupAssignTarget::cont(
+                states,
+                self.precise_move_target_for_expr_with_refinements(expr_id, refinements),
+            ),
             hir::ExprKind::Member { object, .. } => {
                 let eval = self.eval_cleanup_expr(
                     states,
                     *object,
+                    refinements,
+                    exclusions,
                     reporter,
                     use_site.with_span(self.hir.expr(*object).span),
                 );
-                CleanupAssignTarget::from_eval(eval, self.precise_move_target_for_expr(expr_id))
+                CleanupAssignTarget::from_eval(
+                    eval,
+                    self.precise_move_target_for_expr_with_refinements(expr_id, refinements),
+                )
             }
             hir::ExprKind::Bracket { target, items } => {
                 let mut reporter = reporter;
                 let target_eval = self.eval_cleanup_expr(
                     states,
                     *target,
+                    refinements,
+                    exclusions,
                     reporter.as_deref_mut(),
                     use_site.with_span(self.hir.expr(*target).span),
                 );
                 if !target_eval.continues {
                     return CleanupAssignTarget::from_eval(target_eval, None);
                 }
-                let items_eval =
-                    self.eval_cleanup_exprs(target_eval.states, items, reporter, use_site);
+                let items_eval = self.eval_cleanup_exprs(
+                    target_eval.states,
+                    items,
+                    refinements,
+                    exclusions,
+                    reporter,
+                    use_site,
+                );
                 CleanupAssignTarget::from_eval(
                     items_eval,
-                    self.precise_move_target_for_expr(expr_id),
+                    self.precise_move_target_for_expr_with_refinements(expr_id, refinements),
                 )
             }
             _ => {
                 let eval = self.eval_cleanup_expr(
                     states,
                     expr_id,
+                    refinements,
+                    exclusions,
                     reporter,
                     use_site.with_span(expr.span),
                 );
@@ -3094,6 +3596,24 @@ fn merge_index_refinement_vec(
     }
 }
 
+fn merge_index_exclusion_vec(
+    existing: Option<&[IndexRefinement]>,
+    incoming: &[IndexRefinement],
+) -> (Vec<IndexRefinement>, bool) {
+    match existing {
+        None => (incoming.to_vec(), true),
+        Some(existing) => {
+            let merged = existing
+                .iter()
+                .filter(|refinement| incoming.contains(refinement))
+                .cloned()
+                .collect::<Vec<_>>();
+            let changed = merged != existing;
+            (merged, changed)
+        }
+    }
+}
+
 fn apply_branch_index_refinements(
     base: &[IndexRefinement],
     incoming: &[IndexRefinement],
@@ -3115,6 +3635,45 @@ fn apply_branch_index_refinements(
     merged.sort();
     merged.dedup();
     merged
+}
+
+fn apply_branch_index_exclusions(
+    base: &[IndexRefinement],
+    base_refinements: &[IndexRefinement],
+    incoming_refinements: &[IndexRefinement],
+    incoming_exclusions: &[IndexRefinement],
+) -> Vec<IndexRefinement> {
+    let mut merged = base
+        .iter()
+        .filter(|candidate| {
+            !incoming_refinements.iter().any(|refinement| {
+                refinement.target == candidate.target && refinement.value == candidate.value
+            }) && !base_refinements.iter().any(|refinement| {
+                refinement.target == candidate.target && refinement.value == candidate.value
+            })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    merged.extend_from_slice(incoming_exclusions);
+    merged.sort();
+    merged.dedup();
+    merged
+}
+
+fn branch_index_constraints_conflict(
+    base_refinements: &[IndexRefinement],
+    base_exclusions: &[IndexRefinement],
+    incoming_refinements: &[IndexRefinement],
+    incoming_exclusions: &[IndexRefinement],
+) -> bool {
+    incoming_refinements.iter().any(|incoming| {
+        base_exclusions.contains(incoming)
+            || base_refinements.iter().any(|existing| {
+                existing.target == incoming.target && existing.value != incoming.value
+            })
+    }) || incoming_exclusions
+        .iter()
+        .any(|incoming| base_refinements.contains(incoming))
 }
 
 fn merge_cleanup_branches(left: CleanupEval, right: CleanupEval) -> CleanupEval {

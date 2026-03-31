@@ -1,0 +1,3 @@
+error: tests/codegen/fail/guarded_cleanup_dynamic_task_handle_build.ql:15:5: LLVM IR backend foundation does not support cleanup lowering yet
+      defer if index == 0 { forward(tasks[index]) } else { forward(worker()) }
+      ^^^^^^^^

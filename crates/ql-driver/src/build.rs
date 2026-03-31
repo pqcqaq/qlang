@@ -5288,8 +5288,8 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_aliased_projected_root_task_handle_tuple_repackage_after_reinit(
-    ) {
+    fn build_file_writes_static_library_with_aliased_projected_root_task_handle_tuple_repackage_after_reinit()
+     {
         let dir =
             TestDir::new("ql-driver-aliased-projected-root-task-handle-tuple-repackage-reinit");
         let source = dir.write(
@@ -5561,8 +5561,7 @@ async fn helper(row: Int) -> Wrap {
 
     #[test]
     fn build_file_writes_static_library_with_alias_sourced_composed_dynamic_task_handle_reinit() {
-        let dir =
-            TestDir::new("ql-driver-task-array-dynamic-index-alias-sourced-composed-reinit");
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-alias-sourced-composed-reinit");
         let source = dir.write(
             "task_array_dynamic_index_alias_sourced_composed_reinit.ql",
             r#"
@@ -5780,6 +5779,69 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
+    fn build_file_surfaces_cleanup_lowering_after_guarded_dynamic_task_handle_cleanup_analysis() {
+        let dir = TestDir::new("ql-driver-task-array-guarded-cleanup-literal-reinit");
+        let source = dir.write(
+            "task_array_guarded_cleanup_literal_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    defer if index == 0 { forward(tasks[index]) } else { forward(worker()) }
+    if index != 0 {
+        return await tasks[0]
+    };
+    tasks[0] = worker()
+    return await worker()
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/task_array_guarded_cleanup_literal_reinit.lib"
+        } else {
+            "artifacts/libtask_array_guarded_cleanup_literal_reinit.a"
+        });
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect_err("cleanup lowering should still block codegen");
+        let diagnostics = error
+            .diagnostics()
+            .expect("cleanup lowering rejection should return diagnostics");
+
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.message == "LLVM IR backend foundation does not support cleanup lowering yet"
+        }));
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.message != "local `tasks` was used after move"
+                && diagnostic.message
+                    != "local `tasks` may have been moved on another control-flow path"
+        }));
+    }
+
+    #[test]
     fn build_file_surfaces_dynamic_task_array_index_assignment_after_consume_diagnostic_once() {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-after-consume");
         let source = dir.write(
@@ -5831,7 +5893,7 @@ async fn helper(index: Int) -> Wrap {
 
     #[test]
     fn build_file_surfaces_aliased_direct_task_handle_tuple_repackage_use_after_move_diagnostic_once()
-    {
+     {
         let dir = TestDir::new("ql-driver-async-aliased-direct-task-handle-tuple-repackage");
         let source = dir.write(
             "aliased_direct_task_handle_tuple_repackage_use_after_move.ql",
@@ -5926,8 +5988,8 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_aliased_dynamic_task_handle_root_tuple_repackage_use_after_move_diagnostic_once(
-    ) {
+    fn build_file_surfaces_aliased_dynamic_task_handle_root_tuple_repackage_use_after_move_diagnostic_once()
+     {
         let dir =
             TestDir::new("ql-driver-task-array-dynamic-index-root-alias-tuple-repackage-move");
         let source = dir.write(
@@ -6024,8 +6086,8 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_composed_stable_dynamic_task_handle_array_index_use_after_move_diagnostic_once(
-    ) {
+    fn build_file_surfaces_composed_stable_dynamic_task_handle_array_index_use_after_move_diagnostic_once()
+     {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-composed-stable-use-after-move");
         let source = dir.write(
             "task_array_dynamic_index_composed_stable_use_after_move.ql",
@@ -6074,8 +6136,9 @@ async fn helper(row: Int) -> Wrap {
     #[test]
     fn build_file_surfaces_alias_sourced_composed_dynamic_task_handle_array_index_use_after_move_diagnostic_once()
      {
-        let dir =
-            TestDir::new("ql-driver-task-array-dynamic-index-alias-sourced-composed-use-after-move");
+        let dir = TestDir::new(
+            "ql-driver-task-array-dynamic-index-alias-sourced-composed-use-after-move",
+        );
         let source = dir.write(
             "task_array_dynamic_index_alias_sourced_composed_use_after_move.ql",
             r#"

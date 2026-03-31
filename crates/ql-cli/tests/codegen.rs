@@ -1364,6 +1364,22 @@ fn projected_dynamic_task_handle_codegen_cases_match() {
     );
 }
 
+#[test]
+fn guarded_cleanup_dynamic_task_handle_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = FailCase {
+        name: "guarded_cleanup_dynamic_task_handle_build",
+        source_relative: "tests/codegen/fail/guarded_cleanup_dynamic_task_handle_build.ql",
+        emit: "staticlib",
+        expected_stderr_relative: "tests/codegen/fail/guarded_cleanup_dynamic_task_handle_build.stderr",
+        extra_args: &[],
+    };
+
+    if let Err(message) = run_fail_case(&workspace_root, &case) {
+        panic!("guarded cleanup dynamic task-handle build regression:\n\n{message}");
+    }
+}
+
 #[derive(Clone, Copy)]
 struct PassCase {
     name: &'static str,

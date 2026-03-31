@@ -1168,6 +1168,78 @@ async fn main(flag: Bool) -> Int {
 }
 
 #[test]
+fn allows_guarded_cleanup_reinitializing_dynamic_task_handle_literal_before_scope_exit() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    defer if index == 0 { forward(tasks[index]) } else { forward(worker()) }
+    if index != 0 {
+        return await tasks[0]
+    };
+    tasks[0] = worker()
+    return await worker()
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded cleanup to reuse tasks[0] after literal reinit without maybe-moved diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_guarded_cleanup_reinitializing_projected_dynamic_task_handle_literal_before_scope_exit() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(slot: Slot) -> Wrap {
+    var tasks = [worker(), worker()]
+    defer if slot.value == 0 { forward(tasks[slot.value]) } else { forward(worker()) }
+    if slot.value != 0 {
+        return await tasks[0]
+    };
+    tasks[0] = worker()
+    return await worker()
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected projected guarded cleanup to reuse tasks[0] after literal reinit without maybe-moved diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn deferred_root_write_reinitializes_for_later_cleanup_reads() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -2828,7 +2900,8 @@ async fn main(row: Int) -> Wrap {
 }
 
 #[test]
-fn allows_reinitializing_alias_sourced_composed_dynamic_task_handle_array_index_across_source_path() {
+fn allows_reinitializing_alias_sourced_composed_dynamic_task_handle_array_index_across_source_path()
+{
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
