@@ -1202,7 +1202,7 @@ async fn main(flag: Bool) -> Wrap {
 }
 
 #[test]
-fn reports_unsupported_dynamic_task_handle_array_index_assignment_targets() {
+fn accepts_dynamic_task_handle_array_index_assignment_targets() {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -1221,10 +1221,10 @@ async fn main(index: Int) -> Wrap {
 "#,
     );
 
-    assert!(diagnostics.contains(
-        &"assignment through task-handle array indexing currently requires an integer literal index"
-            .to_string()
-    ));
+    assert!(
+        diagnostics.is_empty(),
+        "expected dynamic task-handle array assignment to type-check, got {diagnostics:?}"
+    );
 }
 
 #[test]

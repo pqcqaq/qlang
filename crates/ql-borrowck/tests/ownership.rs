@@ -2120,6 +2120,61 @@ async fn main(flag: Bool) -> Wrap {
 }
 
 #[test]
+fn allows_dynamic_task_handle_array_index_assignment_without_prior_consumes() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    tasks[index] = worker()
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected dynamic task-handle array assignment without prior consumes to avoid borrowck regressions, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_maybe_moved_after_dynamic_task_handle_array_reinit_with_prior_consume() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let first = await tasks[0]
+    tasks[index] = worker()
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"local `tasks` may have been moved on another control-flow path".to_string()
+        ),
+        "expected dynamic task-handle array assignment to stay conservative after prior consume, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_dynamic_array_index_assignment_for_non_task_elements() {
     let diagnostics = diagnostic_messages(
         r#"

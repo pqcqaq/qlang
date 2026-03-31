@@ -244,6 +244,14 @@ impl<'a> BodyAnalyzer<'a> {
                         span,
                         reporter.as_deref_mut(),
                     );
+                } else if let Some(local) = self.dynamic_task_handle_write_local_for_place(place) {
+                    self.read_place_indices(states, place, span, reporter.as_deref_mut());
+                    self.write_dynamic_task_handle_target(
+                        states,
+                        local,
+                        span,
+                        reporter.as_deref_mut(),
+                    );
                 } else {
                     self.read_place(states, place, span, reporter);
                 }
@@ -576,6 +584,38 @@ impl<'a> BodyAnalyzer<'a> {
         };
     }
 
+    fn write_dynamic_task_handle_target(
+        &self,
+        states: &mut [LocalState],
+        local: MirLocalId,
+        span: ql_span::Span,
+        reporter: Option<&mut Reporter>,
+    ) {
+        self.record_event(reporter, span, local, LocalEventKind::Write);
+        states[local.index()] = match &states[local.index()] {
+            LocalState::Moved(info) => LocalState::Moved(MoveInfo {
+                certainty: MoveCertainty::Maybe,
+                origins: info.origins.clone(),
+                path_moves: downgrade_path_moves_to_maybe(&info.path_moves),
+            }),
+            LocalState::Unavailable | LocalState::Available => LocalState::Available,
+        };
+    }
+
+    fn read_place_indices(
+        &self,
+        states: &mut [LocalState],
+        place: &Place,
+        span: ql_span::Span,
+        mut reporter: Option<&mut Reporter>,
+    ) {
+        for projection in &place.projections {
+            if let ProjectionElem::Index(operand) = projection {
+                self.read_operand(states, operand, span, reporter.as_deref_mut());
+            }
+        }
+    }
+
     fn apply_closure_capture_effects(
         &self,
         states: &mut [LocalState],
@@ -836,6 +876,32 @@ impl<'a> BodyAnalyzer<'a> {
             local: place.base,
             path,
         })
+    }
+
+    fn dynamic_task_handle_write_local_for_place(&self, place: &Place) -> Option<MirLocalId> {
+        if !matches!(self.place_ty(place)?, Ty::TaskHandle(_)) {
+            return None;
+        }
+
+        let mut current_ty = self.local_ty(place.base)?;
+        let mut saw_dynamic_array_index = false;
+
+        for projection in &place.projections {
+            if let ProjectionElem::Index(index) = projection {
+                if matches!(current_ty, Ty::Array { .. })
+                    && !matches!(
+                        &**index,
+                        Operand::Constant(Constant::Integer(raw))
+                            if parse_usize_literal(raw).is_some()
+                    )
+                {
+                    saw_dynamic_array_index = true;
+                }
+            }
+            current_ty = self.project_place_ty_step(&current_ty, projection)?;
+        }
+
+        saw_dynamic_array_index.then_some(place.base)
     }
 
     fn precise_move_target_for_expr(&self, expr_id: hir::ExprId) -> Option<MoveTarget> {

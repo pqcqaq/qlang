@@ -1832,21 +1832,8 @@ impl<'a> ModuleEmitter<'a> {
             match (&projection, &step) {
                 (mir::ProjectionElem::Field(_), ResolvedProjectionStep::Field { .. })
                 | (mir::ProjectionElem::TupleIndex(_), ResolvedProjectionStep::TupleIndex { .. })
-                | (mir::ProjectionElem::Index(_), ResolvedProjectionStep::TupleIndex { .. }) => {}
-                (mir::ProjectionElem::Index(index), ResolvedProjectionStep::ArrayIndex { ty }) => {
-                    match &**index {
-                        Operand::Constant(Constant::Integer(raw))
-                            if ql_ast::parse_usize_literal(raw).is_some() => {}
-                        _ if matches!(ty, Ty::TaskHandle(_)) => {
-                            diagnostics.push(unsupported(
-                            span,
-                            "LLVM IR backend foundation currently requires task-handle array element assignment to use a non-negative integer literal index",
-                        ));
-                            return None;
-                        }
-                        _ => {}
-                    }
-                }
+                | (mir::ProjectionElem::Index(_), ResolvedProjectionStep::TupleIndex { .. })
+                | (mir::ProjectionElem::Index(_), ResolvedProjectionStep::ArrayIndex { .. }) => {}
                 _ => {
                     diagnostics.push(unsupported(
                         span,
@@ -4655,6 +4642,38 @@ fn write_cell(row: Int, col: Int) -> Int {
         assert!(rendered.contains("getelementptr inbounds [2 x [3 x i64]], ptr"));
         assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
         assert!(rendered.contains("store i64 9, ptr %t"));
+    }
+
+    #[test]
+    fn emits_dynamic_task_handle_array_index_projection_writes() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    tasks[index] = worker()
+    return await tasks[0]
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("getelementptr inbounds [2 x ptr], ptr"));
+        assert!(rendered.contains("i64 0, i64 %t"));
+        assert!(rendered.contains("store ptr %t"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %t"));
     }
 
     #[test]

@@ -1904,29 +1904,19 @@ impl<'a> Checker<'a> {
                             )
                         }
                     }
-                    Ty::Array { element, .. } if items.len() == 1 => {
-                        if matches!(self.module.expr(items[0]).kind, ExprKind::Integer(_))
-                            || !matches!(element.as_ref(), Ty::TaskHandle(_))
-                        {
-                            self.check_assignment_target_with_anchor(*target, anchor_span)
-                        } else {
-                            unsupported_target(
-                                self,
-                                "assignment through task-handle array indexing currently requires an integer literal index"
-                                    .to_string(),
-                            )
-                        }
+                    Ty::Array { .. } if items.len() == 1 => {
+                        self.check_assignment_target_with_anchor(*target, anchor_span)
                     }
                     _ => unsupported_target(
                         self,
-                        "assignment through indexing is not supported yet; only tuple projections and fixed-array literal-index projections can be assigned"
+                        "assignment through indexing is not supported yet; only tuple literal-index projections and array projections can be assigned"
                             .to_string(),
                     ),
                 }
             }
             _ => unsupported_target(
                 self,
-                "this assignment target is not supported yet; only bare mutable bindings, member projections, tuple projections, and fixed-array literal-index projections can be assigned"
+                "this assignment target is not supported yet; only bare mutable bindings, member projections, tuple literal-index projections, and array projections can be assigned"
                     .to_string(),
             ),
         }

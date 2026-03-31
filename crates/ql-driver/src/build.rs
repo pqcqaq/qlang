@@ -4840,8 +4840,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_dynamic_task_array_index_assignment_diagnostic_once() {
-        let dir = TestDir::new("ql-driver-task-array-dynamic-index-unsupported");
+    fn build_file_writes_static_library_with_dynamic_task_handle_array_index_assignment() {
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-assignment");
         let source = dir.write(
             "task_array_dynamic_index_assignment.ql",
             r#"
@@ -4855,6 +4855,54 @@ async fn worker() -> Wrap {
 
 async fn helper(index: Int) -> Wrap {
     var tasks = [worker(), worker()]
+    tasks[index] = worker()
+    return await tasks[0]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/task_array_dynamic_index_assignment.lib"
+        } else {
+            "artifacts/libtask_array_dynamic_index_assignment.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with dynamic task-handle array assignment should succeed");
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_surfaces_dynamic_task_array_index_assignment_after_consume_diagnostic_once() {
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-after-consume");
+        let source = dir.write(
+            "task_array_dynamic_index_assignment_after_consume.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let first = await tasks[0]
     tasks[index] = worker()
     return await tasks[0]
 }
@@ -4874,14 +4922,14 @@ async fn helper(index: Int) -> Wrap {
         .expect_err("build should fail");
         let diagnostics = error
             .diagnostics()
-            .expect("task-array dynamic index diagnostics should be returned");
+            .expect("task-array dynamic index after-consume diagnostics should be returned");
 
         assert_eq!(
             diagnostics
                 .iter()
                 .filter(|diagnostic| {
                     diagnostic.message
-                        == "assignment through task-handle array indexing currently requires an integer literal index"
+                        == "local `tasks` may have been moved on another control-flow path"
                 })
                 .count(),
             1

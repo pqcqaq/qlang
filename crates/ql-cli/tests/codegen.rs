@@ -186,6 +186,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "async_dynamic_task_array_assignment_staticlib",
+            source_relative: "fixtures/codegen/pass/async_dynamic_task_array_assignment.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "async_library_scalar_await_staticlib",
             source_relative: "fixtures/codegen/pass/async_library_scalar_await.ql",
             emit: "staticlib",
@@ -1259,10 +1270,10 @@ fn codegen_snapshots_match() {
             extra_args: &[],
         },
         FailCase {
-            name: "unsupported_dynamic_task_array_index_assignment_build",
-            source_relative: "tests/codegen/fail/unsupported_dynamic_task_array_index_assignment_build.ql",
+            name: "dynamic_task_array_index_assignment_after_consume_build",
+            source_relative: "tests/codegen/fail/dynamic_task_array_index_assignment_after_consume_build.ql",
             emit: "staticlib",
-            expected_stderr_relative: "tests/codegen/fail/unsupported_dynamic_task_array_index_assignment_build.stderr",
+            expected_stderr_relative: "tests/codegen/fail/dynamic_task_array_index_assignment_after_consume_build.stderr",
             extra_args: &[],
         },
         FailCase {
