@@ -7922,6 +7922,67 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_projected_task_handle_spawns_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct TaskPair {
+    left: Task[Int],
+    right: Task[Int],
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let tuple = (worker(1), worker(2))
+    let tuple_running = spawn tuple[0]
+    let tuple_value = await tuple_running
+
+    let array = [worker(3), worker(4)]
+    let array_running = spawn array[0]
+    let array_value = await array_running
+
+    let pair = TaskPair { left: worker(5), right: worker(6) }
+    let struct_running = spawn pair.left
+    let struct_value = await struct_running
+
+    return score(tuple_value) + score(array_value) + score(struct_value)
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_executor_spawn").count() >= 4);
+        assert!(rendered.matches("@qlrt_task_await").count() >= 4);
+        assert!(
+            rendered
+                .matches("getelementptr inbounds { ptr, ptr }, ptr")
+                .count()
+                >= 2
+        );
+        assert!(rendered.contains("getelementptr inbounds [2 x ptr], ptr"));
+        assert!(rendered.matches("load i64, ptr %t").count() >= 3);
+        assert!(rendered.matches("_score(").count() >= 4);
+        assert!(!rendered.contains("does not support field or index projections yet"));
+        assert!(!rendered.contains("does not support `spawn` lowering yet"));
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_zero_sized_nested_task_handle_payload_in_program_mode()
     {
         let runtime_hooks = collect_runtime_hook_signatures([
