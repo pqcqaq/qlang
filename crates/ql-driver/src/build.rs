@@ -5438,6 +5438,59 @@ async fn helper(row: Int) -> Wrap {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_alias_sourced_composed_dynamic_task_handle_reinit() {
+        let dir =
+            TestDir::new("ql-driver-task-array-dynamic-index-alias-sourced-composed-reinit");
+        let source = dir.write(
+            "task_array_dynamic_index_alias_sourced_composed_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(row: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let slots = [row, row]
+    let alias = slots
+    let first = await tasks[alias[row]]
+    tasks[slots[row]] = worker()
+    return await tasks[alias[row]]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/task_array_dynamic_index_alias_sourced_composed_reinit.lib"
+        } else {
+            "artifacts/libtask_array_dynamic_index_alias_sourced_composed_reinit.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect(
+            "static library build with alias-sourced composed dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_same_const_backed_projected_dynamic_task_handle_reinit()
      {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-const-backed-reinit");
@@ -5688,6 +5741,56 @@ async fn helper(row: Int) -> Wrap {
         let diagnostics = error
             .diagnostics()
             .expect("composed stable dynamic task-array diagnostics should be returned");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.message == "local `tasks` was used after move")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn build_file_surfaces_alias_sourced_composed_dynamic_task_handle_array_index_use_after_move_diagnostic_once()
+     {
+        let dir =
+            TestDir::new("ql-driver-task-array-dynamic-index-alias-sourced-composed-use-after-move");
+        let source = dir.write(
+            "task_array_dynamic_index_alias_sourced_composed_use_after_move.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(row: Int) -> Wrap {
+    let tasks = [worker(), worker()]
+    let slots = [row, row]
+    let alias = slots
+    let first = await tasks[alias[row]]
+    return await tasks[slots[row]]
+}
+"#,
+        );
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: None,
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("alias-sourced composed dynamic task-array diagnostics should be returned");
 
         assert_eq!(
             diagnostics

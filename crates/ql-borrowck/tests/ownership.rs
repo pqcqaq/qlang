@@ -2707,6 +2707,64 @@ async fn main(row: Int) -> Wrap {
 }
 
 #[test]
+fn reports_use_after_move_for_alias_sourced_composed_dynamic_task_handle_array_index_without_reinit()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(row: Int) -> Wrap {
+    let tasks = [worker(), worker()]
+    let slots = [row, row]
+    let alias = slots
+    let first = await tasks[alias[row]]
+    return await tasks[slots[row]]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected alias-sourced composed dynamic task-handle index reuse to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_alias_sourced_composed_dynamic_task_handle_array_index_across_source_path() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(row: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let slots = [row, row]
+    let alias = slots
+    let first = await tasks[alias[row]]
+    tasks[slots[row]] = worker()
+    return await tasks[alias[row]]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected alias-sourced composed dynamic task-handle reinit through source path to restore availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_use_after_move_for_same_const_backed_projected_root_dynamic_task_handle_array_index_and_literal_reuse()
  {
     let diagnostics = diagnostic_messages(

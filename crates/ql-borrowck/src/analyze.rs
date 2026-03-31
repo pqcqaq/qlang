@@ -55,6 +55,7 @@ struct BodyAnalyzer<'a> {
     binding_locals: HashMap<hir::LocalId, MirLocalId>,
     immutable_binding_values: HashMap<hir::LocalId, hir::ExprId>,
     immutable_temp_const_items: HashMap<MirLocalId, hir::ItemId>,
+    immutable_temp_places: HashMap<MirLocalId, Place>,
     param_locals: HashMap<usize, MirLocalId>,
     receiver_local: Option<MirLocalId>,
 }
@@ -85,6 +86,7 @@ impl<'a> BodyAnalyzer<'a> {
         let mut binding_locals = HashMap::new();
         let immutable_binding_values = collect_immutable_binding_values(hir, function);
         let immutable_temp_const_items = collect_immutable_temp_const_items(body);
+        let immutable_temp_places = collect_immutable_temp_places(body);
         let mut param_locals = HashMap::new();
         let mut receiver_local = None;
 
@@ -115,6 +117,7 @@ impl<'a> BodyAnalyzer<'a> {
             binding_locals,
             immutable_binding_values,
             immutable_temp_const_items,
+            immutable_temp_places,
             param_locals,
             receiver_local,
         }
@@ -1103,9 +1106,13 @@ impl<'a> BodyAnalyzer<'a> {
         place: &Place,
     ) -> Option<MoveTarget> {
         let mut visiting = ImmutableSourceVisit::default();
-        let expr_id = self.normalized_immutable_source_expr_for_place(place, &mut visiting)?;
-        let target = self.precise_move_target_for_expr(expr_id)?;
-        self.precise_immutable_move_target(target)
+        let precise = self
+            .normalized_immutable_source_expr_for_place(place, &mut visiting)
+            .and_then(|expr_id| {
+                let target = self.precise_move_target_for_expr(expr_id)?;
+                self.precise_immutable_move_target(target)
+            });
+        precise.or_else(|| self.canonical_precise_immutable_move_target_place_fallback(place))
     }
 
     fn canonical_precise_immutable_move_target_for_expr(
@@ -1113,8 +1120,101 @@ impl<'a> BodyAnalyzer<'a> {
         expr_id: hir::ExprId,
     ) -> Option<MoveTarget> {
         let mut visiting = ImmutableSourceVisit::default();
-        let expr_id = self.normalized_immutable_source_expr(expr_id, &mut visiting)?;
-        let target = self.precise_move_target_for_expr(expr_id)?;
+        let normalized_expr_id = self.normalized_immutable_source_expr(expr_id, &mut visiting)?;
+        let target = self.precise_move_target_for_expr(normalized_expr_id)?;
+        let precise = self.precise_immutable_move_target(target);
+        let canonical = if normalized_expr_id == expr_id {
+            self.canonical_precise_immutable_move_target_expr_fallback(expr_id)
+        } else {
+            None
+        };
+        canonical.or(precise)
+    }
+
+    fn canonical_precise_immutable_move_target_expr_fallback(
+        &self,
+        expr_id: hir::ExprId,
+    ) -> Option<MoveTarget> {
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::Name(_) => {
+                let local = self.direct_local_for_expr(expr_id)?;
+                if let LocalOrigin::Binding(hir_local) = &self.body.local(local).origin
+                    && let Some(value) = self.immutable_binding_values.get(hir_local).copied()
+                    && self.precise_move_target_for_expr(value).is_some()
+                    && let Some(target) =
+                        self.canonical_precise_immutable_move_target_expr_fallback(value)
+                {
+                    return Some(target);
+                }
+                self.precise_immutable_move_target(MoveTarget {
+                    local,
+                    path: Vec::new(),
+                })
+            }
+            hir::ExprKind::Member { object, field, .. } => {
+                let mut target = self
+                    .canonical_precise_immutable_move_target_expr_fallback(*object)
+                    .or_else(|| self.canonical_precise_immutable_move_target_for_expr(*object))?;
+                target.path.push(MovePathSegment::Field(field.clone()));
+                self.precise_immutable_move_target(target)
+            }
+            hir::ExprKind::Bracket { target, items } => {
+                if items.len() != 1 {
+                    return None;
+                }
+                let target_ty = self.typeck.expr_ty(*target)?;
+                let mut target = self
+                    .canonical_precise_immutable_move_target_expr_fallback(*target)
+                    .or_else(|| self.canonical_precise_immutable_move_target_for_expr(*target))?;
+                target
+                    .path
+                    .push(match (target_ty, &self.hir.expr(items[0]).kind) {
+                        (Ty::Tuple(_), hir::ExprKind::Integer(raw_index)) => {
+                            MovePathSegment::TupleIndex(parse_usize_literal(raw_index)?)
+                        }
+                        (Ty::Array { .. }, hir::ExprKind::Integer(raw_index)) => {
+                            MovePathSegment::ArrayIndex(parse_usize_literal(raw_index)?)
+                        }
+                        (Ty::Array { .. }, _) => self.dynamic_array_move_path_step_for_expr(items[0]),
+                        _ => return None,
+                    });
+                self.precise_immutable_move_target(target)
+            }
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
+                .hir
+                .block(*block)
+                .tail
+                .and_then(|tail| self.canonical_precise_immutable_move_target_for_expr(tail)),
+            hir::ExprKind::Question(inner) => {
+                self.canonical_precise_immutable_move_target_for_expr(*inner)
+            }
+            _ => None,
+        }
+    }
+
+    fn canonical_precise_immutable_move_target_place_fallback(
+        &self,
+        place: &Place,
+    ) -> Option<MoveTarget> {
+        let mut target = if let Some(source_place) = self.immutable_temp_places.get(&place.base) {
+            self.canonical_precise_immutable_move_target_for_place(source_place)?
+        } else if let Some(source_expr) = self.immutable_source_expr_for_local(place.base) {
+            self.canonical_precise_immutable_move_target_expr_fallback(source_expr)
+                .or_else(|| self.canonical_precise_immutable_move_target_for_expr(source_expr))?
+        } else {
+            self.precise_immutable_move_target(MoveTarget {
+                local: place.base,
+                path: Vec::new(),
+            })?
+        };
+
+        let mut current_ty = self.local_ty(place.base)?;
+        for projection in &place.projections {
+            let next_ty = self.project_place_ty_step(&current_ty, projection)?;
+            target.path.push(self.precise_move_path_step(&current_ty, projection)?);
+            current_ty = next_ty;
+        }
+
         self.precise_immutable_move_target(target)
     }
 
@@ -2908,6 +3008,29 @@ fn collect_immutable_temp_const_items(body: &MirBody) -> HashMap<MirLocalId, hir
         }
     }
     items
+}
+
+fn collect_immutable_temp_places(body: &MirBody) -> HashMap<MirLocalId, Place> {
+    let mut places = HashMap::new();
+    for block_id in body.block_ids() {
+        let block = body.block(block_id);
+        for stmt_id in &block.statements {
+            let StatementKind::Assign { place, value } = &body.statement(*stmt_id).kind else {
+                continue;
+            };
+            if !place.projections.is_empty() {
+                continue;
+            }
+            if !matches!(body.local(place.base).origin, LocalOrigin::Temp { .. }) {
+                continue;
+            }
+            let Rvalue::Use(Operand::Place(source_place)) = value else {
+                continue;
+            };
+            places.insert(place.base, source_place.clone());
+        }
+    }
+    places
 }
 
 fn collect_immutable_binding_values_in_block(
