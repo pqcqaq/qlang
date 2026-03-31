@@ -7556,6 +7556,47 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_recursive_aggregate_results_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+async fn worker() -> (Pair, [Int; 2]) {
+    return (Pair { left: 1, right: 2 }, [3, 4])
+}
+
+fn score(result: (Pair, [Int; 2])) -> Int {
+    return result[0].left + result[0].right + result[1][0] + result[1][1]
+}
+
+async fn main() -> Int {
+    let value = await worker()
+    return score(value)
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_task_await").count() >= 2);
+        assert!(rendered.contains("load { { i64, i64 }, [2 x i64] }, ptr %t"));
+        assert!(rendered.matches("_score(").count() >= 2);
+        assert!(!rendered.contains("does not support `await` lowering yet"));
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_zero_sized_nested_task_handle_payload_in_program_mode()
      {
         let runtime_hooks = collect_runtime_hook_signatures([

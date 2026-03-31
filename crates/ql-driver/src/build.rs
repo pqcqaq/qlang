@@ -1785,6 +1785,56 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_recursive_aggregate_results() {
+        let dir = TestDir::new("ql-driver-async-exe-recursive-aggregate-results");
+        let source = dir.write(
+            "async_recursive_aggregate_results.ql",
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+async fn worker() -> (Pair, [Int; 2]) {
+    return (Pair { left: 1, right: 2 }, [3, 4])
+}
+
+fn score(result: (Pair, [Int; 2])) -> Int {
+    return result[0].left + result[0].right + result[1][0] + result[1][1]
+}
+
+async fn main() -> Int {
+    let value = await worker()
+    return score(value)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_recursive_aggregate_results.exe"
+        } else {
+            "artifacts/async_recursive_aggregate_results"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with recursive aggregate results should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_executable_with_async_main_zero_sized_nested_task_handle_results() {
         let dir = TestDir::new("ql-driver-async-exe-zero-sized-nested-task-handle");
         let source = dir.write(
