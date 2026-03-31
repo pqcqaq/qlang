@@ -5326,6 +5326,63 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_same_const_backed_projected_dynamic_task_handle_reinit()
+     {
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-const-backed-reinit");
+        let source = dir.write(
+            "task_array_dynamic_index_const_backed_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+const SLOT: Slot = Slot { value: 0 }
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    var tasks = [worker(), worker()]
+    let first = await tasks[SLOT.value]
+    tasks[0] = worker()
+    return await tasks[SLOT.value]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/task_array_dynamic_index_const_backed_reinit.lib"
+        } else {
+            "artifacts/libtask_array_dynamic_index_const_backed_reinit.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect(
+            "static library build with same const-backed projected dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_same_projected_immutable_dynamic_task_handle_conditional_reinit()
      {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-projected-conditional-reinit");
@@ -5471,6 +5528,55 @@ async fn helper(index: Int) -> Wrap {
         let diagnostics = error
             .diagnostics()
             .expect("alias-sourced dynamic task-array diagnostics should be returned");
+
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.message == "local `tasks` was used after move")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn build_file_surfaces_same_const_backed_dynamic_task_handle_array_index_use_after_move_diagnostic_once()
+     {
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-const-backed-use-after-move");
+        let source = dir.write(
+            "task_array_dynamic_index_const_backed_use_after_move.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+const INDEX: Int = 0
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper() -> Wrap {
+    let tasks = [worker(), worker()]
+    let first = await tasks[INDEX]
+    return await tasks[0]
+}
+"#,
+        );
+
+        let error = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: None,
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect_err("build should fail");
+        let diagnostics = error
+            .diagnostics()
+            .expect("const-backed dynamic task-array diagnostics should be returned");
 
         assert_eq!(
             diagnostics

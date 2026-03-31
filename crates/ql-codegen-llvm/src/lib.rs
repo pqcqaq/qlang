@@ -11,7 +11,7 @@ use ql_mir::{
     self as mir, BodyOwner, Constant, LocalOrigin, Operand, Place, Rvalue, StatementKind,
     TerminatorKind,
 };
-use ql_resolve::{BuiltinType, ResolutionMap, TypeResolution};
+use ql_resolve::{BuiltinType, ResolutionMap, TypeResolution, ValueResolution};
 use ql_runtime::{RuntimeHook, RuntimeHookSignature};
 use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, lower_type};
@@ -1491,13 +1491,18 @@ impl<'a> ModuleEmitter<'a> {
                     ));
                     None
                 }
-                Constant::Item { .. } => {
-                    diagnostics.push(unsupported(
-                        span,
-                        "LLVM IR backend foundation does not support item values here",
-                    ));
-                    None
-                }
+                Constant::Item { item, .. } => match &self.input.hir.item(*item).kind {
+                    ItemKind::Const(global) => {
+                        Some(lower_type(self.input.hir, self.input.resolution, global.ty))
+                    }
+                    _ => {
+                        diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation does not support item values here",
+                        ));
+                        None
+                    }
+                },
                 Constant::String { .. } => {
                     diagnostics.push(unsupported(
                         span,
@@ -3216,6 +3221,278 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_item_constant(
+        &mut self,
+        output: &mut String,
+        item_id: ItemId,
+        span: Span,
+    ) -> LoweredValue {
+        let ItemKind::Const(global) = &self.emitter.input.hir.item(item_id).kind else {
+            panic!("prepared const item lowering at {span:?} should only materialize const items");
+        };
+        let ty = lower_type(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            global.ty,
+        );
+        self.render_const_expr(output, global.value, Some(&ty), span)
+    }
+
+    fn render_const_expr(
+        &mut self,
+        output: &mut String,
+        expr_id: hir::ExprId,
+        expected_ty: Option<&Ty>,
+        span: Span,
+    ) -> LoweredValue {
+        let expr = self.emitter.input.hir.expr(expr_id);
+        match &expr.kind {
+            hir::ExprKind::Integer(value) => LoweredValue {
+                ty: Ty::Builtin(BuiltinType::Int),
+                llvm_ty: "i64".to_owned(),
+                repr: value.clone(),
+            },
+            hir::ExprKind::Bool(value) => LoweredValue {
+                ty: Ty::Builtin(BuiltinType::Bool),
+                llvm_ty: "i1".to_owned(),
+                repr: if *value { "true" } else { "false" }.to_owned(),
+            },
+            hir::ExprKind::Name(_) => {
+                match self.emitter.input.resolution.expr_resolution(expr_id) {
+                    Some(ValueResolution::Item(item_id)) => {
+                        self.render_item_constant(output, *item_id, span)
+                    }
+                    _ => panic!(
+                        "prepared const item lowering at {span:?} should only reference resolved const items"
+                    ),
+                }
+            }
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+                let tail = self
+                    .emitter
+                    .input
+                    .hir
+                    .block(*block)
+                    .tail
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "prepared const item lowering at {span:?} should only use block constants with tails"
+                        )
+                    });
+                self.render_const_expr(output, tail, expected_ty, span)
+            }
+            hir::ExprKind::Question(inner) => {
+                self.render_const_expr(output, *inner, expected_ty, span)
+            }
+            hir::ExprKind::Tuple(items) => {
+                self.render_const_tuple_expr(output, items, expected_ty, expr.span)
+            }
+            hir::ExprKind::Array(items) => {
+                self.render_const_array_expr(output, items, expected_ty, expr.span)
+            }
+            hir::ExprKind::StructLiteral { fields, .. } => {
+                self.render_const_struct_expr(output, fields, expected_ty, expr.span)
+            }
+            _ => panic!(
+                "prepared const item lowering at {span:?} should not contain unsupported const expressions"
+            ),
+        }
+    }
+
+    fn render_const_tuple_expr(
+        &mut self,
+        output: &mut String,
+        items: &[hir::ExprId],
+        expected_ty: Option<&Ty>,
+        span: Span,
+    ) -> LoweredValue {
+        let tuple_ty = match expected_ty {
+            Some(Ty::Tuple(items)) => Ty::Tuple(items.clone()),
+            Some(other) => panic!(
+                "prepared const tuple lowering at {span:?} should have tuple expected type, found `{other}`"
+            ),
+            None => {
+                panic!("prepared const tuple lowering at {span:?} should have an expected type")
+            }
+        };
+        let Ty::Tuple(expected_items) = &tuple_ty else {
+            unreachable!();
+        };
+        assert_eq!(
+            expected_items.len(),
+            items.len(),
+            "prepared const tuple lowering at {span:?} should preserve tuple arity"
+        );
+        let rendered_items = items
+            .iter()
+            .zip(expected_items.iter())
+            .map(|(item, item_ty)| self.render_const_expr(output, *item, Some(item_ty), span))
+            .collect::<Vec<_>>();
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&tuple_ty, span, "tuple value")
+            .expect("prepared const tuple values should already have supported LLVM types");
+
+        if rendered_items.is_empty() {
+            return LoweredValue {
+                ty: tuple_ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            };
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for (index, item) in rendered_items.iter().enumerate() {
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                item.llvm_ty, item.repr, index
+            );
+            aggregate = next;
+        }
+
+        LoweredValue {
+            ty: tuple_ty,
+            llvm_ty,
+            repr: aggregate,
+        }
+    }
+
+    fn render_const_array_expr(
+        &mut self,
+        output: &mut String,
+        items: &[hir::ExprId],
+        expected_ty: Option<&Ty>,
+        span: Span,
+    ) -> LoweredValue {
+        let array_ty = match expected_ty {
+            Some(Ty::Array { element, len }) => {
+                assert_eq!(
+                    *len,
+                    items.len(),
+                    "prepared const array lowering at {span:?} should preserve array length"
+                );
+                Ty::Array {
+                    element: element.clone(),
+                    len: *len,
+                }
+            }
+            Some(other) => panic!(
+                "prepared const array lowering at {span:?} should have array expected type, found `{other}`"
+            ),
+            None => {
+                panic!("prepared const array lowering at {span:?} should have an expected type")
+            }
+        };
+        let Ty::Array { element, .. } = &array_ty else {
+            unreachable!();
+        };
+        let rendered_items = items
+            .iter()
+            .map(|item| self.render_const_expr(output, *item, Some(element.as_ref()), span))
+            .collect::<Vec<_>>();
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&array_ty, span, "array value")
+            .expect("prepared const array values should already have supported LLVM types");
+
+        if rendered_items.is_empty() {
+            return LoweredValue {
+                ty: array_ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            };
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for (index, item) in rendered_items.iter().enumerate() {
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                item.llvm_ty, item.repr, index
+            );
+            aggregate = next;
+        }
+
+        LoweredValue {
+            ty: array_ty,
+            llvm_ty,
+            repr: aggregate,
+        }
+    }
+
+    fn render_const_struct_expr(
+        &mut self,
+        output: &mut String,
+        fields: &[hir::StructLiteralField],
+        expected_ty: Option<&Ty>,
+        span: Span,
+    ) -> LoweredValue {
+        let struct_ty = expected_ty.cloned().unwrap_or_else(|| {
+            panic!("prepared const struct lowering at {span:?} should have an expected type")
+        });
+        let field_layouts = self
+            .emitter
+            .struct_field_lowerings(&struct_ty, span, "struct value")
+            .unwrap_or_else(|_| {
+                panic!("prepared const struct lowering at {span:?} should have a loadable declaration layout")
+            });
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&struct_ty, span, "struct value")
+            .unwrap_or_else(|_| {
+                panic!("prepared const struct lowering at {span:?} should have a lowered LLVM type")
+            });
+
+        let mut rendered_fields = HashMap::with_capacity(fields.len());
+        for field in fields {
+            let field_ty = field_layouts
+                .iter()
+                .find(|layout| layout.name == field.name)
+                .map(|layout| &layout.ty)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "prepared const struct lowering at {span:?} should provide declared field `{}`",
+                        field.name
+                    )
+                });
+            let rendered = self.render_const_expr(output, field.value, Some(field_ty), span);
+            rendered_fields.insert(field.name.clone(), rendered);
+        }
+
+        if field_layouts.is_empty() {
+            return LoweredValue {
+                ty: struct_ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            };
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for (index, field) in field_layouts.iter().enumerate() {
+            let rendered = rendered_fields.remove(&field.name).unwrap_or_else(|| {
+                panic!(
+                    "prepared const struct lowering at {span:?} should provide every declared field"
+                )
+            });
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                rendered.llvm_ty, rendered.repr, index
+            );
+            aggregate = next;
+        }
+
+        LoweredValue {
+            ty: struct_ty,
+            llvm_ty,
+            repr: aggregate,
+        }
+    }
+
     fn render_operand(
         &mut self,
         output: &mut String,
@@ -3245,9 +3522,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         "prepared non-call operands should not materialize function declarations"
                     )
                 }
-                Constant::Item { .. } => {
-                    panic!("prepared operands should not materialize unsupported item values")
-                }
+                Constant::Item { item, .. } => self.render_item_constant(output, *item, span),
                 Constant::String { .. }
                 | Constant::None
                 | Constant::Import(_)

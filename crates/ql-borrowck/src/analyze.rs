@@ -54,6 +54,7 @@ struct BodyAnalyzer<'a> {
     task_handle_call_plans: HashMap<ql_span::Span, Vec<bool>>,
     binding_locals: HashMap<hir::LocalId, MirLocalId>,
     immutable_binding_values: HashMap<hir::LocalId, hir::ExprId>,
+    immutable_temp_const_items: HashMap<MirLocalId, hir::ItemId>,
     param_locals: HashMap<usize, MirLocalId>,
     receiver_local: Option<MirLocalId>,
 }
@@ -62,6 +63,12 @@ struct BodyAnalyzer<'a> {
 struct MoveTarget {
     local: MirLocalId,
     path: Vec<MovePathSegment>,
+}
+
+#[derive(Default)]
+struct ImmutableSourceVisit {
+    locals: HashSet<hir::LocalId>,
+    items: HashSet<hir::ItemId>,
 }
 
 impl<'a> BodyAnalyzer<'a> {
@@ -77,6 +84,7 @@ impl<'a> BodyAnalyzer<'a> {
             collect_task_handle_call_plans(hir, resolution, typeck, function);
         let mut binding_locals = HashMap::new();
         let immutable_binding_values = collect_immutable_binding_values(hir, function);
+        let immutable_temp_const_items = collect_immutable_temp_const_items(body);
         let mut param_locals = HashMap::new();
         let mut receiver_local = None;
 
@@ -106,6 +114,7 @@ impl<'a> BodyAnalyzer<'a> {
             task_handle_call_plans,
             binding_locals,
             immutable_binding_values,
+            immutable_temp_const_items,
             param_locals,
             receiver_local,
         }
@@ -811,11 +820,22 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
-    fn immutable_binding_initializer_for_local(&self, local: MirLocalId) -> Option<hir::ExprId> {
+    fn const_item_value_expr(&self, item_id: hir::ItemId) -> Option<hir::ExprId> {
+        match &self.hir.item(item_id).kind {
+            ItemKind::Const(global) => Some(global.value),
+            _ => None,
+        }
+    }
+
+    fn immutable_source_expr_for_local(&self, local: MirLocalId) -> Option<hir::ExprId> {
         match &self.body.local(local).origin {
             LocalOrigin::Binding(hir_local) => {
                 self.immutable_binding_values.get(hir_local).copied()
             }
+            LocalOrigin::Temp { .. } => self
+                .immutable_temp_const_items
+                .get(&local)
+                .and_then(|item_id| self.const_item_value_expr(*item_id)),
             _ => None,
         }
     }
@@ -938,17 +958,20 @@ impl<'a> BodyAnalyzer<'a> {
     }
 
     fn fixed_array_index_value_for_operand(&self, operand: &Operand) -> Option<usize> {
-        let mut visiting = HashSet::new();
+        let mut visiting = ImmutableSourceVisit::default();
         self.fixed_array_index_value_for_operand_inner(operand, &mut visiting)
     }
 
     fn fixed_array_index_value_for_operand_inner(
         &self,
         operand: &Operand,
-        visiting: &mut HashSet<hir::LocalId>,
+        visiting: &mut ImmutableSourceVisit,
     ) -> Option<usize> {
         match operand {
             Operand::Constant(Constant::Integer(raw)) => parse_usize_literal(raw),
+            Operand::Constant(Constant::Item { item, .. }) => self
+                .const_item_value_expr(*item)
+                .and_then(|expr_id| self.fixed_array_index_value_for_expr_inner(expr_id, visiting)),
             Operand::Place(place) => self.fixed_array_index_value_for_place(place, visiting),
             Operand::Constant(_) => None,
         }
@@ -957,9 +980,9 @@ impl<'a> BodyAnalyzer<'a> {
     fn fixed_array_index_value_for_place(
         &self,
         place: &Place,
-        visiting: &mut HashSet<hir::LocalId>,
+        visiting: &mut ImmutableSourceVisit,
     ) -> Option<usize> {
-        let mut current = self.immutable_binding_initializer_for_local(place.base)?;
+        let mut current = self.immutable_source_expr_for_local(place.base)?;
         for projection in &place.projections {
             current = self.project_immutable_expr_for_projection(current, projection, visiting)?;
         }
@@ -967,14 +990,14 @@ impl<'a> BodyAnalyzer<'a> {
     }
 
     fn fixed_array_index_value_for_expr(&self, expr_id: hir::ExprId) -> Option<usize> {
-        let mut visiting = HashSet::new();
+        let mut visiting = ImmutableSourceVisit::default();
         self.fixed_array_index_value_for_expr_inner(expr_id, &mut visiting)
     }
 
     fn fixed_array_index_value_for_expr_inner(
         &self,
         expr_id: hir::ExprId,
-        visiting: &mut HashSet<hir::LocalId>,
+        visiting: &mut ImmutableSourceVisit,
     ) -> Option<usize> {
         let expr_id = self.normalized_immutable_source_expr(expr_id, visiting)?;
         match &self.hir.expr(expr_id).kind {
@@ -995,9 +1018,9 @@ impl<'a> BodyAnalyzer<'a> {
     fn normalized_immutable_source_expr_for_place(
         &self,
         place: &Place,
-        visiting: &mut HashSet<hir::LocalId>,
+        visiting: &mut ImmutableSourceVisit,
     ) -> Option<hir::ExprId> {
-        let mut current = self.immutable_binding_initializer_for_local(place.base)?;
+        let mut current = self.immutable_source_expr_for_local(place.base)?;
         for projection in &place.projections {
             current = self.project_immutable_expr_for_projection(current, projection, visiting)?;
         }
@@ -1007,24 +1030,40 @@ impl<'a> BodyAnalyzer<'a> {
     fn normalized_immutable_source_expr(
         &self,
         expr_id: hir::ExprId,
-        visiting: &mut HashSet<hir::LocalId>,
+        visiting: &mut ImmutableSourceVisit,
     ) -> Option<hir::ExprId> {
         match &self.hir.expr(expr_id).kind {
-            hir::ExprKind::Name(_) => {
-                let local = self.direct_local_for_expr(expr_id)?;
-                let LocalOrigin::Binding(hir_local) = &self.body.local(local).origin else {
-                    return Some(expr_id);
-                };
-                let Some(value) = self.immutable_binding_values.get(hir_local).copied() else {
-                    return Some(expr_id);
-                };
-                if !visiting.insert(*hir_local) {
-                    return None;
+            hir::ExprKind::Name(_) => match self.resolution.expr_resolution(expr_id)? {
+                ValueResolution::Local(_)
+                | ValueResolution::Param(_)
+                | ValueResolution::SelfValue => {
+                    let local = self.direct_local_for_expr(expr_id)?;
+                    let LocalOrigin::Binding(hir_local) = &self.body.local(local).origin else {
+                        return Some(expr_id);
+                    };
+                    let Some(value) = self.immutable_binding_values.get(hir_local).copied() else {
+                        return Some(expr_id);
+                    };
+                    if !visiting.locals.insert(*hir_local) {
+                        return None;
+                    }
+                    let resolved = self.normalized_immutable_source_expr(value, visiting);
+                    visiting.locals.remove(hir_local);
+                    resolved
                 }
-                let resolved = self.normalized_immutable_source_expr(value, visiting);
-                visiting.remove(hir_local);
-                resolved
-            }
+                ValueResolution::Item(item_id) => {
+                    let ItemKind::Const(global) = &self.hir.item(*item_id).kind else {
+                        return Some(expr_id);
+                    };
+                    if !visiting.items.insert(*item_id) {
+                        return None;
+                    }
+                    let resolved = self.normalized_immutable_source_expr(global.value, visiting);
+                    visiting.items.remove(item_id);
+                    resolved
+                }
+                ValueResolution::Function(_) | ValueResolution::Import(_) => Some(expr_id),
+            },
             hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
                 .hir
                 .block(*block)
@@ -1063,7 +1102,7 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         place: &Place,
     ) -> Option<MoveTarget> {
-        let mut visiting = HashSet::new();
+        let mut visiting = ImmutableSourceVisit::default();
         let expr_id = self.normalized_immutable_source_expr_for_place(place, &mut visiting)?;
         let target = self.precise_move_target_for_expr(expr_id)?;
         self.precise_immutable_move_target(target)
@@ -1073,7 +1112,7 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         expr_id: hir::ExprId,
     ) -> Option<MoveTarget> {
-        let mut visiting = HashSet::new();
+        let mut visiting = ImmutableSourceVisit::default();
         let expr_id = self.normalized_immutable_source_expr(expr_id, &mut visiting)?;
         let target = self.precise_move_target_for_expr(expr_id)?;
         self.precise_immutable_move_target(target)
@@ -1083,7 +1122,7 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         expr_id: hir::ExprId,
         projection: &ProjectionElem,
-        visiting: &mut HashSet<hir::LocalId>,
+        visiting: &mut ImmutableSourceVisit,
     ) -> Option<hir::ExprId> {
         match projection {
             ProjectionElem::Field(field) => {
@@ -1104,7 +1143,7 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         expr_id: hir::ExprId,
         field: &str,
-        visiting: &mut HashSet<hir::LocalId>,
+        visiting: &mut ImmutableSourceVisit,
     ) -> Option<hir::ExprId> {
         let expr_id = self.normalized_immutable_source_expr(expr_id, visiting)?;
         match &self.hir.expr(expr_id).kind {
@@ -1120,7 +1159,7 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         expr_id: hir::ExprId,
         index: usize,
-        visiting: &mut HashSet<hir::LocalId>,
+        visiting: &mut ImmutableSourceVisit,
     ) -> Option<hir::ExprId> {
         let expr_id = self.normalized_immutable_source_expr(expr_id, visiting)?;
         match &self.hir.expr(expr_id).kind {
@@ -2833,6 +2872,29 @@ fn collect_immutable_binding_values(
     };
     collect_immutable_binding_values_in_block(hir, body, &mut values);
     values
+}
+
+fn collect_immutable_temp_const_items(body: &MirBody) -> HashMap<MirLocalId, hir::ItemId> {
+    let mut items = HashMap::new();
+    for block_id in body.block_ids() {
+        let block = body.block(block_id);
+        for stmt_id in &block.statements {
+            let StatementKind::Assign { place, value } = &body.statement(*stmt_id).kind else {
+                continue;
+            };
+            if !place.projections.is_empty() {
+                continue;
+            }
+            if !matches!(body.local(place.base).origin, LocalOrigin::Temp { .. }) {
+                continue;
+            }
+            let Rvalue::Use(Operand::Constant(Constant::Item { item, .. })) = value else {
+                continue;
+            };
+            items.insert(place.base, *item);
+        }
+    }
+    items
 }
 
 fn collect_immutable_binding_values_in_block(
