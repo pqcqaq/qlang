@@ -1597,6 +1597,52 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_spawned_bound_task_handles() {
+        let dir = TestDir::new("ql-driver-async-exe-spawn-bound-task-handle");
+        let source = dir.write(
+            "async_spawn_bound_task_handle.ql",
+            r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let first_task = worker(1)
+    let second_task = worker(2)
+    let first_running = spawn first_task
+    let second_running = spawn second_task
+    let first = await first_running
+    let second = await second_running
+    return first + second
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_spawn_bound_task_handle.exe"
+        } else {
+            "artifacts/async_spawn_bound_task_handle"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with spawned bound task handles should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_executable_with_async_main_local_returned_zero_sized_task_handle_helpers()
     {
         let dir = TestDir::new("ql-driver-async-exe-local-return-zero-sized-task-handle-helper");
