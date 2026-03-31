@@ -1121,6 +1121,7 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
     ];
+    pass_cases.extend(dynamic_task_handle_pass_cases());
     pass_cases.extend(projected_dynamic_task_handle_pass_cases());
 
     let fail_cases = vec![
@@ -1316,6 +1317,24 @@ fn codegen_snapshots_match() {
 }
 
 #[test]
+fn dynamic_task_handle_codegen_cases_match() {
+    let workspace_root = workspace_root();
+    let mut failures = Vec::new();
+
+    for case in dynamic_task_handle_pass_cases() {
+        if let Err(message) = run_pass_case(&workspace_root, &case) {
+            failures.push(message);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "dynamic task-handle codegen regressions:\n\n{}",
+        failures.join("\n\n")
+    );
+}
+
+#[test]
 fn projected_dynamic_task_handle_codegen_cases_match() {
     let workspace_root = workspace_root();
     let mut failures = Vec::new();
@@ -1393,6 +1412,55 @@ fn projected_dynamic_task_handle_pass_cases() -> Vec<PassCase> {
         PassCase {
             name: "async_program_main_projected_dynamic_task_handle_conditional_reinit_exe",
             source_relative: "fixtures/codegen/pass/async_program_main_projected_dynamic_task_handle_conditional_reinit.ql",
+            emit: "exe",
+            expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+    ]
+}
+
+fn dynamic_task_handle_pass_cases() -> Vec<PassCase> {
+    vec![
+        PassCase {
+            name: "async_library_dynamic_task_handle_array_assignment_staticlib",
+            source_relative: "fixtures/codegen/pass/async_library_dynamic_task_handle_array_assignment.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
+            name: "async_library_dynamic_task_handle_spawn_sibling_staticlib",
+            source_relative: "fixtures/codegen/pass/async_library_dynamic_task_handle_spawn_sibling.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
+            name: "async_program_main_dynamic_task_handle_array_assignment_exe",
+            source_relative: "fixtures/codegen/pass/async_program_main_dynamic_task_handle_array_assignment.ql",
+            emit: "exe",
+            expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
+            name: "async_program_main_dynamic_task_handle_spawn_sibling_exe",
+            source_relative: "fixtures/codegen/pass/async_program_main_dynamic_task_handle_spawn_sibling.ql",
             emit: "exe",
             expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
             mock_compiler: true,

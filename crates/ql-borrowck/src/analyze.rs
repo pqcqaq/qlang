@@ -53,6 +53,7 @@ struct BodyAnalyzer<'a> {
     // ownership needs a small HIR/typeck-derived lookup table keyed by call span.
     task_handle_call_plans: HashMap<ql_span::Span, Vec<bool>>,
     binding_locals: HashMap<hir::LocalId, MirLocalId>,
+    immutable_binding_values: HashMap<hir::LocalId, hir::ExprId>,
     param_locals: HashMap<usize, MirLocalId>,
     receiver_local: Option<MirLocalId>,
 }
@@ -75,6 +76,7 @@ impl<'a> BodyAnalyzer<'a> {
         let task_handle_call_plans =
             collect_task_handle_call_plans(hir, resolution, typeck, function);
         let mut binding_locals = HashMap::new();
+        let immutable_binding_values = collect_immutable_binding_values(hir, function);
         let mut param_locals = HashMap::new();
         let mut receiver_local = None;
 
@@ -103,6 +105,7 @@ impl<'a> BodyAnalyzer<'a> {
             receiver_ty,
             task_handle_call_plans,
             binding_locals,
+            immutable_binding_values,
             param_locals,
             receiver_local,
         }
@@ -808,6 +811,15 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
+    fn immutable_binding_initializer_for_local(&self, local: MirLocalId) -> Option<hir::ExprId> {
+        match &self.body.local(local).origin {
+            LocalOrigin::Binding(hir_local) => {
+                self.immutable_binding_values.get(hir_local).copied()
+            }
+            _ => None,
+        }
+    }
+
     fn move_target_for_place(&self, place: &Place) -> Option<MoveTarget> {
         let mut current_ty = self.local_ty(place.base)?;
         let mut path = Vec::new();
@@ -925,7 +937,146 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
+    fn fixed_array_index_value_for_operand(&self, operand: &Operand) -> Option<usize> {
+        let mut visiting = HashSet::new();
+        self.fixed_array_index_value_for_operand_inner(operand, &mut visiting)
+    }
+
+    fn fixed_array_index_value_for_operand_inner(
+        &self,
+        operand: &Operand,
+        visiting: &mut HashSet<hir::LocalId>,
+    ) -> Option<usize> {
+        match operand {
+            Operand::Constant(Constant::Integer(raw)) => parse_usize_literal(raw),
+            Operand::Place(place) => self.fixed_array_index_value_for_place(place, visiting),
+            Operand::Constant(_) => None,
+        }
+    }
+
+    fn fixed_array_index_value_for_place(
+        &self,
+        place: &Place,
+        visiting: &mut HashSet<hir::LocalId>,
+    ) -> Option<usize> {
+        let mut current = self.immutable_binding_initializer_for_local(place.base)?;
+        for projection in &place.projections {
+            current = self.project_const_expr_for_projection(current, projection, visiting)?;
+        }
+        self.fixed_array_index_value_for_expr_inner(current, visiting)
+    }
+
+    fn fixed_array_index_value_for_expr(&self, expr_id: hir::ExprId) -> Option<usize> {
+        let mut visiting = HashSet::new();
+        self.fixed_array_index_value_for_expr_inner(expr_id, &mut visiting)
+    }
+
+    fn fixed_array_index_value_for_expr_inner(
+        &self,
+        expr_id: hir::ExprId,
+        visiting: &mut HashSet<hir::LocalId>,
+    ) -> Option<usize> {
+        let expr_id = self.normalized_const_source_expr(expr_id, visiting)?;
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::Integer(raw) => parse_usize_literal(raw),
+            hir::ExprKind::Member { object, field, .. } => {
+                let projected = self.project_member_const_expr(*object, field, visiting)?;
+                self.fixed_array_index_value_for_expr_inner(projected, visiting)
+            }
+            hir::ExprKind::Bracket { target, items } if items.len() == 1 => {
+                let index = self.fixed_array_index_value_for_expr_inner(items[0], visiting)?;
+                let projected = self.project_index_const_expr(*target, index, visiting)?;
+                self.fixed_array_index_value_for_expr_inner(projected, visiting)
+            }
+            _ => None,
+        }
+    }
+
+    fn normalized_const_source_expr(
+        &self,
+        expr_id: hir::ExprId,
+        visiting: &mut HashSet<hir::LocalId>,
+    ) -> Option<hir::ExprId> {
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::Name(_) => {
+                let local = self.direct_local_for_expr(expr_id)?;
+                let LocalOrigin::Binding(hir_local) = &self.body.local(local).origin else {
+                    return Some(expr_id);
+                };
+                let Some(value) = self.immutable_binding_values.get(hir_local).copied() else {
+                    return Some(expr_id);
+                };
+                if !visiting.insert(*hir_local) {
+                    return None;
+                }
+                let resolved = self.normalized_const_source_expr(value, visiting);
+                visiting.remove(hir_local);
+                resolved
+            }
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
+                .hir
+                .block(*block)
+                .tail
+                .and_then(|tail| self.normalized_const_source_expr(tail, visiting)),
+            hir::ExprKind::Question(inner) => self.normalized_const_source_expr(*inner, visiting),
+            _ => Some(expr_id),
+        }
+    }
+
+    fn project_const_expr_for_projection(
+        &self,
+        expr_id: hir::ExprId,
+        projection: &ProjectionElem,
+        visiting: &mut HashSet<hir::LocalId>,
+    ) -> Option<hir::ExprId> {
+        match projection {
+            ProjectionElem::Field(field) => {
+                self.project_member_const_expr(expr_id, field, visiting)
+            }
+            ProjectionElem::TupleIndex(index) => {
+                self.project_index_const_expr(expr_id, *index, visiting)
+            }
+            ProjectionElem::Index(index) => {
+                let constant_index =
+                    self.fixed_array_index_value_for_operand_inner(index, visiting)?;
+                self.project_index_const_expr(expr_id, constant_index, visiting)
+            }
+        }
+    }
+
+    fn project_member_const_expr(
+        &self,
+        expr_id: hir::ExprId,
+        field: &str,
+        visiting: &mut HashSet<hir::LocalId>,
+    ) -> Option<hir::ExprId> {
+        let expr_id = self.normalized_const_source_expr(expr_id, visiting)?;
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::StructLiteral { fields, .. } => fields
+                .iter()
+                .find(|candidate| candidate.name == field)
+                .map(|candidate| candidate.value),
+            _ => None,
+        }
+    }
+
+    fn project_index_const_expr(
+        &self,
+        expr_id: hir::ExprId,
+        index: usize,
+        visiting: &mut HashSet<hir::LocalId>,
+    ) -> Option<hir::ExprId> {
+        let expr_id = self.normalized_const_source_expr(expr_id, visiting)?;
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::Array(items) | hir::ExprKind::Tuple(items) => items.get(index).copied(),
+            _ => None,
+        }
+    }
+
     fn dynamic_array_move_path_step_for_operand(&self, operand: &Operand) -> MovePathSegment {
+        if let Some(index) = self.fixed_array_index_value_for_operand(operand) {
+            return MovePathSegment::ArrayIndex(index);
+        }
         if let Operand::Place(place) = operand
             && let Some(target) = self.precise_immutable_move_target_for_place(place)
         {
@@ -935,6 +1086,9 @@ impl<'a> BodyAnalyzer<'a> {
     }
 
     fn dynamic_array_move_path_step_for_expr(&self, expr_id: hir::ExprId) -> MovePathSegment {
+        if let Some(index) = self.fixed_array_index_value_for_expr(expr_id) {
+            return MovePathSegment::ArrayIndex(index);
+        }
         if let Some(target) = self.precise_immutable_move_target_for_expr(expr_id) {
             return self.stable_dynamic_index_segment_for_target(target);
         }
@@ -2603,6 +2757,149 @@ fn collect_task_handle_call_plans(
     };
     collect_task_handle_call_plans_in_block(hir, resolution, typeck, body, &mut plans);
     plans
+}
+
+fn collect_immutable_binding_values(
+    hir: &hir::Module,
+    function: &Function,
+) -> HashMap<hir::LocalId, hir::ExprId> {
+    let mut values = HashMap::new();
+    let Some(body) = function.body else {
+        return values;
+    };
+    collect_immutable_binding_values_in_block(hir, body, &mut values);
+    values
+}
+
+fn collect_immutable_binding_values_in_block(
+    hir: &hir::Module,
+    block_id: hir::BlockId,
+    values: &mut HashMap<hir::LocalId, hir::ExprId>,
+) {
+    let block = hir.block(block_id);
+    for stmt_id in &block.statements {
+        collect_immutable_binding_values_in_stmt(hir, *stmt_id, values);
+    }
+    if let Some(tail) = block.tail {
+        collect_immutable_binding_values_in_expr(hir, tail, values);
+    }
+}
+
+fn collect_immutable_binding_values_in_stmt(
+    hir: &hir::Module,
+    stmt_id: hir::StmtId,
+    values: &mut HashMap<hir::LocalId, hir::ExprId>,
+) {
+    match &hir.stmt(stmt_id).kind {
+        hir::StmtKind::Let {
+            mutable,
+            pattern,
+            value,
+        } => {
+            if !mutable && let hir::PatternKind::Binding(local) = &hir.pattern(*pattern).kind {
+                values.insert(*local, *value);
+            }
+            collect_immutable_binding_values_in_expr(hir, *value, values);
+        }
+        hir::StmtKind::Defer(value) => {
+            collect_immutable_binding_values_in_expr(hir, *value, values)
+        }
+        hir::StmtKind::Return(value) => {
+            if let Some(value) = value {
+                collect_immutable_binding_values_in_expr(hir, *value, values);
+            }
+        }
+        hir::StmtKind::While { condition, body } => {
+            collect_immutable_binding_values_in_expr(hir, *condition, values);
+            collect_immutable_binding_values_in_block(hir, *body, values);
+        }
+        hir::StmtKind::Loop { body } => {
+            collect_immutable_binding_values_in_block(hir, *body, values);
+        }
+        hir::StmtKind::For { iterable, body, .. } => {
+            collect_immutable_binding_values_in_expr(hir, *iterable, values);
+            collect_immutable_binding_values_in_block(hir, *body, values);
+        }
+        hir::StmtKind::Expr { expr, .. } => {
+            collect_immutable_binding_values_in_expr(hir, *expr, values);
+        }
+        hir::StmtKind::Break | hir::StmtKind::Continue => {}
+    }
+}
+
+fn collect_immutable_binding_values_in_expr(
+    hir: &hir::Module,
+    expr_id: hir::ExprId,
+    values: &mut HashMap<hir::LocalId, hir::ExprId>,
+) {
+    let expr = hir.expr(expr_id);
+    match &expr.kind {
+        hir::ExprKind::Name(_)
+        | hir::ExprKind::Integer(_)
+        | hir::ExprKind::String { .. }
+        | hir::ExprKind::Bool(_)
+        | hir::ExprKind::NoneLiteral => {}
+        hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => {
+            for item in items {
+                collect_immutable_binding_values_in_expr(hir, *item, values);
+            }
+        }
+        hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+            collect_immutable_binding_values_in_block(hir, *block, values);
+        }
+        hir::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_immutable_binding_values_in_expr(hir, *condition, values);
+            collect_immutable_binding_values_in_block(hir, *then_branch, values);
+            if let Some(else_expr) = else_branch {
+                collect_immutable_binding_values_in_expr(hir, *else_expr, values);
+            }
+        }
+        hir::ExprKind::Match { value, arms } => {
+            collect_immutable_binding_values_in_expr(hir, *value, values);
+            for arm in arms {
+                if let Some(guard) = arm.guard {
+                    collect_immutable_binding_values_in_expr(hir, guard, values);
+                }
+                collect_immutable_binding_values_in_expr(hir, arm.body, values);
+            }
+        }
+        hir::ExprKind::Closure { .. } => {}
+        hir::ExprKind::Call { callee, args } => {
+            collect_immutable_binding_values_in_expr(hir, *callee, values);
+            for arg in args {
+                let value = match arg {
+                    hir::CallArg::Positional(value) => *value,
+                    hir::CallArg::Named { value, .. } => *value,
+                };
+                collect_immutable_binding_values_in_expr(hir, value, values);
+            }
+        }
+        hir::ExprKind::Member { object, .. } => {
+            collect_immutable_binding_values_in_expr(hir, *object, values);
+        }
+        hir::ExprKind::Bracket { target, items } => {
+            collect_immutable_binding_values_in_expr(hir, *target, values);
+            for item in items {
+                collect_immutable_binding_values_in_expr(hir, *item, values);
+            }
+        }
+        hir::ExprKind::StructLiteral { fields, .. } => {
+            for field in fields {
+                collect_immutable_binding_values_in_expr(hir, field.value, values);
+            }
+        }
+        hir::ExprKind::Binary { left, right, .. } => {
+            collect_immutable_binding_values_in_expr(hir, *left, values);
+            collect_immutable_binding_values_in_expr(hir, *right, values);
+        }
+        hir::ExprKind::Unary { expr, .. } | hir::ExprKind::Question(expr) => {
+            collect_immutable_binding_values_in_expr(hir, *expr, values);
+        }
+    }
 }
 
 fn collect_task_handle_call_plans_in_block(

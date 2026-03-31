@@ -2705,6 +2705,113 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_dynamic_task_handle_array_index_assignment() {
+        let dir = TestDir::new("ql-driver-async-exe-dynamic-task-array-index-assignment");
+        let source = dir.write(
+            "async_dynamic_task_handle_array_index_assignment.ql",
+            r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var index = 0
+    var tasks = [worker(1), worker(2)]
+    tasks[index] = worker(3)
+    let value = await tasks[0]
+    return score(value)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_dynamic_task_handle_array_index_assignment.exe"
+        } else {
+            "artifacts/async_dynamic_task_handle_array_index_assignment"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with dynamic task-handle array assignment should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_async_main_dynamic_task_handle_spawn_and_sibling_task_use()
+    {
+        let dir = TestDir::new("ql-driver-async-exe-dynamic-task-spawn-sibling");
+        let source = dir.write(
+            "async_dynamic_task_handle_spawn_sibling.ql",
+            r#"
+struct Pending {
+    tasks: [Task[Int]; 2],
+    fallback: Task[Int],
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var index = 0
+    let pending = Pending {
+        tasks: [worker(1), worker(2)],
+        fallback: worker(7),
+    }
+    let running = spawn pending.tasks[index]
+    let first = await running
+    let second = await pending.fallback
+    return score(first) + score(second)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_dynamic_task_handle_spawn_sibling.exe"
+        } else {
+            "artifacts/async_dynamic_task_handle_spawn_sibling"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "async executable with dynamic task-handle spawn and sibling task use should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_executable_with_async_main_zero_sized_projected_task_handle_awaits() {
         let dir = TestDir::new("ql-driver-async-exe-zero-sized-projected-task-handle-awaits");
         let source = dir.write(
