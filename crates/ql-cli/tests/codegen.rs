@@ -1641,6 +1641,17 @@ fn dynamic_task_handle_pass_cases() -> Vec<PassCase> {
             header_surface: None,
             expected_header_relative: None,
         },
+        PassCase {
+            name: "async_library_guard_refined_dynamic_task_handle_reinit_staticlib",
+            source_relative: "fixtures/codegen/pass/async_library_guard_refined_dynamic_task_handle_reinit.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
     ]
 }
 

@@ -58,12 +58,26 @@ struct BodyAnalyzer<'a> {
     immutable_temp_places: HashMap<MirLocalId, Place>,
     param_locals: HashMap<usize, MirLocalId>,
     receiver_local: Option<MirLocalId>,
+    bool_index_refinements: HashMap<MirLocalId, BoolIndexRefinement>,
+    block_entry_index_refinements: Vec<Vec<IndexRefinement>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct MoveTarget {
     local: MirLocalId,
     path: Vec<MovePathSegment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct IndexRefinement {
+    target: MoveTarget,
+    value: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+struct BoolIndexRefinement {
+    when_true: Vec<IndexRefinement>,
+    when_false: Vec<IndexRefinement>,
 }
 
 #[derive(Default)]
@@ -106,7 +120,7 @@ impl<'a> BodyAnalyzer<'a> {
             }
         }
 
-        Self {
+        let mut analyzer = Self {
             hir,
             resolution,
             typeck,
@@ -120,7 +134,150 @@ impl<'a> BodyAnalyzer<'a> {
             immutable_temp_places,
             param_locals,
             receiver_local,
+            bool_index_refinements: HashMap::new(),
+            block_entry_index_refinements: vec![Vec::new(); body.blocks().len()],
+        };
+        analyzer.bool_index_refinements = analyzer.collect_bool_index_refinements();
+        analyzer.block_entry_index_refinements =
+            analyzer.collect_block_entry_index_refinements();
+        analyzer
+    }
+
+    fn block_entry_index_refinements(&self, block_id: BasicBlockId) -> &[IndexRefinement] {
+        &self.block_entry_index_refinements[block_id.index()]
+    }
+
+    fn collect_bool_index_refinements(&self) -> HashMap<MirLocalId, BoolIndexRefinement> {
+        let mut refinements: HashMap<MirLocalId, BoolIndexRefinement> = HashMap::new();
+
+        for block_id in self.body.block_ids() {
+            let block = self.body.block(block_id);
+            for stmt_id in &block.statements {
+                let StatementKind::Assign { place, value } = &self.body.statement(*stmt_id).kind
+                else {
+                    continue;
+                };
+                if !place.projections.is_empty() {
+                    continue;
+                }
+                let Rvalue::Binary { left, op, right } = value else {
+                    continue;
+                };
+                let Some(refinement) =
+                    self.index_refinement_for_comparison_operands(left, right)
+                else {
+                    continue;
+                };
+                let entry = refinements.entry(place.base).or_default();
+                match op {
+                    BinaryOp::EqEq => {
+                        entry.when_true = vec![refinement];
+                    }
+                    BinaryOp::BangEq => {
+                        entry.when_false = vec![refinement];
+                    }
+                    _ => {}
+                }
+            }
         }
+
+        refinements
+    }
+
+    fn collect_block_entry_index_refinements(&self) -> Vec<Vec<IndexRefinement>> {
+        let block_count = self.body.blocks().len();
+        let mut entry_refinements = vec![Vec::new(); block_count];
+        let mut initialized = vec![false; block_count];
+        initialized[self.body.entry.index()] = true;
+
+        let mut worklist = VecDeque::from([self.body.entry]);
+        while let Some(block_id) = worklist.pop_front() {
+            let incoming = entry_refinements[block_id.index()].clone();
+            for (successor, successor_refinements) in
+                self.successor_entry_index_refinements(block_id, &incoming)
+            {
+                let (merged, changed) = merge_index_refinement_vec(
+                    initialized[successor.index()]
+                        .then_some(entry_refinements[successor.index()].as_slice()),
+                    &successor_refinements,
+                );
+                if changed {
+                    entry_refinements[successor.index()] = merged;
+                    initialized[successor.index()] = true;
+                    worklist.push_back(successor);
+                }
+            }
+        }
+
+        entry_refinements
+    }
+
+    fn successor_entry_index_refinements(
+        &self,
+        block_id: BasicBlockId,
+        incoming: &[IndexRefinement],
+    ) -> Vec<(BasicBlockId, Vec<IndexRefinement>)> {
+        match &self.body.block(block_id).terminator.kind {
+            TerminatorKind::Goto { target } => vec![(*target, incoming.to_vec())],
+            TerminatorKind::Branch {
+                condition,
+                then_target,
+                else_target,
+            } => {
+                let mut then_refinements = incoming.to_vec();
+                let mut else_refinements = incoming.to_vec();
+                if let Operand::Place(place) = condition
+                    && let Some(refinement) = self.bool_index_refinements.get(&place.base)
+                {
+                    then_refinements =
+                        apply_branch_index_refinements(&then_refinements, &refinement.when_true);
+                    else_refinements =
+                        apply_branch_index_refinements(&else_refinements, &refinement.when_false);
+                }
+                vec![
+                    (*then_target, then_refinements),
+                    (*else_target, else_refinements),
+                ]
+            }
+            TerminatorKind::Match {
+                arms, else_target, ..
+            } => arms
+                .iter()
+                .map(|arm| (arm.target, incoming.to_vec()))
+                .chain(std::iter::once((*else_target, incoming.to_vec())))
+                .collect(),
+            TerminatorKind::ForLoop {
+                body_target,
+                exit_target,
+                ..
+            } => vec![
+                (*body_target, incoming.to_vec()),
+                (*exit_target, incoming.to_vec()),
+            ],
+            TerminatorKind::Return | TerminatorKind::Terminate => Vec::new(),
+        }
+    }
+
+    fn index_refinement_for_comparison_operands(
+        &self,
+        left: &Operand,
+        right: &Operand,
+    ) -> Option<IndexRefinement> {
+        self.index_refinement_for_comparison_operands_one_way(left, right)
+            .or_else(|| self.index_refinement_for_comparison_operands_one_way(right, left))
+    }
+
+    fn index_refinement_for_comparison_operands_one_way(
+        &self,
+        target: &Operand,
+        value: &Operand,
+    ) -> Option<IndexRefinement> {
+        let Operand::Place(place) = target else {
+            return None;
+        };
+        let value = self.fixed_array_index_value_for_operand(value)?;
+        let target = self.canonical_precise_immutable_move_target_for_place(place)?;
+        Some(IndexRefinement { target, value })
     }
 
     fn analyze(&self) -> (BodyFacts, Vec<Diagnostic>) {
@@ -136,7 +293,12 @@ impl<'a> BodyAnalyzer<'a> {
             let entry_state = entry_states[block_id.index()]
                 .clone()
                 .expect("scheduled blocks should have an entry state");
-            let exit_state = self.transfer_block(block_id, entry_state.clone(), None);
+            let exit_state = self.transfer_block(
+                block_id,
+                entry_state.clone(),
+                self.block_entry_index_refinements(block_id),
+                None,
+            );
             let changed_exit = exit_states[block_id.index()]
                 .as_ref()
                 .is_none_or(|previous| previous != &exit_state);
@@ -161,7 +323,12 @@ impl<'a> BodyAnalyzer<'a> {
             let entry = entry_states[index]
                 .clone()
                 .unwrap_or_else(|| vec![LocalState::Unavailable; local_count]);
-            let exit = self.transfer_block(block_id, entry.clone(), Some(&mut reporter));
+            let exit = self.transfer_block(
+                block_id,
+                entry.clone(),
+                self.block_entry_index_refinements(block_id),
+                Some(&mut reporter),
+            );
             let expected = exit_states[index]
                 .clone()
                 .unwrap_or_else(|| vec![LocalState::Unavailable; local_count]);
@@ -194,6 +361,7 @@ impl<'a> BodyAnalyzer<'a> {
         &self,
         block_id: BasicBlockId,
         mut states: Vec<LocalState>,
+        refinements: &[IndexRefinement],
         mut reporter: Option<&mut Reporter>,
     ) -> Vec<LocalState> {
         let block = self.body.block(block_id);
@@ -202,6 +370,7 @@ impl<'a> BodyAnalyzer<'a> {
             let statement = self.body.statement(*statement_id);
             self.apply_statement(
                 &mut states,
+                refinements,
                 statement.span,
                 &statement.kind,
                 reporter.as_deref_mut(),
@@ -210,6 +379,7 @@ impl<'a> BodyAnalyzer<'a> {
 
         self.apply_terminator(
             &mut states,
+            refinements,
             block.terminator.span,
             &block.terminator.kind,
             reporter,
@@ -221,6 +391,7 @@ impl<'a> BodyAnalyzer<'a> {
     fn apply_statement(
         &self,
         states: &mut [LocalState],
+        refinements: &[IndexRefinement],
         span: ql_span::Span,
         statement: &StatementKind,
         reporter: Option<&mut Reporter>,
@@ -229,7 +400,11 @@ impl<'a> BodyAnalyzer<'a> {
             StatementKind::Assign { place, value } => {
                 let mut reporter = reporter;
                 if let Some((target, reason)) =
-                    self.classify_task_handle_return_rvalue(place, value)
+                    self.classify_task_handle_return_rvalue_with_refinements(
+                        place,
+                        value,
+                        refinements,
+                    )
                 {
                     self.check_moved_use(
                         states,
@@ -247,12 +422,26 @@ impl<'a> BodyAnalyzer<'a> {
                         reporter.as_deref_mut(),
                     );
                 } else {
-                    self.apply_rvalue(states, value, span, reporter.as_deref_mut());
+                    self.apply_rvalue(
+                        states,
+                        refinements,
+                        value,
+                        span,
+                        reporter.as_deref_mut(),
+                    );
                 }
                 if place.projections.is_empty() {
                     self.write_local(states, place.base, span, reporter.as_deref_mut());
-                } else if let Some(target) = self.writable_move_target_for_place(place) {
-                    self.read_place_indices(states, place, span, reporter.as_deref_mut());
+                } else if let Some(target) =
+                    self.writable_move_target_for_place_with_refinements(place, refinements)
+                {
+                    self.read_place_indices(
+                        states,
+                        refinements,
+                        place,
+                        span,
+                        reporter.as_deref_mut(),
+                    );
                     self.write_move_target(
                         states,
                         target.local,
@@ -261,13 +450,15 @@ impl<'a> BodyAnalyzer<'a> {
                         reporter.as_deref_mut(),
                     );
                 } else {
-                    self.read_place(states, place, span, reporter);
+                    self.read_place(states, refinements, place, span, reporter);
                 }
             }
             StatementKind::BindPattern { source, .. } => {
-                self.read_operand(states, source, span, reporter);
+                self.read_operand(states, refinements, source, span, reporter);
             }
-            StatementKind::Eval { value } => self.apply_rvalue(states, value, span, reporter),
+            StatementKind::Eval { value } => {
+                self.apply_rvalue(states, refinements, value, span, reporter)
+            }
             StatementKind::StorageLive { local } => states[local.index()] = LocalState::Available,
             StatementKind::StorageDead { local } => states[local.index()] = LocalState::Unavailable,
             StatementKind::RegisterCleanup { .. } => {}
@@ -280,6 +471,7 @@ impl<'a> BodyAnalyzer<'a> {
     fn apply_terminator(
         &self,
         states: &mut [LocalState],
+        refinements: &[IndexRefinement],
         span: ql_span::Span,
         terminator: &TerminatorKind,
         reporter: Option<&mut Reporter>,
@@ -287,13 +479,13 @@ impl<'a> BodyAnalyzer<'a> {
         match terminator {
             TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Terminate => {}
             TerminatorKind::Branch { condition, .. } => {
-                self.read_operand(states, condition, span, reporter);
+                self.read_operand(states, refinements, condition, span, reporter);
             }
             TerminatorKind::Match { scrutinee, .. } => {
-                self.read_operand(states, scrutinee, span, reporter);
+                self.read_operand(states, refinements, scrutinee, span, reporter);
             }
             TerminatorKind::ForLoop { iterable, .. } => {
-                self.read_operand(states, iterable, span, reporter);
+                self.read_operand(states, refinements, iterable, span, reporter);
             }
         }
     }
@@ -301,16 +493,17 @@ impl<'a> BodyAnalyzer<'a> {
     fn apply_rvalue(
         &self,
         states: &mut [LocalState],
+        refinements: &[IndexRefinement],
         value: &Rvalue,
         span: ql_span::Span,
         reporter: Option<&mut Reporter>,
     ) {
         match value {
-            Rvalue::Use(operand) => self.read_operand(states, operand, span, reporter),
+            Rvalue::Use(operand) => self.read_operand(states, refinements, operand, span, reporter),
             Rvalue::Tuple(items) | Rvalue::Array(items) => {
                 let mut reporter = reporter;
                 for item in items {
-                    self.read_operand(states, item, span, reporter.as_deref_mut());
+                    self.read_operand(states, refinements, item, span, reporter.as_deref_mut());
                 }
             }
             Rvalue::Call { callee, args } => {
@@ -322,11 +515,22 @@ impl<'a> BodyAnalyzer<'a> {
                     reporter.as_deref_mut(),
                 );
                 if pending_consume.is_none() {
-                    self.read_operand(states, callee, span, reporter.as_deref_mut());
+                    self.read_operand(
+                        states,
+                        refinements,
+                        callee,
+                        span,
+                        reporter.as_deref_mut(),
+                    );
                 }
                 for (index, arg) in args.iter().enumerate() {
                     if let Some((target, reason)) =
-                        self.classify_task_handle_call_argument_operand(span, index, &arg.value)
+                        self.classify_task_handle_call_argument_operand_with_refinements(
+                            span,
+                            index,
+                            &arg.value,
+                            refinements,
+                        )
                     {
                         self.check_moved_use(
                             states,
@@ -344,7 +548,13 @@ impl<'a> BodyAnalyzer<'a> {
                             reporter.as_deref_mut(),
                         );
                     } else {
-                        self.read_operand(states, &arg.value, span, reporter.as_deref_mut());
+                        self.read_operand(
+                            states,
+                            refinements,
+                            &arg.value,
+                            span,
+                            reporter.as_deref_mut(),
+                        );
                     }
                 }
                 if let Some((local, reason)) = pending_consume {
@@ -353,13 +563,17 @@ impl<'a> BodyAnalyzer<'a> {
             }
             Rvalue::Binary { left, right, .. } => {
                 let mut reporter = reporter;
-                self.read_operand(states, left, span, reporter.as_deref_mut());
-                self.read_operand(states, right, span, reporter);
+                self.read_operand(states, refinements, left, span, reporter.as_deref_mut());
+                self.read_operand(states, refinements, right, span, reporter);
             }
             Rvalue::Unary { op, operand } => {
                 let mut reporter = reporter;
                 if let Some((target, reason)) =
-                    self.classify_task_handle_unary_operand(*op, operand)
+                    self.classify_task_handle_unary_operand_with_refinements(
+                        *op,
+                        operand,
+                        refinements,
+                    )
                 {
                     self.check_moved_use(
                         states,
@@ -370,14 +584,22 @@ impl<'a> BodyAnalyzer<'a> {
                     );
                     self.apply_consume(states, target.local, &target.path, span, reason, reporter);
                 } else {
-                    self.read_operand(states, operand, span, reporter);
+                    self.read_operand(states, refinements, operand, span, reporter);
                 }
             }
-            Rvalue::Question(operand) => self.read_operand(states, operand, span, reporter),
+            Rvalue::Question(operand) => {
+                self.read_operand(states, refinements, operand, span, reporter)
+            }
             Rvalue::AggregateStruct { fields, .. } => {
                 let mut reporter = reporter;
                 for field in fields {
-                    self.read_operand(states, &field.value, span, reporter.as_deref_mut());
+                    self.read_operand(
+                        states,
+                        refinements,
+                        &field.value,
+                        span,
+                        reporter.as_deref_mut(),
+                    );
                 }
             }
             Rvalue::Closure { closure } => {
@@ -396,36 +618,44 @@ impl<'a> BodyAnalyzer<'a> {
     fn read_operand(
         &self,
         states: &mut [LocalState],
+        refinements: &[IndexRefinement],
         operand: &Operand,
         span: ql_span::Span,
         reporter: Option<&mut Reporter>,
     ) {
         match operand {
-            Operand::Place(place) => self.read_place(states, place, span, reporter),
-            Operand::Constant(constant) => self.read_constant(states, constant, span, reporter),
+            Operand::Place(place) => self.read_place(states, refinements, place, span, reporter),
+            Operand::Constant(constant) => {
+                self.read_constant(states, refinements, constant, span, reporter)
+            }
         }
     }
 
     fn read_constant(
         &self,
         states: &mut [LocalState],
+        refinements: &[IndexRefinement],
         constant: &Constant,
         span: ql_span::Span,
         reporter: Option<&mut Reporter>,
     ) {
-        let _ = (states, span, reporter, constant);
+        let _ = (states, refinements, span, reporter, constant);
     }
 
     fn read_place(
         &self,
         states: &mut [LocalState],
+        refinements: &[IndexRefinement],
         place: &Place,
         span: ql_span::Span,
         reporter: Option<&mut Reporter>,
     ) {
         let mut reporter = reporter;
         let (local, path) = if let Some(target) =
-            self.task_handle_target_for_operand(&Operand::Place(place.clone()))
+            self.task_handle_target_for_operand_with_refinements(
+                &Operand::Place(place.clone()),
+                refinements,
+            )
         {
             (target.local, target.path)
         } else if place.projections.is_empty() {
@@ -433,7 +663,7 @@ impl<'a> BodyAnalyzer<'a> {
         } else {
             (
                 place.base,
-                self.move_target_for_place(place)
+                self.move_target_for_place_with_refinements(place, refinements)
                     .map(|target| target.path)
                     .unwrap_or_default(),
             )
@@ -454,7 +684,13 @@ impl<'a> BodyAnalyzer<'a> {
 
         for projection in &place.projections {
             if let ProjectionElem::Index(operand) = projection {
-                self.read_operand(states, operand, span, reporter.as_deref_mut());
+                self.read_operand(
+                    states,
+                    refinements,
+                    operand,
+                    span,
+                    reporter.as_deref_mut(),
+                );
             }
         }
     }
@@ -486,12 +722,13 @@ impl<'a> BodyAnalyzer<'a> {
         Some((place.base, reason))
     }
 
-    fn classify_task_handle_unary_operand(
+    fn classify_task_handle_unary_operand_with_refinements(
         &self,
         op: UnaryOp,
         operand: &Operand,
+        refinements: &[IndexRefinement],
     ) -> Option<(MoveTarget, MoveReason)> {
-        let target = self.task_handle_target_for_operand(operand)?;
+        let target = self.task_handle_target_for_operand_with_refinements(operand, refinements)?;
 
         match op {
             UnaryOp::Await => Some((target, MoveReason::AwaitTaskHandle)),
@@ -500,10 +737,11 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
-    fn classify_task_handle_return_rvalue(
+    fn classify_task_handle_return_rvalue_with_refinements(
         &self,
         place: &Place,
         value: &Rvalue,
+        refinements: &[IndexRefinement],
     ) -> Option<(MoveTarget, MoveReason)> {
         if !place.projections.is_empty() || place.base != self.body.return_local {
             return None;
@@ -511,7 +749,7 @@ impl<'a> BodyAnalyzer<'a> {
         let Rvalue::Use(operand) = value else {
             return None;
         };
-        let target = self.task_handle_target_for_operand(operand)?;
+        let target = self.task_handle_target_for_operand_with_refinements(operand, refinements)?;
         Some((target, MoveReason::ReturnTaskHandle))
     }
 
@@ -613,13 +851,20 @@ impl<'a> BodyAnalyzer<'a> {
     fn read_place_indices(
         &self,
         states: &mut [LocalState],
+        refinements: &[IndexRefinement],
         place: &Place,
         span: ql_span::Span,
         mut reporter: Option<&mut Reporter>,
     ) {
         for projection in &place.projections {
             if let ProjectionElem::Index(operand) = projection {
-                self.read_operand(states, operand, span, reporter.as_deref_mut());
+                self.read_operand(
+                    states,
+                    refinements,
+                    operand,
+                    span,
+                    reporter.as_deref_mut(),
+                );
             }
         }
     }
@@ -862,6 +1107,14 @@ impl<'a> BodyAnalyzer<'a> {
     }
 
     fn move_target_for_place(&self, place: &Place) -> Option<MoveTarget> {
+        self.move_target_for_place_with_refinements(place, &[])
+    }
+
+    fn move_target_for_place_with_refinements(
+        &self,
+        place: &Place,
+        refinements: &[IndexRefinement],
+    ) -> Option<MoveTarget> {
         let mut current_ty = self.local_ty(place.base)?;
         let mut path = Vec::new();
 
@@ -872,7 +1125,8 @@ impl<'a> BodyAnalyzer<'a> {
                     path: Vec::new(),
                 });
             };
-            match self.precise_move_path_step(&current_ty, projection) {
+            match self.precise_move_path_step_with_refinements(&current_ty, projection, refinements)
+            {
                 Some(step) => path.push(step),
                 None => {
                     return Some(MoveTarget {
@@ -890,13 +1144,21 @@ impl<'a> BodyAnalyzer<'a> {
         })
     }
 
-    fn writable_move_target_for_place(&self, place: &Place) -> Option<MoveTarget> {
+    fn writable_move_target_for_place_with_refinements(
+        &self,
+        place: &Place,
+        refinements: &[IndexRefinement],
+    ) -> Option<MoveTarget> {
         let mut current_ty = self.local_ty(place.base)?;
         let mut path = Vec::new();
 
         for projection in &place.projections {
             let next_ty = self.project_place_ty_step(&current_ty, projection)?;
-            path.push(self.precise_move_path_step(&current_ty, projection)?);
+            path.push(self.precise_move_path_step_with_refinements(
+                &current_ty,
+                projection,
+                refinements,
+            )?);
             current_ty = next_ty;
         }
 
@@ -954,6 +1216,15 @@ impl<'a> BodyAnalyzer<'a> {
         current_ty: &Ty,
         projection: &ProjectionElem,
     ) -> Option<MovePathSegment> {
+        self.precise_move_path_step_with_refinements(current_ty, projection, &[])
+    }
+
+    fn precise_move_path_step_with_refinements(
+        &self,
+        current_ty: &Ty,
+        projection: &ProjectionElem,
+        refinements: &[IndexRefinement],
+    ) -> Option<MovePathSegment> {
         match projection {
             ProjectionElem::Field(field) => Some(MovePathSegment::Field(field.clone())),
             ProjectionElem::TupleIndex(index) => match current_ty {
@@ -965,7 +1236,12 @@ impl<'a> BodyAnalyzer<'a> {
                     Operand::Constant(Constant::Integer(raw)) => {
                         parse_usize_literal(raw).map(MovePathSegment::ArrayIndex)
                     }
-                    _ => Some(self.dynamic_array_move_path_step_for_operand(index)),
+                    _ => Some(
+                        self.dynamic_array_move_path_step_for_operand_with_refinements(
+                            index,
+                            refinements,
+                        ),
+                    ),
                 },
                 Ty::Tuple(_) => match &**index {
                     Operand::Constant(Constant::Integer(raw)) => {
@@ -981,6 +1257,30 @@ impl<'a> BodyAnalyzer<'a> {
     fn fixed_array_index_value_for_operand(&self, operand: &Operand) -> Option<usize> {
         let mut visiting = ImmutableSourceVisit::default();
         self.fixed_array_index_value_for_operand_inner(operand, &mut visiting)
+    }
+
+    fn refined_fixed_array_index_value_for_operand(
+        &self,
+        operand: &Operand,
+        refinements: &[IndexRefinement],
+    ) -> Option<usize> {
+        self.fixed_array_index_value_for_operand(operand)
+            .or_else(|| self.index_refinement_value_for_operand(operand, refinements))
+    }
+
+    fn index_refinement_value_for_operand(
+        &self,
+        operand: &Operand,
+        refinements: &[IndexRefinement],
+    ) -> Option<usize> {
+        let Operand::Place(place) = operand else {
+            return None;
+        };
+        let target = self.canonical_precise_immutable_move_target_for_place(place)?;
+        refinements
+            .iter()
+            .find(|refinement| refinement.target == target)
+            .map(|refinement| refinement.value)
     }
 
     fn fixed_array_index_value_for_operand_inner(
@@ -1236,12 +1536,16 @@ impl<'a> BodyAnalyzer<'a> {
         self.precise_immutable_move_target(target)
     }
 
-    fn canonical_task_handle_move_target_for_place(
+    fn canonical_task_handle_move_target_for_place_with_refinements(
         &self,
         place: &Place,
+        refinements: &[IndexRefinement],
     ) -> Option<MoveTarget> {
         let mut target = if let Some(source_place) = self.immutable_temp_places.get(&place.base) {
-            self.canonical_task_handle_move_target_for_place(source_place)?
+            self.canonical_task_handle_move_target_for_place_with_refinements(
+                source_place,
+                refinements,
+            )?
         } else if let Some(source_expr) = self.immutable_source_expr_for_local(place.base) {
             self.canonical_task_handle_move_target_expr_fallback(source_expr)
                 .or_else(|| self.canonical_task_handle_move_target_for_expr(source_expr))?
@@ -1255,7 +1559,11 @@ impl<'a> BodyAnalyzer<'a> {
         let mut current_ty = self.local_ty(place.base)?;
         for projection in &place.projections {
             let next_ty = self.project_place_ty_step(&current_ty, projection)?;
-            target.path.push(self.precise_move_path_step(&current_ty, projection)?);
+            target.path.push(self.precise_move_path_step_with_refinements(
+                &current_ty,
+                projection,
+                refinements,
+            )?);
             current_ty = next_ty;
         }
 
@@ -1383,8 +1691,14 @@ impl<'a> BodyAnalyzer<'a> {
         }
     }
 
-    fn dynamic_array_move_path_step_for_operand(&self, operand: &Operand) -> MovePathSegment {
-        if let Some(index) = self.fixed_array_index_value_for_operand(operand) {
+    fn dynamic_array_move_path_step_for_operand_with_refinements(
+        &self,
+        operand: &Operand,
+        refinements: &[IndexRefinement],
+    ) -> MovePathSegment {
+        if let Some(index) =
+            self.refined_fixed_array_index_value_for_operand(operand, refinements)
+        {
             return MovePathSegment::ArrayIndex(index);
         }
         if let Operand::Place(place) = operand
@@ -1465,12 +1779,22 @@ impl<'a> BodyAnalyzer<'a> {
     }
 
     fn task_handle_target_for_operand(&self, operand: &Operand) -> Option<MoveTarget> {
+        self.task_handle_target_for_operand_with_refinements(operand, &[])
+    }
+
+    fn task_handle_target_for_operand_with_refinements(
+        &self,
+        operand: &Operand,
+        refinements: &[IndexRefinement],
+    ) -> Option<MoveTarget> {
         let Operand::Place(place) = operand else {
             return None;
         };
         if !matches!(self.place_ty(place)?, Ty::TaskHandle(_)) {
             None
-        } else if let Some(target) = self.canonical_task_handle_move_target_for_place(place) {
+        } else if let Some(target) =
+            self.canonical_task_handle_move_target_for_place_with_refinements(place, refinements)
+        {
             if target.path.is_empty()
                 && let Some(local) = self.direct_task_handle_local(target.local)
             {
@@ -1481,7 +1805,7 @@ impl<'a> BodyAnalyzer<'a> {
             }
             Some(target)
         } else {
-            let target = self.move_target_for_place(place)?;
+            let target = self.move_target_for_place_with_refinements(place, refinements)?;
             if target.path.is_empty()
                 && let Some(local) = self.direct_task_handle_local(target.local)
             {
@@ -1581,16 +1905,17 @@ impl<'a> BodyAnalyzer<'a> {
             .unwrap_or(false)
     }
 
-    fn classify_task_handle_call_argument_operand(
+    fn classify_task_handle_call_argument_operand_with_refinements(
         &self,
         call_span: ql_span::Span,
         arg_index: usize,
         operand: &Operand,
+        refinements: &[IndexRefinement],
     ) -> Option<(MoveTarget, MoveReason)> {
         if !self.task_handle_call_arg_should_consume(call_span, arg_index) {
             return None;
         }
-        let target = self.task_handle_target_for_operand(operand)?;
+        let target = self.task_handle_target_for_operand_with_refinements(operand, refinements)?;
         Some((target, MoveReason::CallTaskHandleArgument))
     }
 
@@ -2749,6 +3074,47 @@ fn merge_state_vec(
             (merged, changed)
         }
     }
+}
+
+fn merge_index_refinement_vec(
+    existing: Option<&[IndexRefinement]>,
+    incoming: &[IndexRefinement],
+) -> (Vec<IndexRefinement>, bool) {
+    match existing {
+        None => (incoming.to_vec(), true),
+        Some(existing) => {
+            let merged = existing
+                .iter()
+                .filter(|refinement| incoming.contains(refinement))
+                .cloned()
+                .collect::<Vec<_>>();
+            let changed = merged != existing;
+            (merged, changed)
+        }
+    }
+}
+
+fn apply_branch_index_refinements(
+    base: &[IndexRefinement],
+    incoming: &[IndexRefinement],
+) -> Vec<IndexRefinement> {
+    if incoming.is_empty() {
+        return base.to_vec();
+    }
+
+    let mut merged = base
+        .iter()
+        .filter(|candidate| {
+            !incoming
+                .iter()
+                .any(|refinement| refinement.target == candidate.target)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    merged.extend_from_slice(incoming);
+    merged.sort();
+    merged.dedup();
+    merged
 }
 
 fn merge_cleanup_branches(left: CleanupEval, right: CleanupEval) -> CleanupEval {

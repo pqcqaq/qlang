@@ -2373,6 +2373,64 @@ async fn main(flag: Bool, index: Int) -> Wrap {
 }
 
 #[test]
+fn reports_use_after_move_for_guard_refined_dynamic_task_handle_array_index_and_literal_reuse() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    let tasks = [worker(), worker()]
+    if index == 0 {
+        let first = await tasks[index]
+        return await tasks[0]
+    }
+    return await tasks[1]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected guard-refined dynamic task-handle index reuse through tasks[0] to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_guard_refined_dynamic_task_handle_array_index_before_literal_reuse() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    if index == 0 {
+        let first = await tasks[index]
+        tasks[0] = worker()
+    }
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guard-refined dynamic task-handle reinit through tasks[0] to restore availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_use_after_move_for_same_immutable_dynamic_task_handle_array_index_without_reinit() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -2462,6 +2520,40 @@ async fn main(flag: Bool, index: Int) -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected conditional same immutable projected dynamic index reinitialization to clear maybe-moved facts, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_guard_refined_projected_dynamic_task_handle_array_index_before_literal_reuse()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(slot: Slot) -> Wrap {
+    var tasks = [worker(), worker()]
+    if slot.value == 0 {
+        let first = await tasks[slot.value]
+        tasks[0] = worker()
+    }
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guard-refined projected dynamic task-handle reinit through tasks[0] to restore availability, got {diagnostics:?}"
     );
 }
 

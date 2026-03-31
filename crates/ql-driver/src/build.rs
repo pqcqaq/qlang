@@ -5728,6 +5728,58 @@ async fn helper(flag: Bool, index: Int) -> Wrap {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_guard_refined_dynamic_task_handle_literal_reinit() {
+        let dir = TestDir::new("ql-driver-task-array-guard-refined-literal-reinit");
+        let source = dir.write(
+            "task_array_guard_refined_literal_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    if index == 0 {
+        let first = await tasks[index]
+        tasks[0] = worker()
+    }
+    return await tasks[0]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/task_array_guard_refined_literal_reinit.lib"
+        } else {
+            "artifacts/libtask_array_guard_refined_literal_reinit.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect(
+            "static library build with guard-refined dynamic task-handle reinit through tasks[0] should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_surfaces_dynamic_task_array_index_assignment_after_consume_diagnostic_once() {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-after-consume");
         let source = dir.write(
