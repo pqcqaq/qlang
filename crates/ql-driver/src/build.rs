@@ -2986,6 +2986,68 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_conditional_async_call_spawns() {
+        let dir = TestDir::new("ql-driver-async-exe-conditional-async-call-spawns");
+        let source = dir.write(
+            "async_conditional_async_call_spawns.ql",
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn choose(flag: Bool) -> Int {
+    if flag {
+        let running = spawn worker();
+        return await running
+    }
+    return await worker()
+}
+
+async fn choose_reverse(flag: Bool) -> Int {
+    if flag {
+        return await worker()
+    }
+    let running = spawn worker();
+    return await running
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let first = await choose(true)
+    let second = await choose_reverse(false)
+    return score(first) + score(second)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_conditional_async_call_spawns.exe"
+        } else {
+            "artifacts/async_conditional_async_call_spawns"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with conditional async-call spawns should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_executable_with_async_main_zero_sized_conditional_async_call_spawns() {
         let dir = TestDir::new("ql-driver-async-exe-zero-sized-conditional-async-call-spawns");
         let source = dir.write(

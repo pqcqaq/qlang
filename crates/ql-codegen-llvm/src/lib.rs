@@ -8677,6 +8677,60 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_conditional_async_call_spawns_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn choose(flag: Bool) -> Int {
+    if flag {
+        let running = spawn worker();
+        return await running
+    }
+    return await worker()
+}
+
+async fn choose_reverse(flag: Bool) -> Int {
+    if flag {
+        return await worker()
+    }
+    let running = spawn worker();
+    return await running
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let first = await choose(true)
+    let second = await choose_reverse(false)
+    return score(first) + score(second)
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_executor_spawn").count() >= 3);
+        assert!(rendered.matches("@qlrt_task_await").count() >= 5);
+        assert!(rendered.contains("load i64, ptr %t"));
+        assert!(rendered.matches("_score(").count() >= 3);
+        assert!(!rendered.contains("does not support `spawn` lowering yet"));
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_zero_sized_conditional_async_call_spawns_in_program_mode()
      {
         let runtime_hooks = collect_runtime_hook_signatures([
