@@ -7354,6 +7354,42 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_direct_task_handles_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let first_task = worker(1)
+    let second_task = worker(2)
+    let first = await first_task
+    let second = await second_task
+    return first + second
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_task_await").count() >= 3);
+        assert!(rendered.matches("store ptr %t").count() >= 2);
+        assert!(rendered.matches("load i64, ptr %t").count() >= 2);
+        assert!(rendered.matches("call ptr @qlrt_task_await(ptr %t").count() >= 2);
+        assert!(!rendered.contains("does not support `await` lowering yet"));
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_local_returned_zero_sized_task_handle_helpers_in_program_mode()
      {
         let runtime_hooks = collect_runtime_hook_signatures([
