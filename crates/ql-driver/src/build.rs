@@ -4887,6 +4887,65 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
+    fn build_file_writes_static_library_with_dynamic_task_handle_array_index_spawn_and_sibling_task_use()
+     {
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-spawn-sibling");
+        let source = dir.write(
+            "task_array_dynamic_index_spawn_sibling.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+    fallback: Task[Wrap],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(index: Int) -> Wrap {
+    let pending = Pending {
+        tasks: [worker(), worker()],
+        fallback: worker(),
+    }
+    let running = spawn pending.tasks[index]
+    let first = await running
+    return await pending.fallback
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/task_array_dynamic_index_spawn_sibling.lib"
+        } else {
+            "artifacts/libtask_array_dynamic_index_spawn_sibling.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect(
+            "static library build with dynamic task-handle spawn and sibling task use should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_surfaces_dynamic_task_array_index_assignment_after_consume_diagnostic_once() {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-after-consume");
         let source = dir.write(

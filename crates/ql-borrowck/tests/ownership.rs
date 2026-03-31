@@ -2146,6 +2146,109 @@ async fn main(index: Int) -> Wrap {
 }
 
 #[test]
+fn allows_awaiting_dynamic_task_handle_array_index_without_consuming_sibling_task_field() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+    fallback: Task[Wrap],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    let pending = Pending {
+        tasks: [worker(), worker()],
+        fallback: worker(),
+    }
+    let first = await pending.tasks[index]
+    return await pending.fallback
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected dynamic task-handle await to stay path-sensitive for sibling task fields, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_spawning_dynamic_task_handle_array_index_without_consuming_sibling_task_field() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+    fallback: Task[Wrap],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    let pending = Pending {
+        tasks: [worker(), worker()],
+        fallback: worker(),
+    }
+    let running = spawn pending.tasks[index]
+    let first = await running
+    return await pending.fallback
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected dynamic task-handle spawn to stay path-sensitive for sibling task fields, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_maybe_moved_for_specific_array_element_after_dynamic_task_handle_consume() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(index: Int) -> Wrap {
+    let pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let first = await pending.tasks[index]
+    return await pending.tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"local `pending` may have been moved on another control-flow path".to_string()
+        ),
+        "expected dynamic task-handle consume to stay conservative for specific array elements, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_maybe_moved_after_dynamic_task_handle_array_reinit_with_prior_consume() {
     let diagnostics = diagnostic_messages(
         r#"

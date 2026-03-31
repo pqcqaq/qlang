@@ -844,7 +844,7 @@ impl<'a> BodyAnalyzer<'a> {
                     path: Vec::new(),
                 });
             };
-            match self.precise_move_path_step(&current_ty, projection) {
+            match self.read_move_path_step(&current_ty, projection) {
                 Some(step) => path.push(step),
                 None => {
                     return Some(MoveTarget {
@@ -860,6 +860,35 @@ impl<'a> BodyAnalyzer<'a> {
             local: place.base,
             path,
         })
+    }
+
+    fn read_move_path_step(
+        &self,
+        current_ty: &Ty,
+        projection: &ProjectionElem,
+    ) -> Option<MovePathSegment> {
+        match projection {
+            ProjectionElem::Field(field) => Some(MovePathSegment::Field(field.clone())),
+            ProjectionElem::TupleIndex(index) => match current_ty {
+                Ty::Tuple(_) => Some(MovePathSegment::TupleIndex(*index)),
+                _ => None,
+            },
+            ProjectionElem::Index(index) => match current_ty {
+                Ty::Array { .. } => match &**index {
+                    Operand::Constant(Constant::Integer(raw)) => {
+                        parse_usize_literal(raw).map(MovePathSegment::ArrayIndex)
+                    }
+                    _ => Some(MovePathSegment::DynamicArrayIndex),
+                },
+                Ty::Tuple(_) => match &**index {
+                    Operand::Constant(Constant::Integer(raw)) => {
+                        parse_usize_literal(raw).map(MovePathSegment::TupleIndex)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            },
+        }
     }
 
     fn writable_move_target_for_place(&self, place: &Place) -> Option<MoveTarget> {
@@ -920,16 +949,19 @@ impl<'a> BodyAnalyzer<'a> {
                     return None;
                 }
                 let target_ty = self.typeck.expr_ty(*target)?;
-                let hir::ExprKind::Integer(raw_index) = &self.hir.expr(items[0]).kind else {
-                    return None;
-                };
-                let index = parse_usize_literal(raw_index)?;
                 let mut target = self.precise_move_target_for_expr(*target)?;
-                target.path.push(match target_ty {
-                    Ty::Tuple(_) => MovePathSegment::TupleIndex(index),
-                    Ty::Array { .. } => MovePathSegment::ArrayIndex(index),
-                    _ => return None,
-                });
+                target
+                    .path
+                    .push(match (target_ty, &self.hir.expr(items[0]).kind) {
+                        (Ty::Tuple(_), hir::ExprKind::Integer(raw_index)) => {
+                            MovePathSegment::TupleIndex(parse_usize_literal(raw_index)?)
+                        }
+                        (Ty::Array { .. }, hir::ExprKind::Integer(raw_index)) => {
+                            MovePathSegment::ArrayIndex(parse_usize_literal(raw_index)?)
+                        }
+                        (Ty::Array { .. }, _) => MovePathSegment::DynamicArrayIndex,
+                        _ => return None,
+                    });
                 Some(target)
             }
             hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
@@ -2397,7 +2429,10 @@ fn summarize_overlapping_path_moves(
 ) -> Option<(MoveCertainty, Vec<MoveOrigin>)> {
     let overlapping = path_moves
         .iter()
-        .filter(|info| move_paths_overlap(&info.path, path))
+        .filter_map(|info| {
+            overlapping_path_move_certainty(&info.path, path, info.certainty)
+                .map(|certainty| (certainty, &info.origins))
+        })
         .collect::<Vec<_>>();
     if overlapping.is_empty() {
         return None;
@@ -2405,7 +2440,7 @@ fn summarize_overlapping_path_moves(
 
     let certainty = if overlapping
         .iter()
-        .any(|info| info.certainty == MoveCertainty::Definite)
+        .any(|(certainty, _)| *certainty == MoveCertainty::Definite)
     {
         MoveCertainty::Definite
     } else {
@@ -2413,8 +2448,8 @@ fn summarize_overlapping_path_moves(
     };
 
     let mut origins = Vec::new();
-    for info in overlapping {
-        origins = merge_origins(&origins, &info.origins);
+    for (_, info_origins) in overlapping {
+        origins = merge_origins(&origins, info_origins);
     }
 
     Some((certainty, origins))
@@ -2423,7 +2458,7 @@ fn summarize_overlapping_path_moves(
 fn move_paths_overlap(left: &[MovePathSegment], right: &[MovePathSegment]) -> bool {
     left.iter()
         .zip(right.iter())
-        .all(|(left_step, right_step)| left_step == right_step)
+        .all(|(left_step, right_step)| move_path_segments_overlap(left_step, right_step))
 }
 
 fn path_starts_with(path: &[MovePathSegment], prefix: &[MovePathSegment]) -> bool {
@@ -2432,6 +2467,53 @@ fn path_starts_with(path: &[MovePathSegment], prefix: &[MovePathSegment]) -> boo
             .iter()
             .zip(path.iter())
             .all(|(prefix_step, path_step)| prefix_step == path_step)
+}
+
+fn overlapping_path_move_certainty(
+    moved_path: &[MovePathSegment],
+    queried_path: &[MovePathSegment],
+    certainty: MoveCertainty,
+) -> Option<MoveCertainty> {
+    if !move_paths_overlap(moved_path, queried_path) {
+        return None;
+    }
+
+    if certainty == MoveCertainty::Maybe {
+        return Some(MoveCertainty::Maybe);
+    }
+
+    let compared_prefix_uses_dynamic =
+        moved_path
+            .iter()
+            .zip(queried_path.iter())
+            .any(|(moved_step, queried_step)| {
+                matches!(
+                    (moved_step, queried_step),
+                    (MovePathSegment::DynamicArrayIndex, _)
+                        | (_, MovePathSegment::DynamicArrayIndex)
+                )
+            });
+    if compared_prefix_uses_dynamic {
+        Some(MoveCertainty::Maybe)
+    } else {
+        Some(MoveCertainty::Definite)
+    }
+}
+
+fn move_path_segments_overlap(left: &MovePathSegment, right: &MovePathSegment) -> bool {
+    matches!(
+        (left, right),
+        (
+            MovePathSegment::DynamicArrayIndex,
+            MovePathSegment::ArrayIndex(_)
+        ) | (
+            MovePathSegment::ArrayIndex(_),
+            MovePathSegment::DynamicArrayIndex
+        ) | (
+            MovePathSegment::DynamicArrayIndex,
+            MovePathSegment::DynamicArrayIndex
+        )
+    ) || left == right
 }
 
 fn render_move_origin(origin: &MoveOrigin) -> String {
