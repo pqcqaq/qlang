@@ -8790,6 +8790,69 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_conditional_helper_task_handle_spawns_in_program_mode()
+    {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker() -> Int {
+    return 1
+}
+
+async fn choose(flag: Bool, task: Task[Int]) -> Int {
+    if flag {
+        let running = spawn task
+        return await running
+    }
+    return await task
+}
+
+async fn choose_reverse(flag: Bool, task: Task[Int]) -> Int {
+    if flag {
+        return await task
+    }
+    let running = spawn task
+    return await running
+}
+
+async fn helper(flag: Bool) -> Int {
+    return await choose(flag, worker())
+}
+
+async fn helper_reverse(flag: Bool) -> Int {
+    return await choose_reverse(flag, worker())
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let first = await helper(true)
+    let second = await helper_reverse(false)
+    return score(first) + score(second)
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_executor_spawn").count() >= 3);
+        assert!(rendered.matches("@qlrt_task_await").count() >= 7);
+        assert!(rendered.contains("load i64, ptr %t"));
+        assert!(rendered.matches("_score(").count() >= 3);
+        assert!(!rendered.contains("does not support `spawn` lowering yet"));
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_zero_sized_conditional_helper_task_handle_spawns_in_program_mode()
      {
         let runtime_hooks = collect_runtime_hook_signatures([
