@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn codegen_snapshots_match() {
     let workspace_root = workspace_root();
 
-    let pass_cases = vec![
+    let mut pass_cases = vec![
         PassCase {
             name: "minimal_build_llvm_ir",
             source_relative: "fixtures/codegen/pass/minimal_build.ql",
@@ -1121,6 +1121,8 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
     ];
+    pass_cases.extend(projected_dynamic_task_handle_pass_cases());
+
     let fail_cases = vec![
         FailCase {
             name: "unsupported_closure_build",
@@ -1313,6 +1315,24 @@ fn codegen_snapshots_match() {
     );
 }
 
+#[test]
+fn projected_dynamic_task_handle_codegen_cases_match() {
+    let workspace_root = workspace_root();
+    let mut failures = Vec::new();
+
+    for case in projected_dynamic_task_handle_pass_cases() {
+        if let Err(message) = run_pass_case(&workspace_root, &case) {
+            failures.push(message);
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "projected dynamic task-handle codegen regressions:\n\n{}",
+        failures.join("\n\n")
+    );
+}
+
 #[derive(Clone, Copy)]
 struct PassCase {
     name: &'static str,
@@ -1333,6 +1353,55 @@ struct FailCase {
     emit: &'static str,
     expected_stderr_relative: &'static str,
     extra_args: &'static [&'static str],
+}
+
+fn projected_dynamic_task_handle_pass_cases() -> Vec<PassCase> {
+    vec![
+        PassCase {
+            name: "async_library_projected_dynamic_array_reinit_staticlib",
+            source_relative: "fixtures/codegen/pass/async_library_projected_dynamic_array_reinit.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
+            name: "async_library_projected_dynamic_array_conditional_reinit_staticlib",
+            source_relative: "fixtures/codegen/pass/async_library_projected_dynamic_array_conditional_reinit.ql",
+            emit: "staticlib",
+            expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+            mock_compiler: true,
+            mock_archiver: true,
+            archiver_style: Some(current_archiver_style()),
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
+            name: "async_program_main_projected_dynamic_task_handle_reinit_exe",
+            source_relative: "fixtures/codegen/pass/async_program_main_projected_dynamic_task_handle_reinit.ql",
+            emit: "exe",
+            expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
+            name: "async_program_main_projected_dynamic_task_handle_conditional_reinit_exe",
+            source_relative: "fixtures/codegen/pass/async_program_main_projected_dynamic_task_handle_conditional_reinit.ql",
+            emit: "exe",
+            expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+    ]
 }
 
 struct TempDir {

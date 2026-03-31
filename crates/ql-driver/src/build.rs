@@ -2593,6 +2593,118 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_executable_with_async_main_projected_dynamic_task_handle_reinit() {
+        let dir = TestDir::new("ql-driver-async-exe-projected-dynamic-task-handle-reinit");
+        let source = dir.write(
+            "async_projected_dynamic_task_handle_reinit.ql",
+            r#"
+struct Slot {
+    value: Int,
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var tasks = [worker(1), worker(2)]
+    let slot = Slot { value: 0 }
+    let first = await tasks[slot.value]
+    tasks[slot.value] = worker(first + 1)
+    let second = await tasks[slot.value]
+    return score(first) + score(second)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_projected_dynamic_task_handle_reinit.exe"
+        } else {
+            "artifacts/async_projected_dynamic_task_handle_reinit"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("async executable with projected dynamic task-handle reinit should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_async_main_projected_dynamic_task_handle_conditional_reinit()
+     {
+        let dir =
+            TestDir::new("ql-driver-async-exe-projected-dynamic-task-handle-conditional-reinit");
+        let source = dir.write(
+            "async_projected_dynamic_task_handle_conditional_reinit.ql",
+            r#"
+struct Slot {
+    value: Int,
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let flag = true
+    var tasks = [worker(1), worker(2)]
+    let slot = Slot { value: 0 }
+    if flag {
+        let first = await tasks[slot.value]
+        tasks[slot.value] = worker(first + 1)
+    }
+    let final_value = await tasks[slot.value]
+    return score(final_value)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_projected_dynamic_task_handle_conditional_reinit.exe"
+        } else {
+            "artifacts/async_projected_dynamic_task_handle_conditional_reinit"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "async executable with projected dynamic task-handle conditional reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
     fn build_file_writes_executable_with_async_main_zero_sized_projected_task_handle_awaits() {
         let dir = TestDir::new("ql-driver-async-exe-zero-sized-projected-task-handle-awaits");
         let source = dir.write(
@@ -5043,6 +5155,64 @@ async fn helper(index: Int) -> Wrap {
         )
         .expect(
             "static library build with same projected immutable dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&output).expect("read generated static library placeholder");
+
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_same_projected_immutable_dynamic_task_handle_conditional_reinit()
+     {
+        let dir = TestDir::new("ql-driver-task-array-dynamic-index-projected-conditional-reinit");
+        let source = dir.write(
+            "task_array_dynamic_index_projected_conditional_reinit.ql",
+            r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn helper(flag: Bool, index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let slot = Slot { value: index }
+    if flag {
+        let first = await tasks[slot.value]
+        tasks[slot.value] = worker()
+    }
+    return await tasks[slot.value]
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/task_array_dynamic_index_projected_conditional_reinit.lib"
+        } else {
+            "artifacts/libtask_array_dynamic_index_projected_conditional_reinit.a"
+        });
+
+        build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect(
+            "static library build with conditional same projected immutable dynamic task-handle reinit should succeed",
         );
         let rendered =
             fs::read_to_string(&output).expect("read generated static library placeholder");

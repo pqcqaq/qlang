@@ -8203,6 +8203,119 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_projected_dynamic_task_handle_reinit_in_program_mode()
+    {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Slot {
+    value: Int,
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var tasks = [worker(1), worker(2)]
+    let slot = Slot { value: 0 }
+    let first = await tasks[slot.value]
+    tasks[slot.value] = worker(first + 1)
+    let second = await tasks[slot.value]
+    return score(first) + score(second)
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_task_await").count() >= 3);
+        assert!(
+            rendered
+                .matches("getelementptr inbounds [2 x ptr], ptr")
+                .count()
+                >= 3
+        );
+        assert!(rendered.matches("store ptr").count() >= 4);
+        assert!(rendered.matches("load i64, ptr %t").count() >= 3);
+        assert!(rendered.matches("_score(").count() >= 3);
+        assert!(!rendered.contains("does not support field or index projections yet"));
+        assert!(
+            !rendered.contains("does not support assignment to field or index projections yet")
+        );
+    }
+
+    #[test]
+    fn emits_async_main_entry_lifecycle_with_projected_dynamic_task_handle_conditional_reinit_in_program_mode()
+     {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Slot {
+    value: Int,
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let flag = true
+    var tasks = [worker(1), worker(2)]
+    let slot = Slot { value: 0 }
+    if flag {
+        let first = await tasks[slot.value]
+        tasks[slot.value] = worker(first + 1)
+    }
+    let final_value = await tasks[slot.value]
+    return score(final_value)
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_task_await").count() >= 3);
+        assert!(
+            rendered
+                .matches("getelementptr inbounds [2 x ptr], ptr")
+                .count()
+                >= 3
+        );
+        assert!(rendered.matches("store ptr").count() >= 4);
+        assert!(rendered.matches("load i64, ptr %t").count() >= 2);
+        assert!(rendered.matches("_score(").count() >= 2);
+        assert!(!rendered.contains("does not support field or index projections yet"));
+        assert!(
+            !rendered.contains("does not support assignment to field or index projections yet")
+        );
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_zero_sized_nested_task_handle_payload_in_program_mode()
     {
         let runtime_hooks = collect_runtime_hook_signatures([

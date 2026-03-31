@@ -2393,6 +2393,41 @@ async fn main(index: Int) -> Wrap {
 }
 
 #[test]
+fn allows_conditionally_reinitializing_same_immutable_projected_dynamic_task_handle_array_index_before_branch_join()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main(flag: Bool, index: Int) -> Wrap {
+    var tasks = [worker(), worker()]
+    let slot = Slot { value: index }
+    if flag {
+        let first = await tasks[slot.value]
+        tasks[slot.value] = worker()
+    }
+    return await tasks[slot.value]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected conditional same immutable projected dynamic index reinitialization to clear maybe-moved facts, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_use_after_move_for_same_immutable_projected_dynamic_task_handle_array_index_without_reinit()
  {
     let diagnostics = diagnostic_messages(
