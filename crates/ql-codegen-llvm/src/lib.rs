@@ -7556,6 +7556,74 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_spawned_aggregate_results_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+async fn tuple_worker() -> (Bool, Int) {
+    return (true, 1)
+}
+
+async fn array_worker() -> [Int; 3] {
+    return [2, 3, 4]
+}
+
+async fn pair_worker() -> Pair {
+    return Pair { left: 5, right: 6 }
+}
+
+fn score_tuple(pair: (Bool, Int)) -> Int {
+    if pair[0] {
+        return pair[1]
+    }
+    return 0
+}
+
+fn score_array(values: [Int; 3]) -> Int {
+    return values[0] + values[1] + values[2]
+}
+
+fn score_pair(pair: Pair) -> Int {
+    return pair.left + pair.right
+}
+
+async fn main() -> Int {
+    let tuple_task = spawn tuple_worker()
+    let array_task = spawn array_worker()
+    let pair_task = spawn pair_worker()
+    let tuple_value = await tuple_task
+    let array_value = await array_task
+    let pair_value = await pair_task
+    return score_tuple(tuple_value) + score_array(array_value) + score_pair(pair_value)
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_executor_spawn").count() >= 4);
+        assert!(rendered.matches("@qlrt_task_await").count() >= 4);
+        assert!(rendered.contains("load { i1, i64 }, ptr %t"));
+        assert!(rendered.contains("load [3 x i64], ptr %t"));
+        assert!(rendered.contains("load { i64, i64 }, ptr %t"));
+        assert!(rendered.matches("_score_").count() >= 4);
+        assert!(!rendered.contains("does not support `spawn` lowering yet"));
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_recursive_aggregate_results_in_program_mode() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
