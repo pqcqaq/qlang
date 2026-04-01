@@ -113,7 +113,7 @@
 - `staticlib` 已开放第一条受控 async library build 子集
 - `dylib` 已开放最小受控 async library build 子集：当前允许带内部 async helper 的 library body 通过，但公开导出面仍收敛在同步 `extern "c"` C ABI surface
 - `for await` 已开放首个受控 lowering 竖切片：当前支持 library-mode async body 内对 fixed array iterable 的 lowering（`staticlib` 与最小 async `dylib` 子集）
-- `examples/ffi-rust` 与对应回归测试已经建立
+- committed `examples/ffi-c` / `examples/ffi-rust` 宿主示例与对应回归测试已经建立
 
 ### 当前仍刻意未开放
 

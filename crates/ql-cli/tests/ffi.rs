@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_driver::{ToolchainOptions, discover_toolchain};
+use ql_driver::{discover_toolchain, ToolchainOptions};
 
 #[test]
 fn ffi_exports_link_from_c_static_harnesses() {
@@ -164,6 +164,46 @@ fn ffi_rust_example_cargo_host_runs() {
     }
 
     if let Err(message) = run_committed_rust_example(&workspace_root, &cargo) {
+        panic!("{message}");
+    }
+}
+
+#[test]
+fn ffi_c_example_host_runs() {
+    let workspace_root = workspace_root();
+    let example_root = workspace_root.join("examples/ffi-c");
+    let ql_source = example_root.join("ql/callback_add.ql");
+    let host_source = example_root.join("host/main.c");
+    assert!(
+        ql_source.is_file(),
+        "expected committed C FFI example source at `{}`",
+        ql_source.display()
+    );
+    assert!(
+        host_source.is_file(),
+        "expected committed C FFI host source at `{}`",
+        host_source.display()
+    );
+
+    let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
+        eprintln!(
+            "skipping committed C FFI example test: no clang-style compiler found via ql-driver toolchain discovery"
+        );
+        return;
+    };
+    if toolchain.archiver().is_none() {
+        eprintln!(
+            "skipping committed C FFI example test: no archive tool found via ql-driver toolchain discovery"
+        );
+        return;
+    }
+
+    if let Err(message) = run_committed_c_example(
+        &workspace_root,
+        &toolchain.clang().program,
+        &ql_source,
+        &host_source,
+    ) {
         panic!("{message}");
     }
 }
@@ -967,6 +1007,114 @@ fn run_committed_rust_example(workspace_root: &Path, cargo: &Path) -> Result<(),
         return Err(format!(
             "[ffi-rust-example] expected committed Cargo host example stdout to contain `q_scale(6, 7) = 42`, got:\n{}",
             cargo_stdout
+        ));
+    }
+
+    Ok(())
+}
+
+fn run_committed_c_example(
+    workspace_root: &Path,
+    clang: &Path,
+    ql_source: &Path,
+    host_source: &Path,
+) -> Result<(), String> {
+    let temp = TempDir::new("ql-ffi-c-example");
+    let stem = ql_source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("ffi_c_example");
+    let header_surface = HeaderSurface::Both;
+    let header = header_output_path(temp.path(), stem, header_surface);
+    let staticlib = static_library_output_path(temp.path(), stem);
+    let executable = executable_output_path(temp.path(), "ffi_c_host");
+    let relative_ql = relative_ql_path(workspace_root, ql_source);
+
+    run_ql_build(
+        workspace_root,
+        "ffi-c-example",
+        &relative_ql,
+        "staticlib",
+        &staticlib,
+        header_surface,
+        Some(&header),
+    )?;
+    if !staticlib.is_file() {
+        return Err(format!(
+            "[ffi-c-example] expected static library `{}` to exist after build",
+            staticlib.display()
+        ));
+    }
+    if !header.is_file() {
+        return Err(format!(
+            "[ffi-c-example] expected generated header `{}` to exist after build",
+            header.display()
+        ));
+    }
+
+    let compile = Command::new(clang)
+        .current_dir(workspace_root)
+        .arg("-I")
+        .arg(temp.path())
+        .arg(host_source)
+        .arg(&staticlib)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap_or_else(|_| {
+            panic!(
+                "run committed C FFI example compiler `{}` for `{}`",
+                clang.display(),
+                host_source.display()
+            )
+        });
+    let compile_stdout = normalize(&String::from_utf8_lossy(&compile.stdout));
+    let compile_stderr = normalize(&String::from_utf8_lossy(&compile.stderr));
+    if compile.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[ffi-c-example] expected committed C FFI example link to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            compile.status.code(),
+            compile_stdout,
+            compile_stderr
+        ));
+    }
+    if !executable.is_file() {
+        return Err(format!(
+            "[ffi-c-example] expected executable `{}` to exist after C host link",
+            executable.display()
+        ));
+    }
+
+    let run = Command::new(&executable)
+        .current_dir(workspace_root)
+        .output()
+        .unwrap_or_else(|_| panic!("run committed C FFI example `{}`", executable.display()));
+    let run_stdout = normalize(&String::from_utf8_lossy(&run.stdout));
+    let run_stderr = normalize(&String::from_utf8_lossy(&run.stderr));
+    if run.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[ffi-c-example] expected committed C FFI example to exit with 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            run.status.code(),
+            run_stdout,
+            run_stderr
+        ));
+    }
+    if !run_stdout.contains("q_add_two(40) = 42") {
+        return Err(format!(
+            "[ffi-c-example] expected stdout to contain `q_add_two(40) = 42`, got:\n{}",
+            run_stdout
+        ));
+    }
+    if !run_stdout.contains("q_scale(6, 7) = 42") {
+        return Err(format!(
+            "[ffi-c-example] expected stdout to contain `q_scale(6, 7) = 42`, got:\n{}",
+            run_stdout
+        ));
+    }
+    if !run_stderr.trim().is_empty() {
+        return Err(format!(
+            "[ffi-c-example] expected committed C FFI example stderr to be empty, got:\n{}",
+            run_stderr
         ));
     }
 

@@ -39,15 +39,18 @@ npm install
 npm run dev
 ```
 
-## Interop Example
+## Interop Examples
 
-A committed Rust host interop example now lives under [`examples/ffi-rust/`](./examples/ffi-rust/).
+Committed host interop examples now live under
+[`examples/ffi-c/`](./examples/ffi-c/) and
+[`examples/ffi-rust/`](./examples/ffi-rust/).
 
-It demonstrates the current conservative Rust workflow:
+They demonstrate the current conservative host workflows:
 
-- Cargo `build.rs` invokes `ql build --emit staticlib`
-- Rust links the generated Qlang static library through the stable C ABI
-- Qlang calls back into a Rust-provided `extern "C"` host function
+- C hosts compile against a generated combined header and link a Qlang
+  `staticlib` through the stable C ABI
+- Rust Cargo `build.rs` can invoke `ql build --emit staticlib`
+- Both hosts provide `extern "C"` callbacks that Qlang imports
 
 ## Current Status
 
