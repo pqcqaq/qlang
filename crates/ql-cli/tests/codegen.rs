@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
-    expect_success, normalize, ql_command, run_command_capture, workspace_root,
+    expect_snapshot_matches, expect_success, normalize_trimmed, ql_command, read_normalized_file,
+    read_normalized_trimmed_file, run_command_capture, workspace_root,
 };
 
 #[test]
@@ -1680,9 +1681,9 @@ fn run_pass_case(workspace_root: &Path, case: &PassCase) -> Result<(), String> {
     let temp = TempDir::new(&format!("ql-codegen-{}", case.name));
     let output_path = artifact_output_path(temp.path(), case.emit);
     let expected_path = workspace_root.join(case.expected_relative);
-    let expected = normalize_artifact(&render_expected_snapshot(&normalize(
-        &fs::read_to_string(&expected_path)
-            .unwrap_or_else(|_| panic!("read expected snapshot `{}`", expected_path.display())),
+    let expected = normalize_trimmed(&render_expected_snapshot(&read_normalized_file(
+        &expected_path,
+        "expected snapshot",
     )));
 
     let mut command = ql_command(workspace_root);
@@ -1734,27 +1735,13 @@ fn run_pass_case(workspace_root: &Path, case: &PassCase) -> Result<(), String> {
         "successful build",
     )?;
 
-    let actual = normalize_artifact(&normalize(
-        &fs::read_to_string(&output_path)
-            .unwrap_or_else(|_| panic!("read generated artifact `{}`", output_path.display())),
-    ));
-    if actual != expected {
-        return Err(format!(
-            "[{}] artifact snapshot mismatch\n--- expected ---\n{}\n--- actual ---\n{}",
-            case.name, expected, actual
-        ));
-    }
+    let actual = read_normalized_trimmed_file(&output_path, "generated artifact");
+    expect_snapshot_matches(case.name, "artifact snapshot", &expected, &actual)?;
 
     if let Some(expected_header_relative) = case.expected_header_relative {
         let expected_header_path = workspace_root.join(expected_header_relative);
-        let expected_header = normalize_artifact(&normalize(
-            &fs::read_to_string(&expected_header_path).unwrap_or_else(|_| {
-                panic!(
-                    "read expected header snapshot `{}`",
-                    expected_header_path.display()
-                )
-            }),
-        ));
+        let expected_header =
+            read_normalized_trimmed_file(&expected_header_path, "expected header snapshot");
         let surface = case
             .header_surface
             .expect("header snapshots require an explicit surface");
@@ -1766,17 +1753,13 @@ fn run_pass_case(workspace_root: &Path, case: &PassCase) -> Result<(), String> {
             "generated header",
             "successful build",
         )?;
-        let actual_header = normalize_artifact(&normalize(
-            &fs::read_to_string(&header_output_path).unwrap_or_else(|_| {
-                panic!("read generated header `{}`", header_output_path.display())
-            }),
-        ));
-        if actual_header != expected_header {
-            return Err(format!(
-                "[{}] header snapshot mismatch\n--- expected ---\n{}\n--- actual ---\n{}",
-                case.name, expected_header, actual_header
-            ));
-        }
+        let actual_header = read_normalized_trimmed_file(&header_output_path, "generated header");
+        expect_snapshot_matches(
+            case.name,
+            "header snapshot",
+            &expected_header,
+            &actual_header,
+        )?;
     }
 
     let leftovers = fs::read_dir(temp.path())
@@ -1806,12 +1789,7 @@ fn run_pass_case(workspace_root: &Path, case: &PassCase) -> Result<(), String> {
 
 fn run_fail_case(workspace_root: &Path, case: &FailCase) -> Result<(), String> {
     let expected_path = workspace_root.join(case.expected_stderr_relative);
-    let expected = normalize(&fs::read_to_string(&expected_path).unwrap_or_else(|_| {
-        panic!(
-            "read expected stderr snapshot `{}`",
-            expected_path.display()
-        )
-    }));
+    let expected = read_normalized_file(&expected_path, "expected stderr snapshot");
 
     let mut command = ql_command(workspace_root);
     command.args(["build", case.source_relative, "--emit", case.emit]);
@@ -1823,12 +1801,7 @@ fn run_fail_case(workspace_root: &Path, case: &FailCase) -> Result<(), String> {
     let (stdout, stderr) = expect_exit_code(case.name, "failing build", &output, 1)?;
     expect_empty_stdout(case.name, "failing build", &stdout)?;
 
-    if stderr != expected {
-        return Err(format!(
-            "[{}] stderr snapshot mismatch\n--- expected ---\n{}\n--- actual ---\n{}",
-            case.name, expected, stderr
-        ));
-    }
+    expect_snapshot_matches(case.name, "stderr snapshot", &expected, &stderr)?;
 
     Ok(())
 }
@@ -1902,10 +1875,6 @@ fn current_target_triple() -> &'static str {
 
 fn current_archiver_style() -> &'static str {
     if cfg!(windows) { "lib" } else { "ar" }
-}
-
-fn normalize_artifact(text: &str) -> String {
-    normalize(text).trim_end().to_owned()
 }
 
 fn make_mock_compiler_wrapper(root: &Path) -> PathBuf {

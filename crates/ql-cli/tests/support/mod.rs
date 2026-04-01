@@ -82,6 +82,22 @@ pub fn normalize(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
+pub fn normalize_trimmed(text: &str) -> String {
+    normalize(text).trim_end().to_owned()
+}
+
+pub fn read_normalized_file(path: &Path, subject: &str) -> String {
+    normalize(
+        &fs::read_to_string(path).unwrap_or_else(|_| panic!("read {subject} `{}`", path.display())),
+    )
+}
+
+pub fn read_normalized_trimmed_file(path: &Path, subject: &str) -> String {
+    normalize_trimmed(
+        &fs::read_to_string(path).unwrap_or_else(|_| panic!("read {subject} `{}`", path.display())),
+    )
+}
+
 pub fn ql_command(workspace_root: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ql"));
     command.current_dir(workspace_root);
@@ -212,6 +228,20 @@ pub fn expect_stdout_contains_all(
                 "[{case_name}] expected stdout to contain `{fragment}`, got:\n{stdout}"
             ));
         }
+    }
+    Ok(())
+}
+
+pub fn expect_snapshot_matches(
+    case_name: &str,
+    subject: &str,
+    expected: &str,
+    actual: &str,
+) -> Result<(), String> {
+    if actual != expected {
+        return Err(format!(
+            "[{case_name}] {subject} mismatch\n--- expected ---\n{expected}\n--- actual ---\n{actual}"
+        ));
     }
     Ok(())
 }

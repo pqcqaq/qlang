@@ -1,11 +1,9 @@
 mod support;
 
-use std::fs;
-
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
-    expect_stderr_contains, expect_stderr_not_contains, expect_success, ql_command,
-    run_command_capture, workspace_root,
+    expect_snapshot_matches, expect_stderr_contains, expect_stderr_not_contains, expect_success,
+    ql_command, read_normalized_file, run_command_capture, workspace_root,
 };
 
 #[test]
@@ -173,10 +171,7 @@ fn assert_ffi_header_snapshot(
     let temp = TempDir::new("ql-ffi-header");
     let output_path = temp.path().join(output_name);
     let expected_path = workspace_root.join(expected_path);
-    let expected = support::normalize(
-        &fs::read_to_string(&expected_path)
-            .unwrap_or_else(|_| panic!("read expected snapshot `{}`", expected_path.display())),
-    );
+    let expected = read_normalized_file(&expected_path, "expected snapshot");
 
     let mut args = vec![
         "ffi".to_owned(),
@@ -209,9 +204,12 @@ fn assert_ffi_header_snapshot(
     )
     .expect("header generation should create an output file");
 
-    let actual = support::normalize(
-        &fs::read_to_string(&output_path)
-            .unwrap_or_else(|_| panic!("read generated header `{}`", output_path.display())),
-    );
-    assert_eq!(actual, expected, "generated header snapshot mismatch");
+    let actual = read_normalized_file(&output_path, "generated header");
+    expect_snapshot_matches(
+        "ffi-header-snapshot",
+        "generated header snapshot",
+        &expected,
+        &actual,
+    )
+    .expect("generated header snapshot should match");
 }

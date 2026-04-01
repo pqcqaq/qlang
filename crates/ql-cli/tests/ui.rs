@@ -4,7 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use support::{
-    expect_empty_stdout, expect_exit_code, ql_command, run_command_capture, workspace_root,
+    expect_empty_stdout, expect_exit_code, expect_snapshot_matches, ql_command,
+    read_normalized_file, run_command_capture, workspace_root,
 };
 
 #[test]
@@ -26,10 +27,7 @@ fn ui_diagnostics_snapshots_match() {
             .to_string_lossy()
             .replace('\\', "/");
         let expected_path = fixture.with_extension("stderr");
-        let expected =
-            support::normalize(&fs::read_to_string(&expected_path).unwrap_or_else(|_| {
-                panic!("read expected snapshot `{}`", expected_path.display())
-            }));
+        let expected = read_normalized_file(&expected_path, "expected snapshot");
 
         let mut command = ql_command(&workspace_root);
         command.args(["check", &relative]);
@@ -46,10 +44,10 @@ fn ui_diagnostics_snapshots_match() {
             failures.push(message);
         }
 
-        if stderr != expected {
-            failures.push(format!(
-                "[{relative}] stderr snapshot mismatch\n--- expected ---\n{expected}\n--- actual ---\n{stderr}"
-            ));
+        if let Err(message) =
+            expect_snapshot_matches(&relative, "stderr snapshot", &expected, &stderr)
+        {
+            failures.push(message);
         }
     }
 
