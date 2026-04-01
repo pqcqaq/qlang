@@ -3248,7 +3248,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_queued_local_alias_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -3330,7 +3330,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_queued_local_chain_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -3413,7 +3413,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_queued_local_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -3497,7 +3497,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_queued_local_inline_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -3580,7 +3580,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_bundle_inline_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -3657,7 +3657,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_bundle_slot_inline_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -3736,7 +3736,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_tail_inline_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -3813,7 +3813,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_awaiting_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_tail_inline_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -3891,7 +3891,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_awaiting_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_bundle_slot_inline_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -3971,7 +3971,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_awaiting_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_bundle_inline_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -4049,7 +4049,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_awaiting_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_queued_local_inline_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -4133,7 +4133,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_awaiting_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_queued_local_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -4218,7 +4218,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_awaiting_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_queued_root_inline_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -4297,7 +4297,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_awaiting_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_queued_root_forwarded_task_handle_after_forwarded_alias()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -4373,6 +4373,88 @@ async fn main() -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected guarded const-backed triple-root triple-source row-slot-tail queued-root-forwarded await after forwarded alias to preserve sibling task availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_awaiting_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_queued_root_alias_forwarded_task_handle_after_forwarded_alias()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Bundle {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Envelope {
+    bundle: Bundle,
+    tail: Task[Wrap],
+}
+
+const INDEX: Int = 0
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row_root = INDEX
+    let row = row_root
+    let slots = [row, row]
+    let slot_root = slots
+    let slot_alias_root = slot_root
+    let alias_slots = slot_alias_root
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let root = pending.tasks
+    let root_alias = root
+    let alias = root_alias
+    let slot = Slot { value: INDEX }
+    let slot_alias = slot
+    if slot_alias.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let tail_tasks = pending.tasks
+    let forwarded = forward(alias[alias_slots[row]])
+    let running_task = forwarded
+    let env = Envelope {
+        bundle: Bundle {
+            tasks: [running_task, worker()],
+        },
+        tail: tail_tasks[1],
+    }
+    let queue_root = env.bundle.tasks
+    let queued_tasks = queue_root
+    let queued = queued_tasks[0]
+    let queued_ready = forward(queued)
+    let second = await queued_ready
+    let extra = await env.bundle.tasks[1]
+    let tail = await env.tail
+    return second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded const-backed triple-root triple-source row-slot-tail queued-root-alias-forwarded await after forwarded alias to preserve sibling task availability, got {diagnostics:?}"
     );
 }
 
