@@ -29,12 +29,13 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `28_async_main_guarded_alias_sourced_composed_dynamic_nested_array_repackage_spawn.ql`
 - `29_async_main_aliased_projected_root_forwarded_nested_array_repackage_spawn.ql`
 - `30_async_main_aliased_guard_refined_const_backed_forwarded_nested_array_repackage_spawn.ql`
+- `31_async_main_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn_with_tail_field.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these twenty-seven examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these twenty-eight examples with the real local toolchain and locks their exit codes.
 
 Expected exit codes:
 
@@ -65,6 +66,7 @@ Expected exit codes:
 - `28_async_main_guarded_alias_sourced_composed_dynamic_nested_array_repackage_spawn.ql` -> `50`
 - `29_async_main_aliased_projected_root_forwarded_nested_array_repackage_spawn.ql` -> `52`
 - `30_async_main_aliased_guard_refined_const_backed_forwarded_nested_array_repackage_spawn.ql` -> `54`
+- `31_async_main_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn_with_tail_field.ql` -> `59`
 
 Try one file directly:
 

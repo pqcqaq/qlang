@@ -10901,6 +10901,96 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_alias_sourced_composed_dynamic_task_handle_forwarded_nested_array_repackage_spawn_with_tail_field_in_program_mode()
+     {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Pending {
+    tasks: [Task[Int]; 2],
+    tail: Task[Int],
+}
+
+struct Bundle {
+    tasks: [Task[Int]; 2],
+}
+
+struct Envelope {
+    bundle: Bundle,
+    tail: Task[Int],
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn choose() -> Int {
+    return 0
+}
+
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn main() -> Int {
+    let row = choose()
+    let slots = [row, row]
+    let alias_slots = slots
+    var pending = Pending {
+        tasks: [worker(9), worker(14)],
+        tail: worker(17),
+    }
+    let alias = pending.tasks
+    let first = await alias[alias_slots[row]]
+    pending.tasks[slots[row]] = worker(first + 9)
+    let env = Envelope {
+        bundle: Bundle {
+            tasks: [forward(alias[alias_slots[row]]), worker(24)],
+        },
+        tail: pending.tail,
+    }
+    let running = spawn env.bundle.tasks[0]
+    let second = await running
+    let extra = await env.bundle.tasks[1]
+    let tail = await env.tail
+    return second + extra + tail
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_executor_spawn").count() >= 2);
+        assert!(rendered.matches("@qlrt_task_await").count() >= 5);
+        assert!(rendered.matches("_forward(").count() >= 2);
+        assert!(
+            rendered
+                .matches("getelementptr inbounds [2 x i64], ptr")
+                .count()
+                >= 3
+        );
+        assert!(
+            rendered
+                .matches("getelementptr inbounds [2 x ptr], ptr")
+                .count()
+                >= 4
+        );
+        assert!(rendered.matches("store ptr").count() >= 8);
+        assert!(!rendered.contains("does not support field or index projections yet"));
+        assert!(
+            !rendered.contains("does not support assignment to field or index projections yet")
+        );
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_dynamic_task_handle_array_index_assignment_in_program_mode()
      {
         let runtime_hooks = collect_runtime_hook_signatures([
