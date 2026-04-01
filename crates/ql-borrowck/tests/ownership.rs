@@ -2389,6 +2389,52 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn allows_passing_const_backed_alias_sourced_composed_dynamic_task_handle_to_helper_and_consuming_sibling_array_element()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+const INDEX: Int = 0
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row = INDEX
+    let slots = [row, row]
+    let alias_slots = slots
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let alias = pending.tasks
+    let first = await alias[alias_slots[row]]
+    pending.tasks[slots[row]] = worker()
+    let forwarded = forward(alias[alias_slots[row]])
+    let second = await pending.tasks[1]
+    return await forwarded
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected const-backed alias-sourced composed dynamic helper consume to preserve sibling array element availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_maybe_moved_for_specific_array_element_after_dynamic_task_handle_consume() {
     let diagnostics = diagnostic_messages(
         r#"

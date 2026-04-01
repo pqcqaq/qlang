@@ -208,6 +208,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/32_async_main_guarded_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn_with_tail_field.ql",
             expected_exit: 63,
         },
+        ExecutableExampleCase {
+            name: "async_main_const_backed_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/33_async_main_const_backed_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql",
+            expected_exit: 61,
+        },
     ];
 
     assert_example_cases_run(
