@@ -2768,6 +2768,65 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn allows_passing_guarded_const_backed_triple_root_triple_source_row_slot_alias_sourced_composed_dynamic_task_handle_to_helper_and_consuming_sibling_array_element()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+const INDEX: Int = 0
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row_root = INDEX
+    let row = row_root
+    let slots = [row, row]
+    let slot_root = slots
+    let slot_alias_root = slot_root
+    let alias_slots = slot_alias_root
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let root = pending.tasks
+    let root_alias = root
+    let alias = root_alias
+    let slot = Slot { value: INDEX }
+    let slot_alias = slot
+    if slot_alias.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let forwarded = forward(alias[alias_slots[row]])
+    let second = await pending.tasks[1]
+    return await forwarded
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded const-backed triple-root triple-source row-slot-alias-sourced composed dynamic helper consume to preserve sibling array element availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_maybe_moved_for_specific_array_element_after_dynamic_task_handle_consume() {
     let diagnostics = diagnostic_messages(
         r#"
