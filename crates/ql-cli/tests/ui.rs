@@ -1,6 +1,11 @@
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+use support::{
+    expect_empty_stdout, expect_exit_code, ql_command, run_command_capture, workspace_root,
+};
 
 #[test]
 fn ui_diagnostics_snapshots_match() {
@@ -22,31 +27,23 @@ fn ui_diagnostics_snapshots_match() {
             .replace('\\', "/");
         let expected_path = fixture.with_extension("stderr");
         let expected =
-            normalize(&fs::read_to_string(&expected_path).unwrap_or_else(|_| {
+            support::normalize(&fs::read_to_string(&expected_path).unwrap_or_else(|_| {
                 panic!("read expected snapshot `{}`", expected_path.display())
             }));
 
-        let output = Command::new(env!("CARGO_BIN_EXE_ql"))
-            .current_dir(&workspace_root)
-            .args(["check", &relative])
-            .output()
-            .unwrap_or_else(|_| panic!("run `ql check {relative}`"));
+        let mut command = ql_command(&workspace_root);
+        command.args(["check", &relative]);
+        let output = run_command_capture(&mut command, format!("`ql check {relative}`"));
+        let (stdout, stderr) = match expect_exit_code(&relative, "failing fixture", &output, 1) {
+            Ok(output) => output,
+            Err(message) => {
+                failures.push(message);
+                continue;
+            }
+        };
 
-        let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
-        let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
-
-        if output.status.code().is_none_or(|code| code != 1) {
-            failures.push(format!(
-                "[{relative}] expected exit code 1, got {:?}\nstdout:\n{stdout}\nstderr:\n{stderr}",
-                output.status.code()
-            ));
-            continue;
-        }
-
-        if !stdout.trim().is_empty() {
-            failures.push(format!(
-                "[{relative}] expected no stdout for failing fixture\nstdout:\n{stdout}"
-            ));
+        if let Err(message) = expect_empty_stdout(&relative, "failing fixture", &stdout) {
+            failures.push(message);
         }
 
         if stderr != expected {
@@ -61,17 +58,6 @@ fn ui_diagnostics_snapshots_match() {
         "UI snapshot regressions:\n\n{}",
         failures.join("\n\n")
     );
-}
-
-fn workspace_root() -> PathBuf {
-    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let crates_dir = crate_dir
-        .parent()
-        .expect("ql-cli crate should have a parent directory");
-    crates_dir
-        .parent()
-        .expect("workspace root should exist")
-        .to_path_buf()
 }
 
 fn collect_ui_fixtures(root: &Path) -> Vec<PathBuf> {
@@ -93,8 +79,4 @@ fn collect_ui_fixtures_recursive(root: &Path, fixtures: &mut Vec<PathBuf>) {
             fixtures.push(path);
         }
     }
-}
-
-fn normalize(text: &str) -> String {
-    text.replace("\r\n", "\n")
 }

@@ -1,8 +1,12 @@
-use std::env;
+mod support;
+
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+
+use support::{
+    TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
+    expect_stderr_contains, expect_stderr_not_contains, expect_success, ql_command,
+    run_command_capture, workspace_root,
+};
 
 #[test]
 fn ffi_header_snapshot_matches() {
@@ -37,37 +41,35 @@ fn ffi_header_combined_snapshot_matches() {
 #[test]
 fn ffi_header_rejects_unknown_surface() {
     let workspace_root = workspace_root();
-    let output = Command::new(env!("CARGO_BIN_EXE_ql"))
-        .current_dir(&workspace_root)
-        .args([
-            "ffi",
-            "header",
-            "tests/ffi/pass/extern_c_export.ql",
-            "--surface",
-            "invalid",
-        ])
-        .output()
-        .expect("run `ql ffi header --surface invalid`");
-    let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
-    let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
-
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "expected exit code 1\nstdout:\n{}\nstderr:\n{}",
-        stdout,
-        stderr
-    );
-    assert!(
-        stdout.trim().is_empty(),
-        "expected no stdout for failing header generation\nstdout:\n{}",
-        stdout
-    );
-    assert!(
-        stderr.contains("unsupported `ql ffi header` surface `invalid`"),
-        "expected invalid-surface diagnostic in stderr\nstderr:\n{}",
-        stderr
-    );
+    let mut command = ql_command(&workspace_root);
+    command.args([
+        "ffi",
+        "header",
+        "tests/ffi/pass/extern_c_export.ql",
+        "--surface",
+        "invalid",
+    ]);
+    let output = run_command_capture(&mut command, "`ql ffi header --surface invalid`");
+    let (stdout, stderr) = expect_exit_code(
+        "ffi-header-invalid-surface",
+        "invalid header generation",
+        &output,
+        1,
+    )
+    .expect("invalid-surface header generation should fail with exit code 1");
+    expect_empty_stdout(
+        "ffi-header-invalid-surface",
+        "failing header generation",
+        &stdout,
+    )
+    .expect("invalid-surface header generation should not print stdout");
+    expect_stderr_contains(
+        "ffi-header-invalid-surface",
+        "invalid header generation",
+        &stderr,
+        "unsupported `ql ffi header` surface `invalid`",
+    )
+    .expect("invalid-surface diagnostic should mention unsupported surface");
 }
 
 #[test]
@@ -82,31 +84,29 @@ extern "c" pub fn q_print(message: String) -> Void {
 "#,
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ql"))
-        .current_dir(&workspace_root)
-        .args(["ffi", "header", &source.to_string_lossy()])
-        .output()
-        .expect("run `ql ffi header` on unsupported signature");
-    let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
-    let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
-
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "expected exit code 1\nstdout:\n{}\nstderr:\n{}",
-        stdout,
-        stderr
-    );
-    assert!(
-        stdout.trim().is_empty(),
-        "expected no stdout for failing header generation\nstdout:\n{}",
-        stdout
-    );
-    assert!(
-        stderr.contains("C header generation does not support parameter type `String` yet"),
-        "expected unsupported-type diagnostic in stderr\nstderr:\n{}",
-        stderr
-    );
+    let mut command = ql_command(&workspace_root);
+    command.args(["ffi", "header"]).arg(&source);
+    let output = run_command_capture(&mut command, "`ql ffi header` on unsupported signature");
+    let (stdout, stderr) = expect_exit_code(
+        "ffi-header-unsupported-export-signature",
+        "unsupported header generation",
+        &output,
+        1,
+    )
+    .expect("unsupported header generation should fail with exit code 1");
+    expect_empty_stdout(
+        "ffi-header-unsupported-export-signature",
+        "failing header generation",
+        &stdout,
+    )
+    .expect("unsupported header generation should not print stdout");
+    expect_stderr_contains(
+        "ffi-header-unsupported-export-signature",
+        "unsupported header generation",
+        &stderr,
+        "C header generation does not support parameter type `String` yet",
+    )
+    .expect("unsupported signature diagnostic should mention String");
 }
 
 #[test]
@@ -128,72 +128,39 @@ extern "c" pub fn q_accept(value: Cmd.Scope.Config) -> Int {
 "#,
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ql"))
-        .current_dir(&workspace_root)
-        .args(["ffi", "header", &source.to_string_lossy()])
-        .output()
-        .expect("run `ql ffi header` on deferred multi-segment type signature");
-    let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
-    let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
-
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "expected exit code 1\nstdout:\n{}\nstderr:\n{}",
-        stdout,
-        stderr
+    let mut command = ql_command(&workspace_root);
+    command.args(["ffi", "header"]).arg(&source);
+    let output = run_command_capture(
+        &mut command,
+        "`ql ffi header` on deferred multi-segment type signature",
     );
-    assert!(
-        stdout.trim().is_empty(),
-        "expected no stdout for failing header generation\nstdout:\n{}",
-        stdout
-    );
-    assert!(
-        stderr
-            .contains("C header generation does not support parameter type `Cmd.Scope.Config` yet"),
-        "expected deferred source-backed type diagnostic in stderr\nstderr:\n{}",
-        stderr
-    );
-    assert!(
-        !stderr.contains("parameter type `Command`"),
-        "expected deferred path to stay source-backed instead of collapsing to `Command`\nstderr:\n{}",
-        stderr
-    );
-}
-
-struct TempDir {
-    path: PathBuf,
-}
-
-impl TempDir {
-    fn new(prefix: &str) -> Self {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let path = env::temp_dir().join(format!("{prefix}-{unique}"));
-        fs::create_dir_all(&path).expect("create temporary ffi header test directory");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-
-    fn write(&self, relative: &str, contents: &str) -> PathBuf {
-        let path = self.path.join(relative);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).expect("create parent directory for temp source");
-        }
-        fs::write(&path, contents).expect("write temp ql source");
-        path
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
+    let (stdout, stderr) = expect_exit_code(
+        "ffi-header-deferred-type",
+        "deferred-type header generation",
+        &output,
+        1,
+    )
+    .expect("deferred-type header generation should fail with exit code 1");
+    expect_empty_stdout(
+        "ffi-header-deferred-type",
+        "failing header generation",
+        &stdout,
+    )
+    .expect("deferred-type header generation should not print stdout");
+    expect_stderr_contains(
+        "ffi-header-deferred-type",
+        "deferred-type header generation",
+        &stderr,
+        "C header generation does not support parameter type `Cmd.Scope.Config` yet",
+    )
+    .expect("deferred diagnostic should preserve source-backed path");
+    expect_stderr_not_contains(
+        "ffi-header-deferred-type",
+        "deferred-type header generation",
+        &stderr,
+        "parameter type `Command`",
+    )
+    .expect("deferred diagnostic should not collapse to local type name");
 }
 
 fn assert_ffi_header_snapshot(
@@ -206,7 +173,7 @@ fn assert_ffi_header_snapshot(
     let temp = TempDir::new("ql-ffi-header");
     let output_path = temp.path().join(output_name);
     let expected_path = workspace_root.join(expected_path);
-    let expected = normalize(
+    let expected = support::normalize(
         &fs::read_to_string(&expected_path)
             .unwrap_or_else(|_| panic!("read expected snapshot `{}`", expected_path.display())),
     );
@@ -223,45 +190,28 @@ fn assert_ffi_header_snapshot(
     args.push("--output".to_owned());
     args.push(output_path.to_string_lossy().into_owned());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ql"))
-        .current_dir(&workspace_root)
-        .args(&args)
-        .output()
-        .unwrap_or_else(|_| panic!("run `ql {}`", args.join(" ")));
-    let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
-    let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
+    let mut command = ql_command(&workspace_root);
+    command.args(&args);
+    let output = run_command_capture(&mut command, format!("`ql {}`", args.join(" ")));
+    let (_, stderr) = expect_success("ffi-header-snapshot", "header generation", &output)
+        .expect("ffi header snapshot generation should succeed");
+    expect_empty_stderr(
+        "ffi-header-snapshot",
+        "successful header generation",
+        &stderr,
+    )
+    .expect("successful header generation should not print stderr");
+    expect_file_exists(
+        "ffi-header-snapshot",
+        &output_path,
+        "generated header",
+        "header generation",
+    )
+    .expect("header generation should create an output file");
 
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "expected exit code 0\nstdout:\n{}\nstderr:\n{}",
-        stdout,
-        stderr
-    );
-    assert!(
-        stderr.trim().is_empty(),
-        "expected no stderr for successful header generation\nstderr:\n{}",
-        stderr
-    );
-
-    let actual = normalize(
+    let actual = support::normalize(
         &fs::read_to_string(&output_path)
             .unwrap_or_else(|_| panic!("read generated header `{}`", output_path.display())),
     );
     assert_eq!(actual, expected, "generated header snapshot mismatch");
-}
-
-fn workspace_root() -> PathBuf {
-    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let crates_dir = crate_dir
-        .parent()
-        .expect("ql-cli crate should have a parent directory");
-    crates_dir
-        .parent()
-        .expect("workspace root should exist")
-        .to_path_buf()
-}
-
-fn normalize(text: &str) -> String {
-    text.replace("\r\n", "\n")
 }

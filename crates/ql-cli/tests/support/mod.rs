@@ -24,6 +24,15 @@ impl TempDir {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    pub fn write(&self, relative: &str, contents: &str) -> PathBuf {
+        let path = self.path.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent directory for temp file");
+        }
+        fs::write(&path, contents).expect("write temp file");
+        path
+    }
 }
 
 impl Drop for TempDir {
@@ -71,6 +80,12 @@ pub fn dynamic_library_output_path(root: &Path, stem: &str) -> PathBuf {
 
 pub fn normalize(text: &str) -> String {
     text.replace("\r\n", "\n")
+}
+
+pub fn ql_command(workspace_root: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ql"));
+    command.current_dir(workspace_root);
+    command
 }
 
 pub fn run_command_capture(command: &mut Command, description: impl Into<String>) -> Output {
@@ -135,6 +150,15 @@ pub fn expect_empty_stderr(case_name: &str, action: &str, stderr: &str) -> Resul
     Ok(())
 }
 
+pub fn expect_empty_stdout(case_name: &str, action: &str, stdout: &str) -> Result<(), String> {
+    if !stdout.trim().is_empty() {
+        return Err(format!(
+            "[{case_name}] expected {action} stdout to be empty, got:\n{stdout}"
+        ));
+    }
+    Ok(())
+}
+
 pub fn expect_silent_output(
     case_name: &str,
     action: &str,
@@ -144,6 +168,34 @@ pub fn expect_silent_output(
     if !stdout.trim().is_empty() || !stderr.trim().is_empty() {
         return Err(format!(
             "[{case_name}] expected {action} to be silent\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+pub fn expect_stderr_contains(
+    case_name: &str,
+    action: &str,
+    stderr: &str,
+    fragment: &str,
+) -> Result<(), String> {
+    if !stderr.contains(fragment) {
+        return Err(format!(
+            "[{case_name}] expected {action} stderr to contain `{fragment}`, got:\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+pub fn expect_stderr_not_contains(
+    case_name: &str,
+    action: &str,
+    stderr: &str,
+    fragment: &str,
+) -> Result<(), String> {
+    if stderr.contains(fragment) {
+        return Err(format!(
+            "[{case_name}] expected {action} stderr not to contain `{fragment}`, got:\n{stderr}"
         ));
     }
     Ok(())
@@ -171,8 +223,8 @@ pub fn run_ql_build_capture(
     output_path: &Path,
     extra_args: &[String],
 ) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ql"));
-    command.current_dir(workspace_root).args([
+    let mut command = ql_command(workspace_root);
+    command.args([
         "build",
         relative_ql,
         "--emit",
