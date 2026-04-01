@@ -4,7 +4,10 @@ use std::path::Path;
 use std::process::Command;
 
 use ql_driver::{ToolchainOptions, discover_toolchain};
-use support::{TempDir, executable_output_path, normalize, run_ql_build_capture, workspace_root};
+use support::{
+    TempDir, executable_output_path, expect_exit_code, expect_file_exists, expect_silent_output,
+    expect_success, run_command_capture, run_ql_build_capture, workspace_root,
+};
 
 #[test]
 fn executable_examples_build_and_run() {
@@ -148,19 +151,7 @@ fn run_executable_example_case(
         &output_path,
         &[],
     );
-
-    let build_stdout = normalize(&String::from_utf8_lossy(&build_output.stdout));
-    let build_stderr = normalize(&String::from_utf8_lossy(&build_output.stderr));
-
-    if build_output.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected build exit code 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            build_output.status.code(),
-            build_stdout,
-            build_stderr
-        ));
-    }
+    let (build_stdout, build_stderr) = expect_success(case.name, "build", &build_output)?;
 
     let expected_build_stdout = format!("wrote executable: {}", output_path.display());
     if build_stdout.trim() != expected_build_stdout || !build_stderr.trim().is_empty() {
@@ -170,38 +161,21 @@ fn run_executable_example_case(
         ));
     }
 
-    if !output_path.is_file() {
-        return Err(format!(
-            "[{}] expected built executable at `{}`",
-            case.name,
-            output_path.display()
-        ));
-    }
+    expect_file_exists(case.name, &output_path, "built executable", "build")?;
 
-    let run_output = Command::new(&output_path)
-        .current_dir(workspace_root)
-        .output()
-        .unwrap_or_else(|_| panic!("run built executable `{}`", output_path.display()));
-    let run_stdout = normalize(&String::from_utf8_lossy(&run_output.stdout));
-    let run_stderr = normalize(&String::from_utf8_lossy(&run_output.stderr));
-
-    if run_output.status.code() != Some(case.expected_exit) {
-        return Err(format!(
-            "[{}] expected runtime exit code {}, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            case.expected_exit,
-            run_output.status.code(),
-            run_stdout,
-            run_stderr
-        ));
-    }
-
-    if !run_stdout.trim().is_empty() || !run_stderr.trim().is_empty() {
-        return Err(format!(
-            "[{}] expected executable to be silent\nstdout:\n{}\nstderr:\n{}",
-            case.name, run_stdout, run_stderr
-        ));
-    }
+    let mut run_command = Command::new(&output_path);
+    run_command.current_dir(workspace_root);
+    let run_output = run_command_capture(
+        &mut run_command,
+        format!("built executable `{}`", output_path.display()),
+    );
+    let (run_stdout, run_stderr) = expect_exit_code(
+        case.name,
+        "runtime executable",
+        &run_output,
+        case.expected_exit,
+    )?;
+    expect_silent_output(case.name, "executable run", &run_stdout, &run_stderr)?;
 
     Ok(())
 }

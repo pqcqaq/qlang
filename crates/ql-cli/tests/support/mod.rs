@@ -73,6 +73,97 @@ pub fn normalize(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
+pub fn run_command_capture(command: &mut Command, description: impl Into<String>) -> Output {
+    let description = description.into();
+    command
+        .output()
+        .unwrap_or_else(|_| panic!("run {description}"))
+}
+
+pub fn normalized_output(output: &Output) -> (String, String) {
+    (
+        normalize(&String::from_utf8_lossy(&output.stdout)),
+        normalize(&String::from_utf8_lossy(&output.stderr)),
+    )
+}
+
+pub fn expect_exit_code(
+    case_name: &str,
+    action: &str,
+    output: &Output,
+    expected_code: i32,
+) -> Result<(String, String), String> {
+    let (stdout, stderr) = normalized_output(output);
+    if output.status.code() != Some(expected_code) {
+        return Err(format!(
+            "[{case_name}] expected {action} to exit with {expected_code}, got {:?}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            output.status.code()
+        ));
+    }
+    Ok((stdout, stderr))
+}
+
+pub fn expect_success(
+    case_name: &str,
+    action: &str,
+    output: &Output,
+) -> Result<(String, String), String> {
+    expect_exit_code(case_name, action, output, 0)
+}
+
+pub fn expect_file_exists(
+    case_name: &str,
+    path: &Path,
+    subject: &str,
+    action: &str,
+) -> Result<(), String> {
+    if !path.is_file() {
+        return Err(format!(
+            "[{case_name}] expected {subject} `{}` to exist after {action}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+pub fn expect_empty_stderr(case_name: &str, action: &str, stderr: &str) -> Result<(), String> {
+    if !stderr.trim().is_empty() {
+        return Err(format!(
+            "[{case_name}] expected {action} stderr to be empty, got:\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+pub fn expect_silent_output(
+    case_name: &str,
+    action: &str,
+    stdout: &str,
+    stderr: &str,
+) -> Result<(), String> {
+    if !stdout.trim().is_empty() || !stderr.trim().is_empty() {
+        return Err(format!(
+            "[{case_name}] expected {action} to be silent\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+pub fn expect_stdout_contains_all(
+    case_name: &str,
+    stdout: &str,
+    expected_fragments: &[&str],
+) -> Result<(), String> {
+    for fragment in expected_fragments {
+        if !stdout.contains(fragment) {
+            return Err(format!(
+                "[{case_name}] expected stdout to contain `{fragment}`, got:\n{stdout}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn run_ql_build_capture(
     workspace_root: &Path,
     relative_ql: &str,
@@ -92,7 +183,8 @@ pub fn run_ql_build_capture(
     for arg in extra_args {
         command.arg(arg);
     }
-    command
-        .output()
-        .unwrap_or_else(|_| panic!("run `ql build {relative_ql} --emit {emit}`"))
+    run_command_capture(
+        &mut command,
+        format!("`ql build {relative_ql} --emit {emit}`"),
+    )
 }

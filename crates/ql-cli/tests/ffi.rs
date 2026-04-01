@@ -7,8 +7,9 @@ use std::process::Command;
 
 use ql_driver::{ToolchainOptions, discover_toolchain};
 use support::{
-    TempDir, dynamic_library_output_path, executable_output_path, normalize, run_ql_build_capture,
-    static_library_output_path, workspace_root,
+    TempDir, dynamic_library_output_path, executable_output_path, expect_empty_stderr,
+    expect_file_exists, expect_stdout_contains_all, expect_success, run_command_capture,
+    run_ql_build_capture, static_library_output_path, workspace_root,
 };
 
 #[test]
@@ -271,71 +272,41 @@ fn run_static_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> R
         case.header_surface,
         Some(&header),
     )?;
-    if !staticlib.is_file() {
-        return Err(format!(
-            "[{}] expected static library `{}` to exist after build",
-            case.name,
-            staticlib.display()
-        ));
-    }
-    if !header.is_file() {
-        return Err(format!(
-            "[{}] expected generated header `{}` to exist after `ql build --header-output`",
-            case.name,
-            header.display()
-        ));
-    }
+    expect_file_exists(&case.name, &staticlib, "static library", "build")?;
+    expect_file_exists(
+        &case.name,
+        &header,
+        "generated header",
+        "`ql build --header-output`",
+    )?;
 
-    let compile = Command::new(clang)
+    let mut compile = Command::new(clang);
+    compile
         .current_dir(workspace_root)
         .arg("-I")
         .arg(temp.path())
         .arg(&case.harness_path)
         .arg(&staticlib)
         .arg("-o")
-        .arg(&executable)
-        .output()
-        .unwrap_or_else(|_| {
-            panic!(
-                "run static C harness compiler `{}` for `{}`",
-                clang.display(),
-                case.name
-            )
-        });
-    let compile_stdout = normalize(&String::from_utf8_lossy(&compile.stdout));
-    let compile_stderr = normalize(&String::from_utf8_lossy(&compile.stderr));
-    if compile.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected static C harness link to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            compile.status.code(),
-            compile_stdout,
-            compile_stderr
-        ));
-    }
-    if !executable.is_file() {
-        return Err(format!(
-            "[{}] expected executable `{}` to exist after static C link",
-            case.name,
-            executable.display()
-        ));
-    }
+        .arg(&executable);
+    let compile = run_command_capture(
+        &mut compile,
+        format!(
+            "static C harness compiler `{}` for `{}`",
+            clang.display(),
+            case.name
+        ),
+    );
+    expect_success(&case.name, "static C harness link", &compile)?;
+    expect_file_exists(&case.name, &executable, "executable", "static C link")?;
 
-    let run = Command::new(&executable)
-        .current_dir(workspace_root)
-        .output()
-        .unwrap_or_else(|_| panic!("run static FFI executable `{}`", executable.display()));
-    let run_stdout = normalize(&String::from_utf8_lossy(&run.stdout));
-    let run_stderr = normalize(&String::from_utf8_lossy(&run.stderr));
-    if run.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected static FFI executable to exit with 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            run.status.code(),
-            run_stdout,
-            run_stderr
-        ));
-    }
+    let mut run = Command::new(&executable);
+    run.current_dir(workspace_root);
+    let run = run_command_capture(
+        &mut run,
+        format!("static FFI executable `{}`", executable.display()),
+    );
+    expect_success(&case.name, "static FFI executable", &run)?;
 
     Ok(())
 }
@@ -356,20 +327,13 @@ fn run_dynamic_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> 
         case.header_surface,
         Some(&header),
     )?;
-    if !dynamic_library.is_file() {
-        return Err(format!(
-            "[{}] expected dynamic library `{}` to exist after build",
-            case.name,
-            dynamic_library.display()
-        ));
-    }
-    if !header.is_file() {
-        return Err(format!(
-            "[{}] expected generated header `{}` to exist after `ql build --header-output`",
-            case.name,
-            header.display()
-        ));
-    }
+    expect_file_exists(&case.name, &dynamic_library, "dynamic library", "build")?;
+    expect_file_exists(
+        &case.name,
+        &header,
+        "generated header",
+        "`ql build --header-output`",
+    )?;
 
     let mut compile = Command::new(clang);
     compile
@@ -382,53 +346,29 @@ fn run_dynamic_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> 
     if cfg!(target_os = "linux") {
         compile.arg("-ldl");
     }
-    let compile = compile.output().unwrap_or_else(|_| {
-        panic!(
-            "run shared-library C harness compiler `{}` for `{}`",
+    let compile = run_command_capture(
+        &mut compile,
+        format!(
+            "shared-library C harness compiler `{}` for `{}`",
             clang.display(),
             case.name
-        )
-    });
-    let compile_stdout = normalize(&String::from_utf8_lossy(&compile.stdout));
-    let compile_stderr = normalize(&String::from_utf8_lossy(&compile.stderr));
-    if compile.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected shared-library C harness build to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            compile.status.code(),
-            compile_stdout,
-            compile_stderr
-        ));
-    }
-    if !executable.is_file() {
-        return Err(format!(
-            "[{}] expected executable `{}` to exist after shared-library C harness build",
-            case.name,
-            executable.display()
-        ));
-    }
+        ),
+    );
+    expect_success(&case.name, "shared-library C harness build", &compile)?;
+    expect_file_exists(
+        &case.name,
+        &executable,
+        "executable",
+        "shared-library C harness build",
+    )?;
 
-    let run = Command::new(&executable)
-        .current_dir(workspace_root)
-        .arg(&dynamic_library)
-        .output()
-        .unwrap_or_else(|_| {
-            panic!(
-                "run shared-library FFI executable `{}`",
-                executable.display()
-            )
-        });
-    let run_stdout = normalize(&String::from_utf8_lossy(&run.stdout));
-    let run_stderr = normalize(&String::from_utf8_lossy(&run.stderr));
-    if run.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected shared-library FFI executable to exit with 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            run.status.code(),
-            run_stdout,
-            run_stderr
-        ));
-    }
+    let mut run = Command::new(&executable);
+    run.current_dir(workspace_root).arg(&dynamic_library);
+    let run = run_command_capture(
+        &mut run,
+        format!("shared-library FFI executable `{}`", executable.display()),
+    );
+    expect_success(&case.name, "shared-library FFI executable", &run)?;
 
     Ok(())
 }
@@ -825,18 +765,7 @@ fn run_ql_build(
         extra_args.push(header_path.to_string_lossy().to_string());
     }
     let build = run_ql_build_capture(workspace_root, relative_ql, emit, output_path, &extra_args);
-    let build_stdout = normalize(&String::from_utf8_lossy(&build.stdout));
-    let build_stderr = normalize(&String::from_utf8_lossy(&build.stderr));
-    if build.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected `ql build --emit {}` to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case_name,
-            emit,
-            build.status.code(),
-            build_stdout,
-            build_stderr
-        ));
-    }
+    expect_success(case_name, &format!("`ql build --emit {emit}`"), &build)?;
     Ok(())
 }
 
@@ -859,15 +788,10 @@ fn run_static_rust_ffi_case(
         HeaderSurface::Exports,
         None,
     )?;
-    if !staticlib.is_file() {
-        return Err(format!(
-            "[{}] expected static library `{}` to exist after build",
-            case.name,
-            staticlib.display()
-        ));
-    }
+    expect_file_exists(&case.name, &staticlib, "static library", "build")?;
 
-    let compile = Command::new(rustc)
+    let mut compile = Command::new(rustc);
+    compile
         .current_dir(workspace_root)
         .arg("--edition=2021")
         .arg("--crate-name")
@@ -878,49 +802,25 @@ fn run_static_rust_ffi_case(
         .arg("-l")
         .arg(format!("static={}", case.name))
         .arg("-o")
-        .arg(&executable)
-        .output()
-        .unwrap_or_else(|_| {
-            panic!(
-                "run Rust FFI harness compiler `{}` for `{}`",
-                rustc.display(),
-                case.name
-            )
-        });
-    let compile_stdout = normalize(&String::from_utf8_lossy(&compile.stdout));
-    let compile_stderr = normalize(&String::from_utf8_lossy(&compile.stderr));
-    if compile.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected Rust static FFI harness link to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            compile.status.code(),
-            compile_stdout,
-            compile_stderr
-        ));
-    }
-    if !executable.is_file() {
-        return Err(format!(
-            "[{}] expected Rust executable `{}` to exist after static link",
-            case.name,
-            executable.display()
-        ));
-    }
+        .arg(&executable);
+    let compile = run_command_capture(
+        &mut compile,
+        format!(
+            "Rust FFI harness compiler `{}` for `{}`",
+            rustc.display(),
+            case.name
+        ),
+    );
+    expect_success(&case.name, "Rust static FFI harness link", &compile)?;
+    expect_file_exists(&case.name, &executable, "Rust executable", "static link")?;
 
-    let run = Command::new(&executable)
-        .current_dir(workspace_root)
-        .output()
-        .unwrap_or_else(|_| panic!("run Rust FFI executable `{}`", executable.display()));
-    let run_stdout = normalize(&String::from_utf8_lossy(&run.stdout));
-    let run_stderr = normalize(&String::from_utf8_lossy(&run.stderr));
-    if run.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected Rust FFI executable to exit with 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            run.status.code(),
-            run_stdout,
-            run_stderr
-        ));
-    }
+    let mut run = Command::new(&executable);
+    run.current_dir(workspace_root);
+    let run = run_command_capture(
+        &mut run,
+        format!("Rust FFI executable `{}`", executable.display()),
+    );
+    expect_success(&case.name, "Rust FFI executable", &run)?;
 
     Ok(())
 }
@@ -943,40 +843,25 @@ fn run_cargo_rust_ffi_case(
         HeaderSurface::Exports,
         None,
     )?;
-    if !staticlib.is_file() {
-        return Err(format!(
-            "[{}] expected static library `{}` to exist after build",
-            case.name,
-            staticlib.display()
-        ));
-    }
+    expect_file_exists(&case.name, &staticlib, "static library", "build")?;
 
     let project_dir = temp.path().join("cargo-host");
     write_rust_cargo_project(&project_dir, case, temp.path())?;
 
-    let cargo_run = Command::new(cargo)
+    let mut cargo_run = Command::new(cargo);
+    cargo_run
         .current_dir(&project_dir)
         .env("CARGO_TARGET_DIR", project_dir.join("target"))
-        .args(["run", "--quiet"])
-        .output()
-        .unwrap_or_else(|_| {
-            panic!(
-                "run Cargo-based Rust FFI harness `{}` for `{}`",
-                cargo.display(),
-                case.name
-            )
-        });
-    let cargo_stdout = normalize(&String::from_utf8_lossy(&cargo_run.stdout));
-    let cargo_stderr = normalize(&String::from_utf8_lossy(&cargo_run.stderr));
-    if cargo_run.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected Cargo-based Rust FFI harness to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            cargo_run.status.code(),
-            cargo_stdout,
-            cargo_stderr
-        ));
-    }
+        .args(["run", "--quiet"]);
+    let cargo_run = run_command_capture(
+        &mut cargo_run,
+        format!(
+            "Cargo-based Rust FFI harness `{}` for `{}`",
+            cargo.display(),
+            case.name
+        ),
+    );
+    expect_success(&case.name, "Cargo-based Rust FFI harness", &cargo_run)?;
 
     Ok(())
 }
@@ -991,29 +876,25 @@ fn run_committed_rust_example(
     copy_directory_recursive(example_root, &copied_root)?;
 
     let host_dir = copied_root.join("host");
-    let cargo_run = Command::new(cargo)
+    let mut cargo_run = Command::new(cargo);
+    cargo_run
         .current_dir(&host_dir)
         .env("QLANG_BIN", env!("CARGO_BIN_EXE_ql"))
         .env("CARGO_TARGET_DIR", host_dir.join("target"))
-        .args(["run", "--quiet"])
-        .output()
-        .unwrap_or_else(|_| {
-            panic!(
-                "run committed Rust FFI example with Cargo `{}`",
-                cargo.display()
-            )
-        });
-    let cargo_stdout = normalize(&String::from_utf8_lossy(&cargo_run.stdout));
-    let cargo_stderr = normalize(&String::from_utf8_lossy(&cargo_run.stderr));
-    if cargo_run.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[ffi-rust-example] expected committed Cargo host example to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            cargo_run.status.code(),
-            cargo_stdout,
-            cargo_stderr
-        ));
-    }
-    assert_stdout_contains_all("ffi-rust-example", &cargo_stdout, expected_stdout_fragments)?;
+        .args(["run", "--quiet"]);
+    let cargo_run = run_command_capture(
+        &mut cargo_run,
+        format!(
+            "committed Rust FFI example with Cargo `{}`",
+            cargo.display()
+        ),
+    );
+    let (cargo_stdout, _) = expect_success(
+        "ffi-rust-example",
+        "committed Cargo host example",
+        &cargo_run,
+    )?;
+    expect_stdout_contains_all("ffi-rust-example", &cargo_stdout, expected_stdout_fragments)?;
 
     Ok(())
 }
@@ -1045,73 +926,39 @@ fn run_committed_c_example(
         header_surface,
         Some(&header),
     )?;
-    if !staticlib.is_file() {
-        return Err(format!(
-            "[ffi-c-example] expected static library `{}` to exist after build",
-            staticlib.display()
-        ));
-    }
-    if !header.is_file() {
-        return Err(format!(
-            "[ffi-c-example] expected generated header `{}` to exist after build",
-            header.display()
-        ));
-    }
+    expect_file_exists("ffi-c-example", &staticlib, "static library", "build")?;
+    expect_file_exists("ffi-c-example", &header, "generated header", "build")?;
 
-    let compile = Command::new(clang)
+    let mut compile = Command::new(clang);
+    compile
         .current_dir(workspace_root)
         .arg("-I")
         .arg(temp.path())
         .arg(host_source)
         .arg(&staticlib)
         .arg("-o")
-        .arg(&executable)
-        .output()
-        .unwrap_or_else(|_| {
-            panic!(
-                "run committed C FFI example compiler `{}` for `{}`",
-                clang.display(),
-                host_source.display()
-            )
-        });
-    let compile_stdout = normalize(&String::from_utf8_lossy(&compile.stdout));
-    let compile_stderr = normalize(&String::from_utf8_lossy(&compile.stderr));
-    if compile.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[ffi-c-example] expected committed C FFI example link to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            compile.status.code(),
-            compile_stdout,
-            compile_stderr
-        ));
-    }
-    if !executable.is_file() {
-        return Err(format!(
-            "[ffi-c-example] expected executable `{}` to exist after C host link",
-            executable.display()
-        ));
-    }
+        .arg(&executable);
+    let compile = run_command_capture(
+        &mut compile,
+        format!(
+            "committed C FFI example compiler `{}` for `{}`",
+            clang.display(),
+            host_source.display()
+        ),
+    );
+    expect_success("ffi-c-example", "committed C FFI example link", &compile)?;
+    expect_file_exists("ffi-c-example", &executable, "executable", "C host link")?;
 
-    let run = Command::new(&executable)
-        .current_dir(workspace_root)
-        .output()
-        .unwrap_or_else(|_| panic!("run committed C FFI example `{}`", executable.display()));
-    let run_stdout = normalize(&String::from_utf8_lossy(&run.stdout));
-    let run_stderr = normalize(&String::from_utf8_lossy(&run.stderr));
-    if run.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[ffi-c-example] expected committed C FFI example to exit with 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            run.status.code(),
-            run_stdout,
-            run_stderr
-        ));
-    }
-    assert_stdout_contains_all("ffi-c-example", &run_stdout, expected_stdout_fragments)?;
-    if !run_stderr.trim().is_empty() {
-        return Err(format!(
-            "[ffi-c-example] expected committed C FFI example stderr to be empty, got:\n{}",
-            run_stderr
-        ));
-    }
+    let mut run = Command::new(&executable);
+    run.current_dir(workspace_root);
+    let run = run_command_capture(
+        &mut run,
+        format!("committed C FFI example `{}`", executable.display()),
+    );
+    let (run_stdout, run_stderr) =
+        expect_success("ffi-c-example", "committed C FFI example", &run)?;
+    expect_stdout_contains_all("ffi-c-example", &run_stdout, expected_stdout_fragments)?;
+    expect_empty_stderr("ffi-c-example", "committed C FFI example", &run_stderr)?;
 
     Ok(())
 }
@@ -1141,12 +988,12 @@ fn run_committed_c_dylib_example(
         HeaderSurface::Exports,
         None,
     )?;
-    if !dynamic_library.is_file() {
-        return Err(format!(
-            "[ffi-c-dylib-example] expected dynamic library `{}` to exist after build",
-            dynamic_library.display()
-        ));
-    }
+    expect_file_exists(
+        "ffi-c-dylib-example",
+        &dynamic_library,
+        "dynamic library",
+        "build",
+    )?;
 
     let mut compile = Command::new(clang);
     compile
@@ -1157,78 +1004,45 @@ fn run_committed_c_dylib_example(
     if cfg!(target_os = "linux") {
         compile.arg("-ldl");
     }
-    let compile = compile.output().unwrap_or_else(|_| {
-        panic!(
-            "run committed C dylib FFI example compiler `{}` for `{}`",
+    let compile = run_command_capture(
+        &mut compile,
+        format!(
+            "committed C dylib FFI example compiler `{}` for `{}`",
             clang.display(),
             host_source.display()
-        )
-    });
-    let compile_stdout = normalize(&String::from_utf8_lossy(&compile.stdout));
-    let compile_stderr = normalize(&String::from_utf8_lossy(&compile.stderr));
-    if compile.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[ffi-c-dylib-example] expected committed C dylib FFI example build to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            compile.status.code(),
-            compile_stdout,
-            compile_stderr
-        ));
-    }
-    if !executable.is_file() {
-        return Err(format!(
-            "[ffi-c-dylib-example] expected executable `{}` to exist after C host build",
-            executable.display()
-        ));
-    }
+        ),
+    );
+    expect_success(
+        "ffi-c-dylib-example",
+        "committed C dylib FFI example build",
+        &compile,
+    )?;
+    expect_file_exists(
+        "ffi-c-dylib-example",
+        &executable,
+        "executable",
+        "C host build",
+    )?;
 
-    let run = Command::new(&executable)
-        .current_dir(workspace_root)
-        .arg(&dynamic_library)
-        .output()
-        .unwrap_or_else(|_| {
-            panic!(
-                "run committed C dylib FFI example `{}`",
-                executable.display()
-            )
-        });
-    let run_stdout = normalize(&String::from_utf8_lossy(&run.stdout));
-    let run_stderr = normalize(&String::from_utf8_lossy(&run.stderr));
-    if run.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[ffi-c-dylib-example] expected committed C dylib FFI example to exit with 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            run.status.code(),
-            run_stdout,
-            run_stderr
-        ));
-    }
-    assert_stdout_contains_all(
+    let mut run = Command::new(&executable);
+    run.current_dir(workspace_root).arg(&dynamic_library);
+    let run = run_command_capture(
+        &mut run,
+        format!("committed C dylib FFI example `{}`", executable.display()),
+    );
+    let (run_stdout, run_stderr) =
+        expect_success("ffi-c-dylib-example", "committed C dylib FFI example", &run)?;
+    expect_stdout_contains_all(
         "ffi-c-dylib-example",
         &run_stdout,
         expected_stdout_fragments,
     )?;
-    if !run_stderr.trim().is_empty() {
-        return Err(format!(
-            "[ffi-c-dylib-example] expected committed C dylib FFI example stderr to be empty, got:\n{}",
-            run_stderr
-        ));
-    }
+    expect_empty_stderr(
+        "ffi-c-dylib-example",
+        "committed C dylib FFI example",
+        &run_stderr,
+    )?;
 
-    Ok(())
-}
-
-fn assert_stdout_contains_all(
-    case_name: &str,
-    stdout: &str,
-    expected_fragments: &[&str],
-) -> Result<(), String> {
-    for fragment in expected_fragments {
-        if !stdout.contains(fragment) {
-            return Err(format!(
-                "[{case_name}] expected stdout to contain `{fragment}`, got:\n{}",
-                stdout
-            ));
-        }
-    }
     Ok(())
 }
 
