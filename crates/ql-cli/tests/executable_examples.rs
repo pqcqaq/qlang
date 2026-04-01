@@ -253,6 +253,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/41_async_main_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql",
             expected_exit: 78,
         },
+        ExecutableExampleCase {
+            name: "async_main_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_forwarded_alias_nested_array_repackage_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/42_async_main_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_forwarded_alias_nested_array_repackage_spawn.ql",
+            expected_exit: 80,
+        },
     ];
 
     assert_example_cases_run(
