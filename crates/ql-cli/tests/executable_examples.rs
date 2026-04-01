@@ -1,10 +1,10 @@
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
+mod support;
+
+use std::path::Path;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_driver::{ToolchainOptions, discover_toolchain};
+use support::{TempDir, executable_output_path, normalize, run_ql_build_capture, workspace_root};
 
 #[test]
 fn executable_examples_build_and_run() {
@@ -135,55 +135,19 @@ struct ExecutableExampleCase {
     expected_exit: i32,
 }
 
-struct TempDir {
-    path: PathBuf,
-}
-
-impl TempDir {
-    fn new(prefix: &str) -> Self {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let path = env::temp_dir().join(format!("{prefix}-{unique}"));
-        fs::create_dir_all(&path).expect("create temporary executable example test directory");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
-
 fn run_executable_example_case(
     workspace_root: &Path,
     case: &ExecutableExampleCase,
 ) -> Result<(), String> {
     let temp = TempDir::new(&format!("ql-executable-example-{}", case.name));
-    let output_path = executable_output_path(temp.path());
-
-    let mut build = Command::new(env!("CARGO_BIN_EXE_ql"));
-    build.current_dir(workspace_root).args([
-        "build",
+    let output_path = executable_output_path(temp.path(), "artifact");
+    let build_output = run_ql_build_capture(
+        workspace_root,
         case.source_relative,
-        "--emit",
         "exe",
-        "--output",
-        &output_path.to_string_lossy(),
-    ]);
-    let build_output = build.output().unwrap_or_else(|_| {
-        panic!(
-            "run `ql build {} --emit exe --output {}`",
-            case.source_relative,
-            output_path.display()
-        )
-    });
+        &output_path,
+        &[],
+    );
 
     let build_stdout = normalize(&String::from_utf8_lossy(&build_output.stdout));
     let build_stderr = normalize(&String::from_utf8_lossy(&build_output.stderr));
@@ -240,27 +204,4 @@ fn run_executable_example_case(
     }
 
     Ok(())
-}
-
-fn workspace_root() -> PathBuf {
-    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let crates_dir = crate_dir
-        .parent()
-        .expect("ql-cli crate should have a parent directory");
-    crates_dir
-        .parent()
-        .expect("workspace root should exist")
-        .to_path_buf()
-}
-
-fn executable_output_path(root: &Path) -> PathBuf {
-    root.join(if cfg!(windows) {
-        "artifact.exe"
-    } else {
-        "artifact"
-    })
-}
-
-fn normalize(text: &str) -> String {
-    text.replace("\r\n", "\n")
 }

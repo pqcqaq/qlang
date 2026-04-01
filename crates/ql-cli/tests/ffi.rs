@@ -1,10 +1,15 @@
+mod support;
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_driver::{ToolchainOptions, discover_toolchain};
+use support::{
+    TempDir, dynamic_library_output_path, executable_output_path, normalize, run_ql_build_capture,
+    static_library_output_path, workspace_root,
+};
 
 #[test]
 fn ffi_exports_link_from_c_static_harnesses() {
@@ -250,32 +255,6 @@ impl HeaderSurface {
     }
 }
 
-struct TempDir {
-    path: PathBuf,
-}
-
-impl TempDir {
-    fn new(prefix: &str) -> Self {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let path = env::temp_dir().join(format!("{prefix}-{unique}"));
-        fs::create_dir_all(&path).expect("create temporary ffi test directory");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
-
 fn run_static_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> Result<(), String> {
     let temp = TempDir::new(&format!("ql-ffi-static-{}", case.name));
     let header = header_output_path(temp.path(), &case.name, case.header_surface);
@@ -452,17 +431,6 @@ fn run_dynamic_ffi_case(workspace_root: &Path, clang: &Path, case: &FfiCase) -> 
     }
 
     Ok(())
-}
-
-fn workspace_root() -> PathBuf {
-    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let crates_dir = crate_dir
-        .parent()
-        .expect("ql-cli crate should have a parent directory");
-    crates_dir
-        .parent()
-        .expect("workspace root should exist")
-        .to_path_buf()
 }
 
 fn committed_example_cases() -> &'static [CommittedExampleCase] {
@@ -729,38 +697,8 @@ fn cargo_candidates() -> Vec<&'static str> {
     }
 }
 
-fn static_library_output_path(root: &Path, stem: &str) -> PathBuf {
-    if cfg!(windows) {
-        root.join(format!("{stem}.lib"))
-    } else {
-        root.join(format!("lib{stem}.a"))
-    }
-}
-
-fn dynamic_library_output_path(root: &Path, stem: &str) -> PathBuf {
-    if cfg!(windows) {
-        root.join(format!("{stem}.dll"))
-    } else if cfg!(target_os = "macos") {
-        root.join(format!("lib{stem}.dylib"))
-    } else {
-        root.join(format!("lib{stem}.so"))
-    }
-}
-
 fn header_output_path(root: &Path, stem: &str, surface: HeaderSurface) -> PathBuf {
     root.join(surface.header_file_name(stem))
-}
-
-fn executable_output_path(root: &Path, stem: &str) -> PathBuf {
-    if cfg!(windows) {
-        root.join(format!("{stem}.exe"))
-    } else {
-        root.join(stem)
-    }
-}
-
-fn normalize(text: &str) -> String {
-    text.replace("\r\n", "\n")
 }
 
 fn rust_crate_name(stem: &str) -> String {
@@ -879,22 +817,14 @@ fn run_ql_build(
     header_surface: HeaderSurface,
     header_path: Option<&Path>,
 ) -> Result<(), String> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ql"));
-    command.current_dir(workspace_root).args([
-        "build",
-        relative_ql,
-        "--emit",
-        emit,
-        "--output",
-        &output_path.to_string_lossy(),
-    ]);
+    let mut extra_args = Vec::new();
     if let Some(header_path) = header_path {
-        command.args(["--header-surface", header_surface.cli_value()]);
-        command.args(["--header-output", &header_path.to_string_lossy()]);
+        extra_args.push("--header-surface".to_owned());
+        extra_args.push(header_surface.cli_value().to_owned());
+        extra_args.push("--header-output".to_owned());
+        extra_args.push(header_path.to_string_lossy().to_string());
     }
-    let build = command
-        .output()
-        .unwrap_or_else(|_| panic!("run `ql build {relative_ql} --emit {emit}`"));
+    let build = run_ql_build_capture(workspace_root, relative_ql, emit, output_path, &extra_args);
     let build_stdout = normalize(&String::from_utf8_lossy(&build.stdout));
     let build_stderr = normalize(&String::from_utf8_lossy(&build.stderr));
     if build.status.code().is_none_or(|code| code != 0) {
