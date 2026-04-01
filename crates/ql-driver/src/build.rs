@@ -211,16 +211,18 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
         .iter()
         .map(|requirement| requirement.capability)
         .collect::<Vec<_>>();
-    if options.emit == BuildEmit::Executable
-        && analysis
-            .hir()
-            .items
-            .iter()
-            .filter_map(|&item_id| match &analysis.hir().item(item_id).kind {
-                ql_hir::ItemKind::Function(function) => Some(function),
-                _ => None,
-            })
-            .any(|function| function.name == "main" && function.is_async)
+    if matches!(
+        options.emit,
+        BuildEmit::Executable | BuildEmit::LlvmIr | BuildEmit::Object
+    ) && analysis
+        .hir()
+        .items
+        .iter()
+        .filter_map(|&item_id| match &analysis.hir().item(item_id).kind {
+            ql_hir::ItemKind::Function(function) => Some(function),
+            _ => None,
+        })
+        .any(|function| function.name == "main" && function.is_async)
     {
         if !runtime_capabilities.contains(&RuntimeCapability::TaskSpawn) {
             runtime_capabilities.push(RuntimeCapability::TaskSpawn);
@@ -365,14 +367,18 @@ fn runtime_requirement_message(
     emit: BuildEmit,
 ) -> Option<&'static str> {
     match capability {
-        // All async capabilities are now open for staticlib, dylib, and executable builds.
-        // LlvmIr and Object emits remain conservatively blocked (no entry lifecycle lowering).
+        // The current async subset is open for staticlib, dylib, llvm-ir, object, and
+        // executable builds.
         RuntimeCapability::AsyncFunctionBodies
         | RuntimeCapability::TaskAwait
         | RuntimeCapability::TaskSpawn
             if matches!(
                 emit,
-                BuildEmit::StaticLibrary | BuildEmit::DynamicLibrary | BuildEmit::Executable
+                BuildEmit::StaticLibrary
+                    | BuildEmit::DynamicLibrary
+                    | BuildEmit::Executable
+                    | BuildEmit::LlvmIr
+                    | BuildEmit::Object
             ) =>
         {
             None
@@ -380,7 +386,11 @@ fn runtime_requirement_message(
         RuntimeCapability::AsyncIteration
             if matches!(
                 emit,
-                BuildEmit::StaticLibrary | BuildEmit::DynamicLibrary | BuildEmit::Executable
+                BuildEmit::StaticLibrary
+                    | BuildEmit::DynamicLibrary
+                    | BuildEmit::Executable
+                    | BuildEmit::LlvmIr
+                    | BuildEmit::Object
             ) =>
         {
             None
@@ -986,6 +996,92 @@ fn main() -> Int {
             leftovers.is_empty(),
             "successful object emission should clean up intermediate LLVM IR"
         );
+    }
+
+    #[test]
+    fn build_file_writes_object_with_async_main_spawn_bound_task_handle() {
+        let dir = TestDir::new("ql-driver-async-object-spawn-bound-task-handle");
+        let source = dir.write(
+            "async_main_spawn_bound_task_handle.ql",
+            r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let first_task = worker(1)
+    let second_task = worker(2)
+    let first_running = spawn first_task
+    let second_running = spawn second_task
+    let first = await first_running
+    let second = await second_running
+    return first + second
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_spawn_bound_task_handle.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let clang = mock_success_invocation(&dir);
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(clang),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("object build with async main spawn-bound task handles should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
+    fn build_file_writes_object_with_async_main_fixed_array_for_await() {
+        let dir = TestDir::new("ql-driver-async-object-for-await-array");
+        let source = dir.write(
+            "async_main_for_await.ql",
+            r#"
+async fn main() -> Int {
+    var total = 0
+    for await value in [1, 2, 3] {
+        total = total + value
+    }
+    return total
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_for_await.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let clang = mock_success_invocation(&dir);
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(clang),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("object build with async main fixed-array for-await should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
     }
 
     #[test]
@@ -2697,6 +2793,122 @@ async fn main() -> Int {
 
         let artifact = build_file(&source, &options).expect(
             "async executable with projected dynamic task-handle conditional reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_async_main_guard_refined_dynamic_task_handle_literal_reinit()
+     {
+        let dir =
+            TestDir::new("ql-driver-async-exe-guard-refined-dynamic-task-handle-literal-reinit");
+        let source = dir.write(
+            "async_guard_refined_dynamic_task_handle_literal_reinit.ql",
+            r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn helper(index: Int) -> Int {
+    var tasks = [worker(1), worker(2)]
+    if index == 0 {
+        let first = await tasks[index]
+        tasks[0] = worker(first + 1)
+    }
+    let final_value = await tasks[0]
+    return score(final_value)
+}
+
+async fn main() -> Int {
+    return await helper(0)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_guard_refined_dynamic_task_handle_literal_reinit.exe"
+        } else {
+            "artifacts/async_guard_refined_dynamic_task_handle_literal_reinit"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "async executable with guard-refined dynamic task-handle reinit through tasks[0] should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-executable");
+    }
+
+    #[test]
+    fn build_file_writes_executable_with_async_main_guard_refined_projected_dynamic_task_handle_literal_reinit()
+     {
+        let dir = TestDir::new(
+            "ql-driver-async-exe-guard-refined-projected-dynamic-task-handle-literal-reinit",
+        );
+        let source = dir.write(
+            "async_guard_refined_projected_dynamic_task_handle_literal_reinit.ql",
+            r#"
+struct Slot {
+    value: Int,
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var tasks = [worker(1), worker(2)]
+    let slot = Slot { value: 0 }
+    if slot.value == 0 {
+        let first = await tasks[slot.value]
+        tasks[0] = worker(first + 1)
+    }
+    let final_value = await tasks[0]
+    return score(final_value)
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/async_guard_refined_projected_dynamic_task_handle_literal_reinit.exe"
+        } else {
+            "artifacts/async_guard_refined_projected_dynamic_task_handle_literal_reinit"
+        });
+        let options = BuildOptions {
+            emit: BuildEmit::Executable,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "async executable with guard-refined projected dynamic task-handle reinit through tasks[0] should succeed",
         );
         let rendered =
             fs::read_to_string(&artifact.path).expect("read generated executable placeholder");
@@ -5227,6 +5439,471 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
+    fn build_file_writes_object_with_async_main_projected_root_dynamic_task_handle_reinit() {
+        let dir = TestDir::new("ql-driver-async-object-projected-root-dynamic-task-handle-reinit");
+        let source = dir.write(
+            "async_main_projected_root_dynamic_task_handle_reinit.ql",
+            r#"
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var pending = Pending {
+        tasks: [worker(1), worker(2)],
+    }
+    let slot = Slot { value: 0 }
+    let first = await pending.tasks[slot.value]
+    pending.tasks[slot.value] = worker(first + 1)
+    return await pending.tasks[slot.value]
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_projected_root_dynamic_task_handle_reinit.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "object build with async main projected-root dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
+    fn build_file_writes_object_with_async_main_composed_dynamic_task_handle_reinit() {
+        let dir = TestDir::new("ql-driver-async-object-composed-dynamic-task-handle-reinit");
+        let source = dir.write(
+            "async_main_composed_dynamic_task_handle_reinit.ql",
+            r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn choose() -> Int {
+    return 0
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let row = choose()
+    var tasks = [worker(1), worker(2)]
+    let slots = [row, row]
+    let first = await tasks[slots[row]]
+    tasks[slots[row]] = worker(first + 1)
+    let final_value = await tasks[slots[row]]
+    return score(final_value)
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_composed_dynamic_task_handle_reinit.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "object build with async main composed dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
+    fn build_file_writes_object_with_async_main_alias_sourced_composed_dynamic_task_handle_reinit()
+    {
+        let dir = TestDir::new(
+            "ql-driver-async-object-alias-sourced-composed-dynamic-task-handle-reinit",
+        );
+        let source = dir.write(
+            "async_main_alias_sourced_composed_dynamic_task_handle_reinit.ql",
+            r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn choose() -> Int {
+    return 0
+}
+
+fn score(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let row = choose()
+    var tasks = [worker(1), worker(2)]
+    let slots = [row, row]
+    let alias = slots
+    let first = await tasks[alias[row]]
+    tasks[slots[row]] = worker(first + 1)
+    let final_value = await tasks[alias[row]]
+    return score(final_value)
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_alias_sourced_composed_dynamic_task_handle_reinit.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "object build with async main alias-sourced composed dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
+    fn build_file_writes_object_with_async_main_projected_root_const_backed_dynamic_task_handle_reinit()
+     {
+        let dir = TestDir::new(
+            "ql-driver-async-object-projected-root-const-backed-dynamic-task-handle-reinit",
+        );
+        let source = dir.write(
+            "async_main_projected_root_const_backed_dynamic_task_handle_reinit.ql",
+            r#"
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+const INDEX: Int = 0
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var pending = Pending {
+        tasks: [worker(8), worker(13)],
+    }
+    let first = await pending.tasks[INDEX]
+    pending.tasks[0] = worker(first + 3)
+    let second = await pending.tasks[INDEX]
+    let tail = await pending.tasks[1]
+    return second + tail
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_projected_root_const_backed_dynamic_task_handle_reinit.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "object build with async main projected-root const-backed dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
+    fn build_file_writes_object_with_async_main_aliased_projected_root_dynamic_task_handle_reinit()
+    {
+        let dir = TestDir::new(
+            "ql-driver-async-object-aliased-projected-root-dynamic-task-handle-reinit",
+        );
+        let source = dir.write(
+            "async_main_aliased_projected_root_dynamic_task_handle_reinit.ql",
+            r#"
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var pending = Pending {
+        tasks: [worker(5), worker(8)],
+    }
+    let slot = Slot { value: 0 }
+    let alias = pending.tasks
+    let first = await alias[slot.value]
+    pending.tasks[slot.value] = worker(first + 4)
+    let second = await alias[slot.value]
+    let tail = await pending.tasks[1]
+    return second + tail
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_aliased_projected_root_dynamic_task_handle_reinit.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "object build with async main aliased projected-root dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
+    fn build_file_writes_object_with_async_main_aliased_projected_root_const_backed_dynamic_task_handle_reinit()
+     {
+        let dir = TestDir::new(
+            "ql-driver-async-object-aliased-projected-root-const-backed-dynamic-task-handle-reinit",
+        );
+        let source = dir.write(
+            "async_main_aliased_projected_root_const_backed_dynamic_task_handle_reinit.ql",
+            r#"
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+const INDEX: Int = 0
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var pending = Pending {
+        tasks: [worker(6), worker(9)],
+    }
+    let alias = pending.tasks
+    let first = await alias[INDEX]
+    pending.tasks[0] = worker(first + 2)
+    let second = await alias[INDEX]
+    let tail = await pending.tasks[1]
+    return second + tail
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_aliased_projected_root_const_backed_dynamic_task_handle_reinit.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "object build with async main aliased projected-root const-backed dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
+    fn build_file_writes_object_with_async_main_aliased_guard_refined_projected_root_dynamic_task_handle_reinit()
+     {
+        let dir = TestDir::new(
+            "ql-driver-async-object-aliased-guard-refined-projected-root-dynamic-task-handle-reinit",
+        );
+        let source = dir.write(
+            "async_main_aliased_guard_refined_projected_root_dynamic_task_handle_reinit.ql",
+            r#"
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var pending = Pending {
+        tasks: [worker(7), worker(11)],
+    }
+    let slot = Slot { value: 0 }
+    let alias = pending.tasks
+    if slot.value == 0 {
+        let first = await alias[slot.value]
+        pending.tasks[0] = worker(first + 3)
+    }
+    let second = await alias[0]
+    let tail = await pending.tasks[1]
+    return second + tail
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_aliased_guard_refined_projected_root_dynamic_task_handle_reinit.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "object build with async main aliased guard-refined projected-root dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
+    fn build_file_writes_object_with_async_main_aliased_guard_refined_const_backed_projected_root_dynamic_task_handle_reinit()
+     {
+        let dir = TestDir::new(
+            "ql-driver-async-object-aliased-guard-refined-const-backed-projected-root-dynamic-task-handle-reinit",
+        );
+        let source = dir.write(
+            "async_main_aliased_guard_refined_const_backed_projected_root_dynamic_task_handle_reinit.ql",
+            r#"
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+const INDEX: Int = 0
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var pending = Pending {
+        tasks: [worker(8), worker(13)],
+    }
+    let alias = pending.tasks
+    let slot = Slot { value: INDEX }
+    if slot.value == 0 {
+        let first = await alias[slot.value]
+        pending.tasks[0] = worker(first + 4)
+    }
+    let second = await alias[0]
+    let tail = await pending.tasks[1]
+    return second + tail
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_aliased_guard_refined_const_backed_projected_root_dynamic_task_handle_reinit.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "object build with async main aliased guard-refined const-backed projected-root dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_aliased_projected_root_dynamic_task_handle_reinit() {
         let dir = TestDir::new("ql-driver-aliased-projected-root-task-array-dynamic-index-reinit");
         let source = dir.write(
@@ -6318,8 +6995,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_async_function_codegen_diagnostics() {
-        let dir = TestDir::new("ql-driver-async-unsupported");
+    fn build_file_writes_llvm_ir_with_async_main() {
+        let dir = TestDir::new("ql-driver-async-llvm-ir-main");
         let source = dir.write(
             "async_main.ql",
             r#"
@@ -6332,15 +7009,23 @@ async fn main() -> Int {
 }
 "#,
         );
+        let output = dir.path().join("artifacts/async_main.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
 
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("async codegen rejection should return diagnostics");
+        let artifact =
+            build_file(&source, &options).expect("llvm-ir build with async main should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
-        }));
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("@qlrt_executor_spawn"));
+        assert!(rendered.contains("@qlrt_task_await"));
     }
 
     #[test]
@@ -6478,41 +7163,8 @@ async fn helper() -> Wrap {
     }
 
     #[test]
-    fn build_file_dedupes_runtime_and_codegen_async_diagnostics() {
-        let dir = TestDir::new("ql-driver-async-diagnostic-dedupe");
-        let source = dir.write(
-            "async_main.ql",
-            r#"
-async fn worker() -> Int {
-    return 1
-}
-
-async fn main() -> Int {
-    return await worker()
-}
-"#,
-        );
-
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("async codegen rejection should return diagnostics");
-        let async_count = diagnostics
-            .iter()
-            .filter(|diagnostic| {
-                diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
-            })
-            .count();
-
-        assert_eq!(
-            async_count, 2,
-            "expected one async rejection per async function body without driver/codegen duplicates, got {diagnostics:?}"
-        );
-    }
-
-    #[test]
-    fn build_file_surfaces_async_runtime_operator_diagnostics() {
-        let dir = TestDir::new("ql-driver-async-runtime-operators");
+    fn build_file_writes_llvm_ir_with_async_spawn() {
+        let dir = TestDir::new("ql-driver-async-llvm-ir-spawn");
         let source = dir.write(
             "async_runtime_ops.ql",
             r#"
@@ -6522,30 +7174,35 @@ async fn worker() -> Int {
 
 async fn main() -> Int {
     let task = spawn worker()
-    return await worker()
+    return await task
 }
 "#,
         );
+        let output = dir.path().join("artifacts/async_runtime_ops.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
 
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("async runtime operator rejection should return diagnostics");
+        let artifact =
+            build_file(&source, &options).expect("llvm-ir build with async spawn should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
-        }));
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support `spawn` yet"
-        }));
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support `await` yet"
-        }));
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(
+            rendered.matches("call ptr @qlrt_executor_spawn").count() >= 2,
+            "expected async main entry and explicit spawn calls in LLVM IR"
+        );
+        assert!(rendered.contains("@qlrt_task_await"));
     }
 
     #[test]
-    fn build_file_surfaces_async_iteration_runtime_diagnostics() {
-        let dir = TestDir::new("ql-driver-async-iteration-runtime");
+    fn build_file_writes_llvm_ir_with_async_main_fixed_array_for_await() {
+        let dir = TestDir::new("ql-driver-async-llvm-ir-for-await-array");
         let source = dir.write(
             "async_for_await.ql",
             r#"
@@ -6557,27 +7214,23 @@ async fn main() -> Int {
 }
 "#,
         );
+        let output = dir.path().join("artifacts/async_for_await.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
 
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("async iteration rejection should return diagnostics");
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with fixed-array for-await should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
-        }));
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message
-                == "LLVM IR backend foundation does not support `for await` lowering yet"
-        }));
-        assert!(diagnostics.iter().all(|diagnostic| {
-            diagnostic.message
-                != "LLVM IR backend foundation requires the `executor-spawn` runtime hook before lowering `async fn main`"
-                && diagnostic.message
-                    != "LLVM IR backend foundation requires the `task-await` runtime hook before lowering `async fn main`"
-                && diagnostic.message
-                    != "LLVM IR backend foundation requires the `task-result-release` runtime hook before lowering `async fn main`"
-        }));
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("@qlrt_async_iter_next"));
+        assert!(rendered.contains("@qlrt_task_await"));
     }
 
     #[test]

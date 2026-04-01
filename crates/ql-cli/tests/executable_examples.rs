@@ -93,6 +93,56 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/09_async_main_zero_sized.ql",
             expected_exit: 10,
         },
+        ExecutableExampleCase {
+            name: "async_main_guard_refined_projected_root",
+            source_relative: "ramdon_tests/async_program_surface_examples/10_async_main_guard_refined_projected_root.ql",
+            expected_exit: 49,
+        },
+        ExecutableExampleCase {
+            name: "async_main_const_backed_projected_root",
+            source_relative: "ramdon_tests/async_program_surface_examples/11_async_main_const_backed_projected_root.ql",
+            expected_exit: 24,
+        },
+        ExecutableExampleCase {
+            name: "async_main_aliased_projected_root",
+            source_relative: "ramdon_tests/async_program_surface_examples/12_async_main_aliased_projected_root.ql",
+            expected_exit: 17,
+        },
+        ExecutableExampleCase {
+            name: "async_main_aliased_const_backed_projected_root",
+            source_relative: "ramdon_tests/async_program_surface_examples/13_async_main_aliased_const_backed_projected_root.ql",
+            expected_exit: 17,
+        },
+        ExecutableExampleCase {
+            name: "async_main_aliased_guard_refined_projected_root",
+            source_relative: "ramdon_tests/async_program_surface_examples/14_async_main_aliased_guard_refined_projected_root.ql",
+            expected_exit: 21,
+        },
+        ExecutableExampleCase {
+            name: "async_main_aliased_guard_refined_const_backed_projected_root",
+            source_relative: "ramdon_tests/async_program_surface_examples/15_async_main_aliased_guard_refined_const_backed_projected_root.ql",
+            expected_exit: 25,
+        },
+        ExecutableExampleCase {
+            name: "async_main_aliased_projected_root_tuple_repackage_reinit",
+            source_relative: "ramdon_tests/async_program_surface_examples/16_async_main_aliased_projected_root_tuple_repackage_reinit.ql",
+            expected_exit: 31,
+        },
+        ExecutableExampleCase {
+            name: "async_main_aliased_projected_root_struct_repackage_reinit",
+            source_relative: "ramdon_tests/async_program_surface_examples/17_async_main_aliased_projected_root_struct_repackage_reinit.ql",
+            expected_exit: 32,
+        },
+        ExecutableExampleCase {
+            name: "async_main_aliased_projected_root_nested_repackage_reinit",
+            source_relative: "ramdon_tests/async_program_surface_examples/18_async_main_aliased_projected_root_nested_repackage_reinit.ql",
+            expected_exit: 33,
+        },
+        ExecutableExampleCase {
+            name: "async_main_aliased_guard_refined_const_backed_nested_repackage_reinit",
+            source_relative: "ramdon_tests/async_program_surface_examples/19_async_main_aliased_guard_refined_const_backed_nested_repackage_reinit.ql",
+            expected_exit: 36,
+        },
     ];
 
     assert_example_cases_run(
