@@ -234,6 +234,7 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
     let ir = match emit_module(CodegenInput {
         module_name: &module_name,
         mode: codegen_mode(options.emit),
+        inline_runtime_support: options.emit == BuildEmit::DynamicLibrary,
         hir: analysis.hir(),
         mir: analysis.mir(),
         resolution: analysis.resolution(),

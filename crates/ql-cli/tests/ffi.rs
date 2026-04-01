@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_driver::{discover_toolchain, ToolchainOptions};
+use ql_driver::{ToolchainOptions, discover_toolchain};
 
 #[test]
 fn ffi_exports_link_from_c_static_harnesses() {
@@ -199,6 +199,40 @@ fn ffi_c_example_host_runs() {
     }
 
     if let Err(message) = run_committed_c_example(
+        &workspace_root,
+        &toolchain.clang().program,
+        &ql_source,
+        &host_source,
+    ) {
+        panic!("{message}");
+    }
+}
+
+#[test]
+fn ffi_c_dylib_example_host_runs() {
+    let workspace_root = workspace_root();
+    let example_root = workspace_root.join("examples/ffi-c-dylib");
+    let ql_source = example_root.join("ql/callback_add.ql");
+    let host_source = example_root.join("host/main.c");
+    assert!(
+        ql_source.is_file(),
+        "expected committed C dylib FFI example source at `{}`",
+        ql_source.display()
+    );
+    assert!(
+        host_source.is_file(),
+        "expected committed C dylib FFI host source at `{}`",
+        host_source.display()
+    );
+
+    let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
+        eprintln!(
+            "skipping committed C dylib FFI example test: no clang-style compiler found via ql-driver toolchain discovery"
+        );
+        return;
+    };
+
+    if let Err(message) = run_committed_c_dylib_example(
         &workspace_root,
         &toolchain.clang().program,
         &ql_source,
@@ -1114,6 +1148,106 @@ fn run_committed_c_example(
     if !run_stderr.trim().is_empty() {
         return Err(format!(
             "[ffi-c-example] expected committed C FFI example stderr to be empty, got:\n{}",
+            run_stderr
+        ));
+    }
+
+    Ok(())
+}
+
+fn run_committed_c_dylib_example(
+    workspace_root: &Path,
+    clang: &Path,
+    ql_source: &Path,
+    host_source: &Path,
+) -> Result<(), String> {
+    let temp = TempDir::new("ql-ffi-c-dylib-example");
+    let stem = ql_source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("ffi_c_dylib_example");
+    let dynamic_library = dynamic_library_output_path(temp.path(), stem);
+    let executable = executable_output_path(temp.path(), "ffi_c_dylib_host");
+    let relative_ql = relative_ql_path(workspace_root, ql_source);
+
+    run_ql_build(
+        workspace_root,
+        "ffi-c-dylib-example",
+        &relative_ql,
+        "dylib",
+        &dynamic_library,
+        HeaderSurface::Exports,
+        None,
+    )?;
+    if !dynamic_library.is_file() {
+        return Err(format!(
+            "[ffi-c-dylib-example] expected dynamic library `{}` to exist after build",
+            dynamic_library.display()
+        ));
+    }
+
+    let mut compile = Command::new(clang);
+    compile
+        .current_dir(workspace_root)
+        .arg(host_source)
+        .arg("-o")
+        .arg(&executable);
+    if cfg!(target_os = "linux") {
+        compile.arg("-ldl");
+    }
+    let compile = compile.output().unwrap_or_else(|_| {
+        panic!(
+            "run committed C dylib FFI example compiler `{}` for `{}`",
+            clang.display(),
+            host_source.display()
+        )
+    });
+    let compile_stdout = normalize(&String::from_utf8_lossy(&compile.stdout));
+    let compile_stderr = normalize(&String::from_utf8_lossy(&compile.stderr));
+    if compile.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[ffi-c-dylib-example] expected committed C dylib FFI example build to succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            compile.status.code(),
+            compile_stdout,
+            compile_stderr
+        ));
+    }
+    if !executable.is_file() {
+        return Err(format!(
+            "[ffi-c-dylib-example] expected executable `{}` to exist after C host build",
+            executable.display()
+        ));
+    }
+
+    let run = Command::new(&executable)
+        .current_dir(workspace_root)
+        .arg(&dynamic_library)
+        .output()
+        .unwrap_or_else(|_| {
+            panic!(
+                "run committed C dylib FFI example `{}`",
+                executable.display()
+            )
+        });
+    let run_stdout = normalize(&String::from_utf8_lossy(&run.stdout));
+    let run_stderr = normalize(&String::from_utf8_lossy(&run.stderr));
+    if run.status.code().is_none_or(|code| code != 0) {
+        return Err(format!(
+            "[ffi-c-dylib-example] expected committed C dylib FFI example to exit with 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
+            run.status.code(),
+            run_stdout,
+            run_stderr
+        ));
+    }
+    if !run_stdout.contains("q_add(20, 22) = 42") {
+        return Err(format!(
+            "[ffi-c-dylib-example] expected stdout to contain `q_add(20, 22) = 42`, got:\n{}",
+            run_stdout
+        ));
+    }
+    if !run_stderr.trim().is_empty() {
+        return Err(format!(
+            "[ffi-c-dylib-example] expected committed C dylib FFI example stderr to be empty, got:\n{}",
             run_stderr
         ));
     }

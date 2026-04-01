@@ -43,14 +43,18 @@ npm run dev
 
 Committed host interop examples now live under
 [`examples/ffi-c/`](./examples/ffi-c/) and
+[`examples/ffi-c-dylib/`](./examples/ffi-c-dylib/) and
 [`examples/ffi-rust/`](./examples/ffi-rust/).
 
 They demonstrate the current conservative host workflows:
 
 - C hosts compile against a generated combined header and link a Qlang
   `staticlib` through the stable C ABI
+- C hosts can also runtime-load a Qlang `dylib` and resolve exported symbols
+  dynamically
 - Rust Cargo `build.rs` can invoke `ql build --emit staticlib`
-- Both hosts provide `extern "C"` callbacks that Qlang imports
+- The `staticlib` examples also show host-provided `extern "C"` callbacks that
+  Qlang imports
 
 ## Current Status
 

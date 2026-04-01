@@ -27,6 +27,7 @@ pub enum CodegenMode {
 pub struct CodegenInput<'a> {
     pub module_name: &'a str,
     pub mode: CodegenMode,
+    pub inline_runtime_support: bool,
     pub hir: &'a hir::Module,
     pub mir: &'a mir::MirModule,
     pub resolution: &'a ResolutionMap,
@@ -2062,17 +2063,7 @@ impl<'a> ModuleEmitter<'a> {
 
     fn render_runtime_hook_declarations(&self, output: &mut String) {
         for signature in self.input.runtime_hooks {
-            if self.input.mode == CodegenMode::Program
-                && matches!(
-                    signature.hook,
-                    RuntimeHook::AsyncFrameAlloc
-                        | RuntimeHook::AsyncTaskCreate
-                        | RuntimeHook::ExecutorSpawn
-                        | RuntimeHook::TaskAwait
-                        | RuntimeHook::TaskResultRelease
-                        | RuntimeHook::AsyncIterNext
-                )
-            {
+            if self.should_inline_runtime_hook(signature.hook) {
                 continue;
             }
             let _ = writeln!(output, "{}", signature.render_llvm_declaration());
@@ -2088,7 +2079,7 @@ impl<'a> ModuleEmitter<'a> {
     }
 
     fn render_program_runtime_support(&self, output: &mut String) {
-        if self.input.mode != CodegenMode::Program {
+        if !self.should_inline_runtime_support() {
             return;
         }
         let needs_task_runtime = self.has_runtime_hook(RuntimeHook::AsyncTaskCreate)
@@ -2194,6 +2185,23 @@ impl<'a> ModuleEmitter<'a> {
             .any(|signature| signature.hook == hook)
     }
 
+    fn should_inline_runtime_support(&self) -> bool {
+        self.input.mode == CodegenMode::Program || self.input.inline_runtime_support
+    }
+
+    fn should_inline_runtime_hook(&self, hook: RuntimeHook) -> bool {
+        self.should_inline_runtime_support()
+            && matches!(
+                hook,
+                RuntimeHook::AsyncFrameAlloc
+                    | RuntimeHook::AsyncTaskCreate
+                    | RuntimeHook::ExecutorSpawn
+                    | RuntimeHook::TaskAwait
+                    | RuntimeHook::TaskResultRelease
+                    | RuntimeHook::AsyncIterNext
+            )
+    }
+
     fn runtime_hook_signature(&self, hook: RuntimeHook) -> Option<RuntimeHookSignature> {
         self.input
             .runtime_hooks
@@ -2257,14 +2265,11 @@ impl<'a> ModuleEmitter<'a> {
                 let _ = writeln!(
                     output,
                     "  call {} @{}(ptr %frame)",
-                    function.signature.body_return_llvm_ty,
-                    body_name
+                    function.signature.body_return_llvm_ty, body_name
                 );
                 output.push_str("  %async_result_ptr = call ptr @malloc(i64 1)\n");
             }
-            AsyncTaskResultLayout::Loadable {
-                llvm_ty, align, ..
-            } => {
+            AsyncTaskResultLayout::Loadable { llvm_ty, align, .. } => {
                 let _ = writeln!(
                     output,
                     "  %async_result = call {} @{}(ptr %frame)",
@@ -4267,6 +4272,7 @@ mod tests {
         emit_module(CodegenInput {
             module_name: "test_module",
             mode,
+            inline_runtime_support: false,
             hir: analysis.hir(),
             mir: analysis.mir(),
             resolution: analysis.resolution(),
@@ -4294,6 +4300,7 @@ mod tests {
         emit_module(CodegenInput {
             module_name: "test_module",
             mode,
+            inline_runtime_support: false,
             hir: analysis.hir(),
             mir: analysis.mir(),
             resolution: analysis.resolution(),
@@ -4305,6 +4312,31 @@ mod tests {
         .into_iter()
         .map(|diagnostic| diagnostic.message)
         .collect()
+    }
+
+    fn emit_with_runtime_hooks_and_inline_support(
+        source: &str,
+        mode: CodegenMode,
+        runtime_hooks: &[RuntimeHookSignature],
+        inline_runtime_support: bool,
+    ) -> String {
+        let analysis = analyze_source(source).expect("source should analyze");
+        assert!(
+            !analysis.has_errors(),
+            "test source should not contain semantic diagnostics"
+        );
+
+        emit_module(CodegenInput {
+            module_name: "test_module",
+            mode,
+            inline_runtime_support,
+            hir: analysis.hir(),
+            mir: analysis.mir(),
+            resolution: analysis.resolution(),
+            typeck: analysis.typeck(),
+            runtime_hooks,
+        })
+        .expect("codegen should succeed")
     }
 
     #[test]
@@ -4433,7 +4465,7 @@ fn main() -> Int {
         assert!(
             rendered
                 .find(async_frame_alloc)
-                    .expect("runtime definition should exist")
+                .expect("runtime definition should exist")
                 < rendered
                     .find(entry_definition)
                     .expect("entry function should exist")
@@ -7028,6 +7060,47 @@ async fn helper() -> Int {
         assert!(rendered.contains("for_await_setup"));
         assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
         assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn inlines_runtime_support_for_async_dynamic_library_builds() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks_and_inline_support(
+            r#"
+async fn seed_total() -> Int {
+    var total = 0
+    for await value in [20, 22] {
+        total = total + value
+    }
+    return total
+}
+
+async fn helper() -> Int {
+    return await seed_total()
+}
+
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+            true,
+        );
+
+        assert!(!rendered.contains("declare ptr @qlrt_async_task_create(ptr, ptr)"));
+        assert!(!rendered.contains("declare ptr @qlrt_task_await(ptr)"));
+        assert!(!rendered.contains("declare void @qlrt_task_result_release(ptr)"));
+        assert!(!rendered.contains("declare ptr @qlrt_async_iter_next(ptr)"));
+        assert!(rendered.contains("define ptr @qlrt_async_task_create(ptr %entry_fn, ptr %frame)"));
+        assert!(rendered.contains("define ptr @qlrt_task_await(ptr %handle)"));
+        assert!(rendered.contains("define void @qlrt_task_result_release(ptr %result)"));
+        assert!(rendered.contains("define ptr @qlrt_async_iter_next(ptr %iterator)"));
+        assert!(rendered.contains("define i64 @q_add(i64 %arg0, i64 %arg1)"));
     }
 
     #[test]

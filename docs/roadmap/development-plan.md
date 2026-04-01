@@ -111,9 +111,9 @@
 - 非 `Task[...]` 元素的 dynamic array assignment 已开放并在 driver/CLI 两层锁定；`Task[...]` 动态数组索引写入现也已从单纯 write-only 扩到“generic dynamic 保守 reinit + same immutable stable index path precise reinit”子集，但仍不把任意 dynamic index 误当成 fully precise reinit
 - generic dynamic `Task[...]` array assignment 与 sibling-safe dynamic consume/spawn 现也已显式锁进 user-facing build matrix：`staticlib` 下的 async helper 与 `BuildEmit::Executable` 下的 `async fn main()` 都已有 codegen / driver / CLI 定向回归，不再只依赖内部单测证明这条保守子集“理论上可用”；same immutable stable index path 的 projected-root reinit（例如 `pending.tasks[slot.value]`）与 const-backed projected-root literal reuse（例如 `pending.tasks[INDEX]`）也已补进这条用户可见回归面
 - `staticlib` 已开放第一条受控 async library build 子集
-- `dylib` 已开放最小受控 async library build 子集：当前允许带内部 async helper 的 library body 通过，但公开导出面仍收敛在同步 `extern "c"` C ABI surface
+- `dylib` 已开放最小受控 async library build 子集：当前允许带内部 async helper 的 library body 通过，真实 shared-library 产物也会内联最小 runtime hook 定义以保证可链接，但公开导出面仍收敛在同步 `extern "c"` C ABI surface
 - `for await` 已开放首个受控 lowering 竖切片：当前支持 library-mode async body 内对 fixed array iterable 的 lowering（`staticlib` 与最小 async `dylib` 子集）
-- committed `examples/ffi-c` / `examples/ffi-rust` 宿主示例与对应回归测试已经建立
+- committed `examples/ffi-c` / `examples/ffi-c-dylib` / `examples/ffi-rust` 宿主示例与对应回归测试已经建立
 
 ### 当前仍刻意未开放
 
