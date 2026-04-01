@@ -134,112 +134,27 @@ fn ffi_exports_link_from_rust_cargo_static_harnesses() {
 }
 
 #[test]
-fn ffi_rust_example_cargo_host_runs() {
+fn ffi_committed_examples_run() {
     let workspace_root = workspace_root();
-    let example_root = workspace_root.join("examples/ffi-rust");
-    let host_manifest = example_root.join("host/Cargo.toml");
+    let cases = committed_example_cases();
     assert!(
-        host_manifest.is_file(),
-        "expected committed Rust FFI example manifest at `{}`",
-        host_manifest.display()
+        !cases.is_empty(),
+        "expected at least one committed FFI example under `{}`",
+        workspace_root.join("examples").display()
     );
 
-    let Some(cargo) = resolve_program_from_env_or_path("CARGO", &cargo_candidates()) else {
-        eprintln!(
-            "skipping committed Rust FFI example test: no cargo found on PATH and `CARGO` is not set"
-        );
-        return;
-    };
-    let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
-        eprintln!(
-            "skipping committed Rust FFI example test: no clang-style compiler found via ql-driver toolchain discovery"
-        );
-        return;
-    };
-    if toolchain.archiver().is_none() {
-        eprintln!(
-            "skipping committed Rust FFI example test: no archive tool found via ql-driver toolchain discovery"
-        );
-        return;
+    let mut failures = Vec::new();
+    for case in cases {
+        if let Err(message) = run_committed_example_case(&workspace_root, case) {
+            failures.push(message);
+        }
     }
 
-    if let Err(message) = run_committed_rust_example(&workspace_root, &cargo) {
-        panic!("{message}");
-    }
-}
-
-#[test]
-fn ffi_c_example_host_runs() {
-    let workspace_root = workspace_root();
-    let example_root = workspace_root.join("examples/ffi-c");
-    let ql_source = example_root.join("ql/callback_add.ql");
-    let host_source = example_root.join("host/main.c");
     assert!(
-        ql_source.is_file(),
-        "expected committed C FFI example source at `{}`",
-        ql_source.display()
+        failures.is_empty(),
+        "committed FFI example regressions:\n\n{}",
+        failures.join("\n\n")
     );
-    assert!(
-        host_source.is_file(),
-        "expected committed C FFI host source at `{}`",
-        host_source.display()
-    );
-
-    let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
-        eprintln!(
-            "skipping committed C FFI example test: no clang-style compiler found via ql-driver toolchain discovery"
-        );
-        return;
-    };
-    if toolchain.archiver().is_none() {
-        eprintln!(
-            "skipping committed C FFI example test: no archive tool found via ql-driver toolchain discovery"
-        );
-        return;
-    }
-
-    if let Err(message) = run_committed_c_example(
-        &workspace_root,
-        &toolchain.clang().program,
-        &ql_source,
-        &host_source,
-    ) {
-        panic!("{message}");
-    }
-}
-
-#[test]
-fn ffi_c_dylib_example_host_runs() {
-    let workspace_root = workspace_root();
-    let example_root = workspace_root.join("examples/ffi-c-dylib");
-    let ql_source = example_root.join("ql/callback_add.ql");
-    let host_source = example_root.join("host/main.c");
-    assert!(
-        ql_source.is_file(),
-        "expected committed C dylib FFI example source at `{}`",
-        ql_source.display()
-    );
-    assert!(
-        host_source.is_file(),
-        "expected committed C dylib FFI host source at `{}`",
-        host_source.display()
-    );
-
-    let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
-        eprintln!(
-            "skipping committed C dylib FFI example test: no clang-style compiler found via ql-driver toolchain discovery"
-        );
-        return;
-    };
-
-    if let Err(message) = run_committed_c_dylib_example(
-        &workspace_root,
-        &toolchain.clang().program,
-        &ql_source,
-        &host_source,
-    ) {
-        panic!("{message}");
-    }
 }
 
 #[test]
@@ -281,6 +196,23 @@ struct FfiCase {
     ql_path: PathBuf,
     harness_path: PathBuf,
     header_surface: HeaderSurface,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CommittedExampleCase {
+    name: &'static str,
+    example_relative: &'static str,
+    ql_relative: &'static str,
+    host_relative: &'static str,
+    host_kind: CommittedExampleHostKind,
+    expected_stdout_fragments: &'static [&'static str],
+}
+
+#[derive(Clone, Copy, Debug)]
+enum CommittedExampleHostKind {
+    CStaticlib,
+    CDylib,
+    RustCargoStaticlib,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -531,6 +463,124 @@ fn workspace_root() -> PathBuf {
         .parent()
         .expect("workspace root should exist")
         .to_path_buf()
+}
+
+fn committed_example_cases() -> &'static [CommittedExampleCase] {
+    &[
+        CommittedExampleCase {
+            name: "ffi-c",
+            example_relative: "examples/ffi-c",
+            ql_relative: "ql/callback_add.ql",
+            host_relative: "host/main.c",
+            host_kind: CommittedExampleHostKind::CStaticlib,
+            expected_stdout_fragments: &["q_add_two(40) = 42", "q_scale(6, 7) = 42"],
+        },
+        CommittedExampleCase {
+            name: "ffi-c-dylib",
+            example_relative: "examples/ffi-c-dylib",
+            ql_relative: "ql/callback_add.ql",
+            host_relative: "host/main.c",
+            host_kind: CommittedExampleHostKind::CDylib,
+            expected_stdout_fragments: &["q_add(20, 22) = 42"],
+        },
+        CommittedExampleCase {
+            name: "ffi-rust",
+            example_relative: "examples/ffi-rust",
+            ql_relative: "ql/callback_add.ql",
+            host_relative: "host/Cargo.toml",
+            host_kind: CommittedExampleHostKind::RustCargoStaticlib,
+            expected_stdout_fragments: &["q_add_two(40) = 42", "q_scale(6, 7) = 42"],
+        },
+    ]
+}
+
+fn run_committed_example_case(
+    workspace_root: &Path,
+    case: &CommittedExampleCase,
+) -> Result<(), String> {
+    let example_root = workspace_root.join(case.example_relative);
+    let ql_source = example_root.join(case.ql_relative);
+    let host_path = example_root.join(case.host_relative);
+    if !ql_source.is_file() {
+        return Err(format!(
+            "[{}] expected committed example Qlang source at `{}`",
+            case.name,
+            ql_source.display()
+        ));
+    }
+    if !host_path.is_file() {
+        return Err(format!(
+            "[{}] expected committed example host file at `{}`",
+            case.name,
+            host_path.display()
+        ));
+    }
+
+    match case.host_kind {
+        CommittedExampleHostKind::CStaticlib => {
+            let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
+                eprintln!(
+                    "skipping committed FFI example `{}`: no clang-style compiler found via ql-driver toolchain discovery",
+                    case.name
+                );
+                return Ok(());
+            };
+            if toolchain.archiver().is_none() {
+                eprintln!(
+                    "skipping committed FFI example `{}`: no archive tool found via ql-driver toolchain discovery",
+                    case.name
+                );
+                return Ok(());
+            }
+            run_committed_c_example(
+                workspace_root,
+                &toolchain.clang().program,
+                &ql_source,
+                &host_path,
+                case.expected_stdout_fragments,
+            )
+        }
+        CommittedExampleHostKind::CDylib => {
+            let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
+                eprintln!(
+                    "skipping committed FFI example `{}`: no clang-style compiler found via ql-driver toolchain discovery",
+                    case.name
+                );
+                return Ok(());
+            };
+            run_committed_c_dylib_example(
+                workspace_root,
+                &toolchain.clang().program,
+                &ql_source,
+                &host_path,
+                case.expected_stdout_fragments,
+            )
+        }
+        CommittedExampleHostKind::RustCargoStaticlib => {
+            let Some(cargo) = resolve_program_from_env_or_path("CARGO", &cargo_candidates()) else {
+                eprintln!(
+                    "skipping committed FFI example `{}`: no cargo found on PATH and `CARGO` is not set",
+                    case.name
+                );
+                return Ok(());
+            };
+            let Ok(toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
+                eprintln!(
+                    "skipping committed FFI example `{}`: no clang-style compiler found via ql-driver toolchain discovery",
+                    case.name
+                );
+                return Ok(());
+            };
+            if toolchain.archiver().is_none() {
+                eprintln!(
+                    "skipping committed FFI example `{}`: no archive tool found via ql-driver toolchain discovery",
+                    case.name
+                );
+                return Ok(());
+            }
+            run_committed_rust_example(&example_root, &cargo, case.expected_stdout_fragments)
+        }
+    }
 }
 
 fn collect_static_ffi_cases(root: &Path) -> Vec<FfiCase> {
@@ -1001,11 +1051,14 @@ fn run_cargo_rust_ffi_case(
     Ok(())
 }
 
-fn run_committed_rust_example(workspace_root: &Path, cargo: &Path) -> Result<(), String> {
-    let example_root = workspace_root.join("examples/ffi-rust");
+fn run_committed_rust_example(
+    example_root: &Path,
+    cargo: &Path,
+    expected_stdout_fragments: &[&str],
+) -> Result<(), String> {
     let temp = TempDir::new("ql-ffi-rust-example");
     let copied_root = temp.path().join("ffi-rust");
-    copy_directory_recursive(&example_root, &copied_root)?;
+    copy_directory_recursive(example_root, &copied_root)?;
 
     let host_dir = copied_root.join("host");
     let cargo_run = Command::new(cargo)
@@ -1030,19 +1083,7 @@ fn run_committed_rust_example(workspace_root: &Path, cargo: &Path) -> Result<(),
             cargo_stderr
         ));
     }
-    if !cargo_stdout.contains("q_add_two(40) = 42") {
-        return Err(format!(
-            "[ffi-rust-example] expected committed Cargo host example stdout to contain `q_add_two(40) = 42`, got:\n{}",
-            cargo_stdout
-        ));
-    }
-    // Bidirectional: q_scale exercises a second export + a second Rust callback (q_host_multiply).
-    if !cargo_stdout.contains("q_scale(6, 7) = 42") {
-        return Err(format!(
-            "[ffi-rust-example] expected committed Cargo host example stdout to contain `q_scale(6, 7) = 42`, got:\n{}",
-            cargo_stdout
-        ));
-    }
+    assert_stdout_contains_all("ffi-rust-example", &cargo_stdout, expected_stdout_fragments)?;
 
     Ok(())
 }
@@ -1052,6 +1093,7 @@ fn run_committed_c_example(
     clang: &Path,
     ql_source: &Path,
     host_source: &Path,
+    expected_stdout_fragments: &[&str],
 ) -> Result<(), String> {
     let temp = TempDir::new("ql-ffi-c-example");
     let stem = ql_source
@@ -1133,18 +1175,7 @@ fn run_committed_c_example(
             run_stderr
         ));
     }
-    if !run_stdout.contains("q_add_two(40) = 42") {
-        return Err(format!(
-            "[ffi-c-example] expected stdout to contain `q_add_two(40) = 42`, got:\n{}",
-            run_stdout
-        ));
-    }
-    if !run_stdout.contains("q_scale(6, 7) = 42") {
-        return Err(format!(
-            "[ffi-c-example] expected stdout to contain `q_scale(6, 7) = 42`, got:\n{}",
-            run_stdout
-        ));
-    }
+    assert_stdout_contains_all("ffi-c-example", &run_stdout, expected_stdout_fragments)?;
     if !run_stderr.trim().is_empty() {
         return Err(format!(
             "[ffi-c-example] expected committed C FFI example stderr to be empty, got:\n{}",
@@ -1160,6 +1191,7 @@ fn run_committed_c_dylib_example(
     clang: &Path,
     ql_source: &Path,
     host_source: &Path,
+    expected_stdout_fragments: &[&str],
 ) -> Result<(), String> {
     let temp = TempDir::new("ql-ffi-c-dylib-example");
     let stem = ql_source
@@ -1239,12 +1271,11 @@ fn run_committed_c_dylib_example(
             run_stderr
         ));
     }
-    if !run_stdout.contains("q_add(20, 22) = 42") {
-        return Err(format!(
-            "[ffi-c-dylib-example] expected stdout to contain `q_add(20, 22) = 42`, got:\n{}",
-            run_stdout
-        ));
-    }
+    assert_stdout_contains_all(
+        "ffi-c-dylib-example",
+        &run_stdout,
+        expected_stdout_fragments,
+    )?;
     if !run_stderr.trim().is_empty() {
         return Err(format!(
             "[ffi-c-dylib-example] expected committed C dylib FFI example stderr to be empty, got:\n{}",
@@ -1252,6 +1283,22 @@ fn run_committed_c_dylib_example(
         ));
     }
 
+    Ok(())
+}
+
+fn assert_stdout_contains_all(
+    case_name: &str,
+    stdout: &str,
+    expected_fragments: &[&str],
+) -> Result<(), String> {
+    for fragment in expected_fragments {
+        if !stdout.contains(fragment) {
+            return Err(format!(
+                "[{case_name}] expected stdout to contain `{fragment}`, got:\n{}",
+                stdout
+            ));
+        }
+    }
     Ok(())
 }
 
