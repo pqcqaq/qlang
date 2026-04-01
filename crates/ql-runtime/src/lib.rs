@@ -45,22 +45,27 @@ impl RuntimeCapability {
 ///
 /// **Frame / task creation group** (`AsyncFunctionBodies` capability):
 /// ```text
-/// [caller]  result_ptr = qlrt_async_frame_alloc(size, align)
-///           -- writes parameters into *result_ptr --
-///           task = qlrt_async_task_create(entry_fn_ptr, result_ptr)
-///           -- result_ptr ownership transferred to runtime --
+/// [caller]  frame_ptr = qlrt_async_frame_alloc(size, align)
+///           -- writes parameters into *frame_ptr --
+///           task = qlrt_async_task_create(entry_fn_ptr, frame_ptr)
+///           -- frame_ptr ownership transferred to runtime --
 /// ```
 ///
 /// **Spawn / await / release group** (`TaskSpawn` + `TaskAwait` capabilities):
 /// ```text
-/// [caller]  join_handle = qlrt_executor_spawn(executor_ptr, task)
-///           -- task ownership transferred to runtime --
-///           result_ptr  = qlrt_task_await(join_handle)
-///           -- join_handle consumed; result_ptr is caller-owned until released --
+/// [caller]  await_handle = qlrt_executor_spawn(executor_ptr, task)
+///           -- task ownership transferred to runtime; callee may return the same opaque handle --
+///           result_ptr   = qlrt_task_await(await_handle)
+///           -- await_handle consumed; result_ptr is caller-owned until released --
 ///           loaded_val  = load <T>, ptr result_ptr          ← backend assumes this
 ///           qlrt_task_result_release(result_ptr)
 ///           -- result_ptr no longer valid after this call --
 /// ```
+///
+/// The current backend also passes fresh task handles returned by
+/// `qlrt_async_task_create` directly to `qlrt_task_await`, so the awaited
+/// handle is intentionally documented as one unified opaque handle shape rather
+/// than as a spawn-only join handle.
 ///
 /// **Async iteration group** (`AsyncIteration` capability):
 /// ```text
@@ -94,18 +99,24 @@ pub enum RuntimeHook {
     /// optional parameter frame.
     ///
     /// # Contract
-    /// - `entry` is a function pointer with the signature `fn(ptr) -> void`
-    ///   where the `ptr` argument receives the frame on invocation.
+    /// - `entry_fn` is a function pointer with the signature `fn(ptr) -> ptr`
+    ///   where the `ptr` argument receives the frame on invocation and the
+    ///   return value is a caller-owned opaque result-payload buffer.
+    /// - The backend currently synthesizes a dedicated `__async_entry` thunk so
+    ///   the runtime always receives this erased `fn(ptr) -> ptr` entry shape,
+    ///   even when the typed async body itself returns `void`, a scalar, or a
+    ///   loadable aggregate.
     /// - `frame` may be null for parameter-free `async fn`; otherwise it must
     ///   have been returned by [`RuntimeHook::AsyncFrameAlloc`] and not yet
     ///   released.
     /// - **Callee** returns an opaque `ptr` representing the task handle.
-    ///   Ownership transfers to the caller, who must eventually pass it to
-    ///   [`RuntimeHook::ExecutorSpawn`].
+    ///   Ownership transfers to the caller, who may pass it to
+    ///   [`RuntimeHook::ExecutorSpawn`] or directly to [`RuntimeHook::TaskAwait`]
+    ///   under the current unified opaque handle model.
     /// - After this call, the caller must not access `frame` directly; the
-    ///   runtime will pass it to `entry` when the task is executed.
+    ///   runtime will pass it to `entry_fn` when the task is executed.
     AsyncTaskCreate,
-    /// Submits a task to the configured executor and returns a join handle.
+    /// Submits a task to the configured executor and returns an awaitable handle.
     ///
     /// # Contract
     /// - `executor` is an opaque `ptr` to the ambient executor context.
@@ -113,15 +124,24 @@ pub enum RuntimeHook {
     ///   implicit executor; a concrete runtime may use this to select a specific
     ///   scheduler or thread pool.
     /// - `task` must be a handle returned by [`RuntimeHook::AsyncTaskCreate`]
-    ///   that has not yet been spawned.  Ownership transfers to the runtime.
-    /// - **Callee** returns an opaque `ptr` join handle.  Ownership transfers
-    ///   to the caller, who must eventually pass it to [`RuntimeHook::TaskAwait`].
+    ///   that has not yet been spawned or awaited.  Ownership transfers to the
+    ///   runtime.
+    /// - **Callee** returns an opaque `ptr` awaitable handle.  Ownership
+    ///   transfers to the caller, who must eventually pass it to
+    ///   [`RuntimeHook::TaskAwait`].
+    /// - The current minimal program-mode runtime eagerly runs the task and
+    ///   returns the same opaque handle shape after start, but future runtimes
+    ///   may substitute a different representation as long as
+    ///   [`RuntimeHook::TaskAwait`] accepts the returned handle.
     ExecutorSpawn,
-    /// Blocks until the task associated with `join_handle` produces a result.
+    /// Blocks until the task associated with `handle` produces a result.
     ///
     /// # Contract
-    /// - `join_handle` must be a handle returned by [`RuntimeHook::ExecutorSpawn`]
-    ///   that has not yet been awaited.  Ownership is consumed by this call.
+    /// - `handle` must be an opaque awaitable handle in the runtime's task
+    ///   lifecycle.  The current backend uses the same opaque handle shape for
+    ///   both fresh handles returned by [`RuntimeHook::AsyncTaskCreate`] and the
+    ///   values returned by [`RuntimeHook::ExecutorSpawn`].
+    /// - Ownership of `handle` is consumed by this call.
     /// - **Callee** returns an opaque `ptr` (`result_ptr`) to the task's result
     ///   payload.  The payload is laid out as a contiguous, naturally aligned
     ///   value of the async function's declared return type.
@@ -278,7 +298,7 @@ impl RuntimeHookSignature {
 
 const ASYNC_TASK_CREATE_PARAMS: &[RuntimeHookParam] = &[
     RuntimeHookParam {
-        name: "entry",
+        name: "entry_fn",
         ty: RuntimeAbiType::Ptr,
     },
     RuntimeHookParam {
@@ -307,7 +327,7 @@ const EXECUTOR_SPAWN_PARAMS: &[RuntimeHookParam] = &[
     },
 ];
 const TASK_AWAIT_PARAMS: &[RuntimeHookParam] = &[RuntimeHookParam {
-    name: "join_handle",
+    name: "handle",
     ty: RuntimeAbiType::Ptr,
 }];
 const TASK_RESULT_RELEASE_PARAMS: &[RuntimeHookParam] = &[RuntimeHookParam {

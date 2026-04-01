@@ -94,6 +94,13 @@ impl AsyncTaskResultLayout {
             Self::Loadable { llvm_ty, .. } => llvm_ty,
         }
     }
+
+    fn storage_size(&self) -> u64 {
+        match self {
+            Self::Void => 1,
+            Self::Loadable { _size, .. } => (*_size).max(1),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1924,6 +1931,8 @@ impl<'a> ModuleEmitter<'a> {
         if !self.input.runtime_hooks.is_empty() {
             output.push('\n');
             self.render_runtime_hook_declarations(&mut output);
+            self.render_runtime_heap_declarations(&mut output);
+            self.render_program_runtime_support(&mut output);
         }
 
         for function_ref in reachable {
@@ -2053,7 +2062,128 @@ impl<'a> ModuleEmitter<'a> {
 
     fn render_runtime_hook_declarations(&self, output: &mut String) {
         for signature in self.input.runtime_hooks {
+            if self.input.mode == CodegenMode::Program
+                && matches!(
+                    signature.hook,
+                    RuntimeHook::AsyncFrameAlloc
+                        | RuntimeHook::AsyncTaskCreate
+                        | RuntimeHook::ExecutorSpawn
+                        | RuntimeHook::TaskAwait
+                        | RuntimeHook::TaskResultRelease
+                        | RuntimeHook::AsyncIterNext
+                )
+            {
+                continue;
+            }
             let _ = writeln!(output, "{}", signature.render_llvm_declaration());
+        }
+    }
+
+    fn render_runtime_heap_declarations(&self, output: &mut String) {
+        if self.input.runtime_hooks.is_empty() {
+            return;
+        }
+        output.push_str("declare ptr @malloc(i64)\n");
+        output.push_str("declare void @free(ptr)\n");
+    }
+
+    fn render_program_runtime_support(&self, output: &mut String) {
+        if self.input.mode != CodegenMode::Program {
+            return;
+        }
+        let needs_task_runtime = self.has_runtime_hook(RuntimeHook::AsyncTaskCreate)
+            || self.has_runtime_hook(RuntimeHook::ExecutorSpawn)
+            || self.has_runtime_hook(RuntimeHook::TaskAwait)
+            || self.has_runtime_hook(RuntimeHook::TaskResultRelease);
+        let needs_async_iter_stub = self.has_runtime_hook(RuntimeHook::AsyncIterNext);
+
+        if !needs_task_runtime && !needs_async_iter_stub {
+            return;
+        }
+
+        output.push('\n');
+
+        if needs_task_runtime {
+            output.push_str("define ptr @qlrt_async_frame_alloc(i64 %size, i64 %align) {\n");
+            output.push_str("entry:\n");
+            output.push_str("  %frame_is_zero = icmp eq i64 %size, 0\n");
+            output.push_str("  %frame_alloc_size = select i1 %frame_is_zero, i64 1, i64 %size\n");
+            output.push_str("  %frame = call ptr @malloc(i64 %frame_alloc_size)\n");
+            output.push_str("  ret ptr %frame\n");
+            output.push_str("}\n\n");
+
+            output.push_str("define ptr @qlrt_async_task_create(ptr %entry_fn, ptr %frame) {\n");
+            output.push_str("entry:\n");
+            output.push_str("  %task_end = getelementptr { ptr, ptr, ptr }, ptr null, i32 1\n");
+            output.push_str("  %task_size = ptrtoint ptr %task_end to i64\n");
+            output.push_str("  %task = call ptr @malloc(i64 %task_size)\n");
+            output.push_str(
+                "  %task_entry_ptr = getelementptr inbounds { ptr, ptr, ptr }, ptr %task, i32 0, i32 0\n",
+            );
+            output.push_str("  store ptr %entry_fn, ptr %task_entry_ptr\n");
+            output.push_str(
+                "  %task_frame_ptr = getelementptr inbounds { ptr, ptr, ptr }, ptr %task, i32 0, i32 1\n",
+            );
+            output.push_str("  store ptr %frame, ptr %task_frame_ptr\n");
+            output.push_str(
+                "  %task_result_ptr = getelementptr inbounds { ptr, ptr, ptr }, ptr %task, i32 0, i32 2\n",
+            );
+            output.push_str("  store ptr null, ptr %task_result_ptr\n");
+            output.push_str("  ret ptr %task\n");
+            output.push_str("}\n\n");
+
+            output.push_str("define ptr @qlrt_executor_spawn(ptr %executor, ptr %task) {\n");
+            output.push_str("entry:\n");
+            output.push_str(
+                "  %task_entry_ptr = getelementptr inbounds { ptr, ptr, ptr }, ptr %task, i32 0, i32 0\n",
+            );
+            output.push_str("  %task_entry = load ptr, ptr %task_entry_ptr\n");
+            output.push_str("  %task_started = icmp eq ptr %task_entry, null\n");
+            output.push_str("  br i1 %task_started, label %done, label %start\n\n");
+            output.push_str("start:\n");
+            output.push_str(
+                "  %task_frame_ptr = getelementptr inbounds { ptr, ptr, ptr }, ptr %task, i32 0, i32 1\n",
+            );
+            output.push_str("  %task_frame = load ptr, ptr %task_frame_ptr\n");
+            output.push_str("  %task_result = call ptr %task_entry(ptr %task_frame)\n");
+            output.push_str("  call void @free(ptr %task_frame)\n");
+            output.push_str("  store ptr null, ptr %task_entry_ptr\n");
+            output.push_str("  store ptr null, ptr %task_frame_ptr\n");
+            output.push_str(
+                "  %task_result_ptr = getelementptr inbounds { ptr, ptr, ptr }, ptr %task, i32 0, i32 2\n",
+            );
+            output.push_str("  store ptr %task_result, ptr %task_result_ptr\n");
+            output.push_str("  br label %done\n\n");
+            output.push_str("done:\n");
+            output.push_str("  ret ptr %task\n");
+            output.push_str("}\n\n");
+
+            output.push_str("define ptr @qlrt_task_await(ptr %handle) {\n");
+            output.push_str("entry:\n");
+            output.push_str("  %started = call ptr @qlrt_executor_spawn(ptr null, ptr %handle)\n");
+            output.push_str(
+                "  %result_ptr_slot = getelementptr inbounds { ptr, ptr, ptr }, ptr %started, i32 0, i32 2\n",
+            );
+            output.push_str("  %result_ptr = load ptr, ptr %result_ptr_slot\n");
+            output.push_str("  call void @free(ptr %started)\n");
+            output.push_str("  ret ptr %result_ptr\n");
+            output.push_str("}\n\n");
+
+            output.push_str("define void @qlrt_task_result_release(ptr %result) {\n");
+            output.push_str("entry:\n");
+            output.push_str("  call void @free(ptr %result)\n");
+            output.push_str("  ret void\n");
+            output.push_str("}\n");
+        }
+
+        if needs_async_iter_stub {
+            if needs_task_runtime {
+                output.push('\n');
+            }
+            output.push_str("define ptr @qlrt_async_iter_next(ptr %iterator) {\n");
+            output.push_str("entry:\n");
+            output.push_str("  ret ptr null\n");
+            output.push_str("}\n");
         }
     }
 
@@ -2100,16 +2230,67 @@ impl<'a> ModuleEmitter<'a> {
             .async_body_llvm_name
             .as_deref()
             .expect("async functions should have a dedicated body symbol");
+        let entry_name = format!("{}__async_entry", function.signature.llvm_name);
         self.render_function_body(output, function, body_name);
         output.push('\n');
-        self.render_async_task_wrapper(output, function, body_name);
+        self.render_async_task_entry_thunk(output, function, body_name, &entry_name);
+        output.push('\n');
+        self.render_async_task_wrapper(output, function, &entry_name);
+    }
+
+    fn render_async_task_entry_thunk(
+        &self,
+        output: &mut String,
+        function: &PreparedFunction,
+        body_name: &str,
+        entry_name: &str,
+    ) {
+        let result_layout = function
+            .signature
+            .async_result_layout
+            .as_ref()
+            .expect("async functions should precompute a task result layout");
+        let _ = writeln!(output, "define ptr @{entry_name}(ptr %frame) {{");
+        output.push_str("entry:\n");
+        match result_layout {
+            AsyncTaskResultLayout::Void => {
+                let _ = writeln!(
+                    output,
+                    "  call {} @{}(ptr %frame)",
+                    function.signature.body_return_llvm_ty,
+                    body_name
+                );
+                output.push_str("  %async_result_ptr = call ptr @malloc(i64 1)\n");
+            }
+            AsyncTaskResultLayout::Loadable {
+                llvm_ty, align, ..
+            } => {
+                let _ = writeln!(
+                    output,
+                    "  %async_result = call {} @{}(ptr %frame)",
+                    llvm_ty, body_name
+                );
+                let _ = writeln!(
+                    output,
+                    "  %async_result_ptr = call ptr @malloc(i64 {})",
+                    result_layout.storage_size()
+                );
+                let _ = writeln!(
+                    output,
+                    "  store {} %async_result, ptr %async_result_ptr, align {}",
+                    llvm_ty, align
+                );
+            }
+        }
+        output.push_str("  ret ptr %async_result_ptr\n");
+        output.push_str("}\n");
     }
 
     fn render_async_task_wrapper(
         &self,
         output: &mut String,
         function: &PreparedFunction,
-        body_name: &str,
+        entry_name: &str,
     ) {
         let task_create_hook = self
             .runtime_hook_signature(RuntimeHook::AsyncTaskCreate)
@@ -2164,7 +2345,7 @@ impl<'a> ModuleEmitter<'a> {
             "  {temp} = call {} @{}(ptr @{}, ptr {frame})",
             task_create_hook.return_type.llvm_ir(),
             task_create_hook.hook.symbol_name(),
-            body_name
+            entry_name
         );
         let _ = writeln!(output, "  ret {} {temp}", function.signature.return_llvm_ty);
         output.push_str("}\n");
@@ -4237,11 +4418,11 @@ fn main() -> Int {
             &runtime_hooks,
         );
 
-        let async_frame_alloc = "declare ptr @qlrt_async_frame_alloc(i64, i64)";
-        let async_task_create = "declare ptr @qlrt_async_task_create(ptr, ptr)";
-        let executor_spawn = "declare ptr @qlrt_executor_spawn(ptr, ptr)";
-        let task_await = "declare ptr @qlrt_task_await(ptr)";
-        let task_result_release = "declare void @qlrt_task_result_release(ptr)";
+        let async_frame_alloc = "define ptr @qlrt_async_frame_alloc(i64 %size, i64 %align)";
+        let async_task_create = "define ptr @qlrt_async_task_create(ptr %entry_fn, ptr %frame)";
+        let executor_spawn = "define ptr @qlrt_executor_spawn(ptr %executor, ptr %task)";
+        let task_await = "define ptr @qlrt_task_await(ptr %handle)";
+        let task_result_release = "define void @qlrt_task_result_release(ptr %result)";
         let entry_definition = "define i64 @ql_0_main()";
 
         assert!(rendered.contains(async_frame_alloc));
@@ -4252,7 +4433,7 @@ fn main() -> Int {
         assert!(
             rendered
                 .find(async_frame_alloc)
-                .expect("runtime declaration should exist")
+                    .expect("runtime definition should exist")
                 < rendered
                     .find(entry_definition)
                     .expect("entry function should exist")
@@ -4260,7 +4441,7 @@ fn main() -> Int {
         assert!(
             rendered
                 .find(async_task_create)
-                .expect("runtime declaration should exist")
+                .expect("runtime definition should exist")
                 < rendered
                     .find(entry_definition)
                     .expect("entry function should exist")
@@ -4268,7 +4449,7 @@ fn main() -> Int {
         assert!(
             rendered
                 .find(executor_spawn)
-                .expect("runtime declaration should exist")
+                .expect("runtime definition should exist")
                 < rendered
                     .find(entry_definition)
                     .expect("entry function should exist")
@@ -4276,7 +4457,7 @@ fn main() -> Int {
         assert!(
             rendered
                 .find(task_await)
-                .expect("runtime declaration should exist")
+                .expect("runtime definition should exist")
                 < rendered
                     .find(entry_definition)
                     .expect("entry function should exist")
@@ -4284,7 +4465,7 @@ fn main() -> Int {
         assert!(
             rendered
                 .find(task_result_release)
-                .expect("runtime declaration should exist")
+                .expect("runtime definition should exist")
                 < rendered
                     .find(entry_definition)
                     .expect("entry function should exist")
@@ -4308,10 +4489,13 @@ async fn worker() -> Int {
         assert!(rendered.contains("declare ptr @qlrt_async_frame_alloc(i64, i64)"));
         assert!(rendered.contains("declare ptr @qlrt_async_task_create(ptr, ptr)"));
         assert!(rendered.contains("define i64 @ql_0_worker__async_body(ptr %frame)"));
+        assert!(rendered.contains("define ptr @ql_0_worker__async_entry(ptr %frame)"));
+        assert!(rendered.contains("call i64 @ql_0_worker__async_body(ptr %frame)"));
+        assert!(rendered.contains("call ptr @malloc(i64 8)"));
         assert!(rendered.contains("define ptr @ql_0_worker()"));
         assert!(
             rendered.contains(
-                "call ptr @qlrt_async_task_create(ptr @ql_0_worker__async_body, ptr null)"
+                "call ptr @qlrt_async_task_create(ptr @ql_0_worker__async_entry, ptr null)"
             )
         );
     }
@@ -4335,6 +4519,9 @@ async fn worker(flag: Bool, value: Int) -> Int {
 
         assert!(rendered.contains("declare ptr @qlrt_async_frame_alloc(i64, i64)"));
         assert!(rendered.contains("define i64 @ql_0_worker__async_body(ptr %frame)"));
+        assert!(rendered.contains("define ptr @ql_0_worker__async_entry(ptr %frame)"));
+        assert!(rendered.contains("call i64 @ql_0_worker__async_body(ptr %frame)"));
+        assert!(rendered.contains("call ptr @malloc(i64 8)"));
         assert!(rendered.contains("define ptr @ql_0_worker(i1 %arg0, i64 %arg1)"));
         assert!(rendered.contains("call ptr @qlrt_async_frame_alloc(i64 16, i64 8)"));
         assert!(
@@ -4346,7 +4533,7 @@ async fn worker(flag: Bool, value: Int) -> Int {
         assert!(rendered.contains("store i1 %arg0, ptr %async_frame_field0"));
         assert!(rendered.contains("store i64 %arg1, ptr %async_frame_field1"));
         assert!(rendered.contains(
-            "call ptr @qlrt_async_task_create(ptr @ql_0_worker__async_body, ptr %async_frame)"
+            "call ptr @qlrt_async_task_create(ptr @ql_0_worker__async_entry, ptr %async_frame)"
         ));
         assert!(rendered.contains(
             "%async_body_frame_field0 = getelementptr inbounds { i1, i64 }, ptr %frame, i32 0, i32 0"
@@ -7213,11 +7400,11 @@ async fn main() -> Int {
             &runtime_hooks,
         );
 
-        // Runtime hooks must be declared.
-        assert!(rendered.contains("declare ptr @qlrt_async_task_create(ptr, ptr)"));
-        assert!(rendered.contains("declare ptr @qlrt_executor_spawn(ptr, ptr)"));
-        assert!(rendered.contains("declare ptr @qlrt_task_await(ptr)"));
-        assert!(rendered.contains("declare void @qlrt_task_result_release(ptr)"));
+        // Runtime hooks must be defined in-program so native executable links succeed.
+        assert!(rendered.contains("define ptr @qlrt_async_task_create(ptr %entry_fn, ptr %frame)"));
+        assert!(rendered.contains("define ptr @qlrt_executor_spawn(ptr %executor, ptr %task)"));
+        assert!(rendered.contains("define ptr @qlrt_task_await(ptr %handle)"));
+        assert!(rendered.contains("define void @qlrt_task_result_release(ptr %result)"));
 
         // The async body and task-create wrapper must be emitted.
         assert!(
@@ -7225,6 +7412,7 @@ async fn main() -> Int {
                 || rendered.contains("define ptr @ql_0_main__async_body(ptr %frame)")
                 || rendered.contains("__async_body")
         );
+        assert!(rendered.contains("__async_entry"));
         assert!(rendered.contains("define ptr @ql_") && rendered.contains("@main("));
 
         // The C entry point must drive the lifecycle.
@@ -7286,10 +7474,10 @@ async fn main() -> Int {
             &runtime_hooks,
         );
 
-        assert!(rendered.contains("declare ptr @qlrt_executor_spawn(ptr, ptr)"));
-        assert!(rendered.contains("declare ptr @qlrt_task_await(ptr)"));
-        assert!(rendered.contains("declare void @qlrt_task_result_release(ptr)"));
-        assert!(rendered.contains("declare ptr @qlrt_async_iter_next(ptr)"));
+        assert!(rendered.contains("define ptr @qlrt_executor_spawn(ptr %executor, ptr %task)"));
+        assert!(rendered.contains("define ptr @qlrt_task_await(ptr %handle)"));
+        assert!(rendered.contains("define void @qlrt_task_result_release(ptr %result)"));
+        assert!(rendered.contains("define ptr @qlrt_async_iter_next(ptr %iterator)"));
         assert!(rendered.contains("define i32 @main()"));
         assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
         assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));

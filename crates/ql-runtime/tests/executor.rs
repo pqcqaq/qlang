@@ -25,17 +25,17 @@ fn hook_lifecycle_create_await_result_load_release_abi_contract() {
     assert_eq!(frame_alloc.return_type, RuntimeAbiType::Ptr,
         "AsyncFrameAlloc must return ptr (caller writes params into it)");
 
-    // Task create: consumes entry fn ptr + frame ptr, returns opaque task ptr.
+    // Task create: consumes erased entry_fn ptr + frame ptr, returns opaque task ptr.
     let task_create = runtime_hook_signature(RuntimeHook::AsyncTaskCreate);
     assert_eq!(task_create.return_type, RuntimeAbiType::Ptr,
-        "AsyncTaskCreate must return ptr (opaque task handle, caller owns until spawn)");
+        "AsyncTaskCreate must return ptr (opaque task handle, caller owns until spawn/await)");
 
-    // Executor spawn: takes executor ptr + task ptr, returns join handle ptr.
+    // Executor spawn: takes executor ptr + task ptr, returns awaitable handle ptr.
     let exec_spawn = runtime_hook_signature(RuntimeHook::ExecutorSpawn);
     assert_eq!(exec_spawn.return_type, RuntimeAbiType::Ptr,
-        "ExecutorSpawn must return ptr (join handle, caller owns until await)");
+        "ExecutorSpawn must return ptr (awaitable handle, caller owns until await)");
 
-    // Task await: consumes join handle, returns result_ptr.
+    // Task await: consumes awaitable handle, returns result_ptr.
     // CRITICAL: the backend immediately does `load <RetTy>, ptr result_ptr` after
     // this call.  The return type MUST be Ptr and the pointed-to region must be
     // a contiguous, naturally aligned payload of the async return type.
@@ -43,8 +43,8 @@ fn hook_lifecycle_create_await_result_load_release_abi_contract() {
     assert_eq!(task_await.return_type, RuntimeAbiType::Ptr,
         "TaskAwait must return ptr — backend loads result payload directly from it");
     assert_eq!(task_await.params.len(), 1,
-        "TaskAwait takes exactly one argument (join_handle: ptr)");
-    assert_eq!(task_await.params[0].name, "join_handle");
+        "TaskAwait takes exactly one argument (handle: ptr)");
+    assert_eq!(task_await.params[0].name, "handle");
     assert_eq!(task_await.params[0].ty, RuntimeAbiType::Ptr);
 
     // Result release: frees the result_ptr after the value has been extracted.
@@ -182,7 +182,7 @@ fn async_task_create_signature_keeps_entry_and_frame_contract() {
     assert_eq!(signature.return_type, RuntimeAbiType::Ptr);
     assert_eq!(
         signature.render_contract(),
-        "ccc qlrt_async_task_create(entry: ptr, frame: ptr) -> ptr"
+        "ccc qlrt_async_task_create(entry_fn: ptr, frame: ptr) -> ptr"
     );
     assert_eq!(
         signature.render_llvm_declaration(),
@@ -222,9 +222,9 @@ fn collect_runtime_hook_signatures_preserves_sorted_hook_plan() {
             .collect::<Vec<_>>(),
         vec![
             "ccc qlrt_async_frame_alloc(size: i64, align: i64) -> ptr",
-            "ccc qlrt_async_task_create(entry: ptr, frame: ptr) -> ptr",
+            "ccc qlrt_async_task_create(entry_fn: ptr, frame: ptr) -> ptr",
             "ccc qlrt_executor_spawn(executor: ptr, task: ptr) -> ptr",
-            "ccc qlrt_task_await(join_handle: ptr) -> ptr",
+            "ccc qlrt_task_await(handle: ptr) -> ptr",
             "ccc qlrt_task_result_release(result: ptr) -> void",
             "ccc qlrt_async_iter_next(iterator: ptr) -> ptr",
         ]

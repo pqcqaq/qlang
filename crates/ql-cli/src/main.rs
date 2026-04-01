@@ -802,14 +802,14 @@ async fn helper() -> Int {
             "runtime hook abi: async-frame-alloc ccc qlrt_async_frame_alloc(size: i64, align: i64) -> ptr"
         ));
         assert!(rendered.contains(
-            "runtime hook abi: async-task-create ccc qlrt_async_task_create(entry: ptr, frame: ptr) -> ptr"
+            "runtime hook abi: async-task-create ccc qlrt_async_task_create(entry_fn: ptr, frame: ptr) -> ptr"
         ));
         assert!(rendered.contains(
             "runtime hook abi: executor-spawn ccc qlrt_executor_spawn(executor: ptr, task: ptr) -> ptr"
         ));
         assert!(
             rendered.contains(
-                "runtime hook abi: task-await ccc qlrt_task_await(join_handle: ptr) -> ptr"
+                "runtime hook abi: task-await ccc qlrt_task_await(handle: ptr) -> ptr"
             )
         );
         assert!(rendered.contains(
