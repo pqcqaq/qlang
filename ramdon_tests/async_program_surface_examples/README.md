@@ -63,12 +63,15 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `62_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_chain_forward_await.ql`
 - `63_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_alias_inline_forward_await.ql`
 - `64_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_chain_inline_forward_await.ql`
+- `65_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_forward_await.ql`
+- `66_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_alias_forward_await.ql`
+- `67_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_chain_forward_await.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these sixty-one examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these sixty-four examples with the real local toolchain and locks their exit codes.
 
 Expected exit codes:
 
@@ -133,6 +136,9 @@ Expected exit codes:
 - `62_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_chain_forward_await.ql` -> `120`
 - `63_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_alias_inline_forward_await.ql` -> `122`
 - `64_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_chain_inline_forward_await.ql` -> `124`
+- `65_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_forward_await.ql` -> `126`
+- `66_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_alias_forward_await.ql` -> `128`
+- `67_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_chain_forward_await.ql` -> `130`
 
 Try one file directly:
 
