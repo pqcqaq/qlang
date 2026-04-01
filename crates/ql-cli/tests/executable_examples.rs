@@ -338,6 +338,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/58_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_local_forward_await.ql",
             expected_exit: 112,
         },
+        ExecutableExampleCase {
+            name: "async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_inline_forward_await",
+            source_relative: "ramdon_tests/async_program_surface_examples/59_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_inline_forward_await.ql",
+            expected_exit: 114,
+        },
     ];
 
     assert_example_cases_run(
