@@ -9900,6 +9900,73 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_aliased_projected_root_task_handle_array_repackage_spawn_in_program_mode()
+     {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var pending = Pending {
+        tasks: [worker(9), worker(14)],
+    }
+    let slot = Slot { value: 0 }
+    let alias = pending.tasks
+    let first = await alias[slot.value]
+    pending.tasks[slot.value] = worker(first + 4)
+    let tasks = [alias[slot.value], worker(10)]
+    let running = spawn tasks[0]
+    let second = await running
+    let extra = await tasks[1]
+    let tail = await pending.tasks[1]
+    return second + extra + tail
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_executor_spawn(ptr null, ptr %async_main_task)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_executor_spawn").count() >= 2);
+        assert!(rendered.matches("@qlrt_task_await").count() >= 5);
+        assert!(
+            rendered
+                .matches("getelementptr inbounds [2 x ptr], ptr")
+                .count()
+                >= 4
+        );
+        assert!(
+            rendered
+                .matches("getelementptr inbounds { [2 x ptr] }, ptr")
+                .count()
+                >= 2
+        );
+        assert!(rendered.matches("store ptr").count() >= 7);
+        assert!(!rendered.contains("does not support field or index projections yet"));
+        assert!(
+            !rendered.contains("does not support assignment to field or index projections yet")
+        );
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_aliased_guard_refined_const_backed_projected_root_task_handle_nested_repackage_reinit_in_program_mode()
      {
         let runtime_hooks = collect_runtime_hook_signatures([
