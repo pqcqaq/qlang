@@ -105,7 +105,7 @@ source
 - 新增 equality operand compatibility checking
 - 新增 comparison operand compatible-numeric checking
 - 新增 bare mutable binding assignment diagnostics：`=` 现在会约束 `var` local / `var self`
-- 同一条路径现在还会显式拒绝 `const` / `static` / function / import binding 赋值，以及 member/index assignment target，避免语义层静默放过 backend 尚未承诺的写入模型
+- 同一条路径现在还会显式拒绝 `const` / `static` / function / import binding 赋值；同时也已对 tuple index / struct-field / fixed-array literal index 写入、非 `Task[...]` 元素的 dynamic array assignment，以及 `Task[...]` 动态数组的保守写入/重初始化子集开放明确的 assignment typing，避免语义层继续把所有 member/index assignment 一律打成 unsupported
 - 新增 struct member existence checking
 - 新增 same-file local import alias value/callable typing：同文件单段 alias 指向 function / const / static 时，会复用本地 item 的 value type 与 callable signature
 - 新增 ambiguous method member diagnostics：当前同名多 candidate 的成员方法访问会给出显式 type diagnostics，而不是静默退化成 `unknown`
@@ -120,7 +120,7 @@ source
 当前依然保守的边界：
 
 - 未解析成员调用、通用索引协议、import prelude 细节时，表达式类型会主动退化为 `unknown`；当前只对源码层 fixed array、inferred array 和 constant tuple index 开放一层 typing
-- `=` 当前只对 bare mutable binding 开放真实可写语义；field/index 写入仍未开放，但已经有显式 unsupported diagnostics，不再静默伪装成“可能可用”
+- `=` 已不再只限 bare mutable binding：tuple index / struct-field / fixed-array literal index 写入、非 `Task[...]` 元素的 dynamic array assignment，以及 `Task[...]` 动态数组的保守写入/重初始化子集都已开放；更广义的 arbitrary dynamic overlap / complete place-sensitive assignment 仍保持保守
 - local import alias 的 value/callable typing 当前仍只限 same-file、single-segment、可规范化到本地 function / const / static item 的场景；foreign import 与更深 module graph 仍然延后
 - invalid projection receiver diagnostics 当前也只在“类型已知且明确不支持当前语义”时触发；`unknown` / generic / deeper import-module 相关场景仍保持保守，不提前下结论
 - invalid deeper path-like call 当前也不会继续复用 root callable truth surface：如果 receiver 已知必错，`ping.scope(true)` 这类 case 会停在 projection error，而不是再从 `ping` / import alias 根绑定偷出函数签名继续做参数类型检查

@@ -245,7 +245,7 @@
 - 保守 tuple / array indexing：array element projection、支持 lexer-style integer literal 的 constant tuple indexing、array index type 检查、tuple out-of-bounds 检查
 - equality operand compatibility
 - bare mutable binding assignment diagnostics：对 `var` local / `var self` 做 assignment target 可写性检查
-- 非 binding assignment target diagnostics：`const` / `static` / function / import binding 赋值会显式报错，member/index 写入会显式报 unsupported
+- 非 binding assignment target diagnostics：`const` / `static` / function / import binding 赋值会显式报错；而 tuple-index / struct-field / fixed-array literal-index 写入、非 `Task[...]` 元素的 dynamic array assignment，以及 `Task[...]` 动态数组的保守 write/reinit 子集已经进入稳定实现
 - struct member existence
 - same-file local import alias value/callable canonicalization
 - ambiguous method member diagnostics
@@ -260,7 +260,7 @@
 关键设计取舍：
 
 - `unknown` 不是偷懒，而是明确的退化阀门
-- assignment target 先只接管已有稳定语义身份的 binding；对 member/index 写入先给出显式 unsupported 诊断，而不是提前伪装成完整 place system
+- assignment target 已不再只接管 bare binding：稳定 projection path（tuple/struct-field/fixed-array literal index）、普通 dynamic array assignment，以及 `Task[...]` dynamic array 的保守子集都已接入；更广义的 arbitrary dynamic overlap / 完整 place system 仍保持保守
 - import alias 的 value/callable typing 先只复用 same-file single-segment canonicalization，不把这条路径误写成完整 module graph / foreign import 语义
 - ambiguous method 先只升级成显式 type diagnostics，不提前宣称 completion / rename / query 已经具备模糊候选真值模型
 - projection receiver diagnostics 也先只覆盖“已知必错”的类型，不拿 generic / unresolved / module-path deferred case 冒进报错

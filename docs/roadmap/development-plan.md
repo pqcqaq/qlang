@@ -120,8 +120,8 @@
 这些边界仍然应该明确写成“未完成”，而不是模糊描述成“后面再看”：
 
 - 更广义的 projection-sensitive ownership / partial-place move tracking（当前已开放 tuple/struct-field task-handle path 的只读 consume 与同路径 write/reinit、fixed-array literal index task-handle path 的只读 consume/write-reinit，以及 dynamic fixed-array index task-handle 的 sibling-safe consume + same immutable stable index path precise consume/reinit 子集，其中 stable source path 现也可递归组合到 `tasks[slots[row]]` 这类 composed dynamic index，并继续穿过 `let alias = slots` 这类 immutable alias；同一条稳定 source path 现也可在 `if index == 0` / `if slot.value == 0` 这类 equality guard 的 dominated branch 内保守回收到 literal/projection path；非 `Task[...]` 元素 dynamic array assignment 已开放，而 generic dynamic `Task[...]` overlap / reinit reasoning 仍未开放）
-- 更广义的 projection assignment lowering（当前仅开放 tuple index / struct-field / fixed-array literal index projection write/reinit）
-- 更广义的 `for await` lowering（当前仅开放 library-mode async body 内的 fixed array iterable）
+- 更广义的 projection assignment lowering（当前已开放 tuple index / struct-field / fixed-array literal index projection write/reinit、非 `Task[...]` 元素的 dynamic array assignment，以及 `Task[...]` dynamic array 的 generic maybe-overlap write/reinit + same immutable stable index path precise consume/reinit 子集）
+- 更广义的 `for await` lowering（当前已开放 library-mode 与 `BuildEmit::Executable` `async fn main` 子集下的 fixed-array iterable）
 - cancellation / polling / drop 语义
 - generic async ABI 与 layout substitution
 - 更广义的 async `dylib` 构建承诺（当前仅开放带同步 `extern "c"` 导出面的最小 library-style async body 子集）
