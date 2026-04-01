@@ -828,6 +828,7 @@ P7.2 两个主线任务与 P7.4 的首个 program-entry 切片均已完成（202
 - `crates/ql-codegen-llvm/src/lib.rs`：新增 program-mode 单测 `emits_async_main_entry_lifecycle_with_fixed_array_for_await_in_program_mode`，锁定 async main host entry lifecycle 与 fixed-array `for await` lowering 在同一模块内共存
 - `crates/ql-driver/src/build.rs`：新增 executable 成功回归 `build_file_writes_executable_with_async_main_fixed_array_for_await`
 - `crates/ql-cli/tests/codegen.rs` + `fixtures/codegen/pass/async_program_main_for_await_array.ql`：补齐 CLI 黑盒 pass fixture，锁定 `ql build --emit exe` 的组合成功路径
+- `crates/ql-cli/tests/executable_examples.rs` + `ramdon_tests/async_program_surface_examples/*.ql`：新增真实 toolchain 的 build-and-run smoke harness，锁住当前六个 async executable 样例的实际退出码（`28 / 71 / 39 / 45 / 70 / 10`），避免 program-mode async executable 只剩“可构建”而没有“可运行”回归
 - 当前边界保持不变：仅 fixed-array iterable 被开放；non-array iterable、`llvm-ir` / `object` async surface 与更广 program bootstrap 仍关闭
 
 **P7.4 Task 3（进行中）：扩大 executable async payload 的 regression-locked 子集**
