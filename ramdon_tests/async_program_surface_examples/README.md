@@ -60,12 +60,13 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `59_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_inline_forward_await.ql`
 - `60_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_forward_await.ql`
 - `61_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_alias_forward_await.ql`
+- `62_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_chain_forward_await.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these fifty-eight examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these fifty-nine examples with the real local toolchain and locks their exit codes.
 
 Expected exit codes:
 
@@ -127,6 +128,7 @@ Expected exit codes:
 - `59_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_inline_forward_await.ql` -> `114`
 - `60_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_forward_await.ql` -> `116`
 - `61_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_alias_forward_await.ql` -> `118`
+- `62_async_main_guarded_const_backed_triple_root_triple_source_tail_queue_root_chain_forward_await.ql` -> `120`
 
 Try one file directly:
 
