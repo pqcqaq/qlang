@@ -7,6 +7,45 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ql_driver::{ToolchainOptions, discover_toolchain};
 
 #[test]
+fn executable_examples_build_and_run() {
+    let workspace_root = workspace_root();
+    let examples_root = workspace_root.join("ramdon_tests/executable_examples");
+    assert!(
+        examples_root.is_dir(),
+        "expected sync executable examples under `{}`",
+        examples_root.display()
+    );
+
+    if !toolchain_available("sync executable example test") {
+        return;
+    }
+
+    let cases = [
+        ExecutableExampleCase {
+            name: "sync_minimal",
+            source_relative: "ramdon_tests/executable_examples/01_sync_minimal.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "sync_data_shapes",
+            source_relative: "ramdon_tests/executable_examples/02_sync_data_shapes.ql",
+            expected_exit: 32,
+        },
+        ExecutableExampleCase {
+            name: "sync_extern_c_export",
+            source_relative: "ramdon_tests/executable_examples/03_sync_extern_c_export.ql",
+            expected_exit: 42,
+        },
+    ];
+
+    assert_example_cases_run(
+        &workspace_root,
+        &cases,
+        "sync executable example regressions",
+    );
+}
+
+#[test]
 fn async_program_surface_examples_build_and_run() {
     let workspace_root = workspace_root();
     let examples_root = workspace_root.join("ramdon_tests/async_program_surface_examples");
@@ -16,12 +55,9 @@ fn async_program_surface_examples_build_and_run() {
         examples_root.display()
     );
 
-    let Ok(_toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
-        eprintln!(
-            "skipping async executable example test: no clang-style compiler found via ql-driver toolchain discovery"
-        );
+    if !toolchain_available("async executable example test") {
         return;
-    };
+    }
 
     let cases = [
         ExecutableExampleCase {
@@ -56,16 +92,38 @@ fn async_program_surface_examples_build_and_run() {
         },
     ];
 
+    assert_example_cases_run(
+        &workspace_root,
+        &cases,
+        "async executable example regressions",
+    );
+}
+
+fn toolchain_available(context: &str) -> bool {
+    let Ok(_toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
+        eprintln!(
+            "skipping {context}: no clang-style compiler found via ql-driver toolchain discovery"
+        );
+        return false;
+    };
+    true
+}
+
+fn assert_example_cases_run(
+    workspace_root: &Path,
+    cases: &[ExecutableExampleCase],
+    failure_header: &str,
+) {
     let mut failures = Vec::new();
     for case in cases {
-        if let Err(message) = run_executable_example_case(&workspace_root, &case) {
+        if let Err(message) = run_executable_example_case(workspace_root, case) {
             failures.push(message);
         }
     }
 
     assert!(
         failures.is_empty(),
-        "async executable example regressions:\n\n{}",
+        "{failure_header}:\n\n{}",
         failures.join("\n\n")
     );
 }
