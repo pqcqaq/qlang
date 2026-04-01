@@ -24,12 +24,13 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `23_async_main_aliased_guard_refined_const_backed_array_repackage_spawn.ql`
 - `24_async_main_aliased_projected_root_nested_array_repackage_spawn.ql`
 - `25_async_main_aliased_guard_refined_const_backed_nested_array_repackage_spawn.ql`
+- `26_async_main_composed_dynamic_nested_array_repackage_spawn.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these twenty-two examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these twenty-three examples with the real local toolchain and locks their exit codes.
 
 Expected exit codes:
 
@@ -55,6 +56,7 @@ Expected exit codes:
 - `23_async_main_aliased_guard_refined_const_backed_array_repackage_spawn.ql` -> `40`
 - `24_async_main_aliased_projected_root_nested_array_repackage_spawn.ql` -> `41`
 - `25_async_main_aliased_guard_refined_const_backed_nested_array_repackage_spawn.ql` -> `46`
+- `26_async_main_composed_dynamic_nested_array_repackage_spawn.ql` -> `47`
 
 Try one file directly:
 
