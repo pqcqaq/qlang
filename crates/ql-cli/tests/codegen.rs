@@ -1,8 +1,13 @@
+mod support;
+
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+
+use support::{
+    TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
+    expect_success, normalize, ql_command, run_command_capture, workspace_root,
+};
 
 #[test]
 fn codegen_snapshots_match() {
@@ -1671,32 +1676,6 @@ fn dynamic_task_handle_pass_cases() -> Vec<PassCase> {
     ]
 }
 
-struct TempDir {
-    path: PathBuf,
-}
-
-impl TempDir {
-    fn new(prefix: &str) -> Self {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock should be after unix epoch")
-            .as_nanos();
-        let path = env::temp_dir().join(format!("{prefix}-{unique}"));
-        fs::create_dir_all(&path).expect("create temporary test directory");
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
-
 fn run_pass_case(workspace_root: &Path, case: &PassCase) -> Result<(), String> {
     let temp = TempDir::new(&format!("ql-codegen-{}", case.name));
     let output_path = artifact_output_path(temp.path(), case.emit);
@@ -1706,8 +1685,8 @@ fn run_pass_case(workspace_root: &Path, case: &PassCase) -> Result<(), String> {
             .unwrap_or_else(|_| panic!("read expected snapshot `{}`", expected_path.display())),
     )));
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ql"));
-    command.current_dir(workspace_root).args([
+    let mut command = ql_command(workspace_root);
+    command.args([
         "build",
         case.source_relative,
         "--emit",
@@ -1742,31 +1721,18 @@ fn run_pass_case(workspace_root: &Path, case: &PassCase) -> Result<(), String> {
         command.env("QLANG_AR_STYLE", style);
     }
 
-    let output = command.output().unwrap_or_else(|_| {
-        panic!(
-            "run `ql build {} --emit {}`",
-            case.source_relative, case.emit
-        )
-    });
-    let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
-    let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
-
-    if output.status.code().is_none_or(|code| code != 0) {
-        return Err(format!(
-            "[{}] expected exit code 0, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            output.status.code(),
-            stdout,
-            stderr
-        ));
-    }
-
-    if !stderr.trim().is_empty() {
-        return Err(format!(
-            "[{}] expected no stderr for successful build\nstderr:\n{}",
-            case.name, stderr
-        ));
-    }
+    let output = run_command_capture(
+        &mut command,
+        format!("`ql build {} --emit {}`", case.source_relative, case.emit),
+    );
+    let (_, stderr) = expect_success(case.name, "successful build", &output)?;
+    expect_empty_stderr(case.name, "successful build", &stderr)?;
+    expect_file_exists(
+        case.name,
+        &output_path,
+        "generated artifact",
+        "successful build",
+    )?;
 
     let actual = normalize_artifact(&normalize(
         &fs::read_to_string(&output_path)
@@ -1794,6 +1760,12 @@ fn run_pass_case(workspace_root: &Path, case: &PassCase) -> Result<(), String> {
             .expect("header snapshots require an explicit surface");
         let header_output_path =
             default_sidecar_header_output_path(&output_path, case.source_relative, surface);
+        expect_file_exists(
+            case.name,
+            &header_output_path,
+            "generated header",
+            "successful build",
+        )?;
         let actual_header = normalize_artifact(&normalize(
             &fs::read_to_string(&header_output_path).unwrap_or_else(|_| {
                 panic!("read generated header `{}`", header_output_path.display())
@@ -1841,37 +1813,15 @@ fn run_fail_case(workspace_root: &Path, case: &FailCase) -> Result<(), String> {
         )
     }));
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ql"));
-    command
-        .current_dir(workspace_root)
-        .args(["build", case.source_relative, "--emit", case.emit]);
+    let mut command = ql_command(workspace_root);
+    command.args(["build", case.source_relative, "--emit", case.emit]);
     command.args(case.extra_args);
-    let output = command.output().unwrap_or_else(|_| {
-        panic!(
-            "run `ql build {} --emit {}`",
-            case.source_relative, case.emit
-        )
-    });
-
-    let stdout = normalize(&String::from_utf8_lossy(&output.stdout));
-    let stderr = normalize(&String::from_utf8_lossy(&output.stderr));
-
-    if output.status.code().is_none_or(|code| code != 1) {
-        return Err(format!(
-            "[{}] expected exit code 1, got {:?}\nstdout:\n{}\nstderr:\n{}",
-            case.name,
-            output.status.code(),
-            stdout,
-            stderr
-        ));
-    }
-
-    if !stdout.trim().is_empty() {
-        return Err(format!(
-            "[{}] expected no stdout for failing build\nstdout:\n{}",
-            case.name, stdout
-        ));
-    }
+    let output = run_command_capture(
+        &mut command,
+        format!("`ql build {} --emit {}`", case.source_relative, case.emit),
+    );
+    let (stdout, stderr) = expect_exit_code(case.name, "failing build", &output, 1)?;
+    expect_empty_stdout(case.name, "failing build", &stdout)?;
 
     if stderr != expected {
         return Err(format!(
@@ -1881,17 +1831,6 @@ fn run_fail_case(workspace_root: &Path, case: &FailCase) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-fn workspace_root() -> PathBuf {
-    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let crates_dir = crate_dir
-        .parent()
-        .expect("ql-cli crate should have a parent directory");
-    crates_dir
-        .parent()
-        .expect("workspace root should exist")
-        .to_path_buf()
 }
 
 fn artifact_output_path(root: &Path, emit: &str) -> PathBuf {
@@ -1963,10 +1902,6 @@ fn current_target_triple() -> &'static str {
 
 fn current_archiver_style() -> &'static str {
     if cfg!(windows) { "lib" } else { "ar" }
-}
-
-fn normalize(text: &str) -> String {
-    text.replace("\r\n", "\n")
 }
 
 fn normalize_artifact(text: &str) -> String {
