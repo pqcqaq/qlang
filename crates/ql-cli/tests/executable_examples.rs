@@ -188,6 +188,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/28_async_main_guarded_alias_sourced_composed_dynamic_nested_array_repackage_spawn.ql",
             expected_exit: 50,
         },
+        ExecutableExampleCase {
+            name: "async_main_aliased_projected_root_forwarded_nested_array_repackage_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/29_async_main_aliased_projected_root_forwarded_nested_array_repackage_spawn.ql",
+            expected_exit: 52,
+        },
     ];
 
     assert_example_cases_run(
