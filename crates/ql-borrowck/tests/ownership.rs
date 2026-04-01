@@ -2331,6 +2331,64 @@ async fn main(row: Int) -> Wrap {
 }
 
 #[test]
+fn allows_passing_guarded_alias_sourced_composed_dynamic_task_handle_to_helper_without_consuming_sibling_task_field()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+    fallback: Task[Wrap],
+}
+
+struct Slot {
+    value: Int,
+}
+
+const INDEX: Int = 0
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn choose() -> Int {
+    return INDEX
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row = choose()
+    let slots = [row, row]
+    let alias_slots = slots
+    var pending = Pending {
+        tasks: [worker(), worker()],
+        fallback: worker(),
+    }
+    let alias = pending.tasks
+    let slot = Slot { value: INDEX }
+    if slot.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let forwarded = forward(alias[alias_slots[row]])
+    return await pending.fallback
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded helper-consumed alias-sourced composed dynamic task-handle path to stay path-sensitive for sibling task fields, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_maybe_moved_for_specific_array_element_after_dynamic_task_handle_consume() {
     let diagnostics = diagnostic_messages(
         r#"
