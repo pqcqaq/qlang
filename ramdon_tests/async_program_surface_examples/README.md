@@ -106,12 +106,13 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `105_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_alias_inline_forward_await.ql`
 - `106_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_chain_inline_forward_await.ql`
 - `107_async_main_import_alias_named_calls.ql`
+- `108_async_main_import_alias_direct_submit.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-seven examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-eight examples with the real local toolchain and locks their exit codes.
 
 Expected exit codes:
 
@@ -219,6 +220,7 @@ Expected exit codes:
 - `105_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_alias_inline_forward_await.ql` -> `128`
 - `106_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_chain_inline_forward_await.ql` -> `130`
 - `107_async_main_import_alias_named_calls.ql` -> `42`
+- `108_async_main_import_alias_direct_submit.ql` -> `42`
 
 Try one file directly:
 
