@@ -135,7 +135,7 @@ struct GuardBindingValue {
 
 #[derive(Clone, Debug)]
 struct SupportedForLoopLowering {
-    iterable_place: Place,
+    iterable_root: SupportedForLoopIterableRoot,
     item_local: mir::LocalId,
     element_ty: Ty,
     item_ty: Ty,
@@ -149,6 +149,12 @@ struct SupportedForLoopLowering {
 enum SupportedForLoopIterableKind {
     Array,
     Tuple,
+}
+
+#[derive(Clone, Debug)]
+enum SupportedForLoopIterableRoot {
+    Place(Place),
+    Item(ItemId),
 }
 
 #[derive(Clone, Debug)]
@@ -1028,13 +1034,13 @@ impl<'a> ModuleEmitter<'a> {
                     } else {
                         "LLVM IR backend foundation does not support `for` lowering yet"
                     };
-                    let Some((iterable_place, iterable_kind, element_ty, iterable_len)) =
+                    let Some((iterable_root, iterable_kind, element_ty, iterable_len)) =
                         (match (iterable, iterable_ty) {
                             (
                                 Operand::Place(iterable_place),
                                 Some(Ty::Array { element, len }),
                             ) => Some((
-                                iterable_place.clone(),
+                                SupportedForLoopIterableRoot::Place(iterable_place.clone()),
                                 SupportedForLoopIterableKind::Array,
                                 element.as_ref().clone(),
                                 len,
@@ -1048,11 +1054,91 @@ impl<'a> ModuleEmitter<'a> {
                                     }) =>
                             {
                                 Some((
-                                    iterable_place.clone(),
+                                    SupportedForLoopIterableRoot::Place(iterable_place.clone()),
                                     SupportedForLoopIterableKind::Tuple,
                                     items[0].clone(),
                                     items.len(),
                                 ))
+                            }
+                            (
+                                Operand::Constant(Constant::Item { item, .. }),
+                                Some(Ty::Array { element, len }),
+                            ) if const_or_static_item_type(self.input.hir, self.input.resolution, *item)
+                                .is_some() =>
+                            {
+                                Some((
+                                    SupportedForLoopIterableRoot::Item(*item),
+                                    SupportedForLoopIterableKind::Array,
+                                    element.as_ref().clone(),
+                                    len,
+                                ))
+                            }
+                            (
+                                Operand::Constant(Constant::Item { item, .. }),
+                                Some(Ty::Tuple(items)),
+                            ) if const_or_static_item_type(self.input.hir, self.input.resolution, *item)
+                                .is_some()
+                                && !items.is_empty()
+                                && !items.iter().any(is_void_ty)
+                                && items.iter().skip(1).all(|item| {
+                                    item.compatible_with(&items[0])
+                                        && items[0].compatible_with(item)
+                                }) =>
+                            {
+                                Some((
+                                    SupportedForLoopIterableRoot::Item(*item),
+                                    SupportedForLoopIterableKind::Tuple,
+                                    items[0].clone(),
+                                    items.len(),
+                                ))
+                            }
+                            (
+                                Operand::Constant(Constant::Import(path)),
+                                Some(Ty::Array { element, len }),
+                            ) => local_item_for_import_path(self.input.hir, path).and_then(
+                                |item_id| {
+                                    const_or_static_item_type(
+                                        self.input.hir,
+                                        self.input.resolution,
+                                        item_id,
+                                    )
+                                    .map(|_| {
+                                        (
+                                            SupportedForLoopIterableRoot::Item(item_id),
+                                            SupportedForLoopIterableKind::Array,
+                                            element.as_ref().clone(),
+                                            len,
+                                        )
+                                    })
+                                },
+                            ),
+                            (
+                                Operand::Constant(Constant::Import(path)),
+                                Some(Ty::Tuple(items)),
+                            ) if !items.is_empty()
+                                && !items.iter().any(is_void_ty)
+                                && items.iter().skip(1).all(|item| {
+                                    item.compatible_with(&items[0])
+                                        && items[0].compatible_with(item)
+                                }) =>
+                            {
+                                local_item_for_import_path(self.input.hir, path).and_then(
+                                    |item_id| {
+                                        const_or_static_item_type(
+                                            self.input.hir,
+                                            self.input.resolution,
+                                            item_id,
+                                        )
+                                        .map(|_| {
+                                            (
+                                                SupportedForLoopIterableRoot::Item(item_id),
+                                                SupportedForLoopIterableKind::Tuple,
+                                                items[0].clone(),
+                                                items.len(),
+                                            )
+                                        })
+                                    },
+                                )
                             }
                             _ => None,
                         })
@@ -1088,7 +1174,7 @@ impl<'a> ModuleEmitter<'a> {
                     supported_for_loops.insert(
                         block_id,
                         SupportedForLoopLowering {
-                            iterable_place,
+                            iterable_root,
                             item_local: *item_local,
                             element_ty,
                             item_ty,
@@ -3037,6 +3123,31 @@ impl<'a> ModuleEmitter<'a> {
                 );
             }
         }
+        for block_id in body.block_ids() {
+            let Some(loop_lowering) = function.supported_for_loops.get(&block_id) else {
+                continue;
+            };
+            let SupportedForLoopIterableRoot::Item(item_id) = &loop_lowering.iterable_root else {
+                continue;
+            };
+            let Some(ty) =
+                const_or_static_item_type(self.input.hir, self.input.resolution, *item_id)
+            else {
+                panic!(
+                    "prepared `for` lowering for block {:?} should only materialize const/static iterable roots",
+                    block_id
+                );
+            };
+            let llvm_ty = self
+                .lower_llvm_type(&ty, body.block(block_id).terminator.span, "for iterable type")
+                .expect("prepared const/static `for` iterable should have a lowered LLVM type");
+            let _ = writeln!(
+                output,
+                "  {} = alloca {}",
+                for_iterable_slot_name(block_id),
+                llvm_ty
+            );
+        }
 
         for local_id in body.local_ids() {
             let local = body.local(local_id);
@@ -3085,14 +3196,21 @@ impl<'a> ModuleEmitter<'a> {
             }
         }
 
-        let _ = writeln!(output, "  br label %bb{}", body.entry.index());
-
         let mut renderer = FunctionRenderer {
             emitter: self,
             body,
             prepared: function,
             next_temp: 0,
         };
+        for block_id in body.block_ids() {
+            let Some(loop_lowering) = renderer.prepared.supported_for_loops.get(&block_id).cloned()
+            else {
+                continue;
+            };
+            renderer.render_for_loop_iterable_initialization(output, block_id, &loop_lowering);
+        }
+
+        let _ = writeln!(output, "  br label %bb{}", body.entry.index());
 
         for block_id in body.block_ids() {
             let block = body.block(block_id);
@@ -5246,6 +5364,53 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         format!("%t{index}")
     }
 
+    fn render_for_loop_iterable_initialization(
+        &mut self,
+        output: &mut String,
+        block_id: mir::BasicBlockId,
+        loop_lowering: &SupportedForLoopLowering,
+    ) {
+        let SupportedForLoopIterableRoot::Item(item_id) = &loop_lowering.iterable_root else {
+            return;
+        };
+        let span = self.body.block(block_id).terminator.span;
+        let rendered = self.render_item_constant(output, *item_id, span);
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {}",
+            rendered.llvm_ty,
+            rendered.repr,
+            for_iterable_slot_name(block_id)
+        );
+    }
+
+    fn render_for_loop_iterable_pointer(
+        &mut self,
+        output: &mut String,
+        block_id: mir::BasicBlockId,
+        loop_lowering: &SupportedForLoopLowering,
+        span: Span,
+    ) -> (String, Ty) {
+        match &loop_lowering.iterable_root {
+            SupportedForLoopIterableRoot::Place(place) => {
+                self.render_place_pointer(output, place, span)
+            }
+            SupportedForLoopIterableRoot::Item(item_id) => (
+                for_iterable_slot_name(block_id),
+                const_or_static_item_type(
+                    self.emitter.input.hir,
+                    self.emitter.input.resolution,
+                    *item_id,
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "prepared `for` lowering at {span:?} should only materialize const/static iterable roots"
+                    )
+                }),
+            ),
+        }
+    }
+
     fn render_for_await_setup_block(
         &mut self,
         output: &mut String,
@@ -5261,7 +5426,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             for_await_index_slot_name(block_id)
         );
         let (iterable_ptr, iterable_ty) =
-            self.render_place_pointer(output, &loop_lowering.iterable_place, span);
+            self.render_for_loop_iterable_pointer(output, block_id, loop_lowering, span);
         let iterable_llvm_ty = self
             .emitter
             .lower_llvm_type(&iterable_ty, span, "for-await iterable type")
@@ -6491,8 +6656,25 @@ fn seed_inferred_local_type(
     }
 }
 
+fn const_or_static_item_type(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    item_id: ItemId,
+) -> Option<Ty> {
+    match &module.item(item_id).kind {
+        ItemKind::Const(global) | ItemKind::Static(global) => {
+            Some(lower_type(module, resolution, global.ty))
+        }
+        _ => None,
+    }
+}
+
 fn for_await_index_slot_name(block_id: mir::BasicBlockId) -> String {
     format!("%for_await_index_bb{}", block_id.index())
+}
+
+fn for_iterable_slot_name(block_id: mir::BasicBlockId) -> String {
+    format!("%for_iterable_bb{}", block_id.index())
 }
 
 fn bool_match_dispatch_block_name(block_id: mir::BasicBlockId, arm_index: usize) -> String {
@@ -10165,6 +10347,53 @@ fn main() -> Int {
         assert!(rendered.contains("icmp ult i64"));
         assert!(rendered.contains("for_await_setup"));
         assert!(rendered.contains("getelementptr inbounds { i64, i64, i64 }, ptr"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
+    }
+
+    #[test]
+    fn emits_for_lowering_for_const_backed_tuple_program_bodies() {
+        let rendered = emit_with_mode(
+            r#"
+const VALUES: (Int, Int, Int) = (1, 2, 3)
+
+fn main() -> Int {
+    var total = 0
+    for value in VALUES {
+        total = total + value
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("%for_iterable_bb"));
+        assert!(rendered.contains("insertvalue { i64, i64, i64 }"));
+        assert!(rendered.contains("getelementptr inbounds { i64, i64, i64 }, ptr %for_iterable_bb"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
+    }
+
+    #[test]
+    fn emits_for_lowering_for_import_aliased_static_array_program_bodies() {
+        let rendered = emit_with_mode(
+            r#"
+use VALUES as INPUT
+static VALUES: [Int; 3] = [1, 2, 3]
+
+fn main() -> Int {
+    var total = 0
+    for value in INPUT {
+        total = total + value
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("%for_iterable_bb"));
+        assert!(rendered.contains("insertvalue [3 x i64]"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr %for_iterable_bb"));
         assert!(!rendered.contains("does not support `for` lowering yet"));
     }
 

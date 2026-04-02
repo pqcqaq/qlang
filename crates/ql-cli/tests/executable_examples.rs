@@ -54,6 +54,26 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/06_sync_import_alias_named_call_arguments.ql",
             expected_exit: 49,
         },
+        ExecutableExampleCase {
+            name: "sync_for_fixed_array",
+            source_relative: "ramdon_tests/executable_examples/07_sync_for_fixed_array.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "sync_for_tuple",
+            source_relative: "ramdon_tests/executable_examples/08_sync_for_tuple.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "sync_for_projected_fixed_shape",
+            source_relative: "ramdon_tests/executable_examples/09_sync_for_projected_fixed_shape.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "sync_for_const_static_fixed_shape",
+            source_relative: "ramdon_tests/executable_examples/10_sync_for_const_static_fixed_shape.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(

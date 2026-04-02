@@ -10,6 +10,10 @@ Files:
 - `04_sync_static_item_values.ql`: same-file `static` item values plus `use ... as ...` aliases in ordinary expressions and bool conditions
 - `05_sync_named_call_arguments.ql`: direct named call arguments lowered in parameter order, including expected-type back-propagation for `[]`
 - `06_sync_import_alias_named_call_arguments.ql`: same-file `use ... as ...` function alias calls plus named arguments, lowered as the original direct callee in parameter order
+- `07_sync_for_fixed_array.ql`: direct fixed-array `for` lowering in executable mode
+- `08_sync_for_tuple.ql`: homogeneous tuple `for` lowering in executable mode
+- `09_sync_for_projected_fixed_shape.ql`: projected tuple/array fixed-shape `for` lowering in executable mode
+- `10_sync_for_const_static_fixed_shape.ql`: same-file `const` / `static` fixed-shape `for` roots, including a `use ... as ...` const alias
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -22,6 +26,10 @@ Expected exit codes for the sync examples:
 - `04_sync_static_item_values.ql` -> `5`
 - `05_sync_named_call_arguments.ql` -> `47`
 - `06_sync_import_alias_named_call_arguments.ql` -> `49`
+- `07_sync_for_fixed_array.ql` -> `42`
+- `08_sync_for_tuple.ql` -> `42`
+- `09_sync_for_projected_fixed_shape.ql` -> `42`
+- `10_sync_for_const_static_fixed_shape.ql` -> `42`
 
 Build one verified executable example:
 
