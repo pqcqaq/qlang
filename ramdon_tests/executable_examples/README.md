@@ -8,6 +8,7 @@ Files:
 - `02_sync_data_shapes.ql`: structs, tuples, arrays, nested projections, dynamic array assignment, zero-sized arrays with expected context
 - `03_sync_extern_c_export.ql`: top-level `extern "c" pub fn` definition plus normal `main`
 - `04_sync_static_item_values.ql`: same-file `static` item values plus `use ... as ...` aliases in ordinary expressions and bool conditions
+- `05_sync_named_call_arguments.ql`: direct named call arguments lowered in parameter order, including expected-type back-propagation for `[]`
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -18,6 +19,7 @@ Expected exit codes for the sync examples:
 - `02_sync_data_shapes.ql` -> `32`
 - `03_sync_extern_c_export.ql` -> `42`
 - `04_sync_static_item_values.ql` -> `5`
+- `05_sync_named_call_arguments.ql` -> `47`
 
 Build one verified executable example:
 

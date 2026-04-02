@@ -1259,9 +1259,49 @@ impl<'a> ModuleEmitter<'a> {
             return;
         };
 
-        for (arg, param) in args.iter().zip(signature.params.iter()) {
+        let Some(ordered_args) = self.ordered_call_args(args, signature) else {
+            return;
+        };
+
+        for (arg, param) in ordered_args.into_iter().zip(signature.params.iter()) {
             self.seed_expected_temp_from_operand(body, &arg.value, &param.ty, local_types);
         }
+    }
+
+    fn ordered_call_args<'b>(
+        &self,
+        args: &'b [mir::CallArgument],
+        signature: &FunctionSignature,
+    ) -> Option<Vec<&'b mir::CallArgument>> {
+        if args.iter().all(|arg| arg.name.is_none()) {
+            return (args.len() == signature.params.len()).then(|| args.iter().collect());
+        }
+
+        let mut ordered = vec![None; signature.params.len()];
+        let mut next_positional = 0usize;
+
+        for arg in args {
+            let index = if let Some(name) = arg.name.as_deref() {
+                signature.params.iter().position(|param| param.name == name)?
+            } else {
+                while next_positional < ordered.len() && ordered[next_positional].is_some() {
+                    next_positional += 1;
+                }
+                if next_positional == ordered.len() {
+                    return None;
+                }
+                let index = next_positional;
+                next_positional += 1;
+                index
+            };
+
+            if ordered[index].is_some() {
+                return None;
+            }
+            ordered[index] = Some(arg);
+        }
+
+        ordered.into_iter().collect()
     }
 
     fn seed_expected_temp_from_operand(
@@ -1554,23 +1594,6 @@ impl<'a> ModuleEmitter<'a> {
                 span,
             ),
             Rvalue::Call { callee, args } => {
-                for arg in args {
-                    if arg.name.is_some() {
-                        ctx.diagnostics.push(unsupported(
-                            span,
-                            "LLVM IR backend foundation does not support named call arguments yet",
-                        ));
-                    }
-                    let _ = self.infer_operand_type(
-                        ctx.body,
-                        &arg.value,
-                        ctx.local_types,
-                        ctx.async_task_handles,
-                        ctx.diagnostics,
-                        span,
-                    );
-                }
-
                 let Operand::Constant(Constant::Function { function, .. }) = callee else {
                     ctx.diagnostics.push(unsupported(
                         span,
@@ -1586,6 +1609,25 @@ impl<'a> ModuleEmitter<'a> {
                     ));
                     return None;
                 };
+
+                let Some(ordered_args) = self.ordered_call_args(args, signature) else {
+                    ctx.diagnostics.push(unsupported(
+                        span,
+                        "LLVM IR backend foundation could not map call arguments to direct callee parameters",
+                    ));
+                    return None;
+                };
+
+                for arg in ordered_args {
+                    let _ = self.infer_operand_type(
+                        ctx.body,
+                        &arg.value,
+                        ctx.local_types,
+                        ctx.async_task_handles,
+                        ctx.diagnostics,
+                        span,
+                    );
+                }
 
                 if signature.is_async {
                     None
@@ -3686,7 +3728,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     .signatures
                     .get(function)
                     .expect("callee signatures should exist");
-                let rendered_args = args
+                let rendered_args = self
+                    .emitter
+                    .ordered_call_args(args, signature)
+                    .expect("prepared direct calls should preserve callee argument mapping")
                     .iter()
                     .map(|arg| {
                         let value = self.render_operand(output, &arg.value, span);
@@ -6538,6 +6583,26 @@ fn main() -> Int {
         assert!(rendered.contains("call i64 @ql_0_add_one(i64 41)"));
         assert!(rendered.contains("call i64 @ql_1_main()"));
         assert!(rendered.contains("add i64"));
+    }
+
+    #[test]
+    fn emits_llvm_ir_for_named_call_arguments_in_signature_order() {
+        let rendered = emit(
+            r#"
+fn collect(values: [Int; 0], left: Int, right: Int) -> Int {
+    return left + right + 5
+}
+
+fn main() -> Int {
+    return collect(right: 20, values: [], left: 22)
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @ql_0_collect([0 x i64] %arg0, i64 %arg1, i64 %arg2)"));
+        assert!(rendered.contains("store [0 x i64] zeroinitializer"));
+        assert!(rendered.contains("call i64 @ql_0_collect([0 x i64] %t0, i64 22, i64 20)"));
+        assert!(!rendered.contains("does not support named call arguments yet"));
     }
 
     #[test]
