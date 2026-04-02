@@ -114,13 +114,19 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `113_async_main_import_alias_helper_task_submit.ql`
 - `114_async_main_import_alias_helper_forward_submit.ql`
 - `115_async_main_import_alias_task_array_for_await.ql`
+- `116_async_main_import_alias_helper_task_array_for_await.ql`
+- `117_async_main_projected_task_array_for_await.ql`
+- `118_async_main_void_task_array_for_await.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-fifteen examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-eighteen examples with the real local toolchain and locks their exit codes.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
+- `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
+- `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
+- `118_async_main_void_task_array_for_await.ql` now locks the `Task[Void]` wildcard variant, confirming that task-backed `for await` also works when each iteration only contributes side effects and the program exits with `2`.
 
 Expected exit codes:
 
@@ -236,6 +242,9 @@ Expected exit codes:
 - `113_async_main_import_alias_helper_task_submit.ql` -> `42`
 - `114_async_main_import_alias_helper_forward_submit.ql` -> `42`
 - `115_async_main_import_alias_task_array_for_await.ql` -> `42`
+- `116_async_main_import_alias_helper_task_array_for_await.ql` -> `42`
+- `117_async_main_projected_task_array_for_await.ql` -> `42`
+- `118_async_main_void_task_array_for_await.ql` -> `2`
 
 Try one file directly:
 
