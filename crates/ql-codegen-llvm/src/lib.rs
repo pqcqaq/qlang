@@ -3461,6 +3461,18 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                                         local,
                                         value: rendered.clone(),
                                     });
+                                if let Some(binding) = guard_binding.as_ref()
+                                    && let Some(local) =
+                                        mir_local_for_hir_local(self.body, binding.local)
+                                {
+                                    let _ = writeln!(
+                                        output,
+                                        "  store {} {}, ptr {}",
+                                        binding.value.llvm_ty,
+                                        binding.value.repr,
+                                        llvm_slot_name(self.body, local)
+                                    );
+                                }
                                 let condition = self.render_bool_guard_expr(
                                     output,
                                     expr_id,
@@ -3587,6 +3599,18 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                                         local,
                                         value: rendered.clone(),
                                     });
+                                if let Some(binding) = guard_binding.as_ref()
+                                    && let Some(local) =
+                                        mir_local_for_hir_local(self.body, binding.local)
+                                {
+                                    let _ = writeln!(
+                                        output,
+                                        "  store {} {}, ptr {}",
+                                        binding.value.llvm_ty,
+                                        binding.value.repr,
+                                        llvm_slot_name(self.body, local)
+                                    );
+                                }
                                 let condition = self.render_bool_guard_expr(
                                     output,
                                     expr_id,
@@ -5389,18 +5413,15 @@ fn guard_expr_place_with_ty(
 }
 
 fn guard_expr_place_root(
-    module: &hir::Module,
+    _module: &hir::Module,
     resolution: &ResolutionMap,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
-    arm_pattern: Option<hir::PatternId>,
+    _arm_pattern: Option<hir::PatternId>,
     expr_id: hir::ExprId,
 ) -> Option<(mir::LocalId, Ty)> {
     match resolution.expr_resolution(expr_id)? {
         ValueResolution::Local(local_id) => {
-            if arm_pattern.is_some_and(|pattern| pattern_binds_local(module, pattern, *local_id)) {
-                return None;
-            }
             let local = mir_local_for_hir_local(body, *local_id)?;
             let ty = local_types.get(&local)?.clone();
             Some((local, ty))
@@ -7592,6 +7613,31 @@ fn main() -> Int {
 
         assert!(rendered.contains(" and i1 "));
         assert!(rendered.contains("icmp sgt i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_match_guard_binding_index_operand_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+fn main() -> Int {
+    let values = [1, 3, 5]
+    let value = 1
+    return match value {
+        current if values[current] < values[2] => 10,
+        _ => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("%l6_current"));
+        assert!(
+            rendered.contains("getelementptr inbounds [3 x i64], ptr %l2_values, i64 0, i64 %")
+        );
+        assert!(rendered.contains("icmp slt i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

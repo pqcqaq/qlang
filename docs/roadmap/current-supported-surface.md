@@ -29,7 +29,7 @@
 - `Bool` scrutinee 子集现在还额外支持 direct bool-valued guard：same-scope `Bool` local / parameter、以 local / parameter / `self` 为根的 read-only bool scalar projection，以及能折叠成 `Bool` 的 same-file `const` / alias-backed aggregate projection；但当前只开放在后续 arm 仍提供 guaranteed fallback coverage 的 ordered 子集内。
 - `Int` scrutinee 子集现在还额外支持 integer-literal arm 与 guarded catch-all arm 上的同一组 direct bool-valued guard，但当前只开放在后续存在 unguarded catch-all fallback 的 ordered 子集内。
 - `match guard` 现在也支持对当前 bool guard 子集做 runtime `&&` / `||` 组合；也就是说 literal / const-backed / direct-bool / scalar-comparison 这些已列出的 bool-valued guard，可以继续被 `!`、`&&`、`||` 组合后进入 lowering。
-- 当前 arm 的单名 binding catch-all 变量现在也可作为 direct scalar operand 参与当前 guard 子集；例如 `match flag { state if state && enabled => ... }` 与 `match value { current if current > limit => ... }` 这类路径已进入 lowering，但基于当前 arm 新绑定名继续做 member/index projection 仍未开放。
+- 当前 arm 的单名 binding catch-all 变量现在也可作为 direct scalar operand 参与当前 guard 子集；例如 `match flag { state if state && enabled => ... }` 与 `match value { current if current > limit => ... }` 这类路径已进入 lowering。它们现在也可作为 fixed-array 只读投影里的 dynamic index operand，例如 `match value { current if values[current] < values[2] => ... }`；但基于当前 arm 新绑定名本身继续做 member projection、或把它继续当作 tuple/fixed-array projection root，仍未开放。
 - async public build 当前已开放两类受控子集：
   - library build 子集：`staticlib` 与最小 async `dylib`，要求公开导出面仍保持同步 `extern "c"` C ABI。
   - program build 子集：`BuildEmit::LlvmIr`、`BuildEmit::Object`、`BuildEmit::Executable` 下的最小 `async fn main`。
