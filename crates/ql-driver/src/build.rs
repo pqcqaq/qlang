@@ -9938,6 +9938,59 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_projected_integer_comparison_guard_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-projected-integer-comparison-guard-match");
+        let source = dir.write(
+            "projected_integer_comparison_guard_match.ql",
+            r#"
+struct Slot {
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+    pair: (Int, Int),
+    values: [Int; 2],
+}
+
+fn main() -> Int {
+    let value = 3
+    let state = State {
+        slot: Slot { value: 2 },
+        pair: (0, 1),
+        values: [1, 4],
+    }
+    return match value {
+        3 if state.pair[1] == state.slot.value => 30,
+        3 if state.values[0] < state.slot.value => 31,
+        _ => 0,
+    }
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/projected_integer_comparison_guard_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with projected integer comparison-guard match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("bb0_match_guard1:"));
+        assert!(rendered.contains("icmp slt i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_integer_dynamic_guard_catch_all_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-integer-dynamic-guard-catch-all-match");
         let source = dir.write(

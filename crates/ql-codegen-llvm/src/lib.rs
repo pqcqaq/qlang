@@ -4351,51 +4351,6 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             },
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
-                    Some(ValueResolution::Local(local_id)) => {
-                        let local = mir_local_for_hir_local(self.body, *local_id).unwrap_or_else(|| {
-                            panic!(
-                                "prepared bool guard lowering at {span:?} should resolve local guard operands to MIR locals"
-                            )
-                        });
-                        let rendered =
-                            self.render_operand(output, &Operand::Place(Place::local(local)), span);
-                        assert!(
-                            rendered.ty.is_bool()
-                                || rendered.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
-                            "prepared bool guard lowering at {span:?} should only render bool or Int local guard operands"
-                        );
-                        rendered
-                    }
-                    Some(ValueResolution::Param(binding)) => {
-                        let local = mir_param_local(self.body, binding.index).unwrap_or_else(|| {
-                            panic!(
-                                "prepared bool guard lowering at {span:?} should resolve param guard operands to MIR locals"
-                            )
-                        });
-                        let rendered =
-                            self.render_operand(output, &Operand::Place(Place::local(local)), span);
-                        assert!(
-                            rendered.ty.is_bool()
-                                || rendered.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
-                            "prepared bool guard lowering at {span:?} should only render bool or Int param guard operands"
-                        );
-                        rendered
-                    }
-                    Some(ValueResolution::SelfValue) => {
-                        let local = mir_receiver_local(self.body).unwrap_or_else(|| {
-                            panic!(
-                                "prepared bool guard lowering at {span:?} should resolve `self` guard operands to MIR locals"
-                            )
-                        });
-                        let rendered =
-                            self.render_operand(output, &Operand::Place(Place::local(local)), span);
-                        assert!(
-                            rendered.ty.is_bool()
-                                || rendered.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
-                            "prepared bool guard lowering at {span:?} should only render bool or Int `self` guard operands"
-                        );
-                        rendered
-                    }
                     Some(ValueResolution::Item(_)) | Some(ValueResolution::Import(_)) => {
                         if let Some(value) = guard_literal_bool(
                             self.emitter.input.hir,
@@ -4423,10 +4378,53 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                             )
                         }
                     }
-                    Some(ValueResolution::Function(_)) | None => panic!(
-                        "prepared bool guard lowering at {span:?} should only render resolved scalar guard names"
-                    ),
+                    Some(ValueResolution::Local(_))
+                    | Some(ValueResolution::Param(_))
+                    | Some(ValueResolution::SelfValue)
+                    | Some(ValueResolution::Function(_))
+                    | None => {
+                        let (place, ty) = guard_expr_place_with_ty(
+                            self.emitter.input.hir,
+                            self.emitter.input.resolution,
+                            self.body,
+                            &self.prepared.local_types,
+                            None,
+                            expr_id,
+                        )
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "prepared bool guard lowering at {span:?} should only render resolved scalar guard places"
+                            )
+                        });
+                        let rendered = self.render_operand(output, &Operand::Place(place), span);
+                        assert!(
+                            ty.is_bool() || ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                            "prepared bool guard lowering at {span:?} should only render bool or Int guard places"
+                        );
+                        rendered
+                    }
                 }
+            }
+            hir::ExprKind::Member { .. } | hir::ExprKind::Bracket { .. } => {
+                let (place, ty) = guard_expr_place_with_ty(
+                    self.emitter.input.hir,
+                    self.emitter.input.resolution,
+                    self.body,
+                    &self.prepared.local_types,
+                    None,
+                    expr_id,
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "prepared bool guard lowering at {span:?} should only render supported scalar projection guards"
+                    )
+                });
+                let rendered = self.render_operand(output, &Operand::Place(place), span);
+                assert!(
+                    ty.is_bool() || ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                    "prepared bool guard lowering at {span:?} should only render bool or Int projection guards"
+                );
+                rendered
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
                 let tail = self
@@ -4773,20 +4771,6 @@ fn supported_guard_scalar_expr(
         hir::ExprKind::Bool(_) => Some(GuardScalarKind::Bool),
         hir::ExprKind::Integer(_) => Some(GuardScalarKind::Int),
         hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
-            Some(ValueResolution::Local(local_id)) => {
-                if pattern_binds_local(module, arm_pattern, *local_id) {
-                    return None;
-                }
-                mir_local_for_hir_local(body, *local_id)
-                    .and_then(|local_id| local_types.get(&local_id))
-                    .and_then(guard_scalar_kind_for_ty)
-            }
-            Some(ValueResolution::Param(binding)) => mir_param_local(body, binding.index)
-                .and_then(|local_id| local_types.get(&local_id))
-                .and_then(guard_scalar_kind_for_ty),
-            Some(ValueResolution::SelfValue) => mir_receiver_local(body)
-                .and_then(|local_id| local_types.get(&local_id))
-                .and_then(guard_scalar_kind_for_ty),
             Some(ValueResolution::Item(_)) | Some(ValueResolution::Import(_)) => {
                 if guard_literal_bool(module, resolution, expr_id).is_some() {
                     Some(GuardScalarKind::Bool)
@@ -4796,8 +4780,29 @@ fn supported_guard_scalar_expr(
                     None
                 }
             }
-            Some(ValueResolution::Function(_)) | None => None,
+            Some(ValueResolution::Local(_))
+            | Some(ValueResolution::Param(_))
+            | Some(ValueResolution::SelfValue)
+            | Some(ValueResolution::Function(_))
+            | None => guard_expr_place_with_ty(
+                module,
+                resolution,
+                body,
+                local_types,
+                Some(arm_pattern),
+                expr_id,
+            )
+            .and_then(|(_, ty)| guard_scalar_kind_for_ty(&ty)),
         },
+        hir::ExprKind::Member { .. } | hir::ExprKind::Bracket { .. } => guard_expr_place_with_ty(
+            module,
+            resolution,
+            body,
+            local_types,
+            Some(arm_pattern),
+            expr_id,
+        )
+        .and_then(|(_, ty)| guard_scalar_kind_for_ty(&ty)),
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
             module.block(*block_id).tail.and_then(|tail| {
                 supported_guard_scalar_expr(
@@ -4881,6 +4886,195 @@ fn mir_param_local(body: &mir::MirBody, index: usize) -> Option<mir::LocalId> {
 fn mir_receiver_local(body: &mir::MirBody) -> Option<mir::LocalId> {
     body.local_ids()
         .find(|candidate| matches!(body.local(*candidate).origin, LocalOrigin::Receiver))
+}
+
+fn guard_expr_place_with_ty(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    arm_pattern: Option<hir::PatternId>,
+    expr_id: hir::ExprId,
+) -> Option<(Place, Ty)> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Name(_) => {
+            let (local, ty) =
+                guard_expr_place_root(module, resolution, body, local_types, arm_pattern, expr_id)?;
+            Some((Place::local(local), ty))
+        }
+        hir::ExprKind::Member { object, field, .. } => {
+            let (mut place, current_ty) = guard_expr_place_with_ty(
+                module,
+                resolution,
+                body,
+                local_types,
+                arm_pattern,
+                *object,
+            )?;
+            let output_ty = guard_field_projection_ty(module, resolution, &current_ty, field)?;
+            place
+                .projections
+                .push(mir::ProjectionElem::Field(field.clone()));
+            Some((place, output_ty))
+        }
+        hir::ExprKind::Bracket { target, items } => {
+            let (mut place, mut current_ty) = guard_expr_place_with_ty(
+                module,
+                resolution,
+                body,
+                local_types,
+                arm_pattern,
+                *target,
+            )?;
+            for item in items {
+                let (index_operand, index_ty) = guard_expr_index_operand_with_ty(
+                    module,
+                    resolution,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    *item,
+                )?;
+                if !index_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
+                    return None;
+                }
+                current_ty = guard_index_projection_ty(&current_ty, &index_operand)?;
+                place
+                    .projections
+                    .push(mir::ProjectionElem::Index(Box::new(index_operand)));
+            }
+            Some((place, current_ty))
+        }
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+            module.block(*block_id).tail.and_then(|tail| {
+                guard_expr_place_with_ty(module, resolution, body, local_types, arm_pattern, tail)
+            })
+        }
+        hir::ExprKind::Question(inner) => {
+            guard_expr_place_with_ty(module, resolution, body, local_types, arm_pattern, *inner)
+        }
+        _ => None,
+    }
+}
+
+fn guard_expr_place_root(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    arm_pattern: Option<hir::PatternId>,
+    expr_id: hir::ExprId,
+) -> Option<(mir::LocalId, Ty)> {
+    match resolution.expr_resolution(expr_id)? {
+        ValueResolution::Local(local_id) => {
+            if arm_pattern.is_some_and(|pattern| pattern_binds_local(module, pattern, *local_id)) {
+                return None;
+            }
+            let local = mir_local_for_hir_local(body, *local_id)?;
+            let ty = local_types.get(&local)?.clone();
+            Some((local, ty))
+        }
+        ValueResolution::Param(binding) => {
+            let local = mir_param_local(body, binding.index)?;
+            let ty = local_types.get(&local)?.clone();
+            Some((local, ty))
+        }
+        ValueResolution::SelfValue => {
+            let local = mir_receiver_local(body)?;
+            let ty = local_types.get(&local)?.clone();
+            Some((local, ty))
+        }
+        ValueResolution::Item(_) | ValueResolution::Import(_) | ValueResolution::Function(_) => {
+            None
+        }
+    }
+}
+
+fn guard_expr_index_operand_with_ty(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    arm_pattern: Option<hir::PatternId>,
+    expr_id: hir::ExprId,
+) -> Option<(Operand, Ty)> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Integer(value) => Some((
+            Operand::Constant(Constant::Integer(value.clone())),
+            Ty::Builtin(BuiltinType::Int),
+        )),
+        hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
+            Some(ValueResolution::Item(_)) | Some(ValueResolution::Import(_)) => {
+                let value = guard_literal_int(module, resolution, expr_id)?;
+                Some((
+                    Operand::Constant(Constant::Integer(value.to_string())),
+                    Ty::Builtin(BuiltinType::Int),
+                ))
+            }
+            Some(ValueResolution::Local(_))
+            | Some(ValueResolution::Param(_))
+            | Some(ValueResolution::SelfValue)
+            | Some(ValueResolution::Function(_))
+            | None => guard_expr_place_with_ty(
+                module,
+                resolution,
+                body,
+                local_types,
+                arm_pattern,
+                expr_id,
+            )
+            .map(|(place, ty)| (Operand::Place(place), ty)),
+        },
+        hir::ExprKind::Member { .. }
+        | hir::ExprKind::Bracket { .. }
+        | hir::ExprKind::Block(_)
+        | hir::ExprKind::Unsafe(_)
+        | hir::ExprKind::Question(_) => {
+            guard_expr_place_with_ty(module, resolution, body, local_types, arm_pattern, expr_id)
+                .map(|(place, ty)| (Operand::Place(place), ty))
+        }
+        _ => None,
+    }
+}
+
+fn guard_field_projection_ty(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    current_ty: &Ty,
+    field: &str,
+) -> Option<Ty> {
+    let Ty::Item { item_id, args, .. } = current_ty else {
+        return None;
+    };
+    if !args.is_empty() {
+        return None;
+    }
+    let item = module.item(*item_id);
+    let ItemKind::Struct(struct_decl) = &item.kind else {
+        return None;
+    };
+    if !struct_decl.generics.is_empty() {
+        return None;
+    }
+    struct_decl
+        .fields
+        .iter()
+        .find(|candidate| candidate.name == field)
+        .map(|field| lower_type(module, resolution, field.ty))
+}
+
+fn guard_index_projection_ty(current_ty: &Ty, index: &Operand) -> Option<Ty> {
+    match current_ty {
+        Ty::Array { element, .. } => Some(element.as_ref().clone()),
+        Ty::Tuple(items) => {
+            let Operand::Constant(Constant::Integer(raw)) = index else {
+                return None;
+            };
+            let index = ql_ast::parse_usize_literal(raw)?;
+            items.get(index).cloned()
+        }
+        _ => None,
+    }
 }
 
 fn guard_literal_bool_expr(
