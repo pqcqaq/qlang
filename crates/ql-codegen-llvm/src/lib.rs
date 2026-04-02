@@ -7931,6 +7931,47 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_static_projected_integer_guard_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+use STATE as CURRENT
+
+struct Slot {
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+    pair: (Int, Int),
+    limits: [Int; 2],
+}
+
+static STATE: State = State {
+    slot: Slot { value: 2 },
+    pair: (0, 2),
+    limits: [1, 4],
+}
+
+fn main() -> Int {
+    let value = 3
+    return match value {
+        3 if CURRENT.pair[1] == CURRENT.slot.value => 30,
+        3 if CURRENT.limits[0] < CURRENT.slot.value => 31,
+        _ => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(!rendered.contains("bb0_match_guard0:"));
+        assert!(!rendered.contains("bb0_match_guard1:"));
+        assert_eq!(rendered.matches("icmp eq i64").count(), 2);
+        assert!(!rendered.contains("getelementptr inbounds { { i64 }, { i64, i64 }, [2 x i64] }"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn rejects_unsupported_for_lowering() {
         let messages = emit_error(
             r#"
