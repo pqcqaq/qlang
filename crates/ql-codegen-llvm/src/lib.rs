@@ -111,6 +111,7 @@ struct PreparedFunction {
     async_task_handles: HashMap<mir::LocalId, AsyncTaskHandleInfo>,
     task_handle_place_aliases: HashMap<mir::LocalId, mir::Place>,
     supported_for_loops: HashMap<mir::BasicBlockId, SupportedForLoopLowering>,
+    supported_matches: HashMap<mir::BasicBlockId, SupportedMatchLowering>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,6 +134,12 @@ struct SupportedForLoopLowering {
     element_ty: Ty,
     array_len: usize,
     body_target: mir::BasicBlockId,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SupportedMatchLowering {
+    true_target: mir::BasicBlockId,
+    false_target: mir::BasicBlockId,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -595,6 +602,7 @@ impl<'a> ModuleEmitter<'a> {
         let task_handle_place_aliases =
             self.collect_task_handle_place_aliases(body, &local_types, &mut diagnostics);
         let mut supported_for_loops = HashMap::new();
+        let mut supported_matches = HashMap::new();
         self.propagate_expected_temp_local_types(body, &mut local_types, &async_task_handles);
 
         for block_id in body.block_ids() {
@@ -628,15 +636,15 @@ impl<'a> ModuleEmitter<'a> {
                             }
                         }
                     }
-                    StatementKind::BindPattern {
-                        pattern, source, ..
-                    } => {
-                        self.require_binding_pattern(*pattern, statement.span, &mut diagnostics);
-                        let source_ty = self.infer_operand_type(
-                            body,
-                            source,
-                            &local_types,
-                            &async_task_handles,
+                StatementKind::BindPattern {
+                    pattern, source, ..
+                } => {
+                    self.require_supported_bind_pattern(*pattern, statement.span, &mut diagnostics);
+                    let source_ty = self.infer_operand_type(
+                        body,
+                        source,
+                        &local_types,
+                        &async_task_handles,
                             &mut diagnostics,
                             statement.span,
                         );
@@ -687,10 +695,73 @@ impl<'a> ModuleEmitter<'a> {
                         ));
                     }
                 }
-                TerminatorKind::Match { .. } => diagnostics.push(unsupported(
-                    block.terminator.span,
-                    "LLVM IR backend foundation does not support `match` lowering yet",
-                )),
+                TerminatorKind::Match {
+                    scrutinee,
+                    arms,
+                    else_target,
+                } => {
+                    let mut scratch = Vec::new();
+                    let scrutinee_ty = self.infer_operand_type(
+                        body,
+                        scrutinee,
+                        &local_types,
+                        &async_task_handles,
+                        &mut scratch,
+                        block.terminator.span,
+                    );
+                    if !matches!(scrutinee_ty, Some(Ty::Builtin(BuiltinType::Bool))) {
+                        diagnostics.push(unsupported(
+                            block.terminator.span,
+                            "LLVM IR backend foundation does not support `match` lowering yet",
+                        ));
+                        continue;
+                    }
+
+                    let mut true_target = None;
+                    let mut false_target = None;
+                    let mut supported = true;
+                    for arm in arms {
+                        if arm.guard.is_some() {
+                            supported = false;
+                            break;
+                        }
+                        match pattern_kind(self.input.hir, arm.pattern) {
+                            PatternKind::Bool(true) => {
+                                true_target.get_or_insert(arm.target);
+                            }
+                            PatternKind::Bool(false) => {
+                                false_target.get_or_insert(arm.target);
+                            }
+                            PatternKind::Wildcard => {
+                                true_target.get_or_insert(arm.target);
+                                false_target.get_or_insert(arm.target);
+                            }
+                            _ => {
+                                supported = false;
+                                break;
+                            }
+                        }
+                        if true_target.is_some() && false_target.is_some() {
+                            break;
+                        }
+                    }
+
+                    if !supported {
+                        diagnostics.push(unsupported(
+                            block.terminator.span,
+                            "LLVM IR backend foundation does not support `match` lowering yet",
+                        ));
+                        continue;
+                    }
+
+                    supported_matches.insert(
+                        block_id,
+                        SupportedMatchLowering {
+                            true_target: true_target.unwrap_or(*else_target),
+                            false_target: false_target.unwrap_or(*else_target),
+                        },
+                    );
+                }
                 TerminatorKind::ForLoop {
                     iterable,
                     item_local,
@@ -769,6 +840,7 @@ impl<'a> ModuleEmitter<'a> {
                 async_task_handles,
                 task_handle_place_aliases,
                 supported_for_loops,
+                supported_matches,
             })
         } else {
             Err(dedupe_diagnostics(diagnostics))
@@ -1930,7 +2002,7 @@ impl<'a> ModuleEmitter<'a> {
         Some(current_ty)
     }
 
-    fn require_binding_pattern(
+    fn require_supported_bind_pattern(
         &self,
         pattern: hir::PatternId,
         span: Span,
@@ -1938,7 +2010,7 @@ impl<'a> ModuleEmitter<'a> {
     ) {
         if !matches!(
             pattern_kind(self.input.hir, pattern),
-            PatternKind::Binding(_)
+            PatternKind::Binding(_) | PatternKind::Bool(_) | PatternKind::Wildcard
         ) {
             diagnostics.push(unsupported(
                 span,
@@ -2876,28 +2948,30 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             StatementKind::BindPattern {
                 pattern, source, ..
             } => {
-                let PatternKind::Binding(local) = pattern_kind(self.emitter.input.hir, *pattern)
-                else {
-                    panic!("prepared patterns should only contain bindings");
-                };
-                let rendered = self.render_operand(output, source, statement.span);
-                let binding_local = self
-                    .body
-                    .local_ids()
-                    .find(|candidate| {
-                        matches!(
-                            self.body.local(*candidate).origin,
-                            LocalOrigin::Binding(hir_local) if hir_local == *local
-                        )
-                    })
-                    .expect("binding local should exist in MIR body");
-                let _ = writeln!(
-                    output,
-                    "  store {} {}, ptr {}",
-                    rendered.llvm_ty,
-                    rendered.repr,
-                    llvm_slot_name(self.body, binding_local)
-                );
+                match pattern_kind(self.emitter.input.hir, *pattern) {
+                    PatternKind::Binding(local) => {
+                        let rendered = self.render_operand(output, source, statement.span);
+                        let binding_local = self
+                            .body
+                            .local_ids()
+                            .find(|candidate| {
+                                matches!(
+                                    self.body.local(*candidate).origin,
+                                    LocalOrigin::Binding(hir_local) if hir_local == *local
+                                )
+                            })
+                            .expect("binding local should exist in MIR body");
+                        let _ = writeln!(
+                            output,
+                            "  store {} {}, ptr {}",
+                            rendered.llvm_ty,
+                            rendered.repr,
+                            llvm_slot_name(self.body, binding_local)
+                        );
+                    }
+                    PatternKind::Bool(_) | PatternKind::Wildcard => {}
+                    _ => panic!("prepared patterns should only contain supported bind patterns"),
+                }
             }
             StatementKind::Eval { value } => {
                 let _ = self.render_rvalue(output, value, None, statement.span);
@@ -2969,8 +3043,18 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             TerminatorKind::Terminate => {
                 output.push_str("  unreachable\n");
             }
-            TerminatorKind::Match { .. } => {
-                panic!("prepared functions should not contain unsupported terminators")
+            TerminatorKind::Match { scrutinee, .. } => {
+                let Some(match_lowering) = self.prepared.supported_matches.get(&block_id) else {
+                    panic!("prepared `match` at block {:?} should have lowering metadata", block_id)
+                };
+                let rendered = self.render_operand(output, scrutinee, terminator.span);
+                let _ = writeln!(
+                    output,
+                    "  br i1 {}, label %bb{}, label %bb{}",
+                    rendered.repr,
+                    match_lowering.true_target.index(),
+                    match_lowering.false_target.index()
+                );
             }
             TerminatorKind::ForLoop { exit_target, .. } => {
                 let loop_lowering = self
@@ -5684,13 +5768,32 @@ fn main() -> Int {
     }
 
     #[test]
-    fn rejects_unsupported_match_lowering() {
-        let messages = emit_error(
+    fn emits_bool_match_lowering() {
+        let rendered = emit_with_mode(
             r#"
 fn main() -> Int {
     let flag = true
     return match flag {
         true => 1,
+        false => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("br i1"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn rejects_guarded_match_lowering() {
+        let messages = emit_error(
+            r#"
+fn main() -> Int {
+    let flag = true
+    return match flag {
+        true if flag => 1,
         false => 0,
     }
 }
@@ -7318,7 +7421,7 @@ fn main() -> Int {
     let flag = true
     defer first()
     return match flag {
-        true => 1,
+        true if flag => 1,
         false => 0,
     }
 }
@@ -7358,7 +7461,7 @@ fn main() -> Int {
 fn helper() -> Int {
     let flag = true
     return match flag {
-        true => 1,
+        true if flag => 1,
         false => 0,
     }
 }
@@ -7374,30 +7477,10 @@ fn main() -> Int {
                 .iter()
                 .filter(|message| {
                     message.as_str()
-                        == "LLVM IR backend foundation encountered an opaque expression that still needs MIR elaboration"
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    message.as_str()
                         == "LLVM IR backend foundation does not support `match` lowering yet"
                 })
                 .count(),
             1
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    message.as_str()
-                        == "LLVM IR backend foundation only supports single-name binding patterns"
-                })
-                .count(),
-            2
         );
         assert_eq!(
             messages

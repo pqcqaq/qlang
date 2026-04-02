@@ -745,14 +745,6 @@ impl<'a> BodyBuilder<'a> {
                 let (dispatch, scrutinee) = self.lower_expr_to_operand(*value, entry, scope);
                 let (dispatch, scrutinee) =
                     self.materialize_operand(dispatch, scope, expr.span, scrutinee);
-                self.push_statement(
-                    dispatch,
-                    expr.span,
-                    StatementKind::Assign {
-                        place: target.clone(),
-                        value: Rvalue::OpaqueExpr(expr_id),
-                    },
-                );
 
                 let mut lowered_arms = Vec::with_capacity(arms.len());
                 for arm in arms {

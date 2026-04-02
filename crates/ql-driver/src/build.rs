@@ -8206,7 +8206,7 @@ fn main() -> Int {
     let flag = true
     defer first()
     return match flag {
-        true => 1,
+        true if flag => 1,
         false => 0,
     }
 }
@@ -8257,7 +8257,7 @@ fn main() -> Int {
 fn helper() -> Int {
     let flag = true
     return match flag {
-        true => 1,
+        true if flag => 1,
         false => 0,
     }
 }
@@ -8278,30 +8278,10 @@ fn main() -> Int {
                 .iter()
                 .filter(|diagnostic| {
                     diagnostic.message
-                        == "LLVM IR backend foundation encountered an opaque expression that still needs MIR elaboration"
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
                         == "LLVM IR backend foundation does not support `match` lowering yet"
                 })
                 .count(),
             1
-        );
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation only supports single-name binding patterns"
-                })
-                .count(),
-            2
         );
         assert_eq!(
             diagnostics
@@ -9751,7 +9731,7 @@ async fn helper() -> Int {
 fn main() -> Int {
     let flag = true
     return match flag {
-        true => 1,
+        true if flag => 1,
         false => 0,
     }
 }
@@ -9774,6 +9754,39 @@ fn main() -> Int {
                     .message
                     .contains("could not infer LLVM type for MIR local")
         }));
+    }
+
+    #[test]
+    fn build_file_writes_llvm_ir_with_bool_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-bool-match");
+        let source = dir.write(
+            "bool_match.ql",
+            r#"
+fn main() -> Int {
+    let flag = true
+    return match flag {
+        true => 1,
+        false => 0,
+    }
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/bool_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact =
+            build_file(&source, &options).expect("llvm-ir build with bool match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("br i1"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
     #[test]

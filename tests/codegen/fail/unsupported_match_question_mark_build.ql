@@ -1,7 +1,7 @@
 fn helper() -> Int {
     let flag = true
     return match flag {
-        true => 1,
+        true if flag => 1,
         false => 0,
     }
 }
