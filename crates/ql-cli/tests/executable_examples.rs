@@ -608,6 +608,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/109_async_main_import_alias_aggregate_submit.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "async_main_import_alias_array_submit",
+            source_relative: "ramdon_tests/async_program_surface_examples/110_async_main_import_alias_array_submit.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
