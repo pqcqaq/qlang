@@ -623,6 +623,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/112_async_main_import_alias_forward_submit.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "async_main_import_alias_helper_task_submit",
+            source_relative: "ramdon_tests/async_program_surface_examples/113_async_main_import_alias_helper_task_submit.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
