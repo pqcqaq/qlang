@@ -443,6 +443,16 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/78_async_main_guarded_static_alias_backed_double_root_double_source_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql",
             expected_exit: 71,
         },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_double_root_double_source_row_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/79_async_main_guarded_static_alias_backed_double_root_double_source_row_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql",
+            expected_exit: 73,
+        },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_double_root_double_source_row_slot_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/80_async_main_guarded_static_alias_backed_double_root_double_source_row_slot_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql",
+            expected_exit: 77,
+        },
     ];
 
     assert_example_cases_run(
