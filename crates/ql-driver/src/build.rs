@@ -7315,8 +7315,8 @@ fn main() -> Int {
             toolchain: ToolchainOptions::default(),
         };
 
-        let artifact =
-            build_file(&source, &options).expect("llvm-ir build with fixed-array for should succeed");
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with fixed-array for should succeed");
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);
@@ -9924,6 +9924,47 @@ fn main() -> Int {
 
         let artifact = build_file(&source, &options)
             .expect("llvm-ir build with const-guard match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered.matches("icmp eq i64").count(), 1);
+        assert!(rendered.contains("%l4_other = alloca i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn build_file_writes_llvm_ir_with_alias_const_guard_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-alias-const-guard-match");
+        let source = dir.write(
+            "alias_const_guard_match.ql",
+            r#"
+use ENABLE as ON
+use DISABLE as OFF
+
+const ENABLE: Bool = true
+const DISABLE: Bool = false
+
+fn main() -> Int {
+    let value = 2
+    return match value {
+        1 if OFF => 10,
+        2 if ON => 20,
+        other if ON => other,
+    }
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/alias_const_guard_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with alias const-guard match should succeed");
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);

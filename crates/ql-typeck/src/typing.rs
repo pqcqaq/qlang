@@ -958,10 +958,11 @@ impl<'a> Checker<'a> {
     fn bool_literal_expr(&self, expr_id: ExprId, visited: &mut HashSet<ItemId>) -> Option<bool> {
         match &self.module.expr(expr_id).kind {
             ExprKind::Bool(value) => Some(*value),
-            ExprKind::Name(_) => match self.resolution.expr_resolution(expr_id) {
-                Some(ValueResolution::Item(item_id)) => self.bool_literal_item(*item_id, visited),
-                _ => None,
-            },
+            ExprKind::Name(_) => self
+                .resolution
+                .expr_resolution(expr_id)
+                .and_then(|resolution| self.item_id_for_value_resolution(resolution))
+                .and_then(|item_id| self.bool_literal_item(item_id, visited)),
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self
                 .module
                 .block(*block_id)

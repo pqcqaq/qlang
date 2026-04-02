@@ -456,6 +456,41 @@ fn choose(flag: Bool) -> Int {
 }
 
 #[test]
+fn accepts_bool_matches_with_import_alias_const_bool_guards_as_exhaustive_for_function_returns() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use ENABLE as ON
+use DISABLE as OFF
+
+const ENABLE: Bool = true
+const DISABLE: Bool = false
+
+fn choose(flag: Bool) -> Int {
+    match flag {
+        true if OFF => {
+            return 1
+        }
+        false if ON => {
+            return 0
+        }
+        other if ON => {
+            if other {
+                return 2
+            }
+            return 3
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_guarded_catch_all_matches_with_literal_true_guards_as_exhaustive() {
     let diagnostics = diagnostic_messages(
         r#"

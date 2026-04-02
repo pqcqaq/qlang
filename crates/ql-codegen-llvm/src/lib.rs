@@ -11,7 +11,7 @@ use ql_mir::{
     self as mir, BodyOwner, Constant, LocalOrigin, Operand, Place, Rvalue, StatementKind,
     TerminatorKind,
 };
-use ql_resolve::{BuiltinType, ResolutionMap, TypeResolution, ValueResolution};
+use ql_resolve::{BuiltinType, ImportBinding, ResolutionMap, TypeResolution, ValueResolution};
 use ql_runtime::{RuntimeHook, RuntimeHookSignature};
 use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, lower_type};
@@ -648,15 +648,19 @@ impl<'a> ModuleEmitter<'a> {
                             }
                         }
                     }
-                StatementKind::BindPattern {
-                    pattern, source, ..
-                } => {
-                    self.require_supported_bind_pattern(*pattern, statement.span, &mut diagnostics);
-                    let source_ty = self.infer_operand_type(
-                        body,
-                        source,
-                        &local_types,
-                        &async_task_handles,
+                    StatementKind::BindPattern {
+                        pattern, source, ..
+                    } => {
+                        self.require_supported_bind_pattern(
+                            *pattern,
+                            statement.span,
+                            &mut diagnostics,
+                        );
+                        let source_ty = self.infer_operand_type(
+                            body,
+                            source,
+                            &local_types,
+                            &async_task_handles,
                             &mut diagnostics,
                             statement.span,
                         );
@@ -855,10 +859,7 @@ impl<'a> ModuleEmitter<'a> {
                     let (Operand::Place(iterable_place), Some(Ty::Array { element, len })) =
                         (iterable, iterable_ty)
                     else {
-                        diagnostics.push(unsupported(
-                            block.terminator.span,
-                            unsupported_message,
-                        ));
+                        diagnostics.push(unsupported(block.terminator.span, unsupported_message));
                         continue;
                     };
                     let element_ty = element.as_ref().clone();
@@ -3019,32 +3020,30 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             StatementKind::BindPattern {
                 pattern, source, ..
-            } => {
-                match pattern_kind(self.emitter.input.hir, *pattern) {
-                    PatternKind::Binding(local) => {
-                        let rendered = self.render_operand(output, source, statement.span);
-                        let binding_local = self
-                            .body
-                            .local_ids()
-                            .find(|candidate| {
-                                matches!(
-                                    self.body.local(*candidate).origin,
-                                    LocalOrigin::Binding(hir_local) if hir_local == *local
-                                )
-                            })
-                            .expect("binding local should exist in MIR body");
-                        let _ = writeln!(
-                            output,
-                            "  store {} {}, ptr {}",
-                            rendered.llvm_ty,
-                            rendered.repr,
-                            llvm_slot_name(self.body, binding_local)
-                        );
-                    }
-                    PatternKind::Integer(_) | PatternKind::Bool(_) | PatternKind::Wildcard => {}
-                    _ => panic!("prepared patterns should only contain supported bind patterns"),
+            } => match pattern_kind(self.emitter.input.hir, *pattern) {
+                PatternKind::Binding(local) => {
+                    let rendered = self.render_operand(output, source, statement.span);
+                    let binding_local = self
+                        .body
+                        .local_ids()
+                        .find(|candidate| {
+                            matches!(
+                                self.body.local(*candidate).origin,
+                                LocalOrigin::Binding(hir_local) if hir_local == *local
+                            )
+                        })
+                        .expect("binding local should exist in MIR body");
+                    let _ = writeln!(
+                        output,
+                        "  store {} {}, ptr {}",
+                        rendered.llvm_ty,
+                        rendered.repr,
+                        llvm_slot_name(self.body, binding_local)
+                    );
                 }
-            }
+                PatternKind::Integer(_) | PatternKind::Bool(_) | PatternKind::Wildcard => {}
+                _ => panic!("prepared patterns should only contain supported bind patterns"),
+            },
             StatementKind::Eval { value } => {
                 let _ = self.render_rvalue(output, value, None, statement.span);
             }
@@ -3117,7 +3116,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             TerminatorKind::Match { scrutinee, .. } => {
                 let Some(match_lowering) = self.prepared.supported_matches.get(&block_id) else {
-                    panic!("prepared `match` at block {:?} should have lowering metadata", block_id)
+                    panic!(
+                        "prepared `match` at block {:?} should have lowering metadata",
+                        block_id
+                    )
                 };
                 let rendered = self.render_operand(output, scrutinee, terminator.span);
                 match match_lowering {
@@ -4212,12 +4214,10 @@ fn guard_literal_bool_expr(
 ) -> Option<bool> {
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(value) => Some(*value),
-        hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
-            Some(ValueResolution::Item(item_id)) => {
-                guard_literal_bool_item(module, resolution, *item_id, visited)
-            }
-            _ => None,
-        },
+        hir::ExprKind::Name(_) => resolution
+            .expr_resolution(expr_id)
+            .and_then(|resolution| local_item_for_value_resolution(module, resolution))
+            .and_then(|item_id| guard_literal_bool_item(module, resolution, item_id, visited)),
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => module
             .block(*block_id)
             .tail
@@ -4248,6 +4248,42 @@ fn guard_literal_bool_item(
 
     visited.remove(&item_id);
     result
+}
+
+fn local_item_for_value_resolution(
+    module: &hir::Module,
+    resolution: &ValueResolution,
+) -> Option<ItemId> {
+    match resolution {
+        ValueResolution::Item(item_id) => Some(*item_id),
+        ValueResolution::Import(import_binding) => {
+            local_item_for_import_binding(module, import_binding)
+        }
+        _ => None,
+    }
+}
+
+fn local_item_for_import_binding(
+    module: &hir::Module,
+    import_binding: &ImportBinding,
+) -> Option<ItemId> {
+    let [name] = import_binding.path.segments.as_slice() else {
+        return None;
+    };
+
+    module
+        .items
+        .iter()
+        .copied()
+        .find(|item_id| match &module.item(*item_id).kind {
+            ItemKind::Function(function) => function.name == *name,
+            ItemKind::Const(global) | ItemKind::Static(global) => global.name == *name,
+            ItemKind::Struct(struct_decl) => struct_decl.name == *name,
+            ItemKind::Enum(enum_decl) => enum_decl.name == *name,
+            ItemKind::Trait(trait_decl) => trait_decl.name == *name,
+            ItemKind::TypeAlias(alias) => alias.name == *name,
+            ItemKind::Impl(_) | ItemKind::Extend(_) | ItemKind::ExternBlock(_) => false,
+        })
 }
 
 fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnostic> {
