@@ -96,12 +96,17 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `95_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_direct_inline_forward_spawn.ql`
 - `96_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_direct_inline_forward_await.ql`
 - `97_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_bundle_slot_inline_forward_await.ql`
+- `98_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_bundle_inline_forward_await.ql`
+- `99_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_inline_forward_await.ql`
+- `100_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_forward_await.ql`
+- `101_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_inline_forward_await.ql`
+- `102_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_forward_await.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these ninety-seven examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-two examples with the real local toolchain and locks their exit codes.
 
 Expected exit codes:
 
@@ -199,6 +204,11 @@ Expected exit codes:
 - `95_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_direct_inline_forward_spawn.ql` -> `108`
 - `96_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_direct_inline_forward_await.ql` -> `110`
 - `97_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_bundle_slot_inline_forward_await.ql` -> `112`
+- `98_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_bundle_inline_forward_await.ql` -> `114`
+- `99_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_inline_forward_await.ql` -> `116`
+- `100_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_forward_await.ql` -> `118`
+- `101_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_inline_forward_await.ql` -> `120`
+- `102_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_forward_await.ql` -> `122`
 
 Try one file directly:
 
