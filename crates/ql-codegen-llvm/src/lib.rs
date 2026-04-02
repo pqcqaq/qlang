@@ -142,10 +142,34 @@ enum SupportedMatchLowering {
         true_target: mir::BasicBlockId,
         false_target: mir::BasicBlockId,
     },
+    BoolGuarded {
+        arms: Vec<SupportedBoolMatchArm>,
+        fallback_target: mir::BasicBlockId,
+    },
     Integer {
         arms: Vec<SupportedIntegerMatchArm>,
         fallback_target: mir::BasicBlockId,
     },
+}
+
+#[derive(Clone, Debug)]
+struct SupportedBoolMatchArm {
+    pattern: SupportedBoolMatchPattern,
+    guard: SupportedBoolGuard,
+    target: mir::BasicBlockId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SupportedBoolMatchPattern {
+    True,
+    False,
+    CatchAll,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SupportedBoolGuard {
+    Always,
+    Dynamic(hir::ExprId),
 }
 
 #[derive(Clone, Debug)]
@@ -729,49 +753,93 @@ impl<'a> ModuleEmitter<'a> {
                         Some(Ty::Builtin(BuiltinType::Bool)) => {
                             let mut true_target = None;
                             let mut false_target = None;
+                            let mut ordered_arms = Vec::new();
+                            let mut guaranteed_true = false;
+                            let mut guaranteed_false = false;
+                            let mut dynamic_guard_seen = false;
                             let mut supported = true;
                             for arm in arms {
-                                match arm.guard {
-                                    None => {}
-                                    Some(guard) => match guard_literal_bool(
+                                let guard = match arm.guard {
+                                    None => SupportedBoolGuard::Always,
+                                    Some(guard) => match supported_bool_guard(
                                         self.input.hir,
                                         self.input.resolution,
+                                        body,
+                                        &local_types,
+                                        arm.pattern,
                                         guard,
                                     ) {
-                                        Some(true) => {}
-                                        Some(false) => continue,
+                                        Some(SupportedBoolGuardAnalysis::Always) => {
+                                            SupportedBoolGuard::Always
+                                        }
+                                        Some(SupportedBoolGuardAnalysis::Skip) => continue,
+                                        Some(SupportedBoolGuardAnalysis::Dynamic(expr_id)) => {
+                                            dynamic_guard_seen = true;
+                                            SupportedBoolGuard::Dynamic(expr_id)
+                                        }
                                         None => {
                                             supported = false;
                                             break;
                                         }
                                     },
+                                };
+                                let Some(pattern) =
+                                    supported_bool_match_pattern(self.input.hir, arm.pattern)
+                                else {
+                                    supported = false;
+                                    break;
+                                };
+
+                                if matches!(guard, SupportedBoolGuard::Always) {
+                                    match pattern {
+                                        SupportedBoolMatchPattern::True => {
+                                            true_target.get_or_insert(arm.target);
+                                            guaranteed_true = true;
+                                        }
+                                        SupportedBoolMatchPattern::False => {
+                                            false_target.get_or_insert(arm.target);
+                                            guaranteed_false = true;
+                                        }
+                                        SupportedBoolMatchPattern::CatchAll => {
+                                            true_target.get_or_insert(arm.target);
+                                            false_target.get_or_insert(arm.target);
+                                            guaranteed_true = true;
+                                            guaranteed_false = true;
+                                        }
+                                    }
                                 }
-                                match pattern_kind(self.input.hir, arm.pattern) {
-                                    PatternKind::Bool(true) => {
-                                        true_target.get_or_insert(arm.target);
-                                    }
-                                    PatternKind::Bool(false) => {
-                                        false_target.get_or_insert(arm.target);
-                                    }
-                                    PatternKind::Binding(_) | PatternKind::Wildcard => {
-                                        true_target.get_or_insert(arm.target);
-                                        false_target.get_or_insert(arm.target);
-                                    }
-                                    _ => {
-                                        supported = false;
+
+                                ordered_arms.push(SupportedBoolMatchArm {
+                                    pattern,
+                                    guard,
+                                    target: arm.target,
+                                });
+
+                                if dynamic_guard_seen {
+                                    if guaranteed_true && guaranteed_false {
                                         break;
                                     }
-                                }
-                                if true_target.is_some() && false_target.is_some() {
+                                } else if true_target.is_some() && false_target.is_some() {
                                     break;
                                 }
                             }
 
                             if supported {
-                                Some(SupportedMatchLowering::Bool {
-                                    true_target: true_target.unwrap_or(*else_target),
-                                    false_target: false_target.unwrap_or(*else_target),
-                                })
+                                if dynamic_guard_seen {
+                                    if guaranteed_true && guaranteed_false {
+                                        Some(SupportedMatchLowering::BoolGuarded {
+                                            arms: ordered_arms,
+                                            fallback_target: *else_target,
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    Some(SupportedMatchLowering::Bool {
+                                        true_target: true_target.unwrap_or(*else_target),
+                                        false_target: false_target.unwrap_or(*else_target),
+                                    })
+                                }
                             } else {
                                 None
                             }
@@ -3135,6 +3203,78 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                             false_target.index()
                         );
                     }
+                    SupportedMatchLowering::BoolGuarded {
+                        arms,
+                        fallback_target,
+                    } => {
+                        if arms.is_empty() {
+                            let _ = writeln!(output, "  br label %bb{}", fallback_target.index());
+                            return;
+                        }
+
+                        for (index, arm) in arms.iter().enumerate() {
+                            if index > 0 {
+                                let _ = writeln!(
+                                    output,
+                                    "{}:",
+                                    bool_match_dispatch_block_name(block_id, index)
+                                );
+                            }
+
+                            let next_target = if index + 1 == arms.len() {
+                                format!("bb{}", fallback_target.index())
+                            } else {
+                                bool_match_dispatch_block_name(block_id, index + 1)
+                            };
+                            let guard_target = match arm.guard {
+                                SupportedBoolGuard::Always => format!("bb{}", arm.target.index()),
+                                SupportedBoolGuard::Dynamic(_) => {
+                                    bool_match_guard_block_name(block_id, index)
+                                }
+                            };
+
+                            match arm.pattern {
+                                SupportedBoolMatchPattern::True => {
+                                    let _ = writeln!(
+                                        output,
+                                        "  br i1 {}, label %{guard_target}, label %{next_target}",
+                                        rendered.repr
+                                    );
+                                }
+                                SupportedBoolMatchPattern::False => {
+                                    let _ = writeln!(
+                                        output,
+                                        "  br i1 {}, label %{next_target}, label %{guard_target}",
+                                        rendered.repr
+                                    );
+                                }
+                                SupportedBoolMatchPattern::CatchAll => match arm.guard {
+                                    SupportedBoolGuard::Always => {
+                                        let _ = writeln!(
+                                            output,
+                                            "  br label %bb{}",
+                                            arm.target.index()
+                                        );
+                                    }
+                                    SupportedBoolGuard::Dynamic(_) => {
+                                        let _ = writeln!(output, "  br label %{guard_target}");
+                                    }
+                                },
+                            }
+
+                            if let SupportedBoolGuard::Dynamic(expr_id) = arm.guard {
+                                let _ = writeln!(output, "{guard_target}:");
+                                let condition =
+                                    self.render_bool_guard_expr(output, expr_id, terminator.span);
+                                let _ = writeln!(
+                                    output,
+                                    "  br i1 {}, label %bb{}, label %{next_target}",
+                                    condition.repr,
+                                    arm.target.index()
+                                );
+                            }
+                        }
+                    }
                     SupportedMatchLowering::Integer {
                         arms,
                         fallback_target,
@@ -3990,6 +4130,86 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_bool_guard_expr(
+        &mut self,
+        output: &mut String,
+        expr_id: hir::ExprId,
+        span: Span,
+    ) -> LoweredValue {
+        match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Bool(value) => LoweredValue {
+                ty: Ty::Builtin(BuiltinType::Bool),
+                llvm_ty: "i1".to_owned(),
+                repr: if *value { "true" } else { "false" }.to_owned(),
+            },
+            hir::ExprKind::Name(_) => {
+                match self.emitter.input.resolution.expr_resolution(expr_id) {
+                    Some(ValueResolution::Local(local_id)) => {
+                        let local = mir_local_for_hir_local(self.body, *local_id).unwrap_or_else(|| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should resolve local guards to MIR locals"
+                        )
+                    });
+                        self.render_operand(output, &Operand::Place(Place::local(local)), span)
+                    }
+                    Some(ValueResolution::Param(binding)) => {
+                        let local = mir_param_local(self.body, binding.index).unwrap_or_else(|| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should resolve param guards to MIR locals"
+                        )
+                    });
+                        self.render_operand(output, &Operand::Place(Place::local(local)), span)
+                    }
+                    Some(ValueResolution::SelfValue) => {
+                        let local = mir_receiver_local(self.body).unwrap_or_else(|| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should resolve `self` guards to MIR locals"
+                        )
+                    });
+                        self.render_operand(output, &Operand::Place(Place::local(local)), span)
+                    }
+                    Some(ValueResolution::Item(_)) | Some(ValueResolution::Import(_)) => {
+                        match guard_literal_bool(
+                            self.emitter.input.hir,
+                            self.emitter.input.resolution,
+                            expr_id,
+                        ) {
+                            Some(value) => LoweredValue {
+                                ty: Ty::Builtin(BuiltinType::Bool),
+                                llvm_ty: "i1".to_owned(),
+                                repr: if value { "true" } else { "false" }.to_owned(),
+                            },
+                            None => panic!(
+                                "prepared bool guard lowering at {span:?} should only render supported item-backed guards"
+                            ),
+                        }
+                    }
+                    Some(ValueResolution::Function(_)) | None => panic!(
+                        "prepared bool guard lowering at {span:?} should only render resolved bool guard names"
+                    ),
+                }
+            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                let tail = self
+                    .emitter
+                    .input
+                    .hir
+                    .block(*block_id)
+                    .tail
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should only render block guards with tails"
+                        )
+                    });
+                self.render_bool_guard_expr(output, tail, span)
+            }
+            hir::ExprKind::Question(inner) => self.render_bool_guard_expr(output, *inner, span),
+            _ => panic!(
+                "prepared bool guard lowering at {span:?} should only render supported guard expressions"
+            ),
+        }
+    }
+
     fn render_place_operand(
         &mut self,
         output: &mut String,
@@ -4204,6 +4424,138 @@ fn guard_literal_bool(
 ) -> Option<bool> {
     let mut visited = HashSet::new();
     guard_literal_bool_expr(module, resolution, expr_id, &mut visited)
+}
+
+enum SupportedBoolGuardAnalysis {
+    Always,
+    Skip,
+    Dynamic(hir::ExprId),
+}
+
+fn supported_bool_guard(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    arm_pattern: hir::PatternId,
+    expr_id: hir::ExprId,
+) -> Option<SupportedBoolGuardAnalysis> {
+    match guard_literal_bool(module, resolution, expr_id) {
+        Some(true) => Some(SupportedBoolGuardAnalysis::Always),
+        Some(false) => Some(SupportedBoolGuardAnalysis::Skip),
+        None => runtime_bool_guard_supported(
+            module,
+            resolution,
+            body,
+            local_types,
+            arm_pattern,
+            expr_id,
+        )
+        .then_some(SupportedBoolGuardAnalysis::Dynamic(expr_id)),
+    }
+}
+
+fn runtime_bool_guard_supported(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    arm_pattern: hir::PatternId,
+    expr_id: hir::ExprId,
+) -> bool {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Bool(_) => true,
+        hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
+            Some(ValueResolution::Local(local_id)) => {
+                !pattern_binds_local(module, arm_pattern, *local_id)
+                    && mir_local_for_hir_local(body, *local_id)
+                        .and_then(|local_id| local_types.get(&local_id))
+                        .is_some_and(Ty::is_bool)
+            }
+            Some(ValueResolution::Param(binding)) => mir_param_local(body, binding.index)
+                .and_then(|local_id| local_types.get(&local_id))
+                .is_some_and(Ty::is_bool),
+            Some(ValueResolution::SelfValue) => mir_receiver_local(body)
+                .and_then(|local_id| local_types.get(&local_id))
+                .is_some_and(Ty::is_bool),
+            Some(ValueResolution::Function(_))
+            | Some(ValueResolution::Item(_))
+            | Some(ValueResolution::Import(_))
+            | None => false,
+        },
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+            module.block(*block_id).tail.is_some_and(|tail| {
+                runtime_bool_guard_supported(
+                    module,
+                    resolution,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    tail,
+                )
+            })
+        }
+        hir::ExprKind::Question(inner) => {
+            runtime_bool_guard_supported(module, resolution, body, local_types, arm_pattern, *inner)
+        }
+        _ => false,
+    }
+}
+
+fn supported_bool_match_pattern(
+    module: &hir::Module,
+    pattern: hir::PatternId,
+) -> Option<SupportedBoolMatchPattern> {
+    match pattern_kind(module, pattern) {
+        PatternKind::Bool(true) => Some(SupportedBoolMatchPattern::True),
+        PatternKind::Bool(false) => Some(SupportedBoolMatchPattern::False),
+        PatternKind::Binding(_) | PatternKind::Wildcard => {
+            Some(SupportedBoolMatchPattern::CatchAll)
+        }
+        _ => None,
+    }
+}
+
+fn pattern_binds_local(
+    module: &hir::Module,
+    pattern: hir::PatternId,
+    local_id: hir::LocalId,
+) -> bool {
+    match pattern_kind(module, pattern) {
+        PatternKind::Binding(binding_local) => *binding_local == local_id,
+        PatternKind::Tuple(items) | PatternKind::TupleStruct { items, .. } => items
+            .iter()
+            .any(|item| pattern_binds_local(module, *item, local_id)),
+        PatternKind::Struct { fields, .. } => fields
+            .iter()
+            .any(|field| pattern_binds_local(module, field.pattern, local_id)),
+        PatternKind::Path(_)
+        | PatternKind::Integer(_)
+        | PatternKind::String(_)
+        | PatternKind::Bool(_)
+        | PatternKind::NoneLiteral
+        | PatternKind::Wildcard => false,
+    }
+}
+
+fn mir_local_for_hir_local(body: &mir::MirBody, hir_local: hir::LocalId) -> Option<mir::LocalId> {
+    body.local_ids().find(|candidate| {
+        matches!(
+            body.local(*candidate).origin,
+            LocalOrigin::Binding(candidate_local) if candidate_local == hir_local
+        )
+    })
+}
+
+fn mir_param_local(body: &mir::MirBody, index: usize) -> Option<mir::LocalId> {
+    body.local_ids().find(|candidate| {
+        matches!(body.local(*candidate).origin, LocalOrigin::Param { index: candidate_index } if candidate_index == index)
+    })
+}
+
+fn mir_receiver_local(body: &mir::MirBody) -> Option<mir::LocalId> {
+    body.local_ids()
+        .find(|candidate| matches!(body.local(*candidate).origin, LocalOrigin::Receiver))
 }
 
 fn guard_literal_bool_expr(
@@ -4442,6 +4794,14 @@ fn seed_inferred_local_type(
 
 fn for_await_index_slot_name(block_id: mir::BasicBlockId) -> String {
     format!("%for_await_index_bb{}", block_id.index())
+}
+
+fn bool_match_dispatch_block_name(block_id: mir::BasicBlockId, arm_index: usize) -> String {
+    format!("bb{}_match_dispatch{arm_index}", block_id.index())
+}
+
+fn bool_match_guard_block_name(block_id: mir::BasicBlockId, arm_index: usize) -> String {
+    format!("bb{}_match_guard{arm_index}", block_id.index())
 }
 
 fn integer_match_dispatch_block_name(block_id: mir::BasicBlockId, arm_index: usize) -> String {

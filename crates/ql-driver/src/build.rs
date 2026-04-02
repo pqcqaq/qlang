@@ -9790,6 +9790,42 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_bool_dynamic_guard_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-bool-dynamic-guard-match");
+        let source = dir.write(
+            "bool_dynamic_guard_match.ql",
+            r#"
+fn main() -> Int {
+    let flag = true
+    let enabled = false
+    return match flag {
+        true if enabled => 1,
+        true => 2,
+        false => 0,
+    }
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/bool_dynamic_guard_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with bool dynamic-guard match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("load i1, ptr %l2_enabled"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_integer_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-integer-match");
         let source = dir.write(
