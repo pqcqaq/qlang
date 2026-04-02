@@ -5615,7 +5615,22 @@ fn guard_literal_source_expr(
         hir::ExprKind::Bool(_)
         | hir::ExprKind::Integer(_)
         | hir::ExprKind::Unary {
+            op: UnaryOp::Not, ..
+        }
+        | hir::ExprKind::Unary {
             op: UnaryOp::Neg, ..
+        }
+        | hir::ExprKind::Binary {
+            op:
+                BinaryOp::AndAnd
+                | BinaryOp::OrOr
+                | BinaryOp::EqEq
+                | BinaryOp::BangEq
+                | BinaryOp::Gt
+                | BinaryOp::GtEq
+                | BinaryOp::Lt
+                | BinaryOp::LtEq,
+            ..
         }
         | hir::ExprKind::Binary {
             op: BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem,
@@ -7603,6 +7618,31 @@ fn main() -> Int {
 
         assert!(rendered.contains("br i1"));
         assert_eq!(rendered.matches("icmp eq i64").count(), 1);
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_computed_bool_const_path_and_guard_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+const BASE: Int = 1
+const READY: Bool = BASE + 1 == 2
+const SKIP: Bool = READY && BASE > 1
+
+fn main() -> Int {
+    let flag = true
+    return match flag {
+        READY if SKIP => 10,
+        READY => 20,
+        false => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("br i1"));
+        assert!(!rendered.contains("bb0_match_guard0:"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

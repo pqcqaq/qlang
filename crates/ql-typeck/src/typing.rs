@@ -1121,7 +1121,23 @@ impl<'a> Checker<'a> {
             ExprKind::Bool(_)
             | ExprKind::Integer(_)
             | ExprKind::Unary {
+                op: ql_ast::UnaryOp::Not,
+                ..
+            }
+            | ExprKind::Unary {
                 op: ql_ast::UnaryOp::Neg,
+                ..
+            }
+            | ExprKind::Binary {
+                op:
+                    BinaryOp::AndAnd
+                    | BinaryOp::OrOr
+                    | BinaryOp::EqEq
+                    | BinaryOp::BangEq
+                    | BinaryOp::Gt
+                    | BinaryOp::GtEq
+                    | BinaryOp::Lt
+                    | BinaryOp::LtEq,
                 ..
             }
             | ExprKind::Binary {
