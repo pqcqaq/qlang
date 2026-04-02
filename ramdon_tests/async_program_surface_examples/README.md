@@ -125,12 +125,16 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `124_async_main_awaited_array_projected_task_array_for_await.ql`
 - `125_async_main_tuple_for_await.ql`
 - `126_async_main_task_tuple_for_await.ql`
+- `127_async_main_import_alias_helper_task_tuple_for_await.ql`
+- `128_async_main_projected_task_tuple_for_await.ql`
+- `129_async_main_awaited_aggregate_task_tuple_for_await.ql`
+- `130_async_main_awaited_tuple_projected_task_tuple_for_await.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-twenty-six examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-thirty examples with the real local toolchain and locks their exit codes.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -143,6 +147,10 @@ Current status:
 - `124_async_main_awaited_array_projected_task_array_for_await.ql` now extends the projected-root surface to awaited array projections, where `batches[0]` is a projected `[Task[Int]; 2]` root reached after awaiting an outer fixed array result, and still exits with `42`.
 - `125_async_main_tuple_for_await.ql` now locks the homogeneous tuple iterable variant, where `for await` can iterate a plain `(Int, Int)` tuple inside `async fn main`, still exiting with `42`.
 - `126_async_main_task_tuple_for_await.ql` now locks the task-tuple auto-await variant, where each `(Task[Int], Task[Int])` element is auto-awaited before binding `value`, still exiting with `42`.
+- `127_async_main_import_alias_helper_task_tuple_for_await.ql` now extends the same same-file import alias surface to helper-returned homogeneous task tuples, so `for await value in schedule(base: 20)` auto-awaits each tuple element and still exits with `42`.
+- `128_async_main_projected_task_tuple_for_await.ql` now locks the projected-root tuple variant, where the iterable is a struct field carrying `(Task[Int], Task[Int])`, and still exits with `42`.
+- `129_async_main_awaited_aggregate_task_tuple_for_await.ql` now locks the first awaited-aggregate task-tuple variant, where `await make_pending(...)` yields a struct carrying `(Task[Int], Task[Int])` and the projected field can immediately feed `for await`, still exiting with `42`.
+- `130_async_main_awaited_tuple_projected_task_tuple_for_await.ql` now extends the same tuple surface to awaited tuple projections, where `pair[0]` is a projected `(Task[Int], Task[Int])` root reached after awaiting an outer tuple result, and still exits with `42`.
 
 Expected exit codes:
 
@@ -269,6 +277,10 @@ Expected exit codes:
 - `124_async_main_awaited_array_projected_task_array_for_await.ql` -> `42`
 - `125_async_main_tuple_for_await.ql` -> `42`
 - `126_async_main_task_tuple_for_await.ql` -> `42`
+- `127_async_main_import_alias_helper_task_tuple_for_await.ql` -> `42`
+- `128_async_main_projected_task_tuple_for_await.ql` -> `42`
+- `129_async_main_awaited_aggregate_task_tuple_for_await.ql` -> `42`
+- `130_async_main_awaited_tuple_projected_task_tuple_for_await.ql` -> `42`
 
 Try one file directly:
 
