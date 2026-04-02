@@ -1,6 +1,0 @@
-error: tests/codegen/fail/unsupported_async_for_await_build.ql:1:7: LLVM IR backend foundation does not support `async fn` yet
-  async fn main() -> Int {
-        ^^^^^^^^
-error: tests/codegen/fail/unsupported_async_for_await_build.ql:2:9: LLVM IR backend foundation does not support `for await` lowering yet
-      for await value in [1, 2, 3] {
-          ^^^^^

@@ -1,9 +1,0 @@
-error: tests/codegen/fail/unsupported_async_spawn_build.ql:1:7: LLVM IR backend foundation does not support `async fn` yet
-  async fn worker() -> Int {
-        ^^^^^^^^
-error: tests/codegen/fail/unsupported_async_spawn_build.ql:5:7: LLVM IR backend foundation does not support `async fn` yet
-  async fn main() -> Int {
-        ^^^^^^^^
-error: tests/codegen/fail/unsupported_async_spawn_build.ql:6:5: LLVM IR backend foundation does not support `spawn` yet
-      spawn worker()
-      ^^^^^
