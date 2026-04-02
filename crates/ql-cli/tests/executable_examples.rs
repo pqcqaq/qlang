@@ -3,10 +3,10 @@ mod support;
 use std::path::Path;
 use std::process::Command;
 
-use ql_driver::{ToolchainOptions, discover_toolchain};
+use ql_driver::{discover_toolchain, ToolchainOptions};
 use support::{
-    TempDir, executable_output_path, expect_exit_code, expect_file_exists, expect_silent_output,
-    expect_success, run_command_capture, run_ql_build_capture, workspace_root,
+    executable_output_path, expect_exit_code, expect_file_exists, expect_silent_output,
+    expect_success, run_command_capture, run_ql_build_capture, workspace_root, TempDir,
 };
 
 #[test]
@@ -412,6 +412,11 @@ fn async_program_surface_examples_build_and_run() {
             name: "async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_chain_forward_spawn",
             source_relative: "ramdon_tests/async_program_surface_examples/72_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_chain_forward_spawn.ql",
             expected_exit: 140,
+        },
+        ExecutableExampleCase {
+            name: "async_main_aliased_guard_refined_static_alias_backed_projected_root",
+            source_relative: "ramdon_tests/async_program_surface_examples/73_async_main_aliased_guard_refined_static_alias_backed_projected_root.ql",
+            expected_exit: 35,
         },
     ];
 
