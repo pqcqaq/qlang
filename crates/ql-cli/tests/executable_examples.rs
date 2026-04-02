@@ -39,6 +39,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/03_sync_extern_c_export.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_static_item_values",
+            source_relative: "ramdon_tests/executable_examples/04_sync_static_item_values.ql",
+            expected_exit: 5,
+        },
     ];
 
     assert_example_cases_run(
