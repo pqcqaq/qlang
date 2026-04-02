@@ -136,10 +136,22 @@ struct SupportedForLoopLowering {
     body_target: mir::BasicBlockId,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct SupportedMatchLowering {
-    true_target: mir::BasicBlockId,
-    false_target: mir::BasicBlockId,
+#[derive(Clone, Debug)]
+enum SupportedMatchLowering {
+    Bool {
+        true_target: mir::BasicBlockId,
+        false_target: mir::BasicBlockId,
+    },
+    Integer {
+        arms: Vec<SupportedIntegerMatchArm>,
+        fallback_target: mir::BasicBlockId,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct SupportedIntegerMatchArm {
+    value: String,
+    target: mir::BasicBlockId,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -709,58 +721,93 @@ impl<'a> ModuleEmitter<'a> {
                         &mut scratch,
                         block.terminator.span,
                     );
-                    if !matches!(scrutinee_ty, Some(Ty::Builtin(BuiltinType::Bool))) {
+                    let Some(match_lowering) = (match scrutinee_ty {
+                        Some(Ty::Builtin(BuiltinType::Bool)) => {
+                            let mut true_target = None;
+                            let mut false_target = None;
+                            let mut supported = true;
+                            for arm in arms {
+                                if arm.guard.is_some() {
+                                    supported = false;
+                                    break;
+                                }
+                                match pattern_kind(self.input.hir, arm.pattern) {
+                                    PatternKind::Bool(true) => {
+                                        true_target.get_or_insert(arm.target);
+                                    }
+                                    PatternKind::Bool(false) => {
+                                        false_target.get_or_insert(arm.target);
+                                    }
+                                    PatternKind::Wildcard => {
+                                        true_target.get_or_insert(arm.target);
+                                        false_target.get_or_insert(arm.target);
+                                    }
+                                    _ => {
+                                        supported = false;
+                                        break;
+                                    }
+                                }
+                                if true_target.is_some() && false_target.is_some() {
+                                    break;
+                                }
+                            }
+
+                            if supported {
+                                Some(SupportedMatchLowering::Bool {
+                                    true_target: true_target.unwrap_or(*else_target),
+                                    false_target: false_target.unwrap_or(*else_target),
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        Some(Ty::Builtin(BuiltinType::Int)) => {
+                            let mut lowered_arms = Vec::new();
+                            let mut fallback_target = *else_target;
+                            let mut supported = true;
+
+                            for arm in arms {
+                                if arm.guard.is_some() {
+                                    supported = false;
+                                    break;
+                                }
+                                match pattern_kind(self.input.hir, arm.pattern) {
+                                    PatternKind::Integer(value) => {
+                                        lowered_arms.push(SupportedIntegerMatchArm {
+                                            value: value.clone(),
+                                            target: arm.target,
+                                        });
+                                    }
+                                    PatternKind::Wildcard => {
+                                        fallback_target = arm.target;
+                                        break;
+                                    }
+                                    _ => {
+                                        supported = false;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if supported {
+                                Some(SupportedMatchLowering::Integer {
+                                    arms: lowered_arms,
+                                    fallback_target,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }) else {
                         diagnostics.push(unsupported(
                             block.terminator.span,
                             "LLVM IR backend foundation does not support `match` lowering yet",
                         ));
                         continue;
-                    }
+                    };
 
-                    let mut true_target = None;
-                    let mut false_target = None;
-                    let mut supported = true;
-                    for arm in arms {
-                        if arm.guard.is_some() {
-                            supported = false;
-                            break;
-                        }
-                        match pattern_kind(self.input.hir, arm.pattern) {
-                            PatternKind::Bool(true) => {
-                                true_target.get_or_insert(arm.target);
-                            }
-                            PatternKind::Bool(false) => {
-                                false_target.get_or_insert(arm.target);
-                            }
-                            PatternKind::Wildcard => {
-                                true_target.get_or_insert(arm.target);
-                                false_target.get_or_insert(arm.target);
-                            }
-                            _ => {
-                                supported = false;
-                                break;
-                            }
-                        }
-                        if true_target.is_some() && false_target.is_some() {
-                            break;
-                        }
-                    }
-
-                    if !supported {
-                        diagnostics.push(unsupported(
-                            block.terminator.span,
-                            "LLVM IR backend foundation does not support `match` lowering yet",
-                        ));
-                        continue;
-                    }
-
-                    supported_matches.insert(
-                        block_id,
-                        SupportedMatchLowering {
-                            true_target: true_target.unwrap_or(*else_target),
-                            false_target: false_target.unwrap_or(*else_target),
-                        },
-                    );
+                    supported_matches.insert(block_id, match_lowering);
                 }
                 TerminatorKind::ForLoop {
                     iterable,
@@ -2010,7 +2057,10 @@ impl<'a> ModuleEmitter<'a> {
     ) {
         if !matches!(
             pattern_kind(self.input.hir, pattern),
-            PatternKind::Binding(_) | PatternKind::Bool(_) | PatternKind::Wildcard
+            PatternKind::Binding(_)
+                | PatternKind::Integer(_)
+                | PatternKind::Bool(_)
+                | PatternKind::Wildcard
         ) {
             diagnostics.push(unsupported(
                 span,
@@ -2969,7 +3019,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                             llvm_slot_name(self.body, binding_local)
                         );
                     }
-                    PatternKind::Bool(_) | PatternKind::Wildcard => {}
+                    PatternKind::Integer(_) | PatternKind::Bool(_) | PatternKind::Wildcard => {}
                     _ => panic!("prepared patterns should only contain supported bind patterns"),
                 }
             }
@@ -3048,13 +3098,56 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     panic!("prepared `match` at block {:?} should have lowering metadata", block_id)
                 };
                 let rendered = self.render_operand(output, scrutinee, terminator.span);
-                let _ = writeln!(
-                    output,
-                    "  br i1 {}, label %bb{}, label %bb{}",
-                    rendered.repr,
-                    match_lowering.true_target.index(),
-                    match_lowering.false_target.index()
-                );
+                match match_lowering {
+                    SupportedMatchLowering::Bool {
+                        true_target,
+                        false_target,
+                    } => {
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %bb{}, label %bb{}",
+                            rendered.repr,
+                            true_target.index(),
+                            false_target.index()
+                        );
+                    }
+                    SupportedMatchLowering::Integer {
+                        arms,
+                        fallback_target,
+                    } => {
+                        if arms.is_empty() {
+                            let _ = writeln!(output, "  br label %bb{}", fallback_target.index());
+                            return;
+                        }
+
+                        let opcode = compare_opcode(BinaryOp::EqEq, &rendered.ty);
+                        for (index, arm) in arms.iter().enumerate() {
+                            if index > 0 {
+                                let _ = writeln!(
+                                    output,
+                                    "{}:",
+                                    integer_match_dispatch_block_name(block_id, index)
+                                );
+                            }
+                            let compare = self.fresh_temp();
+                            let _ = writeln!(
+                                output,
+                                "  {compare} = {opcode} {} {}, {}",
+                                rendered.llvm_ty, rendered.repr, arm.value
+                            );
+                            let false_target = if index + 1 == arms.len() {
+                                format!("bb{}", fallback_target.index())
+                            } else {
+                                integer_match_dispatch_block_name(block_id, index + 1)
+                            };
+                            let _ = writeln!(
+                                output,
+                                "  br i1 {compare}, label %bb{}, label %{false_target}",
+                                arm.target.index()
+                            );
+                        }
+                    }
+                }
             }
             TerminatorKind::ForLoop { exit_target, .. } => {
                 let loop_lowering = self
@@ -4236,6 +4329,10 @@ fn seed_inferred_local_type(
 
 fn for_await_index_slot_name(block_id: mir::BasicBlockId) -> String {
     format!("%for_await_index_bb{}", block_id.index())
+}
+
+fn integer_match_dispatch_block_name(block_id: mir::BasicBlockId, arm_index: usize) -> String {
+    format!("bb{}_match_dispatch{arm_index}", block_id.index())
 }
 
 fn for_await_setup_block_name(block_id: mir::BasicBlockId) -> String {
@@ -5783,6 +5880,27 @@ fn main() -> Int {
         );
 
         assert!(rendered.contains("br i1"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_integer_match_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+fn main() -> Int {
+    let value = 2
+    return match value {
+        1 => 10,
+        2 => 20,
+        _ => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert_eq!(rendered.matches("icmp eq i64").count(), 2);
+        assert!(rendered.contains("bb0_match_dispatch1:"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

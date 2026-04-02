@@ -87,7 +87,7 @@ P4/P5 地基已经落地，且当前正在保守扩展 Phase 7 async library/pro
 - 标量整数 / `Bool` / `Void`
 - direct function call
 - fixed-array iterable 的 sync `for`
-- `Bool` scrutinee 的最小 `match` lowering：仅 unguarded `true` / `false` / `_` arm
+- 最小 literal `match` lowering：`Bool` scrutinee 仅支持 unguarded `true` / `false` / `_` arm；`Int` scrutinee 仅支持 unguarded integer literal / `_` arm
 - 保守的 async `staticlib` 子集：async library body、scalar/tuple/array/struct/void `await`、task-handle-aware `spawn`、以及 fixed-array iterable 的 `for await`
 - 最小 async `dylib` 子集：在仍通过同步 `extern "c"` 顶层导出暴露公开 ABI 时，内部 async helper / `await` / 已支持的 task-handle lowering 也可进入 library build，并对 fixed-array iterable 打开同一条 `for await` lowering
 - 最小 async executable 子集：`BuildEmit::Executable` 下的 `async fn main`、已接入的 task-handle / aggregate payload lowering，以及 fixed-array iterable 的 `for await`
@@ -125,7 +125,7 @@ P4/P5 地基已经落地，且当前正在保守扩展 Phase 7 async library/pro
 - runtime startup object
 - first-class function value lowering
 - closure lowering
-- 更广义的 projection assignment（当前已开放 tuple-index / struct-field / fixed-array literal-index write、非 `Task[...]` 元素的 dynamic array assignment，以及 `Task[...]` 动态数组的 generic maybe-overlap write/reinit + same immutable stable index path precise consume/reinit 子集）、更广义 `for` / `for await` lowering（当前已开放 sync fixed-array `for`，以及 library-mode 与 `BuildEmit::Executable` `async fn main` 子集下的 fixed-array iterable `for await`）、更广义 `match` lowering（当前只开放 `Bool` scrutinee + unguarded `true` / `false` / `_` arm 子集）与更广义 aggregate / cleanup lowering
+- 更广义的 projection assignment（当前已开放 tuple-index / struct-field / fixed-array literal-index write、非 `Task[...]` 元素的 dynamic array assignment，以及 `Task[...]` 动态数组的 generic maybe-overlap write/reinit + same immutable stable index path precise consume/reinit 子集）、更广义 `for` / `for await` lowering（当前已开放 sync fixed-array `for`，以及 library-mode 与 `BuildEmit::Executable` `async fn main` 子集下的 fixed-array iterable `for await`）、更广义 `match` lowering（当前只开放 `Bool` scrutinee + unguarded `true` / `false` / `_` arm，以及 `Int` scrutinee + unguarded integer literal / `_` arm 子集）与更广义 aggregate / cleanup lowering
 - 任意共享库 surface、exported ABI 的 linkage/visibility 控制与 richer ABI surface
 - extern ABI 与 runtime glue 的其余部分
 
