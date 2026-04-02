@@ -150,6 +150,10 @@ enum SupportedMatchLowering {
         arms: Vec<SupportedIntegerMatchArm>,
         fallback_target: mir::BasicBlockId,
     },
+    IntegerGuarded {
+        arms: Vec<SupportedGuardedIntegerMatchArm>,
+        fallback_target: mir::BasicBlockId,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +179,13 @@ enum SupportedBoolGuard {
 #[derive(Clone, Debug)]
 struct SupportedIntegerMatchArm {
     value: String,
+    target: mir::BasicBlockId,
+}
+
+#[derive(Clone, Debug)]
+struct SupportedGuardedIntegerMatchArm {
+    value: String,
+    guard: SupportedBoolGuard,
     target: mir::BasicBlockId,
 }
 
@@ -846,34 +857,52 @@ impl<'a> ModuleEmitter<'a> {
                         }
                         Some(Ty::Builtin(BuiltinType::Int)) => {
                             let mut lowered_arms = Vec::new();
+                            let mut ordered_arms = Vec::new();
                             let mut fallback_target = *else_target;
+                            let mut guaranteed_fallback = false;
+                            let mut dynamic_guard_seen = false;
                             let mut supported = true;
 
                             for arm in arms {
-                                match arm.guard {
-                                    None => {}
-                                    Some(guard) => match guard_literal_bool(
+                                let guard = match arm.guard {
+                                    None => SupportedBoolGuard::Always,
+                                    Some(guard) => match supported_bool_guard(
                                         self.input.hir,
                                         self.input.resolution,
+                                        body,
+                                        &local_types,
+                                        arm.pattern,
                                         guard,
                                     ) {
-                                        Some(true) => {}
-                                        Some(false) => continue,
+                                        Some(SupportedBoolGuardAnalysis::Always) => {
+                                            SupportedBoolGuard::Always
+                                        }
+                                        Some(SupportedBoolGuardAnalysis::Skip) => continue,
+                                        Some(SupportedBoolGuardAnalysis::Dynamic(expr_id)) => {
+                                            dynamic_guard_seen = true;
+                                            SupportedBoolGuard::Dynamic(expr_id)
+                                        }
                                         None => {
                                             supported = false;
                                             break;
                                         }
                                     },
-                                }
+                                };
                                 match pattern_kind(self.input.hir, arm.pattern) {
                                     PatternKind::Integer(value) => {
-                                        lowered_arms.push(SupportedIntegerMatchArm {
+                                        ordered_arms.push(SupportedGuardedIntegerMatchArm {
                                             value: value.clone(),
+                                            guard,
                                             target: arm.target,
                                         });
                                     }
                                     PatternKind::Binding(_) | PatternKind::Wildcard => {
+                                        if !matches!(guard, SupportedBoolGuard::Always) {
+                                            supported = false;
+                                            break;
+                                        }
                                         fallback_target = arm.target;
+                                        guaranteed_fallback = true;
                                         break;
                                     }
                                     _ => {
@@ -884,10 +913,27 @@ impl<'a> ModuleEmitter<'a> {
                             }
 
                             if supported {
-                                Some(SupportedMatchLowering::Integer {
-                                    arms: lowered_arms,
-                                    fallback_target,
-                                })
+                                if dynamic_guard_seen {
+                                    if guaranteed_fallback {
+                                        Some(SupportedMatchLowering::IntegerGuarded {
+                                            arms: ordered_arms,
+                                            fallback_target,
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    lowered_arms.extend(ordered_arms.into_iter().map(|arm| {
+                                        SupportedIntegerMatchArm {
+                                            value: arm.value,
+                                            target: arm.target,
+                                        }
+                                    }));
+                                    Some(SupportedMatchLowering::Integer {
+                                        arms: lowered_arms,
+                                        fallback_target,
+                                    })
+                                }
                             } else {
                                 None
                             }
@@ -3311,6 +3357,67 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                             );
                         }
                     }
+                    SupportedMatchLowering::IntegerGuarded {
+                        arms,
+                        fallback_target,
+                    } => {
+                        if arms.is_empty() {
+                            let _ = writeln!(output, "  br label %bb{}", fallback_target.index());
+                            return;
+                        }
+
+                        let opcode = compare_opcode(BinaryOp::EqEq, &rendered.ty);
+                        for (index, arm) in arms.iter().enumerate() {
+                            if index > 0 {
+                                let _ = writeln!(
+                                    output,
+                                    "{}:",
+                                    integer_match_dispatch_block_name(block_id, index)
+                                );
+                            }
+                            let compare = self.fresh_temp();
+                            let _ = writeln!(
+                                output,
+                                "  {compare} = {opcode} {} {}, {}",
+                                rendered.llvm_ty, rendered.repr, arm.value
+                            );
+                            let false_target = if index + 1 == arms.len() {
+                                format!("bb{}", fallback_target.index())
+                            } else {
+                                integer_match_dispatch_block_name(block_id, index + 1)
+                            };
+
+                            match arm.guard {
+                                SupportedBoolGuard::Always => {
+                                    let _ = writeln!(
+                                        output,
+                                        "  br i1 {compare}, label %bb{}, label %{false_target}",
+                                        arm.target.index()
+                                    );
+                                }
+                                SupportedBoolGuard::Dynamic(expr_id) => {
+                                    let guard_target =
+                                        integer_match_guard_block_name(block_id, index);
+                                    let _ = writeln!(
+                                        output,
+                                        "  br i1 {compare}, label %{guard_target}, label %{false_target}"
+                                    );
+                                    let _ = writeln!(output, "{guard_target}:");
+                                    let condition = self.render_bool_guard_expr(
+                                        output,
+                                        expr_id,
+                                        terminator.span,
+                                    );
+                                    let _ = writeln!(
+                                        output,
+                                        "  br i1 {}, label %bb{}, label %{false_target}",
+                                        condition.repr,
+                                        arm.target.index()
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
             TerminatorKind::ForLoop { exit_target, .. } => {
@@ -4806,6 +4913,10 @@ fn bool_match_guard_block_name(block_id: mir::BasicBlockId, arm_index: usize) ->
 
 fn integer_match_dispatch_block_name(block_id: mir::BasicBlockId, arm_index: usize) -> String {
     format!("bb{}_match_dispatch{arm_index}", block_id.index())
+}
+
+fn integer_match_guard_block_name(block_id: mir::BasicBlockId, arm_index: usize) -> String {
+    format!("bb{}_match_guard{arm_index}", block_id.index())
 }
 
 fn for_await_setup_block_name(block_id: mir::BasicBlockId) -> String {
