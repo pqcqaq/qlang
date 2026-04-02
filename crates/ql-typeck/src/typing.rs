@@ -1192,7 +1192,9 @@ impl<'a> Checker<'a> {
         }
 
         let result = match &self.module.item(item_id).kind {
-            ItemKind::Const(global) => self.const_source_expr(global.value, visited),
+            ItemKind::Const(global) | ItemKind::Static(global) => {
+                self.const_source_expr(global.value, visited)
+            }
             _ => None,
         };
 
@@ -2518,13 +2520,12 @@ impl<'a> Checker<'a> {
                 "path pattern syntax is not supported for `{path_text}`"
             )),
             ItemKind::Struct(_) | ItemKind::Enum(_) => None,
-            ItemKind::Const(_) if path.segments.len() == 1 => self
+            ItemKind::Const(_) | ItemKind::Static(_) if path.segments.len() == 1 => self
                 .const_item_path_pattern_ty(item_id)
                 .is_none()
                 .then(|| format!("path pattern syntax is not supported for `{path_text}`")),
-            ItemKind::Const(_) => None,
-            ItemKind::Static(_)
-            | ItemKind::Function(_)
+            ItemKind::Const(_) | ItemKind::Static(_) => None,
+            ItemKind::Function(_)
             | ItemKind::Trait(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Impl(_)
@@ -2536,8 +2537,7 @@ impl<'a> Checker<'a> {
                     "path pattern syntax is not supported for `{path_text}`"
                 ))
             }
-            ItemKind::Static(_)
-            | ItemKind::Function(_)
+            ItemKind::Function(_)
             | ItemKind::Trait(_)
             | ItemKind::TypeAlias(_)
             | ItemKind::Impl(_)

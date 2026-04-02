@@ -5722,7 +5722,7 @@ fn guard_literal_source_item(
     }
 
     let result = match &module.item(item_id).kind {
-        ItemKind::Const(global) => {
+        ItemKind::Const(global) | ItemKind::Static(global) => {
             guard_literal_source_expr(module, resolution, global.value, visited)
         }
         _ => None,
@@ -7661,6 +7661,43 @@ fn choose_flag(flag: Bool) -> Int {
 fn choose_value(value: Int) -> Int {
     return match value {
         THRESHOLD => 20,
+        _ => 0,
+    }
+}
+
+fn main() -> Int {
+    return choose_flag(true) + choose_value(2)
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("br i1"));
+        assert_eq!(rendered.matches("icmp eq i64").count(), 1);
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_static_path_and_guard_match_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+use ENABLE as ON
+use LIMIT as THRESHOLD
+
+static ENABLE: Bool = true
+static LIMIT: Int = 2
+static READY: Bool = LIMIT > 1
+
+fn choose_flag(flag: Bool) -> Int {
+    return match flag {
+        ON => 10,
+        false => 0,
+    }
+}
+
+fn choose_value(value: Int) -> Int {
+    return match value {
+        THRESHOLD if READY => 20,
         _ => 0,
     }
 }
