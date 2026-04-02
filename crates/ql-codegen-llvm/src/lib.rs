@@ -140,8 +140,15 @@ struct SupportedForLoopLowering {
     element_ty: Ty,
     item_ty: Ty,
     auto_await_task_elements: bool,
-    array_len: usize,
+    iterable_kind: SupportedForLoopIterableKind,
+    iterable_len: usize,
     body_target: mir::BasicBlockId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SupportedForLoopIterableKind {
+    Array,
+    Tuple,
 }
 
 #[derive(Clone, Debug)]
@@ -1021,13 +1028,38 @@ impl<'a> ModuleEmitter<'a> {
                     } else {
                         "LLVM IR backend foundation does not support `for` lowering yet"
                     };
-                    let (Operand::Place(iterable_place), Some(Ty::Array { element, len })) =
-                        (iterable, iterable_ty)
+                    let Some((iterable_place, iterable_kind, element_ty, iterable_len)) =
+                        (match (iterable, iterable_ty) {
+                            (
+                                Operand::Place(iterable_place),
+                                Some(Ty::Array { element, len }),
+                            ) => Some((
+                                iterable_place.clone(),
+                                SupportedForLoopIterableKind::Array,
+                                element.as_ref().clone(),
+                                len,
+                            )),
+                            (Operand::Place(iterable_place), Some(Ty::Tuple(items)))
+                                if !items.is_empty()
+                                    && !items.iter().any(is_void_ty)
+                                    && items.iter().skip(1).all(|item| {
+                                        item.compatible_with(&items[0])
+                                            && items[0].compatible_with(item)
+                                    }) =>
+                            {
+                                Some((
+                                    iterable_place.clone(),
+                                    SupportedForLoopIterableKind::Tuple,
+                                    items[0].clone(),
+                                    items.len(),
+                                ))
+                            }
+                            _ => None,
+                        })
                     else {
                         diagnostics.push(unsupported(block.terminator.span, unsupported_message));
                         continue;
                     };
-                    let element_ty = element.as_ref().clone();
                     if *is_await && matches!(&element_ty, Ty::TaskHandle(_)) {
                         if !self.has_runtime_hook(RuntimeHook::TaskAwait) {
                             diagnostics.push(unsupported(
@@ -1056,12 +1088,13 @@ impl<'a> ModuleEmitter<'a> {
                     supported_for_loops.insert(
                         block_id,
                         SupportedForLoopLowering {
-                            iterable_place: iterable_place.clone(),
+                            iterable_place,
                             item_local: *item_local,
                             element_ty,
                             item_ty,
                             auto_await_task_elements,
-                            array_len: len,
+                            iterable_kind,
+                            iterable_len,
                             body_target: *body_target,
                         },
                     );
@@ -3741,7 +3774,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 let _ = writeln!(
                     output,
                     "  {continue_flag} = icmp ult i64 {index}, {}",
-                    loop_lowering.array_len
+                    loop_lowering.iterable_len
                 );
                 let _ = writeln!(
                     output,
@@ -5229,24 +5262,116 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         );
         let (iterable_ptr, iterable_ty) =
             self.render_place_pointer(output, &loop_lowering.iterable_place, span);
-        let array_llvm_ty = self
+        let iterable_llvm_ty = self
             .emitter
             .lower_llvm_type(&iterable_ty, span, "for-await iterable type")
             .expect("prepared for-await iterable should have a lowered LLVM type");
-        let element_ptr = self.fresh_temp();
-        let _ = writeln!(
-            output,
-            "  {element_ptr} = getelementptr inbounds {array_llvm_ty}, ptr {iterable_ptr}, i64 0, i64 {index}"
-        );
         let element_llvm_ty = self
             .emitter
             .lower_llvm_type(&loop_lowering.element_ty, span, "for-await item type")
             .expect("prepared for-await item should have a lowered LLVM type");
-        let element = self.fresh_temp();
-        let _ = writeln!(
-            output,
-            "  {element} = load {element_llvm_ty}, ptr {element_ptr}"
-        );
+
+        match loop_lowering.iterable_kind {
+            SupportedForLoopIterableKind::Array => {
+                let element_ptr = self.fresh_temp();
+                let _ = writeln!(
+                    output,
+                    "  {element_ptr} = getelementptr inbounds {iterable_llvm_ty}, ptr {iterable_ptr}, i64 0, i64 {index}"
+                );
+                let element = self.fresh_temp();
+                let _ = writeln!(
+                    output,
+                    "  {element} = load {element_llvm_ty}, ptr {element_ptr}"
+                );
+                self.render_loaded_for_loop_item(
+                    output,
+                    loop_lowering,
+                    &element_llvm_ty,
+                    &element,
+                    span,
+                );
+            }
+            SupportedForLoopIterableKind::Tuple => {
+                if loop_lowering.iterable_len == 1 {
+                    let _ = writeln!(
+                        output,
+                        "  br label %{}",
+                        for_await_tuple_item_block_name(block_id, 0)
+                    );
+                } else {
+                    let compare = self.fresh_temp();
+                    let _ = writeln!(output, "  {compare} = icmp eq i64 {index}, 0");
+                    let _ = writeln!(
+                        output,
+                        "  br i1 {compare}, label %{}, label %{}",
+                        for_await_tuple_item_block_name(block_id, 0),
+                        for_await_tuple_check_block_name(block_id, 1)
+                    );
+                }
+
+                for item_index in 1..loop_lowering.iterable_len {
+                    let _ = writeln!(
+                        output,
+                        "{}:",
+                        for_await_tuple_check_block_name(block_id, item_index)
+                    );
+                    if item_index + 1 < loop_lowering.iterable_len {
+                        let compare = self.fresh_temp();
+                        let _ = writeln!(
+                            output,
+                            "  {compare} = icmp eq i64 {index}, {item_index}"
+                        );
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {compare}, label %{}, label %{}",
+                            for_await_tuple_item_block_name(block_id, item_index),
+                            for_await_tuple_check_block_name(block_id, item_index + 1)
+                        );
+                    } else {
+                        let _ = writeln!(
+                            output,
+                            "  br label %{}",
+                            for_await_tuple_item_block_name(block_id, item_index)
+                        );
+                    }
+                }
+
+                for item_index in 0..loop_lowering.iterable_len {
+                    let _ = writeln!(
+                        output,
+                        "{}:",
+                        for_await_tuple_item_block_name(block_id, item_index)
+                    );
+                    let element_ptr = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {element_ptr} = getelementptr inbounds {iterable_llvm_ty}, ptr {iterable_ptr}, i32 0, i32 {item_index}"
+                    );
+                    let element = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {element} = load {element_llvm_ty}, ptr {element_ptr}"
+                    );
+                    self.render_loaded_for_loop_item(
+                        output,
+                        loop_lowering,
+                        &element_llvm_ty,
+                        &element,
+                        span,
+                    );
+                }
+            }
+        }
+    }
+
+    fn render_loaded_for_loop_item(
+        &mut self,
+        output: &mut String,
+        loop_lowering: &SupportedForLoopLowering,
+        element_llvm_ty: &str,
+        element: &str,
+        span: Span,
+    ) {
         if loop_lowering.auto_await_task_elements {
             let await_hook = self
                 .emitter
@@ -6388,6 +6513,14 @@ fn integer_match_guard_block_name(block_id: mir::BasicBlockId, arm_index: usize)
 
 fn for_await_setup_block_name(block_id: mir::BasicBlockId) -> String {
     format!("bb{}_for_await_setup", block_id.index())
+}
+
+fn for_await_tuple_check_block_name(block_id: mir::BasicBlockId, index: usize) -> String {
+    format!("bb{}_for_await_tuple_check_{}", block_id.index(), index)
+}
+
+fn for_await_tuple_item_block_name(block_id: mir::BasicBlockId, index: usize) -> String {
+    format!("bb{}_for_await_tuple_item_{}", block_id.index(), index)
 }
 
 fn arithmetic_opcode(op: BinaryOp, ty: &Ty) -> &'static str {
@@ -9962,6 +10095,34 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn emits_for_await_lowering_for_homogeneous_tuple_async_library_bodies() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn helper() -> Int {
+    var total = 0
+    for await value in (1, 2, 3) {
+        total = total + value
+    }
+    return total
+}
+"#,
+            CodegenMode::Library,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("declare ptr @qlrt_async_iter_next(ptr)"));
+        assert!(rendered.contains("store i64 -1, ptr %for_await_index_bb"));
+        assert!(rendered.contains("icmp ult i64"));
+        assert!(rendered.contains("for_await_setup"));
+        assert!(rendered.contains("getelementptr inbounds { i64, i64, i64 }, ptr"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
     fn emits_for_lowering_for_fixed_array_program_bodies_without_async_runtime_hooks() {
         let rendered = emit_with_mode(
             r#"
@@ -9981,6 +10142,29 @@ fn main() -> Int {
         assert!(rendered.contains("icmp ult i64"));
         assert!(rendered.contains("for_await_setup"));
         assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
+    }
+
+    #[test]
+    fn emits_for_lowering_for_homogeneous_tuple_program_bodies_without_async_runtime_hooks() {
+        let rendered = emit_with_mode(
+            r#"
+fn main() -> Int {
+    var total = 0
+    for value in (1, 2, 3) {
+        total = total + value
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(!rendered.contains("@qlrt_async_iter_next"));
+        assert!(rendered.contains("store i64 -1, ptr %for_await_index_bb"));
+        assert!(rendered.contains("icmp ult i64"));
+        assert!(rendered.contains("for_await_setup"));
+        assert!(rendered.contains("getelementptr inbounds { i64, i64, i64 }, ptr"));
         assert!(!rendered.contains("does not support `for` lowering yet"));
     }
 
@@ -10026,7 +10210,8 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
     }
 
     #[test]
-    fn rejects_unsupported_for_await_lowering_for_non_array_iterables_without_iterable_noise() {
+    fn rejects_unsupported_for_await_lowering_for_non_fixed_shape_iterables_without_iterable_noise()
+    {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
             RuntimeCapability::AsyncIteration,
@@ -10034,7 +10219,7 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
         let messages = emit_error_with_runtime_hooks(
             r#"
 async fn helper() -> Int {
-    for await value in (1, 2, 3) {
+    for await value in 0 {
         break
     }
     return 0
@@ -10304,7 +10489,7 @@ extern "c" fn first()
 
 async fn helper() -> Int {
     defer first()
-    for await value in (1, 2, 3) {
+    for await value in 0 {
         break
     }
     return 0
@@ -10492,6 +10677,45 @@ async fn main() -> Int {
 
         assert!(rendered.contains("define i32 @main()"));
         assert!(rendered.contains("getelementptr inbounds [2 x ptr], ptr"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 2
+        );
+        assert!(rendered.contains("store i64 %t"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn auto_awaits_task_tuple_elements_inside_for_await_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var total = 0
+    for await value in (worker(20), worker(22)) {
+        total = total + value
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("getelementptr inbounds { ptr, ptr }, ptr"));
         assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
         assert!(
             rendered

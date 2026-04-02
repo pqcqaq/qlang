@@ -18,7 +18,7 @@
 ## 当前已开放的构建表面
 
 - `ql build --emit llvm-ir|obj|exe|dylib|staticlib` 已是仓库内真实支持能力，不再只是设计目标。
-- fixed-array iterable 的 sync `for` 已开放在当前 program / library build surface 内，不依赖 async runtime hook。
+- fixed-shape iterable 的 sync `for` 已开放在当前 program / library build surface 内，不依赖 async runtime hook；当前 fixed-shape 覆盖 fixed-array 与 homogeneous tuple。
 - 当前普通表达式与 `if` / `while` 条件里，也已开放 same-file foldable `const` / `static` item value 及其 same-file `use ... as ...` alias 的直接 materialize；当前已支持的 tuple / fixed-array / plain-struct literal 子集会复用同一条 const-evaluation lowering。
 - 最小 literal `match` lowering 已开放在当前 program / library build surface 内：
   - `Bool` scrutinee：unguarded `true` / `false` + `_` 或单名 binding catch-all arm 会直接 lower 成 LLVM branch。
@@ -35,7 +35,7 @@
 - async public build 当前已开放两类受控子集：
   - library build 子集：`staticlib` 与最小 async `dylib`，要求公开导出面仍保持同步 `extern "c"` C ABI。
   - program build 子集：`BuildEmit::LlvmIr`、`BuildEmit::Object`、`BuildEmit::Executable` 下的最小 `async fn main`。
-- fixed-array iterable 的 `for await` 已开放在当前 library build 子集和当前 `async fn main` program build 子集内。
+- fixed-shape iterable 的 `for await` 已开放在当前 library build 子集和当前 `async fn main` program build 子集内；当前 fixed-shape 覆盖 fixed-array 与 homogeneous tuple。
 - `dylib` 当前仍要求至少存在一个 public 顶层 `extern "c"` 函数定义，避免生成没有明确导出面的共享库。
 - `ql runtime <file>` 已能输出 runtime requirement 与 dedupe 后的 runtime hook 计划，作为 async lowering 的共享 truth surface。
 
@@ -64,11 +64,11 @@
 - `ramdon_tests/executable_examples/04_sync_static_item_values.ql` 现已把 same-file foldable `const` / `static` item value 及其 same-file `use ... as ...` alias 的普通表达式 / bool 条件 lowering 收口到真实 `ql build --emit exe` sync 样例。
 - `ramdon_tests/executable_examples/05_sync_named_call_arguments.ql` 现已把 direct named call arguments lowering（含 `[]` 的 expected-type back-propagation）收口到真实 `ql build --emit exe` sync 样例。
 - `ramdon_tests/executable_examples/06_sync_import_alias_named_call_arguments.ql` 现已把 same-file function import alias calls lowering（含 named arguments 与 `[]` 的 expected-type back-propagation）收口到真实 `ql build --emit exe` sync 样例。
-- `ramdon_tests/async_program_surface_examples/` 当前收录 124 个 async executable 样例，覆盖当前 `BuildEmit::Executable` program surface。
-- `for` / `for await` 的循环变量现在会按 fixed-array iterable 的元素类型绑定，而不再一律退化成 `Unknown`；当 `for await` 遍历 `[Task[T]; N]` 时，循环变量会进一步绑定到自动 `await` 后的 `T`，因此 loop body 可以直接使用 `value`，而重复写 `await value` 会稳定报“非 task operand”诊断。
-- `ramdon_tests/async_program_surface_examples/107_async_main_import_alias_named_calls.ql`、`108_async_main_import_alias_direct_submit.ql`、`109_async_main_import_alias_aggregate_submit.ql`、`110_async_main_import_alias_array_submit.ql`、`111_async_main_import_alias_tuple_submit.ql`、`112_async_main_import_alias_forward_submit.ql`、`113_async_main_import_alias_helper_task_submit.ql`、`114_async_main_import_alias_helper_forward_submit.ql`、`115_async_main_import_alias_task_array_for_await.ql`、`116_async_main_import_alias_helper_task_array_for_await.ql` 与 `121_async_main_import_alias_awaited_aggregate_task_array_for_await.ql` 现已把 same-file function import alias calls lowering（含 named arguments、direct `await`、direct `spawn`、aggregate-carried、fixed-array-carried、tuple-carried、helper-forwarded、helper-returned task-handle、helper-returned-task + helper-forwarded submit，以及 direct/helper-returned/awaited-aggregate/inline-awaited fixed-array task-array `for await` 自动 `await` 元素后再绑定循环变量）收口到真实 `async fn main` build-and-run 样例；`117_async_main_projected_task_array_for_await.ql`、`118_async_main_void_task_array_for_await.ql`、`119_async_main_awaited_aggregate_task_array_for_await.ql`、`120_async_main_awaited_nested_aggregate_task_array_for_await.ql`、`123_async_main_awaited_tuple_projected_task_array_for_await.ql` 与 `124_async_main_awaited_array_projected_task_array_for_await.ql` 则继续把 projected fixed-array task root、`Task[Void]` wildcard、awaited aggregate task root、awaited nested aggregate task root、awaited tuple-projected task root 与 awaited array-projected task root 收口到同一条 executable public surface。
-- `crates/ql-cli/tests/executable_examples.rs` 会在真实本地 toolchain 上构建并运行这 124 个 async 样例，并锁定退出码；同一个 harness 也会继续运行 sync executable examples，其中已包含上面的 `04_sync_static_item_values.ql`、`05_sync_named_call_arguments.ql` 与 `06_sync_import_alias_named_call_arguments.ql`。
-- 这些样例不只验证“能产出 IR”，也验证当前最小 async executable 子集已经能真实链接、运行，并复用现有 task-handle / aggregate payload / fixed-array `for await` lowering。
+- `ramdon_tests/async_program_surface_examples/` 当前收录 126 个 async executable 样例，覆盖当前 `BuildEmit::Executable` program surface。
+- `for` / `for await` 的循环变量现在会按当前 fixed-shape iterable 的元素类型绑定，而不再一律退化成 `Unknown`；当 `for await` 遍历 `[Task[T]; N]` 或 homogeneous task tuple `(Task[T], ...)` 时，循环变量会进一步绑定到自动 `await` 后的 `T`，因此 loop body 可以直接使用 `value`，而重复写 `await value` 会稳定报“非 task operand”诊断。
+- `ramdon_tests/async_program_surface_examples/107_async_main_import_alias_named_calls.ql`、`108_async_main_import_alias_direct_submit.ql`、`109_async_main_import_alias_aggregate_submit.ql`、`110_async_main_import_alias_array_submit.ql`、`111_async_main_import_alias_tuple_submit.ql`、`112_async_main_import_alias_forward_submit.ql`、`113_async_main_import_alias_helper_task_submit.ql`、`114_async_main_import_alias_helper_forward_submit.ql`、`115_async_main_import_alias_task_array_for_await.ql`、`116_async_main_import_alias_helper_task_array_for_await.ql` 与 `121_async_main_import_alias_awaited_aggregate_task_array_for_await.ql` 现已把 same-file function import alias calls lowering（含 named arguments、direct `await`、direct `spawn`、aggregate-carried、fixed-array-carried、tuple-carried、helper-forwarded、helper-returned task-handle、helper-returned-task + helper-forwarded submit，以及 direct/helper-returned/awaited-aggregate/inline-awaited fixed-array task-array `for await` 自动 `await` 元素后再绑定循环变量）收口到真实 `async fn main` build-and-run 样例；`117_async_main_projected_task_array_for_await.ql`、`118_async_main_void_task_array_for_await.ql`、`119_async_main_awaited_aggregate_task_array_for_await.ql`、`120_async_main_awaited_nested_aggregate_task_array_for_await.ql`、`122_async_main_inline_awaited_task_array_for_await.ql`、`123_async_main_awaited_tuple_projected_task_array_for_await.ql`、`124_async_main_awaited_array_projected_task_array_for_await.ql`、`125_async_main_tuple_for_await.ql` 与 `126_async_main_task_tuple_for_await.ql` 则继续把 projected/awaited fixed-array task root、homogeneous tuple iterable root 与 task-tuple auto-await root 收口到同一条 executable public surface。
+- `crates/ql-cli/tests/executable_examples.rs` 会在真实本地 toolchain 上构建并运行这 126 个 async 样例，并锁定退出码；同一个 harness 也会继续运行 sync executable examples，其中已包含上面的 `04_sync_static_item_values.ql`、`05_sync_named_call_arguments.ql` 与 `06_sync_import_alias_named_call_arguments.ql`。
+- 这些样例不只验证“能产出 IR”，也验证当前最小 async executable 子集已经能真实链接、运行，并复用现有 task-handle / aggregate payload / fixed-shape `for await` lowering。
 
 ## 当前互操作与工具边界
 
@@ -83,7 +83,7 @@
 
 - 更广义的 async executable / program bootstrap，除当前 `async fn main` 最小子集以外仍未开放。
 - 更广义的 async `dylib` surface，以及任何需要公开 async ABI 的共享库承诺。
-- 非 fixed-array iterable 的 `for` / `for await`。
+- 更广义的 dynamic/generalized iterable，以及非 homogeneous tuple 的 `for` / `for await`。
 - 更广义动态 guard 的 `match`（包括超出当前 `!` / `&&` / `||` + `Bool ==/!=` 与 `Int ==/!=/>/>=/</<=` 子集之外的任意表达式 guard、超出当前 read-only local / parameter / `self` root 与 same-file foldable `const` / `static`-backed aggregate root 及其 same-file `use ... as ...` alias 子集的投影 operand、基于当前 arm 新绑定名继续做 member/index projection、`Bool` scrutinee 上不具备 guaranteed fallback coverage 的 direct bool-valued guard，以及 `Int` scrutinee 上不具备 later unguarded catch-all fallback 的 direct bool-valued guard）、非 `Bool` / `Int` scrutinee `match`、以及超出 `Bool true|false|same-file const/static/alias bare path|_|single-name binding` / `Int literal|same-file const/static/alias bare path|_|single-name binding` 的更广义 match pattern lowering。
 - cleanup lowering / cleanup codegen。
 - cancellation / polling / drop 语义。

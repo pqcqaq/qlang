@@ -1075,6 +1075,9 @@ async fn main() -> Int {
     for await value in [1, 2, 3] {
         total = total + value
     }
+    for await value in (4, 5, 6) {
+        total = total + value
+    }
     return total
 }
 "#,
@@ -1222,6 +1225,9 @@ async fn main() -> Int {
 async fn main() -> Int {
     var total = 0
     for await value in [1, 2, 3] {
+        total = total + value
+    }
+    for await value in (4, 5, 6) {
         total = total + value
     }
     return total
@@ -7417,6 +7423,9 @@ async fn main() -> Int {
     for await value in [1, 2, 3] {
         break
     }
+    for await value in (4, 5, 6) {
+        break
+    }
     return 0
 }
 "#,
@@ -7447,7 +7456,7 @@ async fn main() -> Int {
             "async_for_await_library.ql",
             r#"
 async fn helper() -> Int {
-    for await value in (1, 2, 3) {
+    for await value in 0 {
         break
     }
     return 0
@@ -7583,6 +7592,9 @@ fn total() -> Int {
 async fn helper() -> Int {
     var total = 0
     for await value in [1, 2, 3] {
+        total = total + value
+    }
+    for await value in (4, 5, 6) {
         total = total + value
     }
     return total
@@ -9836,6 +9848,9 @@ async fn helper() -> Int {
     for await value in [1, 2, 3] {
         break
     }
+    for await value in (4, 5, 6) {
+        break
+    }
     return await worker()
 }
 "#,
@@ -9870,10 +9885,10 @@ async fn helper() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_async_for_await_diagnostics_for_dylib_non_array_iterables() {
-        let dir = TestDir::new("ql-driver-async-for-await-dylib-non-array");
+    fn build_file_surfaces_async_for_await_diagnostics_for_dylib_non_fixed_shape_iterables() {
+        let dir = TestDir::new("ql-driver-async-for-await-dylib-non-fixed-shape");
         let source = dir.write(
-            "async_for_await_dylib_non_array.ql",
+            "async_for_await_dylib_non_fixed_shape.ql",
             r#"
 extern "c" pub fn q_export() -> Int {
     return 1
@@ -9884,7 +9899,7 @@ async fn worker() -> Int {
 }
 
 async fn helper() -> Int {
-    for await value in (1, 2, 3) {
+    for await value in 0 {
         break
     }
     return await worker()
@@ -9892,11 +9907,11 @@ async fn helper() -> Int {
 "#,
         );
         let output = dir.path().join(if cfg!(windows) {
-            "artifacts/async_for_await_dylib_non_array.dll"
+            "artifacts/async_for_await_dylib_non_fixed_shape.dll"
         } else if cfg!(target_os = "macos") {
-            "artifacts/libasync_for_await_dylib_non_array.dylib"
+            "artifacts/libasync_for_await_dylib_non_fixed_shape.dylib"
         } else {
-            "artifacts/libasync_for_await_dylib_non_array.so"
+            "artifacts/libasync_for_await_dylib_non_fixed_shape.so"
         });
 
         let error = build_file(
@@ -9909,7 +9924,7 @@ async fn helper() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect_err("dynamic library build with non-array for-await should still fail");
+        .expect_err("dynamic library build with non-fixed-shape for-await should still fail");
         let diagnostics = error
             .diagnostics()
             .expect("async for-await codegen rejection should return diagnostics");
@@ -11175,7 +11190,7 @@ extern "c" fn first()
 
 async fn helper() -> Int {
     defer first()
-    for await value in (1, 2, 3) {
+    for await value in 0 {
         break
     }
     return 0

@@ -186,7 +186,7 @@
 - `staticlib` 已开放第一条受控 async library build 子集
 - `dylib` 已开放最小受控 async library build 子集：当前允许带内部 async helper 的 library body 通过，真实 shared-library 产物也会内联最小 runtime hook 定义以保证可链接，但公开导出面仍收敛在同步 `extern "c"` C ABI surface
 - `llvm-ir` / `object` 已开放当前 async program build 子集：`async fn main` 及其当前已支持的 `await` / `spawn` / fixed-array `for await` 路径现在可以直接产出 LLVM IR 或对象文件
-- `for await` 已开放首个受控 lowering 竖切片：当前支持 library-mode async body，以及 `BuildEmit::LlvmIr` / `BuildEmit::Object` / `BuildEmit::Executable` `async fn main` 子集内对 fixed array iterable 的 lowering
+- `for await` 已开放首个受控 lowering 竖切片：当前支持 library-mode async body，以及 `BuildEmit::LlvmIr` / `BuildEmit::Object` / `BuildEmit::Executable` `async fn main` 子集内对 fixed-shape iterable 的 lowering；当前 fixed-shape 覆盖 fixed array 与 homogeneous tuple
 - committed `examples/ffi-c` / `examples/ffi-c-dylib` / `examples/ffi-rust` 宿主示例与对应回归测试已经建立
 
 ### 当前仍刻意未开放
@@ -195,7 +195,7 @@
 
 - 更广义的 projection-sensitive ownership / partial-place move tracking（当前已开放 tuple/struct-field task-handle path 的只读 consume 与同路径 write/reinit、fixed-array literal index task-handle path 的只读 consume/write-reinit，以及 dynamic fixed-array index task-handle 的 sibling-safe consume + same immutable stable index path precise consume/reinit 子集，其中 stable source path 现也可递归组合到 `tasks[slots[row]]` 这类 composed dynamic index，并继续穿过 `let alias = slots` 这类 immutable alias；同一条稳定 source path 现也可在 `if index == 0` / `if slot.value == 0` 这类 equality guard 的 dominated branch 内保守回收到 literal/projection path；非 `Task[...]` 元素 dynamic array assignment 已开放，而 generic dynamic `Task[...]` overlap / reinit reasoning 仍未开放）
 - 更广义的 projection assignment lowering（当前已开放 tuple index / struct-field / fixed-array literal index projection write/reinit、非 `Task[...]` 元素的 dynamic array assignment，以及 `Task[...]` dynamic array 的 generic maybe-overlap write/reinit + same immutable stable index path precise consume/reinit 子集）
-- 更广义的 `for await` lowering（当前已开放 library-mode 与 `BuildEmit::LlvmIr` / `BuildEmit::Object` / `BuildEmit::Executable` `async fn main` 子集下的 fixed-array iterable）
+- 更广义的 `for await` lowering（当前已开放 library-mode 与 `BuildEmit::LlvmIr` / `BuildEmit::Object` / `BuildEmit::Executable` `async fn main` 子集下的 fixed-shape iterable；当前 fixed-shape 覆盖 fixed-array 与 homogeneous tuple）
 - cancellation / polling / drop 语义
 - generic async ABI 与 layout substitution
 - 更广义的 async `dylib` 构建承诺（当前仅开放带同步 `extern "c"` 导出面的最小 library-style async body 子集）
@@ -250,7 +250,7 @@
 
 #### P7.4 扩大 async build surface（条件评估）
 
-首个 program-build 切片已落地：`BuildEmit::Executable` 现已开放 `async fn main` 的最小程序入口生命周期，并已锁定 `async fn main` + fixed-array `for await` 的 executable 闭环。其余方向仍按下述前提继续保守推进，其中 Task 4 已完成 docs-first 评估并继续 deferred。
+首个 program-build 切片已落地：`BuildEmit::Executable` 现已开放 `async fn main` 的最小程序入口生命周期，并已锁定 `async fn main` + fixed-shape `for await` 的 executable 闭环。当前 fixed-shape 覆盖 fixed-array 与 homogeneous tuple。其余方向仍按下述前提继续保守推进，其中 Task 4 已完成 docs-first 评估并继续 deferred。
 
 以下四个方向各有明确的推进前提，满足条件前继续保持保守拒绝：
 

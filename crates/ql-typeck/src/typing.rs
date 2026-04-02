@@ -2262,6 +2262,22 @@ impl<'a> Checker<'a> {
                     element_ty
                 }
             }
+            Ty::Tuple(items)
+                if !items.is_empty()
+                    && items.iter().skip(1).all(|item| {
+                        item.compatible_with(&items[0]) && items[0].compatible_with(item)
+                    }) =>
+            {
+                let element_ty = items[0].clone();
+                if auto_await_task_elements {
+                    match element_ty {
+                        Ty::TaskHandle(result_ty) => *result_ty,
+                        other => other,
+                    }
+                } else {
+                    element_ty
+                }
+            }
             _ => Ty::Unknown,
         }
     }

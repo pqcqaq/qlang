@@ -1610,6 +1610,30 @@ async fn main() -> Int {
 }
 
 #[test]
+fn auto_awaits_for_await_task_tuple_elements() {
+    let diagnostics = diagnostic_messages(
+        r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var total = 0
+    for await value in (worker(1), worker(2)) {
+        total = total + value
+    }
+    return total
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected for-await task-tuple elements to auto-await, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn rejects_reawaiting_auto_awaited_for_await_task_array_elements() {
     let diagnostics = diagnostic_messages(
         r#"

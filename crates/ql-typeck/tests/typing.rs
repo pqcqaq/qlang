@@ -1295,6 +1295,10 @@ fn main() -> Int {
         break
     }
 
+    for value in (4, 5, 6) {
+        break
+    }
+
     return 0
 }
 "#,
