@@ -814,6 +814,7 @@ impl<'a> QueryIndexBuilder<'a> {
                 let operator = match op {
                     UnaryOp::Await => Some(AsyncOperatorKind::Await),
                     UnaryOp::Spawn => Some(AsyncOperatorKind::Spawn),
+                    UnaryOp::Not => None,
                     UnaryOp::Neg => None,
                 };
                 if let Some(operator) = operator {

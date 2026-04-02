@@ -197,6 +197,18 @@ impl Parser {
                     },
                 ))
             }
+            TokenKind::Bang => {
+                let start = self.current_start();
+                self.bump();
+                let expr = self.parse_prefix_expr(struct_literal_mode)?;
+                Ok(Expr::new(
+                    self.span_from(start),
+                    ExprKind::Unary {
+                        op: ql_ast::UnaryOp::Not,
+                        expr: Box::new(expr),
+                    },
+                ))
+            }
             TokenKind::LParen if self.is_closure_start(self.idx) => self.parse_closure(),
             _ => self.parse_postfix_expr(struct_literal_mode),
         }
@@ -481,7 +493,12 @@ impl Parser {
         let mut depth = 0;
         while let Some(token) = self.tokens.get(idx) {
             match token.kind {
-                TokenKind::LParen => depth += 1,
+                TokenKind::LParen => {
+                    depth += 1;
+                    if depth > 1 {
+                        return false;
+                    }
+                }
                 TokenKind::RParen => {
                     depth -= 1;
                     if depth == 0 {
@@ -492,6 +509,8 @@ impl Parser {
                             .unwrap_or(false);
                     }
                 }
+                TokenKind::Ident | TokenKind::Comma if depth == 1 => {}
+                _ if depth == 1 => return false,
                 TokenKind::Eof => return false,
                 _ => {}
             }

@@ -852,6 +852,7 @@ impl<'a> BodyAnalyzer<'a> {
         match op {
             UnaryOp::Await => Some((target, MoveReason::AwaitTaskHandle)),
             UnaryOp::Spawn => Some((target, MoveReason::SpawnTaskHandle)),
+            UnaryOp::Not => None,
             UnaryOp::Neg => None,
         }
     }
@@ -2148,6 +2149,7 @@ impl<'a> BodyAnalyzer<'a> {
         match op {
             UnaryOp::Await => Some((target, MoveReason::AwaitTaskHandle)),
             UnaryOp::Spawn => Some((target, MoveReason::SpawnTaskHandle)),
+            UnaryOp::Not => None,
             UnaryOp::Neg => None,
         }
     }

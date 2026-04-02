@@ -1514,6 +1514,25 @@ impl<'a> ModuleEmitter<'a> {
                 self.validate_binary_operands(*op, &left_ty, &right_ty, span, ctx.diagnostics)
             }
             Rvalue::Unary { op, operand } => match op {
+                UnaryOp::Not => {
+                    let operand_ty = self.infer_operand_type(
+                        ctx.body,
+                        operand,
+                        ctx.local_types,
+                        ctx.async_task_handles,
+                        ctx.diagnostics,
+                        span,
+                    )?;
+                    if operand_ty.is_bool() {
+                        Some(Ty::Builtin(BuiltinType::Bool))
+                    } else {
+                        ctx.diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation only supports `!` on `Bool` operands",
+                        ));
+                        None
+                    }
+                }
                 UnaryOp::Neg => {
                     let operand_ty = self.infer_operand_type(
                         ctx.body,
@@ -3548,6 +3567,16 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 self.render_binary(output, *op, left, right)
             }
             Rvalue::Unary { op, operand } => match op {
+                UnaryOp::Not => {
+                    let operand = self.render_operand(output, operand, span);
+                    let temp = self.fresh_temp();
+                    let _ = writeln!(output, "  {temp} = xor i1 {}, true", operand.repr);
+                    Some(LoweredValue {
+                        ty: Ty::Builtin(BuiltinType::Bool),
+                        llvm_ty: "i1".to_owned(),
+                        repr: temp,
+                    })
+                }
                 UnaryOp::Neg => {
                     let operand = self.render_operand(output, operand, span);
                     let temp = self.fresh_temp();
@@ -4339,6 +4368,23 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
     ) -> LoweredValue {
         match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Unary {
+                op: UnaryOp::Not,
+                expr,
+            } => {
+                let inner = self.render_bool_guard_expr(output, *expr, span);
+                assert!(
+                    inner.ty.is_bool(),
+                    "prepared bool guard lowering at {span:?} should only negate bool guard expressions"
+                );
+                let temp = self.fresh_temp();
+                let _ = writeln!(output, "  {temp} = xor i1 {}, true", inner.repr);
+                LoweredValue {
+                    ty: Ty::Builtin(BuiltinType::Bool),
+                    llvm_ty: "i1".to_owned(),
+                    repr: temp,
+                }
+            }
             hir::ExprKind::Integer(value) => LoweredValue {
                 ty: Ty::Builtin(BuiltinType::Int),
                 llvm_ty: "i64".to_owned(),
@@ -4738,6 +4784,12 @@ fn runtime_bool_guard_supported(
     expr_id: hir::ExprId,
 ) -> bool {
     match &module.expr(expr_id).kind {
+        hir::ExprKind::Unary {
+            op: UnaryOp::Not,
+            expr,
+        } => {
+            runtime_bool_guard_supported(module, resolution, body, local_types, arm_pattern, *expr)
+        }
         hir::ExprKind::Binary { left, op, right } => {
             let Some(left_kind) = supported_guard_scalar_expr(
                 module,
@@ -4792,6 +4844,11 @@ fn supported_guard_scalar_expr(
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(_) => Some(GuardScalarKind::Bool),
         hir::ExprKind::Integer(_) => Some(GuardScalarKind::Int),
+        hir::ExprKind::Unary {
+            op: UnaryOp::Not,
+            expr,
+        } => supported_bool_guard(module, resolution, body, local_types, arm_pattern, *expr)
+            .map(|_| GuardScalarKind::Bool),
         hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
             Some(ValueResolution::Item(_)) | Some(ValueResolution::Import(_)) => {
                 if guard_literal_bool(module, resolution, expr_id).is_some() {
@@ -5115,6 +5172,10 @@ fn guard_literal_bool_expr(
 ) -> Option<bool> {
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(value) => Some(*value),
+        hir::ExprKind::Unary {
+            op: UnaryOp::Not,
+            expr,
+        } => guard_literal_bool_expr(module, resolution, *expr, visited).map(|value| !value),
         hir::ExprKind::Binary { left, op, right } => {
             if let (Some(left), Some(right)) = (
                 guard_literal_bool_expr(module, resolution, *left, visited),

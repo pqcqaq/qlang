@@ -513,6 +513,7 @@ pub enum BinaryOp {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnaryOp {
+    Not,
     Neg,
     Await,
     Spawn,

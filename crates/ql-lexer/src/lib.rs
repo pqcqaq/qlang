@@ -81,6 +81,7 @@ pub enum TokenKind {
     Question,
     Eq,
     EqEq,
+    Bang,
     BangEq,
     Plus,
     Minus,
@@ -306,11 +307,11 @@ impl<'a> Lexer<'a> {
                             span: Span::new(start, self.current_offset()),
                         })
                     } else {
-                        errors.push(LexError {
-                            message: "unexpected `!`; only `!=` is currently supported".into(),
+                        Some(Token {
+                            kind: TokenKind::Bang,
+                            text: "!".into(),
                             span: Span::new(start, self.current_offset()),
-                        });
-                        None
+                        })
                     }
                 }
                 '<' => {
@@ -665,6 +666,14 @@ mod tests {
         assert!(errors.is_empty(), "unexpected lex errors: {errors:?}");
         assert_eq!(tokens[1].kind, TokenKind::Ident);
         assert_eq!(tokens[1].text, "type");
+    }
+
+    #[test]
+    fn lexes_standalone_bang_token() {
+        assert_eq!(
+            token_kinds("!flag"),
+            vec![TokenKind::Bang, TokenKind::Ident, TokenKind::Eof]
+        );
     }
 
     #[test]

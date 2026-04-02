@@ -704,6 +704,7 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
         }
         ExprKind::Unary { op, expr } => {
             out.push_str(match op {
+                ql_ast::UnaryOp::Not => "!",
                 ql_ast::UnaryOp::Neg => "-",
                 ql_ast::UnaryOp::Await => "await ",
                 ql_ast::UnaryOp::Spawn => "spawn ",

@@ -424,6 +424,26 @@ impl<'a> Checker<'a> {
 
     fn check_unary(&mut self, expr_id: ExprId, op: ql_ast::UnaryOp, operand: ExprId) -> Ty {
         match op {
+            ql_ast::UnaryOp::Not => {
+                let operand_ty =
+                    self.check_expr(operand, Some(&Ty::Builtin(ql_resolve::BuiltinType::Bool)));
+                if operand_ty.is_unknown() {
+                    return Ty::Unknown;
+                }
+                if operand_ty.is_bool() {
+                    return Ty::Builtin(ql_resolve::BuiltinType::Bool);
+                }
+
+                self.diagnostics.push(
+                    Diagnostic::error(format!(
+                        "`!` requires a `Bool` operand, found `{operand_ty}`"
+                    ))
+                    .with_label(
+                        Label::new(self.module.expr(expr_id).span).with_message("`!` used here"),
+                    ),
+                );
+                Ty::Unknown
+            }
             ql_ast::UnaryOp::Neg => self.check_expr(operand, None),
             ql_ast::UnaryOp::Await => {
                 let operand_ty = self.check_expr(operand, None);
@@ -958,6 +978,10 @@ impl<'a> Checker<'a> {
     fn bool_literal_expr(&self, expr_id: ExprId, visited: &mut HashSet<ItemId>) -> Option<bool> {
         match &self.module.expr(expr_id).kind {
             ExprKind::Bool(value) => Some(*value),
+            ExprKind::Unary {
+                op: ql_ast::UnaryOp::Not,
+                expr,
+            } => self.bool_literal_expr(*expr, visited).map(|value| !value),
             ExprKind::Binary { left, op, right } => {
                 if let (Some(left), Some(right)) = (
                     self.bool_literal_expr(*left, visited),

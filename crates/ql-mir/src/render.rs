@@ -519,6 +519,7 @@ fn render_binary(op: BinaryOp) -> &'static str {
 
 fn render_unary(op: UnaryOp) -> &'static str {
     match op {
+        UnaryOp::Not => "!",
         UnaryOp::Neg => "-",
         UnaryOp::Await => "await ",
         UnaryOp::Spawn => "spawn ",

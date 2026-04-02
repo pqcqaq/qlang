@@ -188,6 +188,7 @@ impl<'a> RuntimeRequirementCollector<'a> {
             }
             ExprKind::Unary { op, expr: inner } => {
                 match op {
+                    ql_ast::UnaryOp::Not => {}
                     ql_ast::UnaryOp::Await => {
                         self.push(RuntimeCapability::TaskAwait, self.root_span(expr.span));
                     }

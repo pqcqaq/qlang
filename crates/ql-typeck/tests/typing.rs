@@ -649,6 +649,43 @@ fn choose(flag: Bool) -> Int {
 }
 
 #[test]
+fn accepts_bool_matches_with_negated_bool_guards_as_exhaustive() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Flags {
+    ready: Bool,
+}
+
+fn choose(flag: Bool, flags: Flags, gate: Bool) -> Int {
+    let closed = !flags.ready
+    match flag {
+        true if !flags.ready => {
+            return 1
+        }
+        false if !gate => {
+            return 0
+        }
+        other if !(other == closed) => {
+            if other {
+                return 2
+            }
+            return 3
+        }
+        _ => {
+            return 4
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_guarded_catch_all_matches_with_literal_true_guards_as_exhaustive() {
     let diagnostics = diagnostic_messages(
         r#"

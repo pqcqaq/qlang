@@ -187,6 +187,7 @@ impl Parser {
                 | TokenKind::MoveKw
                 | TokenKind::Await
                 | TokenKind::Spawn
+                | TokenKind::Bang
                 | TokenKind::Minus
         )
     }
