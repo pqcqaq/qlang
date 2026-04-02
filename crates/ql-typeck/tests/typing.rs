@@ -557,6 +557,98 @@ fn choose(flag: Bool) -> Int {
 }
 
 #[test]
+fn accepts_bool_matches_with_const_projected_int_comparison_guards_as_exhaustive() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Slot {
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+    pair: (Int, Int),
+    limits: [Int; 2],
+}
+
+const STATE: State = State {
+    slot: Slot { value: 2 },
+    pair: (0, 2),
+    limits: [1, 4],
+}
+
+fn choose(flag: Bool) -> Int {
+    match flag {
+        true if STATE.pair[1] == STATE.slot.value => {
+            return 1
+        }
+        false if STATE.limits[0] < STATE.slot.value => {
+            return 0
+        }
+        other if STATE.slot.value >= STATE.pair[1] => {
+            if other {
+                return 2
+            }
+            return 3
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_bool_matches_with_alias_const_projected_int_comparison_guards_as_exhaustive() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use STATE as CURRENT
+
+struct Slot {
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+    pair: (Int, Int),
+    limits: [Int; 2],
+}
+
+const STATE: State = State {
+    slot: Slot { value: 2 },
+    pair: (0, 2),
+    limits: [1, 4],
+}
+
+fn choose(flag: Bool) -> Int {
+    match flag {
+        true if CURRENT.pair[1] == CURRENT.slot.value => {
+            return 1
+        }
+        false if CURRENT.limits[0] < CURRENT.slot.value => {
+            return 0
+        }
+        other if CURRENT.slot.value >= CURRENT.pair[1] => {
+            if other {
+                return 2
+            }
+            return 3
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_guarded_catch_all_matches_with_literal_true_guards_as_exhaustive() {
     let diagnostics = diagnostic_messages(
         r#"

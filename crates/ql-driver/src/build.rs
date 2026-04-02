@@ -9991,6 +9991,64 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_const_projected_integer_comparison_guard_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-const-projected-integer-comparison-guard-match");
+        let source = dir.write(
+            "const_projected_integer_comparison_guard_match.ql",
+            r#"
+use STATE as CURRENT
+
+struct Slot {
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+    pair: (Int, Int),
+    limits: [Int; 2],
+}
+
+const STATE: State = State {
+    slot: Slot { value: 2 },
+    pair: (0, 2),
+    limits: [1, 4],
+}
+
+fn main() -> Int {
+    let value = 3
+    return match value {
+        3 if CURRENT.pair[1] == CURRENT.slot.value => 30,
+        3 if CURRENT.limits[0] < CURRENT.slot.value => 31,
+        _ => 0,
+    }
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/const_projected_integer_comparison_guard_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "llvm-ir build with const projected integer comparison-guard match should succeed",
+        );
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(!rendered.contains("bb0_match_guard0:"));
+        assert!(!rendered.contains("bb0_match_guard1:"));
+        assert_eq!(rendered.matches("icmp eq i64").count(), 2);
+        assert!(!rendered.contains("getelementptr inbounds { { i64 }, { i64, i64 }, [2 x i64] }"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_integer_dynamic_guard_catch_all_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-integer-dynamic-guard-catch-all-match");
         let source = dir.write(

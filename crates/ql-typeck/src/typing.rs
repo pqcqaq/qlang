@@ -958,11 +958,6 @@ impl<'a> Checker<'a> {
     fn bool_literal_expr(&self, expr_id: ExprId, visited: &mut HashSet<ItemId>) -> Option<bool> {
         match &self.module.expr(expr_id).kind {
             ExprKind::Bool(value) => Some(*value),
-            ExprKind::Name(_) => self
-                .resolution
-                .expr_resolution(expr_id)
-                .and_then(|resolution| self.item_id_for_value_resolution(resolution))
-                .and_then(|item_id| self.bool_literal_item(item_id, visited)),
             ExprKind::Binary { left, op, right } => {
                 if let (Some(left), Some(right)) = (
                     self.bool_literal_expr(*left, visited),
@@ -987,55 +982,96 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self
-                .module
-                .block(*block_id)
-                .tail
-                .and_then(|tail| self.bool_literal_expr(tail, visited)),
-            ExprKind::Question(inner) => self.bool_literal_expr(*inner, visited),
+            ExprKind::Name(_)
+            | ExprKind::Member { .. }
+            | ExprKind::Bracket { .. }
+            | ExprKind::Block(_)
+            | ExprKind::Unsafe(_)
+            | ExprKind::Question(_) => {
+                let source = self.const_source_expr(expr_id, visited)?;
+                if source == expr_id {
+                    None
+                } else {
+                    self.bool_literal_expr(source, visited)
+                }
+            }
             _ => None,
         }
-    }
-
-    fn bool_literal_item(&self, item_id: ItemId, visited: &mut HashSet<ItemId>) -> Option<bool> {
-        if !visited.insert(item_id) {
-            return None;
-        }
-
-        let result = match &self.module.item(item_id).kind {
-            ItemKind::Const(global) => self.bool_literal_expr(global.value, visited),
-            _ => None,
-        };
-
-        visited.remove(&item_id);
-        result
     }
 
     fn int_literal_expr(&self, expr_id: ExprId, visited: &mut HashSet<ItemId>) -> Option<i64> {
         match &self.module.expr(expr_id).kind {
             ExprKind::Integer(value) => ql_ast::parse_i64_literal(value),
-            ExprKind::Name(_) => self
-                .resolution
-                .expr_resolution(expr_id)
-                .and_then(|resolution| self.item_id_for_value_resolution(resolution))
-                .and_then(|item_id| self.int_literal_item(item_id, visited)),
-            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self
-                .module
-                .block(*block_id)
-                .tail
-                .and_then(|tail| self.int_literal_expr(tail, visited)),
-            ExprKind::Question(inner) => self.int_literal_expr(*inner, visited),
+            ExprKind::Name(_)
+            | ExprKind::Member { .. }
+            | ExprKind::Bracket { .. }
+            | ExprKind::Block(_)
+            | ExprKind::Unsafe(_)
+            | ExprKind::Question(_) => {
+                let source = self.const_source_expr(expr_id, visited)?;
+                if source == expr_id {
+                    None
+                } else {
+                    self.int_literal_expr(source, visited)
+                }
+            }
             _ => None,
         }
     }
 
-    fn int_literal_item(&self, item_id: ItemId, visited: &mut HashSet<ItemId>) -> Option<i64> {
+    fn const_source_expr(&self, expr_id: ExprId, visited: &mut HashSet<ItemId>) -> Option<ExprId> {
+        match &self.module.expr(expr_id).kind {
+            ExprKind::Bool(_)
+            | ExprKind::Integer(_)
+            | ExprKind::Tuple(_)
+            | ExprKind::Array(_)
+            | ExprKind::StructLiteral { .. } => Some(expr_id),
+            ExprKind::Name(_) => self
+                .resolution
+                .expr_resolution(expr_id)
+                .and_then(|resolution| self.item_id_for_value_resolution(resolution))
+                .and_then(|item_id| self.const_source_item(item_id, visited)),
+            ExprKind::Member { object, field, .. } => {
+                let object = self.const_source_expr(*object, visited)?;
+                let ExprKind::StructLiteral { fields, .. } = &self.module.expr(object).kind else {
+                    return None;
+                };
+                let value = fields
+                    .iter()
+                    .find(|candidate| candidate.name == *field)?
+                    .value;
+                self.const_source_expr(value, visited).or(Some(value))
+            }
+            ExprKind::Bracket { target, items } if items.len() == 1 => {
+                let index = self.int_literal_expr(items[0], visited)?;
+                if index < 0 {
+                    return None;
+                }
+                let index = index as usize;
+                let target = self.const_source_expr(*target, visited)?;
+                let value = match &self.module.expr(target).kind {
+                    ExprKind::Tuple(items) | ExprKind::Array(items) => items.get(index).copied(),
+                    _ => None,
+                }?;
+                self.const_source_expr(value, visited).or(Some(value))
+            }
+            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self
+                .module
+                .block(*block_id)
+                .tail
+                .and_then(|tail| self.const_source_expr(tail, visited)),
+            ExprKind::Question(inner) => self.const_source_expr(*inner, visited),
+            _ => None,
+        }
+    }
+
+    fn const_source_item(&self, item_id: ItemId, visited: &mut HashSet<ItemId>) -> Option<ExprId> {
         if !visited.insert(item_id) {
             return None;
         }
 
         let result = match &self.module.item(item_id).kind {
-            ItemKind::Const(global) => self.int_literal_expr(global.value, visited),
+            ItemKind::Const(global) => self.const_source_expr(global.value, visited),
             _ => None,
         };
 

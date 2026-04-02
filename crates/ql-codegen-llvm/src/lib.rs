@@ -4406,25 +4406,47 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 }
             }
             hir::ExprKind::Member { .. } | hir::ExprKind::Bracket { .. } => {
-                let (place, ty) = guard_expr_place_with_ty(
+                if let Some(value) = guard_literal_bool(
                     self.emitter.input.hir,
                     self.emitter.input.resolution,
-                    self.body,
-                    &self.prepared.local_types,
-                    None,
                     expr_id,
-                )
-                .unwrap_or_else(|| {
-                    panic!(
-                        "prepared bool guard lowering at {span:?} should only render supported scalar projection guards"
+                ) {
+                    LoweredValue {
+                        ty: Ty::Builtin(BuiltinType::Bool),
+                        llvm_ty: "i1".to_owned(),
+                        repr: if value { "true" } else { "false" }.to_owned(),
+                    }
+                } else if let Some(value) = guard_literal_int(
+                    self.emitter.input.hir,
+                    self.emitter.input.resolution,
+                    expr_id,
+                ) {
+                    LoweredValue {
+                        ty: Ty::Builtin(BuiltinType::Int),
+                        llvm_ty: "i64".to_owned(),
+                        repr: value.to_string(),
+                    }
+                } else {
+                    let (place, ty) = guard_expr_place_with_ty(
+                        self.emitter.input.hir,
+                        self.emitter.input.resolution,
+                        self.body,
+                        &self.prepared.local_types,
+                        None,
+                        expr_id,
                     )
-                });
-                let rendered = self.render_operand(output, &Operand::Place(place), span);
-                assert!(
-                    ty.is_bool() || ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
-                    "prepared bool guard lowering at {span:?} should only render bool or Int projection guards"
-                );
-                rendered
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should only render supported scalar projection guards"
+                        )
+                    });
+                    let rendered = self.render_operand(output, &Operand::Place(place), span);
+                    assert!(
+                        ty.is_bool() || ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                        "prepared bool guard lowering at {span:?} should only render bool or Int projection guards"
+                    );
+                    rendered
+                }
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
                 let tail = self
@@ -4794,15 +4816,23 @@ fn supported_guard_scalar_expr(
             )
             .and_then(|(_, ty)| guard_scalar_kind_for_ty(&ty)),
         },
-        hir::ExprKind::Member { .. } | hir::ExprKind::Bracket { .. } => guard_expr_place_with_ty(
-            module,
-            resolution,
-            body,
-            local_types,
-            Some(arm_pattern),
-            expr_id,
-        )
-        .and_then(|(_, ty)| guard_scalar_kind_for_ty(&ty)),
+        hir::ExprKind::Member { .. } | hir::ExprKind::Bracket { .. } => {
+            if guard_literal_bool(module, resolution, expr_id).is_some() {
+                Some(GuardScalarKind::Bool)
+            } else if guard_literal_int(module, resolution, expr_id).is_some() {
+                Some(GuardScalarKind::Int)
+            } else {
+                guard_expr_place_with_ty(
+                    module,
+                    resolution,
+                    body,
+                    local_types,
+                    Some(arm_pattern),
+                    expr_id,
+                )
+                .and_then(|(_, ty)| guard_scalar_kind_for_ty(&ty))
+            }
+        }
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
             module.block(*block_id).tail.and_then(|tail| {
                 supported_guard_scalar_expr(
@@ -5109,16 +5139,18 @@ fn guard_literal_bool_expr(
                 }
             }
         }
-        hir::ExprKind::Name(_) => resolution
-            .expr_resolution(expr_id)
-            .and_then(|resolution| local_item_for_value_resolution(module, resolution))
-            .and_then(|item_id| guard_literal_bool_item(module, resolution, item_id, visited)),
-        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => module
-            .block(*block_id)
-            .tail
-            .and_then(|tail| guard_literal_bool_expr(module, resolution, tail, visited)),
-        hir::ExprKind::Question(inner) => {
-            guard_literal_bool_expr(module, resolution, *inner, visited)
+        hir::ExprKind::Name(_)
+        | hir::ExprKind::Member { .. }
+        | hir::ExprKind::Bracket { .. }
+        | hir::ExprKind::Block(_)
+        | hir::ExprKind::Unsafe(_)
+        | hir::ExprKind::Question(_) => {
+            let source = guard_literal_source_expr(module, resolution, expr_id, visited)?;
+            if source == expr_id {
+                None
+            } else {
+                guard_literal_bool_expr(module, resolution, source, visited)
+            }
         }
         _ => None,
     }
@@ -5132,55 +5164,89 @@ fn guard_literal_int_expr(
 ) -> Option<i64> {
     match &module.expr(expr_id).kind {
         hir::ExprKind::Integer(value) => ql_ast::parse_i64_literal(value),
+        hir::ExprKind::Name(_)
+        | hir::ExprKind::Member { .. }
+        | hir::ExprKind::Bracket { .. }
+        | hir::ExprKind::Block(_)
+        | hir::ExprKind::Unsafe(_)
+        | hir::ExprKind::Question(_) => {
+            let source = guard_literal_source_expr(module, resolution, expr_id, visited)?;
+            if source == expr_id {
+                None
+            } else {
+                guard_literal_int_expr(module, resolution, source, visited)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn guard_literal_source_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    expr_id: hir::ExprId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<hir::ExprId> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Bool(_)
+        | hir::ExprKind::Integer(_)
+        | hir::ExprKind::Tuple(_)
+        | hir::ExprKind::Array(_)
+        | hir::ExprKind::StructLiteral { .. } => Some(expr_id),
         hir::ExprKind::Name(_) => resolution
             .expr_resolution(expr_id)
             .and_then(|resolution| local_item_for_value_resolution(module, resolution))
-            .and_then(|item_id| guard_literal_int_item(module, resolution, item_id, visited)),
+            .and_then(|item_id| guard_literal_source_item(module, resolution, item_id, visited)),
+        hir::ExprKind::Member { object, field, .. } => {
+            let object = guard_literal_source_expr(module, resolution, *object, visited)?;
+            let hir::ExprKind::StructLiteral { fields, .. } = &module.expr(object).kind else {
+                return None;
+            };
+            let value = fields
+                .iter()
+                .find(|candidate| candidate.name == *field)?
+                .value;
+            guard_literal_source_expr(module, resolution, value, visited).or(Some(value))
+        }
+        hir::ExprKind::Bracket { target, items } if items.len() == 1 => {
+            let index = guard_literal_int_expr(module, resolution, items[0], visited)?;
+            if index < 0 {
+                return None;
+            }
+            let index = index as usize;
+            let target = guard_literal_source_expr(module, resolution, *target, visited)?;
+            let value = match &module.expr(target).kind {
+                hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => {
+                    items.get(index).copied()
+                }
+                _ => None,
+            }?;
+            guard_literal_source_expr(module, resolution, value, visited).or(Some(value))
+        }
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => module
             .block(*block_id)
             .tail
-            .and_then(|tail| guard_literal_int_expr(module, resolution, tail, visited)),
+            .and_then(|tail| guard_literal_source_expr(module, resolution, tail, visited)),
         hir::ExprKind::Question(inner) => {
-            guard_literal_int_expr(module, resolution, *inner, visited)
+            guard_literal_source_expr(module, resolution, *inner, visited)
         }
         _ => None,
     }
 }
 
-fn guard_literal_bool_item(
+fn guard_literal_source_item(
     module: &hir::Module,
     resolution: &ResolutionMap,
     item_id: ItemId,
     visited: &mut HashSet<ItemId>,
-) -> Option<bool> {
+) -> Option<hir::ExprId> {
     if !visited.insert(item_id) {
         return None;
     }
 
     let result = match &module.item(item_id).kind {
         ItemKind::Const(global) => {
-            guard_literal_bool_expr(module, resolution, global.value, visited)
-        }
-        _ => None,
-    };
-
-    visited.remove(&item_id);
-    result
-}
-
-fn guard_literal_int_item(
-    module: &hir::Module,
-    resolution: &ResolutionMap,
-    item_id: ItemId,
-    visited: &mut HashSet<ItemId>,
-) -> Option<i64> {
-    if !visited.insert(item_id) {
-        return None;
-    }
-
-    let result = match &module.item(item_id).kind {
-        ItemKind::Const(global) => {
-            guard_literal_int_expr(module, resolution, global.value, visited)
+            guard_literal_source_expr(module, resolution, global.value, visited)
         }
         _ => None,
     };
