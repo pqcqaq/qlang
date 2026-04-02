@@ -513,6 +513,31 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/92_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_inline_forward_spawn.ql",
             expected_exit: 102,
         },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_triple_root_triple_source_tail_bundle_inline_forward_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/93_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_bundle_inline_forward_spawn.ql",
+            expected_exit: 104,
+        },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_triple_root_triple_source_tail_bundle_slot_inline_forward_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/94_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_bundle_slot_inline_forward_spawn.ql",
+            expected_exit: 106,
+        },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_triple_root_triple_source_tail_direct_inline_forward_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/95_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_direct_inline_forward_spawn.ql",
+            expected_exit: 108,
+        },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_triple_root_triple_source_tail_direct_inline_forward_await",
+            source_relative: "ramdon_tests/async_program_surface_examples/96_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_direct_inline_forward_await.ql",
+            expected_exit: 110,
+        },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_triple_root_triple_source_tail_bundle_slot_inline_forward_await",
+            source_relative: "ramdon_tests/async_program_surface_examples/97_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_bundle_slot_inline_forward_await.ql",
+            expected_exit: 112,
+        },
     ];
 
     assert_example_cases_run(
