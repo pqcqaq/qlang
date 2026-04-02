@@ -7292,6 +7292,82 @@ async fn helper() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_fixed_array_for_loop() {
+        let dir = TestDir::new("ql-driver-llvm-ir-for-array");
+        let source = dir.write(
+            "for_array.ql",
+            r#"
+fn main() -> Int {
+    var total = 0
+    for value in [1, 2, 3] {
+        total = total + value
+    }
+    return total
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/for_array.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact =
+            build_file(&source, &options).expect("llvm-ir build with fixed-array for should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("for_await_setup"));
+        assert!(!rendered.contains("@qlrt_async_iter_next"));
+    }
+
+    #[test]
+    fn build_file_writes_static_library_with_fixed_array_for_bodies() {
+        let dir = TestDir::new("ql-driver-staticlib-for-array");
+        let source = dir.write(
+            "for_array_library.ql",
+            r#"
+fn total() -> Int {
+    var total = 0
+    for value in [1, 2, 3] {
+        total = total + value
+    }
+    return total
+}
+"#,
+        );
+        let output = dir.path().join(if cfg!(windows) {
+            "artifacts/for_array_library.lib"
+        } else {
+            "artifacts/libfor_array_library.a"
+        });
+
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::StaticLibrary,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions {
+                    clang: Some(mock_success_invocation(&dir)),
+                    archiver: Some(mock_success_archiver_invocation(&dir)),
+                },
+            },
+        )
+        .expect("static library build with fixed-array for should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
+    }
+
+    #[test]
     fn build_file_writes_static_library_with_fixed_array_for_await_bodies() {
         let dir = TestDir::new("ql-driver-staticlib-async-for-await-array");
         let source = dir.write(

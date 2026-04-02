@@ -18,6 +18,7 @@
 ## 当前已开放的构建表面
 
 - `ql build --emit llvm-ir|obj|exe|dylib|staticlib` 已是仓库内真实支持能力，不再只是设计目标。
+- fixed-array iterable 的 sync `for` 已开放在当前 program / library build surface 内，不依赖 async runtime hook。
 - async public build 当前已开放两类受控子集：
   - library build 子集：`staticlib` 与最小 async `dylib`，要求公开导出面仍保持同步 `extern "c"` C ABI。
   - program build 子集：`BuildEmit::LlvmIr`、`BuildEmit::Object`、`BuildEmit::Executable` 下的最小 `async fn main`。
@@ -64,7 +65,7 @@
 
 - 更广义的 async executable / program bootstrap，除当前 `async fn main` 最小子集以外仍未开放。
 - 更广义的 async `dylib` surface，以及任何需要公开 async ABI 的共享库承诺。
-- 非 fixed-array iterable 的 `for await`。
+- 非 fixed-array iterable 的 `for` / `for await`。
 - cleanup lowering / cleanup codegen。
 - cancellation / polling / drop 语义。
 - generic async ABI / layout substitution。

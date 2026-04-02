@@ -698,14 +698,6 @@ impl<'a> ModuleEmitter<'a> {
                     body_target,
                     ..
                 } => {
-                    if !*is_await {
-                        diagnostics.push(unsupported(
-                            block.terminator.span,
-                            "LLVM IR backend foundation does not support `for` lowering yet",
-                        ));
-                        continue;
-                    }
-
                     let mut scratch = Vec::new();
                     let iterable_ty = self.infer_operand_type(
                         body,
@@ -715,12 +707,17 @@ impl<'a> ModuleEmitter<'a> {
                         &mut scratch,
                         block.terminator.span,
                     );
+                    let unsupported_message = if *is_await {
+                        "LLVM IR backend foundation does not support `for await` lowering yet"
+                    } else {
+                        "LLVM IR backend foundation does not support `for` lowering yet"
+                    };
                     let (Operand::Place(iterable_place), Some(Ty::Array { element, len })) =
                         (iterable, iterable_ty)
                     else {
                         diagnostics.push(unsupported(
                             block.terminator.span,
-                            "LLVM IR backend foundation does not support `for await` lowering yet",
+                            unsupported_message,
                         ));
                         continue;
                     };
@@ -7148,6 +7145,29 @@ async fn helper() -> Int {
         assert!(rendered.contains("for_await_setup"));
         assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
         assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_for_lowering_for_fixed_array_program_bodies_without_async_runtime_hooks() {
+        let rendered = emit_with_mode(
+            r#"
+fn main() -> Int {
+    var total = 0
+    for value in [1, 2, 3] {
+        total = total + value
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(!rendered.contains("@qlrt_async_iter_next"));
+        assert!(rendered.contains("store i64 -1, ptr %for_await_index_bb"));
+        assert!(rendered.contains("icmp ult i64"));
+        assert!(rendered.contains("for_await_setup"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
     }
 
     #[test]
