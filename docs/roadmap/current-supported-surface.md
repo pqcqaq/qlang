@@ -1,6 +1,6 @@
 # 当前支持基线
 
-截至 2026-04-02，本页只记录仓库里已经进入“实现、回归、文档”一致状态的能力，不记录尚未开放的目标面。后续开发请优先更新本页，再同步 `README`、`/docs/index.md` 与路线图入口。
+截至 2026-04-03，本页只记录仓库里已经进入“实现、回归、文档”一致状态的能力，不记录尚未开放的目标面。后续开发请优先更新本页，再同步 `README`、`/docs/index.md` 与路线图入口。
 
 如果你需要看设计过程、切片动机和阶段收口细节，请继续阅读：
 
@@ -56,7 +56,7 @@
   - generic dynamic write/reinit，仍按 maybe-overlap 处理
   - sibling-safe dynamic consume/spawn
   - same immutable stable source path 的 precise consume/reinit，例如 `index`、`slot.value`
-- same-file `const` / `static` item，以及指向这些 same-file item 的 `use ... as ...` alias，连同最小 equality guard refinement、immutable alias-source canonicalization、projected-root / alias-root canonicalization，已经进入当前 dynamic task-handle 子集，而不再只是内部假设；其中 current program 回归面现在也已显式锁住 `let alias = pending.tasks; await alias[INDEX_ALIAS.value]; pending.tasks[0] = ...; await alias[INDEX_ALIAS.value]`，以及 `if INDEX_ALIAS.value == 0 { await alias[INDEX_ALIAS.value]; pending.tasks[0] = ... } await alias[0]` 这类 projected-root + alias-root + static/use-alias 组合路径，并已进入 CLI `llvm-ir` / `object` / `executable` public regression matrix。
+- same-file `const` / `static` item，以及指向这些 same-file item 的 `use ... as ...` alias，连同最小 equality guard refinement、immutable alias-source canonicalization、projected-root / alias-root canonicalization，已经进入当前 dynamic task-handle 子集，而不再只是内部假设；其中 current program 回归面现在也已显式锁住 `let alias = pending.tasks; await alias[INDEX_ALIAS.value]; pending.tasks[0] = ...; await alias[INDEX_ALIAS.value]`，以及 `if INDEX_ALIAS.value == 0 { await alias[INDEX_ALIAS.value]; pending.tasks[0] = ... } await alias[0]` 这类 projected-root + alias-root + static/use-alias 组合路径；前者现已进入 driver `BuildEmit::Object` 与 CLI `object` / `executable` regression matrix，后者现已进入 driver `BuildEmit::Object` 与 CLI `llvm-ir` / `object` / `executable` public regression matrix。
 - cleanup 相关的 equality-guard refinement 已进入分析层 truth surface，但 cleanup codegen 仍未开放。
 
 ## 当前可运行的真实样例

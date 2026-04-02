@@ -5,15 +5,15 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::analyze_source;
-use ql_codegen_llvm::{CodegenInput, CodegenMode, emit_module};
+use ql_codegen_llvm::{emit_module, CodegenInput, CodegenMode};
 use ql_diagnostics::{Diagnostic, Label};
-use ql_runtime::{RuntimeCapability, collect_runtime_hook_signatures};
+use ql_runtime::{collect_runtime_hook_signatures, RuntimeCapability};
 
 use crate::ffi::{
-    CHeaderArtifact, CHeaderError, CHeaderOptions, CHeaderSurface, emit_c_header_from_analysis,
-    exported_c_symbol_names,
+    emit_c_header_from_analysis, exported_c_symbol_names, CHeaderArtifact, CHeaderError,
+    CHeaderOptions, CHeaderSurface,
 };
-use crate::toolchain::{ToolchainError, ToolchainOptions, discover_toolchain};
+use crate::toolchain::{discover_toolchain, ToolchainError, ToolchainOptions};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildEmit {
@@ -711,7 +711,11 @@ fn sanitize_symbol(raw: &str) -> String {
 }
 
 fn object_extension() -> &'static str {
-    if cfg!(windows) { "obj" } else { "o" }
+    if cfg!(windows) {
+        "obj"
+    } else {
+        "o"
+    }
 }
 
 fn executable_name(stem: &str) -> String {
@@ -759,8 +763,10 @@ fn codegen_mode(emit: BuildEmit) -> CodegenMode {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::hash_map::DefaultHasher;
     use std::env;
     use std::fs;
+    use std::hash::{Hash, Hasher};
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -769,9 +775,26 @@ mod tests {
     };
 
     use super::{
-        BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderSurface,
-        build_file, default_build_c_header_output_path, default_output_path,
+        build_file, default_build_c_header_output_path, default_output_path, BuildCHeaderOptions,
+        BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderSurface,
     };
+
+    fn compact_test_prefix(prefix: &str) -> String {
+        let readable = prefix
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-')
+            .take(24)
+            .collect::<String>();
+        let readable = readable.trim_matches('-');
+        let mut hasher = DefaultHasher::new();
+        prefix.hash(&mut hasher);
+        let hash = hasher.finish();
+        if readable.is_empty() {
+            format!("t-{hash:016x}")
+        } else {
+            format!("{readable}-{hash:016x}")
+        }
+    }
 
     struct TestDir {
         path: PathBuf,
@@ -783,6 +806,7 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .expect("system clock should be after unix epoch")
                 .as_nanos();
+            let prefix = compact_test_prefix(prefix);
             let path = env::temp_dir().join(format!("{prefix}-{unique}"));
             fs::create_dir_all(&path).expect("create temporary test directory");
             Self { path }
@@ -2743,8 +2767,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_executable_with_async_main_projected_dynamic_task_handle_conditional_reinit()
-     {
+    fn build_file_writes_executable_with_async_main_projected_dynamic_task_handle_conditional_reinit(
+    ) {
         let dir =
             TestDir::new("ql-driver-async-exe-projected-dynamic-task-handle-conditional-reinit");
         let source = dir.write(
@@ -2802,8 +2826,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_executable_with_async_main_guard_refined_dynamic_task_handle_literal_reinit()
-     {
+    fn build_file_writes_executable_with_async_main_guard_refined_dynamic_task_handle_literal_reinit(
+    ) {
         let dir =
             TestDir::new("ql-driver-async-exe-guard-refined-dynamic-task-handle-literal-reinit");
         let source = dir.write(
@@ -2859,8 +2883,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_executable_with_async_main_guard_refined_projected_dynamic_task_handle_literal_reinit()
-     {
+    fn build_file_writes_executable_with_async_main_guard_refined_projected_dynamic_task_handle_literal_reinit(
+    ) {
         let dir = TestDir::new(
             "ql-driver-async-exe-guard-refined-projected-dynamic-task-handle-literal-reinit",
         );
@@ -3233,8 +3257,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_executable_with_async_main_zero_sized_projected_task_handle_conditional_reinit()
-     {
+    fn build_file_writes_executable_with_async_main_zero_sized_projected_task_handle_conditional_reinit(
+    ) {
         let dir =
             TestDir::new("ql-driver-async-exe-zero-sized-projected-task-handle-conditional-reinit");
         let source = dir.write(
@@ -3676,8 +3700,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_executable_with_async_main_zero_sized_conditional_helper_task_handle_spawns()
-     {
+    fn build_file_writes_executable_with_async_main_zero_sized_conditional_helper_task_handle_spawns(
+    ) {
         let dir =
             TestDir::new("ql-driver-async-exe-zero-sized-conditional-helper-task-handle-spawns");
         let source = dir.write(
@@ -5319,8 +5343,8 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_dynamic_task_handle_array_index_spawn_and_sibling_task_use()
-     {
+    fn build_file_writes_static_library_with_dynamic_task_handle_array_index_spawn_and_sibling_task_use(
+    ) {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-spawn-sibling");
         let source = dir.write(
             "task_array_dynamic_index_spawn_sibling.ql",
@@ -5605,8 +5629,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_object_with_async_main_projected_root_const_backed_dynamic_task_handle_reinit()
-     {
+    fn build_file_writes_object_with_async_main_projected_root_const_backed_dynamic_task_handle_reinit(
+    ) {
         let dir = TestDir::new(
             "ql-driver-async-object-projected-root-const-backed-dynamic-task-handle-reinit",
         );
@@ -5721,8 +5745,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_object_with_async_main_aliased_projected_root_const_backed_dynamic_task_handle_reinit()
-     {
+    fn build_file_writes_object_with_async_main_aliased_projected_root_const_backed_dynamic_task_handle_reinit(
+    ) {
         let dir = TestDir::new(
             "ql-driver-async-object-aliased-projected-root-const-backed-dynamic-task-handle-reinit",
         );
@@ -5778,8 +5802,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_object_with_async_main_aliased_projected_root_static_alias_backed_dynamic_task_handle_reinit()
-     {
+    fn build_file_writes_object_with_async_main_aliased_projected_root_static_alias_backed_dynamic_task_handle_reinit(
+    ) {
         let dir = TestDir::new(
             "ql-driver-async-object-aliased-projected-root-static-alias-backed-dynamic-task-handle-reinit",
         );
@@ -5841,8 +5865,73 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_object_with_async_main_aliased_guard_refined_projected_root_dynamic_task_handle_reinit()
-     {
+    fn build_file_writes_object_with_async_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit(
+    ) {
+        let dir = TestDir::new(
+            "ql-driver-async-object-aliased-guard-refined-static-alias-backed-projected-root-dynamic-task-handle-reinit",
+        );
+        let source = dir.write(
+            "async_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit.ql",
+            r#"
+use SLOT as INDEX_ALIAS
+
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+static SLOT: Slot = Slot { value: 0 }
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var pending = Pending {
+        tasks: [worker(9), worker(14)],
+    }
+    let alias = pending.tasks
+    if INDEX_ALIAS.value == 0 {
+        let first = await alias[INDEX_ALIAS.value]
+        pending.tasks[0] = worker(first + 5)
+    }
+    let second = await alias[0]
+    let tail = await pending.tasks[1]
+    return second + tail
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "object build with async main aliased guard-refined static alias-backed projected-root dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
+    fn build_file_writes_object_with_async_main_aliased_guard_refined_projected_root_dynamic_task_handle_reinit(
+    ) {
         let dir = TestDir::new(
             "ql-driver-async-object-aliased-guard-refined-projected-root-dynamic-task-handle-reinit",
         );
@@ -5903,8 +5992,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_object_with_async_main_aliased_guard_refined_const_backed_projected_root_dynamic_task_handle_reinit()
-     {
+    fn build_file_writes_object_with_async_main_aliased_guard_refined_const_backed_projected_root_dynamic_task_handle_reinit(
+    ) {
         let dir = TestDir::new(
             "ql-driver-async-object-aliased-guard-refined-const-backed-projected-root-dynamic-task-handle-reinit",
         );
@@ -6029,8 +6118,8 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_aliased_projected_root_task_handle_tuple_repackage_after_reinit()
-     {
+    fn build_file_writes_static_library_with_aliased_projected_root_task_handle_tuple_repackage_after_reinit(
+    ) {
         let dir =
             TestDir::new("ql-driver-aliased-projected-root-task-handle-tuple-repackage-reinit");
         let source = dir.write(
@@ -6194,8 +6283,8 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_same_alias_sourced_projected_dynamic_task_handle_reinit()
-     {
+    fn build_file_writes_static_library_with_same_alias_sourced_projected_dynamic_task_handle_reinit(
+    ) {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-alias-sourced-reinit");
         let source = dir.write(
             "task_array_dynamic_index_alias_sourced_reinit.ql",
@@ -6353,8 +6442,8 @@ async fn helper(row: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_same_const_backed_projected_dynamic_task_handle_reinit()
-     {
+    fn build_file_writes_static_library_with_same_const_backed_projected_dynamic_task_handle_reinit(
+    ) {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-const-backed-reinit");
         let source = dir.write(
             "task_array_dynamic_index_const_backed_reinit.ql",
@@ -6410,8 +6499,8 @@ async fn helper() -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_same_static_alias_backed_projected_dynamic_task_handle_reinit()
-     {
+    fn build_file_writes_static_library_with_same_static_alias_backed_projected_dynamic_task_handle_reinit(
+    ) {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-static-alias-backed-reinit");
         let source = dir.write(
             "task_array_dynamic_index_static_alias_backed_reinit.ql",
@@ -6469,8 +6558,8 @@ async fn helper() -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_same_projected_immutable_dynamic_task_handle_conditional_reinit()
-     {
+    fn build_file_writes_static_library_with_same_projected_immutable_dynamic_task_handle_conditional_reinit(
+    ) {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-projected-conditional-reinit");
         let source = dir.write(
             "task_array_dynamic_index_projected_conditional_reinit.ql",
@@ -6692,8 +6781,8 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_aliased_direct_task_handle_tuple_repackage_use_after_move_diagnostic_once()
-     {
+    fn build_file_surfaces_aliased_direct_task_handle_tuple_repackage_use_after_move_diagnostic_once(
+    ) {
         let dir = TestDir::new("ql-driver-async-aliased-direct-task-handle-tuple-repackage");
         let source = dir.write(
             "aliased_direct_task_handle_tuple_repackage_use_after_move.ql",
@@ -6788,8 +6877,8 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_aliased_dynamic_task_handle_root_tuple_repackage_use_after_move_diagnostic_once()
-     {
+    fn build_file_surfaces_aliased_dynamic_task_handle_root_tuple_repackage_use_after_move_diagnostic_once(
+    ) {
         let dir =
             TestDir::new("ql-driver-task-array-dynamic-index-root-alias-tuple-repackage-move");
         let source = dir.write(
@@ -6838,8 +6927,8 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_same_alias_sourced_dynamic_task_handle_array_index_use_after_move_diagnostic_once()
-     {
+    fn build_file_surfaces_same_alias_sourced_dynamic_task_handle_array_index_use_after_move_diagnostic_once(
+    ) {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-alias-use-after-move");
         let source = dir.write(
             "task_array_dynamic_index_alias_use_after_move.ql",
@@ -6886,8 +6975,8 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_composed_stable_dynamic_task_handle_array_index_use_after_move_diagnostic_once()
-     {
+    fn build_file_surfaces_composed_stable_dynamic_task_handle_array_index_use_after_move_diagnostic_once(
+    ) {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-composed-stable-use-after-move");
         let source = dir.write(
             "task_array_dynamic_index_composed_stable_use_after_move.ql",
@@ -6934,8 +7023,8 @@ async fn helper(row: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_alias_sourced_composed_dynamic_task_handle_array_index_use_after_move_diagnostic_once()
-     {
+    fn build_file_surfaces_alias_sourced_composed_dynamic_task_handle_array_index_use_after_move_diagnostic_once(
+    ) {
         let dir = TestDir::new(
             "ql-driver-task-array-dynamic-index-alias-sourced-composed-use-after-move",
         );
@@ -6985,8 +7074,8 @@ async fn helper(row: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_same_const_backed_dynamic_task_handle_array_index_use_after_move_diagnostic_once()
-     {
+    fn build_file_surfaces_same_const_backed_dynamic_task_handle_array_index_use_after_move_diagnostic_once(
+    ) {
         let dir = TestDir::new("ql-driver-task-array-dynamic-index-const-backed-use-after-move");
         let source = dir.write(
             "task_array_dynamic_index_const_backed_use_after_move.ql",
@@ -7034,8 +7123,8 @@ async fn helper() -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_same_const_backed_projected_root_dynamic_task_handle_array_index_use_after_move_diagnostic_once()
-     {
+    fn build_file_surfaces_same_const_backed_projected_root_dynamic_task_handle_array_index_use_after_move_diagnostic_once(
+    ) {
         let dir = TestDir::new("ql-driver-task-array-projected-root-const-backed-use-after-move");
         let source = dir.write(
             "task_array_projected_root_const_backed_use_after_move.ql",
@@ -7867,8 +7956,8 @@ async fn helper() -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_sibling_projected_zero_sized_task_handle_struct_field_awaits()
-     {
+    fn build_file_writes_static_library_with_sibling_projected_zero_sized_task_handle_struct_field_awaits(
+    ) {
         let dir = TestDir::new("ql-driver-async-projected-sibling-await-task-handle-struct-field");
         let source = dir.write(
             "async_projected_task_handle_struct_field_sibling_awaits.ql",
@@ -7969,8 +8058,8 @@ async fn helper() -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_reinitialized_projected_zero_sized_task_handle_struct_field()
-     {
+    fn build_file_writes_static_library_with_reinitialized_projected_zero_sized_task_handle_struct_field(
+    ) {
         let dir = TestDir::new("ql-driver-async-projected-reinit-task-handle-struct-field");
         let source = dir.write(
             "async_projected_task_handle_struct_field_reinit.ql",
@@ -8025,8 +8114,8 @@ async fn helper() -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_reinitialized_projected_zero_sized_task_handle_fixed_array()
-     {
+    fn build_file_writes_static_library_with_reinitialized_projected_zero_sized_task_handle_fixed_array(
+    ) {
         let dir = TestDir::new("ql-driver-async-projected-reinit-task-handle-fixed-array");
         let source = dir.write(
             "async_projected_task_handle_fixed_array_reinit.ql",
@@ -8156,8 +8245,8 @@ fn write_cell(row: Int, col: Int) -> Int {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_conditionally_reinitialized_projected_zero_sized_task_handle_fixed_array()
-     {
+    fn build_file_writes_static_library_with_conditionally_reinitialized_projected_zero_sized_task_handle_fixed_array(
+    ) {
         let dir =
             TestDir::new("ql-driver-async-projected-conditional-reinit-task-handle-fixed-array");
         let source = dir.write(
@@ -9091,8 +9180,8 @@ async fn helper(flag: Bool) -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_reverse_branch_conditionally_spawned_zero_sized_task_handle_helpers()
-     {
+    fn build_file_writes_static_library_with_reverse_branch_conditionally_spawned_zero_sized_task_handle_helpers(
+    ) {
         let dir = TestDir::new(
             "ql-driver-staticlib-async-reverse-conditional-spawn-zero-sized-task-handle",
         );
@@ -9196,8 +9285,8 @@ async fn choose(flag: Bool) -> Wrap {
     }
 
     #[test]
-    fn build_file_writes_static_library_with_reverse_branch_conditionally_spawned_zero_sized_async_call_helpers()
-     {
+    fn build_file_writes_static_library_with_reverse_branch_conditionally_spawned_zero_sized_async_call_helpers(
+    ) {
         let dir = TestDir::new(
             "ql-driver-staticlib-async-reverse-conditional-spawn-zero-sized-async-call",
         );
@@ -9981,9 +10070,7 @@ fn main() -> Int {
         assert_eq!(artifact.path, output);
         assert!(rendered.contains("bb0_match_guard0:"));
         assert!(rendered.contains("%l6_current"));
-        assert!(
-            rendered.contains("getelementptr inbounds [3 x i64], ptr %l2_values, i64 0, i64 %")
-        );
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr %l2_values, i64 0, i64 %"));
         assert!(rendered.contains("icmp slt i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
@@ -10023,9 +10110,7 @@ fn main() -> Int {
         assert_eq!(artifact.path, output);
         assert!(rendered.contains("bb0_match_guard0:"));
         assert!(rendered.matches("add i64").count() >= 2);
-        assert!(
-            rendered.contains("getelementptr inbounds [3 x i64], ptr %l2_values, i64 0, i64 %")
-        );
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr %l2_values, i64 0, i64 %"));
         assert!(rendered.contains("icmp eq i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
@@ -11312,6 +11397,7 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
             let script = dir.write(
                 "mock-clang-success.ps1",
                 r#"
+$ErrorActionPreference = 'Stop'
 $out = $null
 $isCompile = $false
 for ($i = 0; $i -lt $args.Count; $i++) {
@@ -11389,6 +11475,7 @@ fi
             let script = dir.write(
                 "mock-archiver-success.ps1",
                 r#"
+$ErrorActionPreference = 'Stop'
 $out = $null
 for ($i = 0; $i -lt $args.Count; $i++) {
     if ($args[$i] -like '/OUT:*') {
@@ -11480,6 +11567,7 @@ printf 'mock-staticlib' > "$out"
             let script = dir.write(
                 "mock-clang-link-fail.ps1",
                 r#"
+$ErrorActionPreference = 'Stop'
 $out = $null
 $isCompile = $false
 for ($i = 0; $i -lt $args.Count; $i++) {
@@ -11552,6 +11640,7 @@ exit 7
                 "mock-clang-dylib-success.ps1",
                 &format!(
                     r#"
+$ErrorActionPreference = 'Stop'
 $expectedExports = @({expected_exports})
 $out = $null
 $isCompile = $false
