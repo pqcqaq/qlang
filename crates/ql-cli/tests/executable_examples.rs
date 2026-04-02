@@ -593,6 +593,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/106_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_chain_inline_forward_await.ql",
             expected_exit: 130,
         },
+        ExecutableExampleCase {
+            name: "async_main_import_alias_named_calls",
+            source_relative: "ramdon_tests/async_program_surface_examples/107_async_main_import_alias_named_calls.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
