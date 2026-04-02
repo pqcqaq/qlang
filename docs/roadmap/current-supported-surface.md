@@ -56,7 +56,7 @@
   - generic dynamic write/reinit，仍按 maybe-overlap 处理
   - sibling-safe dynamic consume/spawn
   - same immutable stable source path 的 precise consume/reinit，例如 `index`、`slot.value`
-- same-file `const` / `static` item，以及指向这些 same-file item 的 `use ... as ...` alias，连同最小 equality guard refinement、immutable alias-source canonicalization、projected-root / alias-root canonicalization，已经进入当前 dynamic task-handle 子集，而不再只是内部假设；其中 current program 回归面现在也已显式锁住 `let alias = pending.tasks; await alias[INDEX_ALIAS.value]; pending.tasks[0] = ...; await alias[INDEX_ALIAS.value]`，以及 `if INDEX_ALIAS.value == 0 { await alias[INDEX_ALIAS.value]; pending.tasks[0] = ... } await alias[0]` 这类 projected-root + alias-root + static/use-alias 组合路径。
+- same-file `const` / `static` item，以及指向这些 same-file item 的 `use ... as ...` alias，连同最小 equality guard refinement、immutable alias-source canonicalization、projected-root / alias-root canonicalization，已经进入当前 dynamic task-handle 子集，而不再只是内部假设；其中 current program 回归面现在也已显式锁住 `let alias = pending.tasks; await alias[INDEX_ALIAS.value]; pending.tasks[0] = ...; await alias[INDEX_ALIAS.value]`，以及 `if INDEX_ALIAS.value == 0 { await alias[INDEX_ALIAS.value]; pending.tasks[0] = ... } await alias[0]` 这类 projected-root + alias-root + static/use-alias 组合路径，并已进入 CLI `object` / `executable` public regression matrix。
 - cleanup 相关的 equality-guard refinement 已进入分析层 truth surface，但 cleanup codegen 仍未开放。
 
 ## 当前可运行的真实样例

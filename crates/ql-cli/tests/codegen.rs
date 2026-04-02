@@ -522,6 +522,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "async_program_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit_object",
+            source_relative: "fixtures/codegen/pass/async_program_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit.ql",
+            emit: "obj",
+            expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "async_program_main_aliased_projected_root_task_handle_tuple_repackage_reinit_object",
             source_relative: "fixtures/codegen/pass/async_program_main_aliased_projected_root_task_handle_tuple_repackage_reinit.ql",
             emit: "obj",
@@ -3391,6 +3402,29 @@ fn guard_refined_static_alias_backed_projected_root_dynamic_task_handle_codegen_
     if let Err(message) = run_pass_case(&workspace_root, &case) {
         panic!(
             "guard-refined static alias-backed projected-root dynamic task-handle codegen regression:\n\n{message}"
+        );
+    }
+}
+
+#[test]
+fn guard_refined_static_alias_backed_projected_root_dynamic_task_handle_object_codegen_case_matches()
+ {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "async_program_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit_object",
+        source_relative: "fixtures/codegen/pass/async_program_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!(
+            "guard-refined static alias-backed projected-root dynamic task-handle object-codegen regression:\n\n{message}"
         );
     }
 }
