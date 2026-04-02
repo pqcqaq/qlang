@@ -1908,6 +1908,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "async_program_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit_llvm_ir",
+            source_relative: "fixtures/codegen/pass/async_program_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit.ql",
+            emit: "llvm-ir",
+            expected_relative: "tests/codegen/pass/async_program_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit.ll",
+            mock_compiler: false,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "async_program_main_aliased_projected_root_task_handle_tuple_repackage_reinit_llvm_ir",
             source_relative: "fixtures/codegen/pass/async_program_main_aliased_projected_root_task_handle_tuple_repackage_reinit.ql",
             emit: "llvm-ir",
@@ -3425,6 +3436,29 @@ fn guard_refined_static_alias_backed_projected_root_dynamic_task_handle_object_c
     if let Err(message) = run_pass_case(&workspace_root, &case) {
         panic!(
             "guard-refined static alias-backed projected-root dynamic task-handle object-codegen regression:\n\n{message}"
+        );
+    }
+}
+
+#[test]
+fn guard_refined_static_alias_backed_projected_root_dynamic_task_handle_llvm_ir_codegen_case_matches()
+ {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "async_program_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit_llvm_ir",
+        source_relative: "fixtures/codegen/pass/async_program_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit.ql",
+        emit: "llvm-ir",
+        expected_relative: "tests/codegen/pass/async_program_main_aliased_guard_refined_static_alias_backed_projected_root_dynamic_task_handle_reinit.ll",
+        mock_compiler: false,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!(
+            "guard-refined static alias-backed projected-root dynamic task-handle llvm-ir regression:\n\n{message}"
         );
     }
 }
