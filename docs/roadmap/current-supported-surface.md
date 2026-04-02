@@ -22,7 +22,7 @@
 - 最小 literal `match` lowering 已开放在当前 program / library build surface 内：
   - `Bool` scrutinee：unguarded `true` / `false` + `_` 或单名 binding catch-all arm 会直接 lower 成 LLVM branch。
   - `Int` scrutinee：unguarded integer literal + `_` 或单名 binding catch-all arm 会 lower 成稳定 compare-chain。
-  - 上述两条子集现在都额外支持 literal `if true` / `if false` guard；`if false` arm 会在 lowering 时被裁剪，`if true` arm 会按普通 arm 处理。
+  - 上述两条子集现在都额外支持 literal `if true` / `if false` guard，以及 same-file `const`-backed `Bool` guard；`if false` arm 会在 lowering 时被裁剪，`if true` arm 会按普通 arm 处理。
 - async public build 当前已开放两类受控子集：
   - library build 子集：`staticlib` 与最小 async `dylib`，要求公开导出面仍保持同步 `extern "c"` C ABI。
   - program build 子集：`BuildEmit::LlvmIr`、`BuildEmit::Object`、`BuildEmit::Executable` 下的最小 `async fn main`。
@@ -70,7 +70,7 @@
 - 更广义的 async executable / program bootstrap，除当前 `async fn main` 最小子集以外仍未开放。
 - 更广义的 async `dylib` surface，以及任何需要公开 async ABI 的共享库承诺。
 - 非 fixed-array iterable 的 `for` / `for await`。
-- 动态 guard 的 `match`、非 `Bool` / `Int` scrutinee `match`、以及超出 `Bool true|false|_|single-name binding` / `Int literal|_|single-name binding` 的更广义 match pattern lowering。
+- 动态 guard 的 `match`、不能静态折叠到 `Bool true|false` 的 guard、非 `Bool` / `Int` scrutinee `match`、以及超出 `Bool true|false|_|single-name binding` / `Int literal|_|single-name binding` 的更广义 match pattern lowering。
 - cleanup lowering / cleanup codegen。
 - cancellation / polling / drop 语义。
 - generic async ABI / layout substitution。

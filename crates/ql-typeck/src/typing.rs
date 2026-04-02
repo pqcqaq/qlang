@@ -951,10 +951,39 @@ impl<'a> Checker<'a> {
     }
 
     fn bool_literal(&self, expr_id: ExprId) -> Option<bool> {
+        let mut visited = HashSet::new();
+        self.bool_literal_expr(expr_id, &mut visited)
+    }
+
+    fn bool_literal_expr(&self, expr_id: ExprId, visited: &mut HashSet<ItemId>) -> Option<bool> {
         match &self.module.expr(expr_id).kind {
             ExprKind::Bool(value) => Some(*value),
+            ExprKind::Name(_) => match self.resolution.expr_resolution(expr_id) {
+                Some(ValueResolution::Item(item_id)) => self.bool_literal_item(*item_id, visited),
+                _ => None,
+            },
+            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self
+                .module
+                .block(*block_id)
+                .tail
+                .and_then(|tail| self.bool_literal_expr(tail, visited)),
+            ExprKind::Question(inner) => self.bool_literal_expr(*inner, visited),
             _ => None,
         }
+    }
+
+    fn bool_literal_item(&self, item_id: ItemId, visited: &mut HashSet<ItemId>) -> Option<bool> {
+        if !visited.insert(item_id) {
+            return None;
+        }
+
+        let result = match &self.module.item(item_id).kind {
+            ItemKind::Const(global) => self.bool_literal_expr(global.value, visited),
+            _ => None,
+        };
+
+        visited.remove(&item_id);
+        result
     }
 
     fn ordered_match_flow<F>(&self, arms: &[MatchArm], mut pattern_matches: F) -> ControlFlowSummary

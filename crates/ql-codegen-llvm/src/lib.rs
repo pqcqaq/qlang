@@ -729,7 +729,11 @@ impl<'a> ModuleEmitter<'a> {
                             for arm in arms {
                                 match arm.guard {
                                     None => {}
-                                    Some(guard) => match guard_literal_bool(self.input.hir, guard) {
+                                    Some(guard) => match guard_literal_bool(
+                                        self.input.hir,
+                                        self.input.resolution,
+                                        guard,
+                                    ) {
                                         Some(true) => {}
                                         Some(false) => continue,
                                         None => {
@@ -776,7 +780,11 @@ impl<'a> ModuleEmitter<'a> {
                             for arm in arms {
                                 match arm.guard {
                                     None => {}
-                                    Some(guard) => match guard_literal_bool(self.input.hir, guard) {
+                                    Some(guard) => match guard_literal_bool(
+                                        self.input.hir,
+                                        self.input.resolution,
+                                        guard,
+                                    ) {
                                         Some(true) => {}
                                         Some(false) => continue,
                                         None => {
@@ -4187,11 +4195,59 @@ fn pattern_kind(module: &hir::Module, pattern: hir::PatternId) -> &PatternKind {
     &module.pattern(pattern).kind
 }
 
-fn guard_literal_bool(module: &hir::Module, expr_id: hir::ExprId) -> Option<bool> {
+fn guard_literal_bool(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    expr_id: hir::ExprId,
+) -> Option<bool> {
+    let mut visited = HashSet::new();
+    guard_literal_bool_expr(module, resolution, expr_id, &mut visited)
+}
+
+fn guard_literal_bool_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    expr_id: hir::ExprId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<bool> {
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(value) => Some(*value),
+        hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
+            Some(ValueResolution::Item(item_id)) => {
+                guard_literal_bool_item(module, resolution, *item_id, visited)
+            }
+            _ => None,
+        },
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => module
+            .block(*block_id)
+            .tail
+            .and_then(|tail| guard_literal_bool_expr(module, resolution, tail, visited)),
+        hir::ExprKind::Question(inner) => {
+            guard_literal_bool_expr(module, resolution, *inner, visited)
+        }
         _ => None,
     }
+}
+
+fn guard_literal_bool_item(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    item_id: ItemId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<bool> {
+    if !visited.insert(item_id) {
+        return None;
+    }
+
+    let result = match &module.item(item_id).kind {
+        ItemKind::Const(global) => {
+            guard_literal_bool_expr(module, resolution, global.value, visited)
+        }
+        _ => None,
+    };
+
+    visited.remove(&item_id);
+    result
 }
 
 fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnostic> {
@@ -5984,6 +6040,30 @@ fn main() -> Int {
 
         assert!(rendered.contains("%l4_other = alloca i1"));
         assert!(rendered.contains("load i1, ptr %l4_other"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_integer_match_with_const_guard_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+const ENABLE: Bool = true
+const DISABLE: Bool = false
+
+fn main() -> Int {
+    let value = 2
+    return match value {
+        1 if DISABLE => 10,
+        2 if ENABLE => 20,
+        other if ENABLE => other,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert_eq!(rendered.matches("icmp eq i64").count(), 1);
+        assert!(rendered.contains("%l4_other = alloca i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
