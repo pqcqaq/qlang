@@ -4285,6 +4285,28 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 llvm_ty: "i1".to_owned(),
                 repr: if *value { "true" } else { "false" }.to_owned(),
             },
+            hir::ExprKind::Binary { left, op, right } => {
+                let left = self.render_bool_guard_expr(output, *left, span);
+                let right = self.render_bool_guard_expr(output, *right, span);
+                let compare = self.fresh_temp();
+                let opcode = match op {
+                    BinaryOp::EqEq => "icmp eq",
+                    BinaryOp::BangEq => "icmp ne",
+                    _ => panic!(
+                        "prepared bool guard lowering at {span:?} should only render supported bool comparisons"
+                    ),
+                };
+                let _ = writeln!(
+                    output,
+                    "  {compare} = {opcode} {} {}, {}",
+                    left.llvm_ty, left.repr, right.repr
+                );
+                LoweredValue {
+                    ty: Ty::Builtin(BuiltinType::Bool),
+                    llvm_ty: "i1".to_owned(),
+                    repr: compare,
+                }
+            }
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
                     Some(ValueResolution::Local(local_id)) => {
@@ -4608,6 +4630,25 @@ fn runtime_bool_guard_supported(
 ) -> bool {
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(_) => true,
+        hir::ExprKind::Binary { left, op, right } => {
+            matches!(op, BinaryOp::EqEq | BinaryOp::BangEq)
+                && runtime_bool_guard_supported(
+                    module,
+                    resolution,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    *left,
+                )
+                && runtime_bool_guard_supported(
+                    module,
+                    resolution,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    *right,
+                )
+        }
         hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
             Some(ValueResolution::Local(local_id)) => {
                 !pattern_binds_local(module, arm_pattern, *local_id)
@@ -4709,6 +4750,15 @@ fn guard_literal_bool_expr(
 ) -> Option<bool> {
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(value) => Some(*value),
+        hir::ExprKind::Binary { left, op, right } => {
+            let left = guard_literal_bool_expr(module, resolution, *left, visited)?;
+            let right = guard_literal_bool_expr(module, resolution, *right, visited)?;
+            match op {
+                BinaryOp::EqEq => Some(left == right),
+                BinaryOp::BangEq => Some(left != right),
+                _ => None,
+            }
+        }
         hir::ExprKind::Name(_) => resolution
             .expr_resolution(expr_id)
             .and_then(|resolution| local_item_for_value_resolution(module, resolution))

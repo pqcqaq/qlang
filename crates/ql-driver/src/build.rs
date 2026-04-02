@@ -9899,6 +9899,42 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_integer_comparison_guard_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-integer-comparison-guard-match");
+        let source = dir.write(
+            "integer_comparison_guard_match.ql",
+            r#"
+fn main() -> Int {
+    let value = 1
+    let enabled = false
+    return match value {
+        1 if enabled != true => 10,
+        _ => 0,
+    }
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/integer_comparison_guard_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with integer comparison-guard match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("icmp ne i1"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_integer_dynamic_guard_catch_all_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-integer-dynamic-guard-catch-all-match");
         let source = dir.write(

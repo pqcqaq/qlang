@@ -963,6 +963,15 @@ impl<'a> Checker<'a> {
                 .expr_resolution(expr_id)
                 .and_then(|resolution| self.item_id_for_value_resolution(resolution))
                 .and_then(|item_id| self.bool_literal_item(item_id, visited)),
+            ExprKind::Binary { left, op, right } => {
+                let left = self.bool_literal_expr(*left, visited)?;
+                let right = self.bool_literal_expr(*right, visited)?;
+                match op {
+                    BinaryOp::EqEq => Some(left == right),
+                    BinaryOp::BangEq => Some(left != right),
+                    _ => None,
+                }
+            }
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self
                 .module
                 .block(*block_id)
