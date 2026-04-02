@@ -13822,6 +13822,211 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_async_main_entry_lifecycle_with_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_task_handle_bundle_alias_inline_forward_await_in_program_mode()
+     {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Bundle {
+    tasks: [Task[Int]; 2],
+}
+
+struct Envelope {
+    bundle: Bundle,
+    tail: Task[Int],
+}
+
+const INDEX: Int = 0
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn main() -> Int {
+    let row_root = INDEX
+    let row = row_root
+    let slots = [row, row]
+    let slot_root = slots
+    let slot_alias_root = slot_root
+    let alias_slots = slot_alias_root
+    var pending = Pending {
+        tasks: [worker(8), worker(14)],
+    }
+    let root = pending.tasks
+    let root_alias = root
+    let alias = root_alias
+    let slot = Slot { value: INDEX }
+    let slot_alias = slot
+    if slot_alias.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker(first + 39)
+    }
+    let tail_tasks = pending.tasks
+    let forwarded = forward(alias[alias_slots[row]])
+    let running_task = forwarded
+    let env = Envelope {
+        bundle: Bundle {
+            tasks: [running_task, worker(71)],
+        },
+        tail: tail_tasks[1],
+    }
+    let bundle_root = env.bundle.tasks
+    let bundle_tasks = bundle_root
+    let second = await forward(bundle_tasks[0])
+    let extra = await env.bundle.tasks[1]
+    let tail = await env.tail
+    return second + extra + tail
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_executor_spawn").count() >= 1);
+        assert!(rendered.matches("@qlrt_task_await").count() >= 5);
+        assert!(rendered.matches("_forward(").count() >= 3);
+        assert!(
+            rendered
+                .matches("getelementptr inbounds [2 x i64], ptr")
+                .count()
+                >= 3
+        );
+        assert!(
+            rendered
+                .matches("getelementptr inbounds { i64 }, ptr")
+                .count()
+                >= 2
+        );
+        assert!(rendered.matches("store ptr").count() >= 10);
+        assert!(!rendered.contains("does not support field or index projections yet"));
+        assert!(
+            !rendered.contains("does not support assignment to field or index projections yet")
+        );
+    }
+
+    #[test]
+    fn emits_async_main_entry_lifecycle_with_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_task_handle_bundle_chain_inline_forward_await_in_program_mode()
+     {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Bundle {
+    tasks: [Task[Int]; 2],
+}
+
+struct Envelope {
+    bundle: Bundle,
+    tail: Task[Int],
+}
+
+const INDEX: Int = 0
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn forward(task: Task[Int]) -> Task[Int] {
+    return task
+}
+
+async fn main() -> Int {
+    let row_root = INDEX
+    let row = row_root
+    let slots = [row, row]
+    let slot_root = slots
+    let slot_alias_root = slot_root
+    let alias_slots = slot_alias_root
+    var pending = Pending {
+        tasks: [worker(8), worker(14)],
+    }
+    let root = pending.tasks
+    let root_alias = root
+    let alias = root_alias
+    let slot = Slot { value: INDEX }
+    let slot_alias = slot
+    if slot_alias.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker(first + 40)
+    }
+    let tail_tasks = pending.tasks
+    let forwarded = forward(alias[alias_slots[row]])
+    let running_task = forwarded
+    let env = Envelope {
+        bundle: Bundle {
+            tasks: [running_task, worker(72)],
+        },
+        tail: tail_tasks[1],
+    }
+    let bundle_root = env.bundle.tasks
+    let bundle_alias_root = bundle_root
+    let bundle_tasks = bundle_alias_root
+    let second = await forward(bundle_tasks[0])
+    let extra = await env.bundle.tasks[1]
+    let tail = await env.tail
+    return second + extra + tail
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("call ptr @qlrt_task_await(ptr %async_main_join)"));
+        assert!(rendered.contains("call void @qlrt_task_result_release(ptr %async_main_res)"));
+        assert!(rendered.matches("@qlrt_executor_spawn").count() >= 1);
+        assert!(rendered.matches("@qlrt_task_await").count() >= 5);
+        assert!(rendered.matches("_forward(").count() >= 3);
+        assert!(
+            rendered
+                .matches("getelementptr inbounds [2 x i64], ptr")
+                .count()
+                >= 3
+        );
+        assert!(
+            rendered
+                .matches("getelementptr inbounds { i64 }, ptr")
+                .count()
+                >= 2
+        );
+        assert!(rendered.matches("store ptr").count() >= 10);
+        assert!(!rendered.contains("does not support field or index projections yet"));
+        assert!(
+            !rendered.contains("does not support assignment to field or index projections yet")
+        );
+    }
+
+    #[test]
     fn emits_async_main_entry_lifecycle_with_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_task_handle_queued_local_inline_forward_await_in_program_mode()
      {
         let runtime_hooks = collect_runtime_hook_signatures([
