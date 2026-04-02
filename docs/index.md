@@ -4,7 +4,7 @@ layout: home
 hero:
   name: Qlang
   text: 给程序员简单，把复杂留给编译器
-  tagline: 一个基于 LLVM 的编译型语言项目，当前已完成 P1-P6 地基并在推进 Phase 7 的 async、runtime 与 Rust 互操作。
+  tagline: 一个基于 LLVM 的编译型语言项目，当前已完成 P1-P6 地基，并开放了 Phase 7 的受控 async build、runtime 与 Rust 互操作子集。
   actions:
     - theme: brand
       text: 查看阶段总览
@@ -38,12 +38,14 @@ features:
 当前实现状态可以概括为：
 
 - Phase 1 到 Phase 6 的基础能力已经落地
-- Phase 7 已建立最小 runtime/executor、task-handle 类型面、共享 runtime hook ABI skeleton，以及受控的 async `staticlib` 子集
+- Phase 7 已建立最小 runtime/executor、task-handle 类型面、共享 runtime hook ABI skeleton，以及受控的 async library/program build 子集
+- 当前真实支持面与未支持边界已集中收口到 [当前支持基线](/roadmap/current-supported-surface)
 - 文档、测试和实现已经开始围绕同一份 phase 文档与回归矩阵收口
 
 建议先看：
 
 - [编译器、术语与生态入门](/getting-started/compiler-primer)
+- [当前支持基线](/roadmap/current-supported-surface)
 - [P1-P7 阶段总览](/roadmap/phase-progress)
 - [开发计划](/roadmap/development-plan)
 - [Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop)

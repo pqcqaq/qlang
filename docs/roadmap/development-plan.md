@@ -1,6 +1,8 @@
 # 开发计划
 
-如果你想先看当前已经完成到什么程度，而不是看后续应该怎么推进，请先阅读：[P1-P7 阶段总览](/roadmap/phase-progress)。
+如果你想先看当前真实已经支持到什么程度，而不是看后续应该怎么推进，请先阅读：[当前支持基线](/roadmap/current-supported-surface)。
+
+如果你想看阶段归档与推进脉络，请再阅读：[P1-P7 阶段总览](/roadmap/phase-progress)。
 
 这份文档的职责不是重复阶段归档，而是统一回答四个问题：
 
@@ -11,6 +13,7 @@
 
 文档分工约定：
 
+- [`/roadmap/current-supported-surface`](/roadmap/current-supported-surface) 负责“今天真实支持到哪里、哪些边界仍关闭”
 - [`/roadmap/phase-progress`](/roadmap/phase-progress) 负责“已经做到了什么”
 - [`/plans/`](/plans/) 负责“各阶段是怎么设计和收口的”
 - 本页负责“接下来按什么顺序推进，哪些边界必须继续保守”
@@ -20,7 +23,7 @@
 截至 2026-04-01，Qlang 已经不是“只有语言设计文档的预研空壳”，而是一个真实的 Rust 编译器与工具链工作区：
 
 - Phase 1 到 Phase 6 的基础设施已经在仓库中落地
-- 当前主线工作是保守的 Phase 7：async/runtime/staticlib/Rust interop
+- 当前主线工作是保守的 Phase 7：async/runtime/library-build/program-build/Rust interop
 - 现阶段最重要的目标不是盲目扩语法，而是沿着现有边界持续扩展，不推翻已有真相源
 - 文档、测试、实现必须继续保持同一事实面，否则项目会重新退化成“代码和路线图各说各话”
 
