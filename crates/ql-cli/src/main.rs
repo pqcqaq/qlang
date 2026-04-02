@@ -808,9 +808,8 @@ async fn helper() -> Int {
             "runtime hook abi: executor-spawn ccc qlrt_executor_spawn(executor: ptr, task: ptr) -> ptr"
         ));
         assert!(
-            rendered.contains(
-                "runtime hook abi: task-await ccc qlrt_task_await(handle: ptr) -> ptr"
-            )
+            rendered
+                .contains("runtime hook abi: task-await ccc qlrt_task_await(handle: ptr) -> ptr")
         );
         assert!(rendered.contains(
             "runtime hook abi: task-result-release ccc qlrt_task_result_release(result: ptr) -> void"

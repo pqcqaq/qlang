@@ -10,8 +10,8 @@ async fn worker(value: Int) -> Int {
 
 async fn main() -> Int {
     var total = 0
-    for await task in [run(value: 20), run(value: 22)] {
-        total = total + await task
+    for await value in [run(value: 20), run(value: 22)] {
+        total = total + value
     }
     return total
 }

@@ -354,7 +354,7 @@ impl<'a> Checker<'a> {
                         );
                     }
                     let iterable_ty = self.check_expr(*iterable, None);
-                    let item_ty = self.iterable_item_ty(&iterable_ty);
+                    let item_ty = self.iterable_item_ty(&iterable_ty, *is_await);
                     self.bind_pattern(*pattern, &item_ty);
                     self.loop_depth += 1;
                     self.check_block(*body);
@@ -2249,9 +2249,19 @@ impl<'a> Checker<'a> {
         result_ty.unwrap_or(Ty::Unknown)
     }
 
-    fn iterable_item_ty(&self, iterable_ty: &Ty) -> Ty {
+    fn iterable_item_ty(&self, iterable_ty: &Ty, auto_await_task_elements: bool) -> Ty {
         match iterable_ty {
-            Ty::Array { element, .. } => element.as_ref().clone(),
+            Ty::Array { element, .. } => {
+                let element_ty = element.as_ref().clone();
+                if auto_await_task_elements {
+                    match element_ty {
+                        Ty::TaskHandle(result_ty) => *result_ty,
+                        other => other,
+                    }
+                } else {
+                    element_ty
+                }
+            }
             _ => Ty::Unknown,
         }
     }

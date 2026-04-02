@@ -1525,9 +1525,10 @@ impl<'a> BodyAnalyzer<'a> {
                     resolved
                 }
                 ValueResolution::Item(_) | ValueResolution::Import(_) => {
-                    let Some(item_id) =
-                        item_id_for_value_resolution(self.hir, self.resolution.expr_resolution(expr_id)?)
-                    else {
+                    let Some(item_id) = item_id_for_value_resolution(
+                        self.hir,
+                        self.resolution.expr_resolution(expr_id)?,
+                    ) else {
                         return Some(expr_id);
                     };
                     let (ItemKind::Const(global) | ItemKind::Static(global)) =
@@ -4557,15 +4558,18 @@ fn local_item_for_import_path(hir: &hir::Module, path: &ql_ast::Path) -> Option<
         return None;
     };
 
-    hir.items.iter().copied().find(|item_id| match &hir.item(*item_id).kind {
-        ItemKind::Function(function) => function.name == *name,
-        ItemKind::Const(global) | ItemKind::Static(global) => global.name == *name,
-        ItemKind::Struct(struct_decl) => struct_decl.name == *name,
-        ItemKind::Enum(enum_decl) => enum_decl.name == *name,
-        ItemKind::Trait(trait_decl) => trait_decl.name == *name,
-        ItemKind::TypeAlias(alias) => alias.name == *name,
-        ItemKind::Impl(_) | ItemKind::Extend(_) | ItemKind::ExternBlock(_) => false,
-    })
+    hir.items
+        .iter()
+        .copied()
+        .find(|item_id| match &hir.item(*item_id).kind {
+            ItemKind::Function(function) => function.name == *name,
+            ItemKind::Const(global) | ItemKind::Static(global) => global.name == *name,
+            ItemKind::Struct(struct_decl) => struct_decl.name == *name,
+            ItemKind::Enum(enum_decl) => enum_decl.name == *name,
+            ItemKind::Trait(trait_decl) => trait_decl.name == *name,
+            ItemKind::TypeAlias(alias) => alias.name == *name,
+            ItemKind::Impl(_) | ItemKind::Extend(_) | ItemKind::ExternBlock(_) => false,
+        })
 }
 
 fn local_item_for_import_binding(

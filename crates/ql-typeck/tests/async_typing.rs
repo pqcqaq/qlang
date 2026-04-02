@@ -1582,7 +1582,7 @@ async fn main() -> Int {
 }
 
 #[test]
-fn binds_for_await_pattern_to_task_array_elements() {
+fn auto_awaits_for_await_task_array_elements() {
     let diagnostics = diagnostic_messages(
         r#"
 fn make_handle(value: Int) -> Task[Int] {
@@ -1595,8 +1595,8 @@ async fn worker(value: Int) -> Int {
 
 async fn main() -> Int {
     var total = 0
-    for await task in [make_handle(1), make_handle(2)] {
-        total = total + await task
+    for await value in [make_handle(1), make_handle(2)] {
+        total = total + value
     }
     return total
 }
@@ -1605,12 +1605,12 @@ async fn main() -> Int {
 
     assert!(
         diagnostics.is_empty(),
-        "expected for-await task-array element binding to succeed, got {diagnostics:?}"
+        "expected for-await task-array elements to auto-await, got {diagnostics:?}"
     );
 }
 
 #[test]
-fn reports_precise_for_await_task_array_element_types() {
+fn rejects_reawaiting_auto_awaited_for_await_task_array_elements() {
     let diagnostics = diagnostic_messages(
         r#"
 fn make_handle(value: Int) -> Task[Int] {
@@ -1623,8 +1623,8 @@ async fn worker(value: Int) -> Int {
 
 async fn main() -> Int {
     var total = 0
-    for await task in [make_handle(1), make_handle(2)] {
-        total = total + task
+    for await value in [make_handle(1), make_handle(2)] {
+        total = total + await value
     }
     return total
 }
@@ -1632,11 +1632,9 @@ async fn main() -> Int {
     );
 
     assert!(
-        diagnostics.contains(
-            &"binary operator `+` expects numeric operands, found `Int` and `Task[Int]`"
-                .to_string()
-        ),
-        "expected precise task-element diagnostic inside for-await, got {diagnostics:?}"
+        diagnostics
+            .contains(&"`await` currently requires an async task handle operand".to_string()),
+        "expected auto-awaited for-await element to reject a second await, got {diagnostics:?}"
     );
 }
 

@@ -6124,7 +6124,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_reinitializing_same_static_alias_backed_projected_dynamic_task_handle_array_index_before_reuse()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 use SLOT as INDEX_ALIAS

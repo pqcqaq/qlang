@@ -120,6 +120,7 @@ Current status:
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
 - `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-fifteen examples with the real local toolchain and locks their exit codes.
+- `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 
 Expected exit codes:
 

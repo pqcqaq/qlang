@@ -138,6 +138,8 @@ struct SupportedForLoopLowering {
     iterable_place: Place,
     item_local: mir::LocalId,
     element_ty: Ty,
+    item_ty: Ty,
+    auto_await_task_elements: bool,
     array_len: usize,
     body_target: mir::BasicBlockId,
 }
@@ -1026,13 +1028,39 @@ impl<'a> ModuleEmitter<'a> {
                         continue;
                     };
                     let element_ty = element.as_ref().clone();
-                    seed_inferred_local_type(&mut local_types, *item_local, element_ty.clone());
+                    if *is_await && matches!(&element_ty, Ty::TaskHandle(_)) {
+                        if !self.has_runtime_hook(RuntimeHook::TaskAwait) {
+                            diagnostics.push(unsupported(
+                                block.terminator.span,
+                                "LLVM IR backend foundation requires the `task-await` runtime hook before lowering task-backed `for await` loops",
+                            ));
+                            continue;
+                        }
+                        if !self.has_runtime_hook(RuntimeHook::TaskResultRelease) {
+                            diagnostics.push(unsupported(
+                                block.terminator.span,
+                                "LLVM IR backend foundation requires the `task-result-release` runtime hook before lowering task-backed `for await` loops",
+                            ));
+                            continue;
+                        }
+                    }
+                    let (item_ty, auto_await_task_elements) = if *is_await {
+                        match &element_ty {
+                            Ty::TaskHandle(result_ty) => ((**result_ty).clone(), true),
+                            _ => (element_ty.clone(), false),
+                        }
+                    } else {
+                        (element_ty.clone(), false)
+                    };
+                    seed_inferred_local_type(&mut local_types, *item_local, item_ty.clone());
                     supported_for_loops.insert(
                         block_id,
                         SupportedForLoopLowering {
                             iterable_place: iterable_place.clone(),
                             item_local: *item_local,
                             element_ty,
+                            item_ty,
+                            auto_await_task_elements,
                             array_len: len,
                             body_target: *body_target,
                         },
@@ -1294,7 +1322,10 @@ impl<'a> ModuleEmitter<'a> {
 
         for arg in args {
             let index = if let Some(name) = arg.name.as_deref() {
-                signature.params.iter().position(|param| param.name == name)?
+                signature
+                    .params
+                    .iter()
+                    .position(|param| param.name == name)?
             } else {
                 while next_positional < ordered.len() && ordered[next_positional].is_some() {
                     next_positional += 1;
@@ -4526,14 +4557,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     )
                 }
                 Constant::Item { item, .. } => self.render_item_constant(output, *item, span),
-                Constant::String { .. }
-                | Constant::None
-                | Constant::UnresolvedName(_) => {
+                Constant::String { .. } | Constant::None | Constant::UnresolvedName(_) => {
                     panic!("prepared operands should not contain unsupported constants")
                 }
                 Constant::Import(path) => {
-                    let item_id =
-                        local_item_for_import_path(self.emitter.input.hir, path).unwrap_or_else(|| {
+                    let item_id = local_item_for_import_path(self.emitter.input.hir, path)
+                        .unwrap_or_else(|| {
                             panic!(
                                 "prepared operands should only contain local const/static imports"
                             )
@@ -4832,8 +4861,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         None,
                         expr_id,
                     ) {
-                        let rendered =
-                            self.render_operand(output, &Operand::Place(place), span);
+                        let rendered = self.render_operand(output, &Operand::Place(place), span);
                         assert!(
                             ty.is_bool() || ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
                             "prepared bool guard lowering at {span:?} should only render bool or Int projection guards"
@@ -5023,11 +5051,15 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 }
                 Some((current_ptr, current_ty))
             }
-            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-                self.emitter.input.hir.block(*block_id).tail.and_then(|tail| {
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => self
+                .emitter
+                .input
+                .hir
+                .block(*block_id)
+                .tail
+                .and_then(|tail| {
                     self.render_guard_projection_pointer(output, tail, span, guard_binding)
-                })
-            }
+                }),
             hir::ExprKind::Question(inner) => {
                 self.render_guard_projection_pointer(output, *inner, span, guard_binding)
             }
@@ -5215,11 +5247,60 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             output,
             "  {element} = load {element_llvm_ty}, ptr {element_ptr}"
         );
-        let _ = writeln!(
-            output,
-            "  store {element_llvm_ty} {element}, ptr {}",
-            llvm_slot_name(self.body, loop_lowering.item_local)
-        );
+        if loop_lowering.auto_await_task_elements {
+            let await_hook = self
+                .emitter
+                .runtime_hook_signature(RuntimeHook::TaskAwait)
+                .expect("prepared for-await task element lowering should require the task-await runtime hook");
+            let release_hook = self
+                .emitter
+                .runtime_hook_signature(RuntimeHook::TaskResultRelease)
+                .expect("prepared for-await task element lowering should require the task-result-release runtime hook");
+            let result_layout = self
+                .emitter
+                .build_async_task_result_layout(&loop_lowering.item_ty, span)
+                .expect(
+                    "prepared for-await task element should have a supported async result layout",
+                );
+            let result_ptr = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {result_ptr} = call {} @{}({element_llvm_ty} {element})",
+                await_hook.return_type.llvm_ir(),
+                await_hook.hook.symbol_name(),
+            );
+            match result_layout {
+                AsyncTaskResultLayout::Void => {
+                    let _ = writeln!(
+                        output,
+                        "  call {} @{}(ptr {result_ptr})",
+                        release_hook.return_type.llvm_ir(),
+                        release_hook.hook.symbol_name()
+                    );
+                }
+                AsyncTaskResultLayout::Loadable { llvm_ty, .. } => {
+                    let awaited = self.fresh_temp();
+                    let _ = writeln!(output, "  {awaited} = load {llvm_ty}, ptr {result_ptr}");
+                    let _ = writeln!(
+                        output,
+                        "  call {} @{}(ptr {result_ptr})",
+                        release_hook.return_type.llvm_ir(),
+                        release_hook.hook.symbol_name()
+                    );
+                    let _ = writeln!(
+                        output,
+                        "  store {llvm_ty} {awaited}, ptr {}",
+                        llvm_slot_name(self.body, loop_lowering.item_local)
+                    );
+                }
+            }
+        } else if !is_void_ty(&loop_lowering.item_ty) {
+            let _ = writeln!(
+                output,
+                "  store {element_llvm_ty} {element}, ptr {}",
+                llvm_slot_name(self.body, loop_lowering.item_local)
+            );
+        }
         let _ = writeln!(
             output,
             "  br label %bb{}",
@@ -5710,10 +5791,11 @@ fn guard_expr_ty(
             }
             Some(current_ty)
         }
-        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => module
-            .block(*block_id)
-            .tail
-            .and_then(|tail| guard_expr_ty(module, resolution, body, local_types, arm_pattern, tail)),
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+            module.block(*block_id).tail.and_then(|tail| {
+                guard_expr_ty(module, resolution, body, local_types, arm_pattern, tail)
+            })
+        }
         hir::ExprKind::Question(inner) => {
             guard_expr_ty(module, resolution, body, local_types, arm_pattern, *inner)
         }
@@ -6611,7 +6693,9 @@ fn main() -> Int {
 "#,
         );
 
-        assert!(rendered.contains("define i64 @ql_0_collect([0 x i64] %arg0, i64 %arg1, i64 %arg2)"));
+        assert!(
+            rendered.contains("define i64 @ql_0_collect([0 x i64] %arg0, i64 %arg1, i64 %arg2)")
+        );
         assert!(rendered.contains("store [0 x i64] zeroinitializer"));
         assert!(rendered.contains("call i64 @ql_0_collect([0 x i64] %t0, i64 22, i64 20)"));
         assert!(!rendered.contains("does not support named call arguments yet"));
@@ -6633,7 +6717,9 @@ fn main() -> Int {
 "#,
         );
 
-        assert!(rendered.contains("define i64 @ql_0_collect([0 x i64] %arg0, i64 %arg1, i64 %arg2)"));
+        assert!(
+            rendered.contains("define i64 @ql_0_collect([0 x i64] %arg0, i64 %arg1, i64 %arg2)")
+        );
         assert!(rendered.contains("call i64 @ql_0_collect([0 x i64] %t0, i64 22, i64 20)"));
         assert!(!rendered.contains("only supports direct resolved function calls"));
     }
@@ -8131,7 +8217,9 @@ fn main() -> Int {
         );
 
         assert!(rendered.contains("store [3 x i64]"));
-        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr %l1_values, i64 0, i64 1"));
+        assert!(
+            rendered.contains("getelementptr inbounds [3 x i64], ptr %l1_values, i64 0, i64 1")
+        );
         assert!(rendered.contains("add i64 2, %"));
         assert!(rendered.contains("br i1 true"));
         assert!(!rendered.contains("does not support item values here"));
@@ -10373,6 +10461,45 @@ async fn main() -> Int {
         assert!(rendered.contains("icmp ult i64"));
         assert!(rendered.contains("for_await_setup"));
         assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn auto_awaits_task_array_elements_inside_for_await_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var total = 0
+    for await value in [worker(20), worker(22)] {
+        total = total + value
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("getelementptr inbounds [2 x ptr], ptr"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 2
+        );
+        assert!(rendered.contains("store i64 %t"));
         assert!(!rendered.contains("does not support `for await` lowering yet"));
     }
 

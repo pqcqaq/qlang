@@ -7270,6 +7270,7 @@ async fn main() -> Int {
             RuntimeCapability::TaskSpawn,
             RuntimeCapability::TaskAwait,
             RuntimeCapability::AsyncIteration,
+            RuntimeCapability::TaskAwait,
             RuntimeCapability::TaskSpawn,
             RuntimeCapability::TaskAwait,
         ]
@@ -7277,8 +7278,9 @@ async fn main() -> Int {
     assert_eq!(requirements[1].span, nth_span(source, "spawn", 1));
     assert_eq!(requirements[2].span, nth_span(source, "await", 1));
     assert_eq!(requirements[3].span, nth_span(source, "await", 2));
-    assert_eq!(requirements[4].span, nth_span(source, "spawn", 2));
-    assert_eq!(requirements[5].span, nth_span(source, "await", 3));
+    assert_eq!(requirements[4].span, nth_span(source, "await", 2));
+    assert_eq!(requirements[5].span, nth_span(source, "spawn", 2));
+    assert_eq!(requirements[6].span, nth_span(source, "await", 3));
 }
 
 #[test]

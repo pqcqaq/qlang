@@ -3,10 +3,10 @@ mod support;
 use std::path::Path;
 use std::process::Command;
 
-use ql_driver::{discover_toolchain, ToolchainOptions};
+use ql_driver::{ToolchainOptions, discover_toolchain};
 use support::{
-    executable_output_path, expect_exit_code, expect_file_exists, expect_silent_output,
-    expect_success, run_command_capture, run_ql_build_capture, workspace_root, TempDir,
+    TempDir, executable_output_path, expect_exit_code, expect_file_exists, expect_silent_output,
+    expect_success, run_command_capture, run_ql_build_capture, workspace_root,
 };
 
 #[test]

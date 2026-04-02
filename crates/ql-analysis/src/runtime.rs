@@ -114,10 +114,9 @@ impl<'a> RuntimeRequirementCollector<'a> {
                     ..
                 } => {
                     if *is_await {
-                        self.push(
-                            RuntimeCapability::AsyncIteration,
-                            self.for_await_operator_span(stmt.span),
-                        );
+                        let operator_span = self.for_await_operator_span(stmt.span);
+                        self.push(RuntimeCapability::AsyncIteration, operator_span);
+                        self.push(RuntimeCapability::TaskAwait, operator_span);
                     }
                     self.visit_expr(*iterable);
                     self.visit_block(*body);
