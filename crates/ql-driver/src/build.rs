@@ -9904,11 +9904,14 @@ fn main() -> Int {
         let source = dir.write(
             "integer_comparison_guard_match.ql",
             r#"
+use LIMIT as THRESHOLD
+
+const LIMIT: Int = 1
+
 fn main() -> Int {
-    let value = 1
-    let enabled = false
+    let value = 2
     return match value {
-        1 if enabled != true => 10,
+        2 if value > THRESHOLD => 20,
         _ => 0,
     }
 }
@@ -9930,7 +9933,7 @@ fn main() -> Int {
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);
-        assert!(rendered.contains("icmp ne i1"));
+        assert!(rendered.contains("icmp sgt i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

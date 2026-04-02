@@ -540,3 +540,37 @@ pub fn parse_usize_literal(text: &str) -> Option<usize> {
         normalized.parse::<usize>().ok()
     }
 }
+
+/// Parse a lexer-style integer literal into `i64` when representable.
+pub fn parse_i64_literal(text: &str) -> Option<i64> {
+    let normalized = text.replace('_', "");
+    let (negative, digits) = if let Some(rest) = normalized.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, normalized.as_str())
+    };
+    let parsed = if let Some(rest) = digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        i64::from_str_radix(rest, 16).ok()
+    } else if let Some(rest) = digits
+        .strip_prefix("0b")
+        .or_else(|| digits.strip_prefix("0B"))
+    {
+        i64::from_str_radix(rest, 2).ok()
+    } else if let Some(rest) = digits
+        .strip_prefix("0o")
+        .or_else(|| digits.strip_prefix("0O"))
+    {
+        i64::from_str_radix(rest, 8).ok()
+    } else {
+        digits.parse::<i64>().ok()
+    }?;
+
+    if negative {
+        parsed.checked_neg()
+    } else {
+        Some(parsed)
+    }
+}

@@ -964,12 +964,27 @@ impl<'a> Checker<'a> {
                 .and_then(|resolution| self.item_id_for_value_resolution(resolution))
                 .and_then(|item_id| self.bool_literal_item(item_id, visited)),
             ExprKind::Binary { left, op, right } => {
-                let left = self.bool_literal_expr(*left, visited)?;
-                let right = self.bool_literal_expr(*right, visited)?;
-                match op {
-                    BinaryOp::EqEq => Some(left == right),
-                    BinaryOp::BangEq => Some(left != right),
-                    _ => None,
+                if let (Some(left), Some(right)) = (
+                    self.bool_literal_expr(*left, visited),
+                    self.bool_literal_expr(*right, visited),
+                ) {
+                    match op {
+                        BinaryOp::EqEq => Some(left == right),
+                        BinaryOp::BangEq => Some(left != right),
+                        _ => None,
+                    }
+                } else {
+                    let left = self.int_literal_expr(*left, visited)?;
+                    let right = self.int_literal_expr(*right, visited)?;
+                    match op {
+                        BinaryOp::EqEq => Some(left == right),
+                        BinaryOp::BangEq => Some(left != right),
+                        BinaryOp::Gt => Some(left > right),
+                        BinaryOp::GtEq => Some(left >= right),
+                        BinaryOp::Lt => Some(left < right),
+                        BinaryOp::LtEq => Some(left <= right),
+                        _ => None,
+                    }
                 }
             }
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self
@@ -989,6 +1004,38 @@ impl<'a> Checker<'a> {
 
         let result = match &self.module.item(item_id).kind {
             ItemKind::Const(global) => self.bool_literal_expr(global.value, visited),
+            _ => None,
+        };
+
+        visited.remove(&item_id);
+        result
+    }
+
+    fn int_literal_expr(&self, expr_id: ExprId, visited: &mut HashSet<ItemId>) -> Option<i64> {
+        match &self.module.expr(expr_id).kind {
+            ExprKind::Integer(value) => ql_ast::parse_i64_literal(value),
+            ExprKind::Name(_) => self
+                .resolution
+                .expr_resolution(expr_id)
+                .and_then(|resolution| self.item_id_for_value_resolution(resolution))
+                .and_then(|item_id| self.int_literal_item(item_id, visited)),
+            ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self
+                .module
+                .block(*block_id)
+                .tail
+                .and_then(|tail| self.int_literal_expr(tail, visited)),
+            ExprKind::Question(inner) => self.int_literal_expr(*inner, visited),
+            _ => None,
+        }
+    }
+
+    fn int_literal_item(&self, item_id: ItemId, visited: &mut HashSet<ItemId>) -> Option<i64> {
+        if !visited.insert(item_id) {
+            return None;
+        }
+
+        let result = match &self.module.item(item_id).kind {
+            ItemKind::Const(global) => self.int_literal_expr(global.value, visited),
             _ => None,
         };
 

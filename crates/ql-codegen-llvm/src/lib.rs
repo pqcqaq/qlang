@@ -4280,20 +4280,34 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
     ) -> LoweredValue {
         match &self.emitter.input.hir.expr(expr_id).kind {
-            hir::ExprKind::Bool(value) => LoweredValue {
-                ty: Ty::Builtin(BuiltinType::Bool),
-                llvm_ty: "i1".to_owned(),
-                repr: if *value { "true" } else { "false" }.to_owned(),
-            },
             hir::ExprKind::Binary { left, op, right } => {
-                let left = self.render_bool_guard_expr(output, *left, span);
-                let right = self.render_bool_guard_expr(output, *right, span);
+                let left = self.render_guard_scalar_expr(output, *left, span);
+                let right = self.render_guard_scalar_expr(output, *right, span);
+                assert_eq!(
+                    left.ty, right.ty,
+                    "prepared bool guard lowering at {span:?} should only compare same-typed supported guard operands"
+                );
                 let compare = self.fresh_temp();
-                let opcode = match op {
-                    BinaryOp::EqEq => "icmp eq",
-                    BinaryOp::BangEq => "icmp ne",
+                let opcode = match &left.ty {
+                    Ty::Builtin(BuiltinType::Bool) => match op {
+                        BinaryOp::EqEq | BinaryOp::BangEq => compare_opcode(*op, &left.ty),
+                        _ => panic!(
+                            "prepared bool guard lowering at {span:?} should only render supported bool guard comparisons"
+                        ),
+                    },
+                    Ty::Builtin(BuiltinType::Int) => match op {
+                        BinaryOp::EqEq
+                        | BinaryOp::BangEq
+                        | BinaryOp::Gt
+                        | BinaryOp::GtEq
+                        | BinaryOp::Lt
+                        | BinaryOp::LtEq => compare_opcode(*op, &left.ty),
+                        _ => panic!(
+                            "prepared bool guard lowering at {span:?} should only render supported integer guard comparisons"
+                        ),
+                    },
                     _ => panic!(
-                        "prepared bool guard lowering at {span:?} should only render supported bool comparisons"
+                        "prepared bool guard lowering at {span:?} should only render supported scalar guard comparisons"
                     ),
                 };
                 let _ = writeln!(
@@ -4307,50 +4321,110 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     repr: compare,
                 }
             }
+            _ => {
+                let rendered = self.render_guard_scalar_expr(output, expr_id, span);
+                assert!(
+                    rendered.ty.is_bool(),
+                    "prepared bool guard lowering at {span:?} should only render bool-valued guard expressions"
+                );
+                rendered
+            }
+        }
+    }
+
+    fn render_guard_scalar_expr(
+        &mut self,
+        output: &mut String,
+        expr_id: hir::ExprId,
+        span: Span,
+    ) -> LoweredValue {
+        match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Integer(value) => LoweredValue {
+                ty: Ty::Builtin(BuiltinType::Int),
+                llvm_ty: "i64".to_owned(),
+                repr: value.clone(),
+            },
+            hir::ExprKind::Bool(value) => LoweredValue {
+                ty: Ty::Builtin(BuiltinType::Bool),
+                llvm_ty: "i1".to_owned(),
+                repr: if *value { "true" } else { "false" }.to_owned(),
+            },
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
                     Some(ValueResolution::Local(local_id)) => {
                         let local = mir_local_for_hir_local(self.body, *local_id).unwrap_or_else(|| {
-                        panic!(
-                            "prepared bool guard lowering at {span:?} should resolve local guards to MIR locals"
-                        )
-                    });
-                        self.render_operand(output, &Operand::Place(Place::local(local)), span)
+                            panic!(
+                                "prepared bool guard lowering at {span:?} should resolve local guard operands to MIR locals"
+                            )
+                        });
+                        let rendered =
+                            self.render_operand(output, &Operand::Place(Place::local(local)), span);
+                        assert!(
+                            rendered.ty.is_bool()
+                                || rendered.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                            "prepared bool guard lowering at {span:?} should only render bool or Int local guard operands"
+                        );
+                        rendered
                     }
                     Some(ValueResolution::Param(binding)) => {
                         let local = mir_param_local(self.body, binding.index).unwrap_or_else(|| {
-                        panic!(
-                            "prepared bool guard lowering at {span:?} should resolve param guards to MIR locals"
-                        )
-                    });
-                        self.render_operand(output, &Operand::Place(Place::local(local)), span)
+                            panic!(
+                                "prepared bool guard lowering at {span:?} should resolve param guard operands to MIR locals"
+                            )
+                        });
+                        let rendered =
+                            self.render_operand(output, &Operand::Place(Place::local(local)), span);
+                        assert!(
+                            rendered.ty.is_bool()
+                                || rendered.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                            "prepared bool guard lowering at {span:?} should only render bool or Int param guard operands"
+                        );
+                        rendered
                     }
                     Some(ValueResolution::SelfValue) => {
                         let local = mir_receiver_local(self.body).unwrap_or_else(|| {
-                        panic!(
-                            "prepared bool guard lowering at {span:?} should resolve `self` guards to MIR locals"
-                        )
-                    });
-                        self.render_operand(output, &Operand::Place(Place::local(local)), span)
+                            panic!(
+                                "prepared bool guard lowering at {span:?} should resolve `self` guard operands to MIR locals"
+                            )
+                        });
+                        let rendered =
+                            self.render_operand(output, &Operand::Place(Place::local(local)), span);
+                        assert!(
+                            rendered.ty.is_bool()
+                                || rendered.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                            "prepared bool guard lowering at {span:?} should only render bool or Int `self` guard operands"
+                        );
+                        rendered
                     }
                     Some(ValueResolution::Item(_)) | Some(ValueResolution::Import(_)) => {
-                        match guard_literal_bool(
+                        if let Some(value) = guard_literal_bool(
                             self.emitter.input.hir,
                             self.emitter.input.resolution,
                             expr_id,
                         ) {
-                            Some(value) => LoweredValue {
+                            LoweredValue {
                                 ty: Ty::Builtin(BuiltinType::Bool),
                                 llvm_ty: "i1".to_owned(),
                                 repr: if value { "true" } else { "false" }.to_owned(),
-                            },
-                            None => panic!(
+                            }
+                        } else if let Some(value) = guard_literal_int(
+                            self.emitter.input.hir,
+                            self.emitter.input.resolution,
+                            expr_id,
+                        ) {
+                            LoweredValue {
+                                ty: Ty::Builtin(BuiltinType::Int),
+                                llvm_ty: "i64".to_owned(),
+                                repr: value.to_string(),
+                            }
+                        } else {
+                            panic!(
                                 "prepared bool guard lowering at {span:?} should only render supported item-backed guards"
-                            ),
+                            )
                         }
                     }
                     Some(ValueResolution::Function(_)) | None => panic!(
-                        "prepared bool guard lowering at {span:?} should only render resolved bool guard names"
+                        "prepared bool guard lowering at {span:?} should only render resolved scalar guard names"
                     ),
                 }
             }
@@ -4363,14 +4437,14 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     .tail
                     .unwrap_or_else(|| {
                         panic!(
-                            "prepared bool guard lowering at {span:?} should only render block guards with tails"
+                            "prepared bool guard lowering at {span:?} should only render block guard operands with tails"
                         )
                     });
-                self.render_bool_guard_expr(output, tail, span)
+                self.render_guard_scalar_expr(output, tail, span)
             }
-            hir::ExprKind::Question(inner) => self.render_bool_guard_expr(output, *inner, span),
+            hir::ExprKind::Question(inner) => self.render_guard_scalar_expr(output, *inner, span),
             _ => panic!(
-                "prepared bool guard lowering at {span:?} should only render supported guard expressions"
+                "prepared bool guard lowering at {span:?} should only render supported scalar guard expressions"
             ),
         }
     }
@@ -4591,10 +4665,25 @@ fn guard_literal_bool(
     guard_literal_bool_expr(module, resolution, expr_id, &mut visited)
 }
 
+fn guard_literal_int(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    expr_id: hir::ExprId,
+) -> Option<i64> {
+    let mut visited = HashSet::new();
+    guard_literal_int_expr(module, resolution, expr_id, &mut visited)
+}
+
 enum SupportedBoolGuardAnalysis {
     Always,
     Skip,
     Dynamic(hir::ExprId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GuardScalarKind {
+    Bool,
+    Int,
 }
 
 fn supported_bool_guard(
@@ -4629,47 +4718,89 @@ fn runtime_bool_guard_supported(
     expr_id: hir::ExprId,
 ) -> bool {
     match &module.expr(expr_id).kind {
-        hir::ExprKind::Bool(_) => true,
         hir::ExprKind::Binary { left, op, right } => {
-            matches!(op, BinaryOp::EqEq | BinaryOp::BangEq)
-                && runtime_bool_guard_supported(
-                    module,
-                    resolution,
-                    body,
-                    local_types,
-                    arm_pattern,
-                    *left,
-                )
-                && runtime_bool_guard_supported(
-                    module,
-                    resolution,
-                    body,
-                    local_types,
-                    arm_pattern,
-                    *right,
-                )
+            let Some(left_kind) = supported_guard_scalar_expr(
+                module,
+                resolution,
+                body,
+                local_types,
+                arm_pattern,
+                *left,
+            ) else {
+                return false;
+            };
+            let Some(right_kind) = supported_guard_scalar_expr(
+                module,
+                resolution,
+                body,
+                local_types,
+                arm_pattern,
+                *right,
+            ) else {
+                return false;
+            };
+
+            left_kind == right_kind
+                && match left_kind {
+                    GuardScalarKind::Bool => matches!(op, BinaryOp::EqEq | BinaryOp::BangEq),
+                    GuardScalarKind::Int => matches!(
+                        op,
+                        BinaryOp::EqEq
+                            | BinaryOp::BangEq
+                            | BinaryOp::Gt
+                            | BinaryOp::GtEq
+                            | BinaryOp::Lt
+                            | BinaryOp::LtEq
+                    ),
+                }
         }
+        _ => {
+            supported_guard_scalar_expr(module, resolution, body, local_types, arm_pattern, expr_id)
+                == Some(GuardScalarKind::Bool)
+        }
+    }
+}
+
+fn supported_guard_scalar_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    arm_pattern: hir::PatternId,
+    expr_id: hir::ExprId,
+) -> Option<GuardScalarKind> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Bool(_) => Some(GuardScalarKind::Bool),
+        hir::ExprKind::Integer(_) => Some(GuardScalarKind::Int),
         hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
             Some(ValueResolution::Local(local_id)) => {
-                !pattern_binds_local(module, arm_pattern, *local_id)
-                    && mir_local_for_hir_local(body, *local_id)
-                        .and_then(|local_id| local_types.get(&local_id))
-                        .is_some_and(Ty::is_bool)
+                if pattern_binds_local(module, arm_pattern, *local_id) {
+                    return None;
+                }
+                mir_local_for_hir_local(body, *local_id)
+                    .and_then(|local_id| local_types.get(&local_id))
+                    .and_then(guard_scalar_kind_for_ty)
             }
             Some(ValueResolution::Param(binding)) => mir_param_local(body, binding.index)
                 .and_then(|local_id| local_types.get(&local_id))
-                .is_some_and(Ty::is_bool),
+                .and_then(guard_scalar_kind_for_ty),
             Some(ValueResolution::SelfValue) => mir_receiver_local(body)
                 .and_then(|local_id| local_types.get(&local_id))
-                .is_some_and(Ty::is_bool),
-            Some(ValueResolution::Function(_))
-            | Some(ValueResolution::Item(_))
-            | Some(ValueResolution::Import(_))
-            | None => false,
+                .and_then(guard_scalar_kind_for_ty),
+            Some(ValueResolution::Item(_)) | Some(ValueResolution::Import(_)) => {
+                if guard_literal_bool(module, resolution, expr_id).is_some() {
+                    Some(GuardScalarKind::Bool)
+                } else if guard_literal_int(module, resolution, expr_id).is_some() {
+                    Some(GuardScalarKind::Int)
+                } else {
+                    None
+                }
+            }
+            Some(ValueResolution::Function(_)) | None => None,
         },
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-            module.block(*block_id).tail.is_some_and(|tail| {
-                runtime_bool_guard_supported(
+            module.block(*block_id).tail.and_then(|tail| {
+                supported_guard_scalar_expr(
                     module,
                     resolution,
                     body,
@@ -4680,9 +4811,19 @@ fn runtime_bool_guard_supported(
             })
         }
         hir::ExprKind::Question(inner) => {
-            runtime_bool_guard_supported(module, resolution, body, local_types, arm_pattern, *inner)
+            supported_guard_scalar_expr(module, resolution, body, local_types, arm_pattern, *inner)
         }
-        _ => false,
+        _ => None,
+    }
+}
+
+fn guard_scalar_kind_for_ty(ty: &Ty) -> Option<GuardScalarKind> {
+    if ty.is_bool() {
+        Some(GuardScalarKind::Bool)
+    } else if ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
+        Some(GuardScalarKind::Int)
+    } else {
+        None
     }
 }
 
@@ -4751,12 +4892,27 @@ fn guard_literal_bool_expr(
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(value) => Some(*value),
         hir::ExprKind::Binary { left, op, right } => {
-            let left = guard_literal_bool_expr(module, resolution, *left, visited)?;
-            let right = guard_literal_bool_expr(module, resolution, *right, visited)?;
-            match op {
-                BinaryOp::EqEq => Some(left == right),
-                BinaryOp::BangEq => Some(left != right),
-                _ => None,
+            if let (Some(left), Some(right)) = (
+                guard_literal_bool_expr(module, resolution, *left, visited),
+                guard_literal_bool_expr(module, resolution, *right, visited),
+            ) {
+                match op {
+                    BinaryOp::EqEq => Some(left == right),
+                    BinaryOp::BangEq => Some(left != right),
+                    _ => None,
+                }
+            } else {
+                let left = guard_literal_int_expr(module, resolution, *left, visited)?;
+                let right = guard_literal_int_expr(module, resolution, *right, visited)?;
+                match op {
+                    BinaryOp::EqEq => Some(left == right),
+                    BinaryOp::BangEq => Some(left != right),
+                    BinaryOp::Gt => Some(left > right),
+                    BinaryOp::GtEq => Some(left >= right),
+                    BinaryOp::Lt => Some(left < right),
+                    BinaryOp::LtEq => Some(left <= right),
+                    _ => None,
+                }
             }
         }
         hir::ExprKind::Name(_) => resolution
@@ -4769,6 +4925,29 @@ fn guard_literal_bool_expr(
             .and_then(|tail| guard_literal_bool_expr(module, resolution, tail, visited)),
         hir::ExprKind::Question(inner) => {
             guard_literal_bool_expr(module, resolution, *inner, visited)
+        }
+        _ => None,
+    }
+}
+
+fn guard_literal_int_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    expr_id: hir::ExprId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<i64> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Integer(value) => ql_ast::parse_i64_literal(value),
+        hir::ExprKind::Name(_) => resolution
+            .expr_resolution(expr_id)
+            .and_then(|resolution| local_item_for_value_resolution(module, resolution))
+            .and_then(|item_id| guard_literal_int_item(module, resolution, item_id, visited)),
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => module
+            .block(*block_id)
+            .tail
+            .and_then(|tail| guard_literal_int_expr(module, resolution, tail, visited)),
+        hir::ExprKind::Question(inner) => {
+            guard_literal_int_expr(module, resolution, *inner, visited)
         }
         _ => None,
     }
@@ -4787,6 +4966,27 @@ fn guard_literal_bool_item(
     let result = match &module.item(item_id).kind {
         ItemKind::Const(global) => {
             guard_literal_bool_expr(module, resolution, global.value, visited)
+        }
+        _ => None,
+    };
+
+    visited.remove(&item_id);
+    result
+}
+
+fn guard_literal_int_item(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    item_id: ItemId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<i64> {
+    if !visited.insert(item_id) {
+        return None;
+    }
+
+    let result = match &module.item(item_id).kind {
+        ItemKind::Const(global) => {
+            guard_literal_int_expr(module, resolution, global.value, visited)
         }
         _ => None,
     };

@@ -523,6 +523,40 @@ fn choose(flag: Bool) -> Int {
 }
 
 #[test]
+fn accepts_bool_matches_with_const_int_comparison_guards_as_exhaustive_for_function_returns() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use LIMIT as TOP
+
+const LIMIT: Int = 2
+const BASE: Int = 1
+
+fn choose(flag: Bool) -> Int {
+    match flag {
+        true if TOP > BASE => {
+            return 1
+        }
+        false if BASE == 1 => {
+            return 0
+        }
+        other if LIMIT != BASE => {
+            if other {
+                return 2
+            }
+            return 3
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_guarded_catch_all_matches_with_literal_true_guards_as_exhaustive() {
     let diagnostics = diagnostic_messages(
         r#"

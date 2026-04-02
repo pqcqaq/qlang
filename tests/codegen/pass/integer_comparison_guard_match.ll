@@ -3,44 +3,42 @@
 source_filename = "integer_comparison_guard_match.ql"
 target triple = "x86_64-pc-windows-msvc"
 
-define i64 @ql_0_main() {
+define i64 @ql_1_main() {
 entry:
   %l0__return = alloca i64
   %l1_value = alloca i64
-  %l2_enabled = alloca i1
-  %l3__t0 = alloca i64
-  %l4__t1 = alloca i64
+  %l2__t0 = alloca i64
+  %l3__t1 = alloca i64
   br label %bb0
 bb0:
-  store i64 1, ptr %l1_value
-  store i1 false, ptr %l2_enabled
+  store i64 2, ptr %l1_value
   %t0 = load i64, ptr %l1_value
-  store i64 %t0, ptr %l4__t1
-  %t1 = load i64, ptr %l4__t1
-  %t2 = icmp eq i64 %t1, 1
+  store i64 %t0, ptr %l3__t1
+  %t1 = load i64, ptr %l3__t1
+  %t2 = icmp eq i64 %t1, 2
   br i1 %t2, label %bb0_match_guard0, label %bb4
 bb0_match_guard0:
-  %t3 = load i1, ptr %l2_enabled
-  %t4 = icmp ne i1 %t3, true
+  %t3 = load i64, ptr %l1_value
+  %t4 = icmp sgt i64 %t3, 1
   br i1 %t4, label %bb3, label %bb4
 bb1:
   %t5 = load i64, ptr %l0__return
   ret i64 %t5
 bb2:
-  %t6 = load i64, ptr %l3__t0
+  %t6 = load i64, ptr %l2__t0
   store i64 %t6, ptr %l0__return
   br label %bb1
 bb3:
-  store i64 10, ptr %l3__t0
+  store i64 20, ptr %l2__t0
   br label %bb2
 bb4:
-  store i64 0, ptr %l3__t0
+  store i64 0, ptr %l2__t0
   br label %bb2
 }
 
 define i32 @main() {
 entry:
-  %entry_ret = call i64 @ql_0_main()
+  %entry_ret = call i64 @ql_1_main()
   %entry_exit = trunc i64 %entry_ret to i32
   ret i32 %entry_exit
 }
