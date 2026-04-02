@@ -10084,6 +10084,53 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_projected_guard_const_arithmetic_indices() {
+        let dir = TestDir::new("ql-driver-llvm-ir-projected-guard-const-arithmetic-indices");
+        let source = dir.write(
+            "projected_guard_const_arithmetic_indices.ql",
+            r#"
+const BASE: Int = 1
+
+struct State {
+    pair: (Int, Int, Int),
+    values: [Int; 3],
+}
+
+fn main() -> Int {
+    let value = 3
+    let state = State {
+        pair: (1, 2, 4),
+        values: [1, 2, 4],
+    }
+    return match value {
+        3 if state.pair[BASE + 1] == state.values[BASE + 1] => 30,
+        _ => 0,
+    }
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/projected_guard_const_arithmetic_indices.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with projected guard const arithmetic indices should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_integer_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-integer-match");
         let source = dir.write(

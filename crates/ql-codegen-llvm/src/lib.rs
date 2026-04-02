@@ -5429,6 +5429,16 @@ fn guard_expr_index_operand_with_ty(
     arm_pattern: Option<hir::PatternId>,
     expr_id: hir::ExprId,
 ) -> Option<(Operand, Ty)> {
+    if let Some(value) = guard_literal_int(module, resolution, expr_id) {
+        if value < 0 {
+            return None;
+        }
+        return Some((
+            Operand::Constant(Constant::Integer(value.to_string())),
+            Ty::Builtin(BuiltinType::Int),
+        ));
+    }
+
     match &module.expr(expr_id).kind {
         hir::ExprKind::Integer(value) => Some((
             Operand::Constant(Constant::Integer(value.clone())),
@@ -7803,6 +7813,37 @@ fn main() -> Int {
         assert!(rendered.contains("icmp eq i64 %t1, 2"));
         assert!(rendered.matches("add i64").count() >= 2);
         assert!(rendered.matches("icmp eq i64").count() >= 2);
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_projected_guard_with_folded_const_arithmetic_indices() {
+        let rendered = emit_with_mode(
+            r#"
+const BASE: Int = 1
+
+struct State {
+    pair: (Int, Int, Int),
+    values: [Int; 3],
+}
+
+fn main() -> Int {
+    let value = 3
+    let state = State {
+        pair: (1, 2, 4),
+        values: [1, 2, 4],
+    }
+    return match value {
+        3 if state.pair[BASE + 1] == state.values[BASE + 1] => 30,
+        _ => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("icmp eq i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
