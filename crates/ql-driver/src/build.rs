@@ -9826,6 +9826,46 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_logical_bool_guard_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-logical-bool-guard-match");
+        let source = dir.write(
+            "logical_bool_guard_match.ql",
+            r#"
+fn main() -> Int {
+    let flag = true
+    let enabled = true
+    let blocked = false
+    return match flag {
+        true if enabled && !blocked => 10,
+        true if blocked || !enabled => 20,
+        true => 30,
+        false => 0,
+    }
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/logical_bool_guard_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with logical bool-guard match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("bb0_match_guard1:"));
+        assert!(rendered.contains(" and i1 "));
+        assert!(rendered.contains(" or i1 "));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_integer_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-integer-match");
         let source = dir.write(

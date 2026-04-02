@@ -4379,47 +4379,73 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
     ) -> LoweredValue {
         match &self.emitter.input.hir.expr(expr_id).kind {
-            hir::ExprKind::Binary { left, op, right } => {
-                let left = self.render_guard_scalar_expr(output, *left, span);
-                let right = self.render_guard_scalar_expr(output, *right, span);
-                assert_eq!(
-                    left.ty, right.ty,
-                    "prepared bool guard lowering at {span:?} should only compare same-typed supported guard operands"
-                );
-                let compare = self.fresh_temp();
-                let opcode = match &left.ty {
-                    Ty::Builtin(BuiltinType::Bool) => match op {
-                        BinaryOp::EqEq | BinaryOp::BangEq => compare_opcode(*op, &left.ty),
-                        _ => panic!(
-                            "prepared bool guard lowering at {span:?} should only render supported bool guard comparisons"
-                        ),
-                    },
-                    Ty::Builtin(BuiltinType::Int) => match op {
-                        BinaryOp::EqEq
-                        | BinaryOp::BangEq
-                        | BinaryOp::Gt
-                        | BinaryOp::GtEq
-                        | BinaryOp::Lt
-                        | BinaryOp::LtEq => compare_opcode(*op, &left.ty),
-                        _ => panic!(
-                            "prepared bool guard lowering at {span:?} should only render supported integer guard comparisons"
-                        ),
-                    },
-                    _ => panic!(
-                        "prepared bool guard lowering at {span:?} should only render supported scalar guard comparisons"
-                    ),
-                };
-                let _ = writeln!(
-                    output,
-                    "  {compare} = {opcode} {} {}, {}",
-                    left.llvm_ty, left.repr, right.repr
-                );
-                LoweredValue {
-                    ty: Ty::Builtin(BuiltinType::Bool),
-                    llvm_ty: "i1".to_owned(),
-                    repr: compare,
+            hir::ExprKind::Binary { left, op, right } => match op {
+                BinaryOp::AndAnd | BinaryOp::OrOr => {
+                    let left = self.render_bool_guard_expr(output, *left, span);
+                    let right = self.render_bool_guard_expr(output, *right, span);
+                    assert!(
+                        left.ty.is_bool() && right.ty.is_bool(),
+                        "prepared bool guard lowering at {span:?} should only combine bool guard expressions with &&/||"
+                    );
+                    let temp = self.fresh_temp();
+                    let opcode = match op {
+                        BinaryOp::AndAnd => "and",
+                        BinaryOp::OrOr => "or",
+                        _ => unreachable!("logical guard rendering should only handle &&/||"),
+                    };
+                    let _ = writeln!(
+                        output,
+                        "  {temp} = {opcode} i1 {}, {}",
+                        left.repr, right.repr
+                    );
+                    LoweredValue {
+                        ty: Ty::Builtin(BuiltinType::Bool),
+                        llvm_ty: "i1".to_owned(),
+                        repr: temp,
+                    }
                 }
-            }
+                _ => {
+                    let left = self.render_guard_scalar_expr(output, *left, span);
+                    let right = self.render_guard_scalar_expr(output, *right, span);
+                    assert_eq!(
+                        left.ty, right.ty,
+                        "prepared bool guard lowering at {span:?} should only compare same-typed supported guard operands"
+                    );
+                    let compare = self.fresh_temp();
+                    let opcode = match &left.ty {
+                        Ty::Builtin(BuiltinType::Bool) => match op {
+                            BinaryOp::EqEq | BinaryOp::BangEq => compare_opcode(*op, &left.ty),
+                            _ => panic!(
+                                "prepared bool guard lowering at {span:?} should only render supported bool guard comparisons"
+                            ),
+                        },
+                        Ty::Builtin(BuiltinType::Int) => match op {
+                            BinaryOp::EqEq
+                            | BinaryOp::BangEq
+                            | BinaryOp::Gt
+                            | BinaryOp::GtEq
+                            | BinaryOp::Lt
+                            | BinaryOp::LtEq => compare_opcode(*op, &left.ty),
+                            _ => panic!(
+                                "prepared bool guard lowering at {span:?} should only render supported integer guard comparisons"
+                            ),
+                        },
+                        _ => panic!(
+                            "prepared bool guard lowering at {span:?} should only render supported scalar guard comparisons"
+                        ),
+                    };
+                    let _ = writeln!(
+                        output,
+                        "  {compare} = {opcode} {} {}, {}",
+                        left.llvm_ty, left.repr, right.repr
+                    );
+                    LoweredValue {
+                        ty: Ty::Builtin(BuiltinType::Bool),
+                        llvm_ty: "i1".to_owned(),
+                        repr: compare,
+                    }
+                }
+            },
             _ => {
                 let rendered = self.render_guard_scalar_expr(output, expr_id, span);
                 assert!(
@@ -4438,6 +4464,25 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
     ) -> LoweredValue {
         match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Binary {
+                op:
+                    BinaryOp::AndAnd
+                    | BinaryOp::OrOr
+                    | BinaryOp::EqEq
+                    | BinaryOp::BangEq
+                    | BinaryOp::Gt
+                    | BinaryOp::GtEq
+                    | BinaryOp::Lt
+                    | BinaryOp::LtEq,
+                ..
+            } => {
+                let rendered = self.render_bool_guard_expr(output, expr_id, span);
+                assert!(
+                    rendered.ty.is_bool(),
+                    "prepared bool guard lowering at {span:?} should only render bool-valued binary guard expressions"
+                );
+                rendered
+            }
             hir::ExprKind::Unary {
                 op: UnaryOp::Not,
                 expr,
@@ -4860,6 +4905,19 @@ fn runtime_bool_guard_supported(
         } => {
             runtime_bool_guard_supported(module, resolution, body, local_types, arm_pattern, *expr)
         }
+        hir::ExprKind::Binary { left, op, right }
+            if matches!(op, BinaryOp::AndAnd | BinaryOp::OrOr) =>
+        {
+            runtime_bool_guard_supported(module, resolution, body, local_types, arm_pattern, *left)
+                && runtime_bool_guard_supported(
+                    module,
+                    resolution,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    *right,
+                )
+        }
         hir::ExprKind::Binary { left, op, right } => {
             let Some(left_kind) = supported_guard_scalar_expr(
                 module,
@@ -4914,6 +4972,26 @@ fn supported_guard_scalar_expr(
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(_) => Some(GuardScalarKind::Bool),
         hir::ExprKind::Integer(_) => Some(GuardScalarKind::Int),
+        hir::ExprKind::Binary {
+            op:
+                BinaryOp::AndAnd
+                | BinaryOp::OrOr
+                | BinaryOp::EqEq
+                | BinaryOp::BangEq
+                | BinaryOp::Gt
+                | BinaryOp::GtEq
+                | BinaryOp::Lt
+                | BinaryOp::LtEq,
+            ..
+        } => runtime_bool_guard_supported(
+            module,
+            resolution,
+            body,
+            local_types,
+            arm_pattern,
+            expr_id,
+        )
+        .then_some(GuardScalarKind::Bool),
         hir::ExprKind::Unary {
             op: UnaryOp::Not,
             expr,
@@ -7213,6 +7291,32 @@ fn main() -> Int {
         assert!(rendered.contains("br i1"));
         assert!(!rendered.contains(" and i1 "));
         assert!(!rendered.contains(" or i1 "));
+    }
+
+    #[test]
+    fn emits_logical_bool_guard_match_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+fn main() -> Int {
+    let flag = true
+    let enabled = true
+    let blocked = false
+    return match flag {
+        true if enabled && !blocked => 10,
+        true if blocked || !enabled => 20,
+        true => 30,
+        false => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("bb0_match_guard1:"));
+        assert!(rendered.contains(" and i1 "));
+        assert!(rendered.contains(" or i1 "));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
     #[test]
