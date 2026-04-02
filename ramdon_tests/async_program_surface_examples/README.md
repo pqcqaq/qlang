@@ -73,12 +73,13 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `72_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_chain_forward_spawn.ql`
 - `73_async_main_aliased_guard_refined_static_alias_backed_projected_root.ql`
 - `74_async_main_aliased_guard_refined_static_alias_backed_nested_repackage_spawn.ql`
+- `75_async_main_aliased_guard_refined_static_alias_backed_forwarded_nested_array_repackage_spawn.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these seventy-four examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these seventy-five examples with the real local toolchain and locks their exit codes.
 
 Expected exit codes:
 
@@ -153,6 +154,7 @@ Expected exit codes:
 - `72_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_chain_forward_spawn.ql` -> `140`
 - `73_async_main_aliased_guard_refined_static_alias_backed_projected_root.ql` -> `35`
 - `74_async_main_aliased_guard_refined_static_alias_backed_nested_repackage_spawn.ql` -> `42`
+- `75_async_main_aliased_guard_refined_static_alias_backed_forwarded_nested_array_repackage_spawn.ql` -> `58`
 
 Try one file directly:
 
