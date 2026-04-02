@@ -184,9 +184,15 @@ struct SupportedIntegerMatchArm {
 
 #[derive(Clone, Debug)]
 struct SupportedGuardedIntegerMatchArm {
-    value: String,
+    pattern: SupportedIntegerMatchPattern,
     guard: SupportedBoolGuard,
     target: mir::BasicBlockId,
+}
+
+#[derive(Clone, Debug)]
+enum SupportedIntegerMatchPattern {
+    Literal(String),
+    CatchAll,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -891,19 +897,24 @@ impl<'a> ModuleEmitter<'a> {
                                 match pattern_kind(self.input.hir, arm.pattern) {
                                     PatternKind::Integer(value) => {
                                         ordered_arms.push(SupportedGuardedIntegerMatchArm {
-                                            value: value.clone(),
+                                            pattern: SupportedIntegerMatchPattern::Literal(
+                                                value.clone(),
+                                            ),
                                             guard,
                                             target: arm.target,
                                         });
                                     }
                                     PatternKind::Binding(_) | PatternKind::Wildcard => {
-                                        if !matches!(guard, SupportedBoolGuard::Always) {
-                                            supported = false;
+                                        if matches!(guard, SupportedBoolGuard::Always) {
+                                            fallback_target = arm.target;
+                                            guaranteed_fallback = true;
                                             break;
                                         }
-                                        fallback_target = arm.target;
-                                        guaranteed_fallback = true;
-                                        break;
+                                        ordered_arms.push(SupportedGuardedIntegerMatchArm {
+                                            pattern: SupportedIntegerMatchPattern::CatchAll,
+                                            guard,
+                                            target: arm.target,
+                                        });
                                     }
                                     _ => {
                                         supported = false;
@@ -925,7 +936,12 @@ impl<'a> ModuleEmitter<'a> {
                                 } else {
                                     lowered_arms.extend(ordered_arms.into_iter().map(|arm| {
                                         SupportedIntegerMatchArm {
-                                            value: arm.value,
+                                            value: match arm.pattern {
+                                                SupportedIntegerMatchPattern::Literal(value) => value,
+                                                SupportedIntegerMatchPattern::CatchAll => unreachable!(
+                                                    "non-dynamic integer match lowering should stop at the first unguarded catch-all arm"
+                                                ),
+                                            },
                                             target: arm.target,
                                         }
                                     }));
@@ -3375,46 +3391,66 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                                     integer_match_dispatch_block_name(block_id, index)
                                 );
                             }
-                            let compare = self.fresh_temp();
-                            let _ = writeln!(
-                                output,
-                                "  {compare} = {opcode} {} {}, {}",
-                                rendered.llvm_ty, rendered.repr, arm.value
-                            );
                             let false_target = if index + 1 == arms.len() {
                                 format!("bb{}", fallback_target.index())
                             } else {
                                 integer_match_dispatch_block_name(block_id, index + 1)
                             };
+                            let guard_target = match arm.guard {
+                                SupportedBoolGuard::Always => format!("bb{}", arm.target.index()),
+                                SupportedBoolGuard::Dynamic(_) => {
+                                    integer_match_guard_block_name(block_id, index)
+                                }
+                            };
 
-                            match arm.guard {
-                                SupportedBoolGuard::Always => {
+                            match &arm.pattern {
+                                SupportedIntegerMatchPattern::Literal(value) => {
+                                    let compare = self.fresh_temp();
                                     let _ = writeln!(
                                         output,
-                                        "  br i1 {compare}, label %bb{}, label %{false_target}",
-                                        arm.target.index()
+                                        "  {compare} = {opcode} {} {}, {}",
+                                        rendered.llvm_ty, rendered.repr, value
                                     );
+                                    match arm.guard {
+                                        SupportedBoolGuard::Always => {
+                                            let _ = writeln!(
+                                                output,
+                                                "  br i1 {compare}, label %bb{}, label %{false_target}",
+                                                arm.target.index()
+                                            );
+                                        }
+                                        SupportedBoolGuard::Dynamic(_) => {
+                                            let _ = writeln!(
+                                                output,
+                                                "  br i1 {compare}, label %{guard_target}, label %{false_target}"
+                                            );
+                                        }
+                                    }
                                 }
-                                SupportedBoolGuard::Dynamic(expr_id) => {
-                                    let guard_target =
-                                        integer_match_guard_block_name(block_id, index);
-                                    let _ = writeln!(
-                                        output,
-                                        "  br i1 {compare}, label %{guard_target}, label %{false_target}"
-                                    );
-                                    let _ = writeln!(output, "{guard_target}:");
-                                    let condition = self.render_bool_guard_expr(
-                                        output,
-                                        expr_id,
-                                        terminator.span,
-                                    );
-                                    let _ = writeln!(
-                                        output,
-                                        "  br i1 {}, label %bb{}, label %{false_target}",
-                                        condition.repr,
-                                        arm.target.index()
-                                    );
-                                }
+                                SupportedIntegerMatchPattern::CatchAll => match arm.guard {
+                                    SupportedBoolGuard::Always => {
+                                        let _ = writeln!(
+                                            output,
+                                            "  br label %bb{}",
+                                            arm.target.index()
+                                        );
+                                    }
+                                    SupportedBoolGuard::Dynamic(_) => {
+                                        let _ = writeln!(output, "  br label %{guard_target}");
+                                    }
+                                },
+                            }
+
+                            if let SupportedBoolGuard::Dynamic(expr_id) = arm.guard {
+                                let _ = writeln!(output, "{guard_target}:");
+                                let condition =
+                                    self.render_bool_guard_expr(output, expr_id, terminator.span);
+                                let _ = writeln!(
+                                    output,
+                                    "  br i1 {}, label %bb{}, label %{false_target}",
+                                    condition.repr,
+                                    arm.target.index()
+                                );
                             }
                         }
                     }

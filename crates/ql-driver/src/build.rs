@@ -9899,6 +9899,44 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_integer_dynamic_guard_catch_all_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-integer-dynamic-guard-catch-all-match");
+        let source = dir.write(
+            "integer_dynamic_guard_catch_all_match.ql",
+            r#"
+fn main() -> Int {
+    let value = 3
+    let enabled = true
+    return match value {
+        1 => 10,
+        other if enabled => other,
+        _ => 0,
+    }
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/integer_dynamic_guard_catch_all_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with integer dynamic guarded catch-all match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("bb0_match_guard1:"));
+        assert!(rendered.contains("_other = alloca i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_integer_match_binding() {
         let dir = TestDir::new("ql-driver-llvm-ir-integer-match-binding");
         let source = dir.write(

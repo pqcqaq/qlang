@@ -24,7 +24,7 @@
   - `Int` scrutinee：unguarded integer literal + `_` 或单名 binding catch-all arm 会 lower 成稳定 compare-chain。
 - 上述两条子集现在都额外支持 literal `if true` / `if false` guard，以及 same-file `const`-backed `Bool` guard 和其 same-file `use ... as ...` 别名；`if false` arm 会在 lowering 时被裁剪，`if true` arm 会按普通 arm 处理。
 - `Bool` scrutinee 子集现在还额外支持 direct same-scope `Bool` local / parameter name guard，但当前只开放在后续 arm 仍提供 guaranteed fallback coverage 的 ordered 子集内。
-- `Int` scrutinee 子集现在还额外支持 integer-literal arm 上的 direct same-scope `Bool` local / parameter name guard，但当前只开放在后续存在 unguarded catch-all fallback 的 ordered 子集内。
+- `Int` scrutinee 子集现在还额外支持 integer-literal arm 与 guarded catch-all arm 上的 direct same-scope `Bool` local / parameter name guard，但当前只开放在后续存在 unguarded catch-all fallback 的 ordered 子集内。
 - async public build 当前已开放两类受控子集：
   - library build 子集：`staticlib` 与最小 async `dylib`，要求公开导出面仍保持同步 `extern "c"` C ABI。
   - program build 子集：`BuildEmit::LlvmIr`、`BuildEmit::Object`、`BuildEmit::Executable` 下的最小 `async fn main`。
