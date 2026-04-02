@@ -86,12 +86,17 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `85_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queued_spawn.ql`
 - `86_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_spawn.ql`
 - `87_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_alias_spawn.ql`
+- `88_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_chain_spawn.ql`
+- `89_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_alias_spawn.ql`
+- `90_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_chain_spawn.ql`
+- `91_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_forward_spawn.ql`
+- `92_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_inline_forward_spawn.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these eighty-seven examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these ninety-two examples with the real local toolchain and locks their exit codes.
 
 Expected exit codes:
 
@@ -179,6 +184,11 @@ Expected exit codes:
 - `85_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queued_spawn.ql` -> `88`
 - `86_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_spawn.ql` -> `90`
 - `87_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_alias_spawn.ql` -> `92`
+- `88_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_chain_spawn.ql` -> `94`
+- `89_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_alias_spawn.ql` -> `96`
+- `90_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_chain_spawn.ql` -> `98`
+- `91_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_forward_spawn.ql` -> `100`
+- `92_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_local_inline_forward_spawn.ql` -> `102`
 
 Try one file directly:
 

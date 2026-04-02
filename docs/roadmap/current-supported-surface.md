@@ -62,8 +62,8 @@
 ## 当前可运行的真实样例
 
 - `ramdon_tests/executable_examples/04_sync_static_item_values.ql` 现已把 same-file foldable `const` / `static` item value 及其 same-file `use ... as ...` alias 的普通表达式 / bool 条件 lowering 收口到真实 `ql build --emit exe` sync 样例。
-- `ramdon_tests/async_program_surface_examples/` 当前收录 87 个 async executable 样例，覆盖当前 `BuildEmit::Executable` program surface。
-- `crates/ql-cli/tests/executable_examples.rs` 会在真实本地 toolchain 上构建并运行这 87 个 async 样例，并锁定退出码；同一个 harness 也会继续运行 sync executable examples，其中已包含上面的 `04_sync_static_item_values.ql`。
+- `ramdon_tests/async_program_surface_examples/` 当前收录 92 个 async executable 样例，覆盖当前 `BuildEmit::Executable` program surface。
+- `crates/ql-cli/tests/executable_examples.rs` 会在真实本地 toolchain 上构建并运行这 92 个 async 样例，并锁定退出码；同一个 harness 也会继续运行 sync executable examples，其中已包含上面的 `04_sync_static_item_values.ql`。
 - 这些样例不只验证“能产出 IR”，也验证当前最小 async executable 子集已经能真实链接、运行，并复用现有 task-handle / aggregate payload / fixed-array `for await` lowering。
 
 ## 当前互操作与工具边界
