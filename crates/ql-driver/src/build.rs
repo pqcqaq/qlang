@@ -5778,6 +5778,69 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_object_with_async_main_aliased_projected_root_static_alias_backed_dynamic_task_handle_reinit()
+     {
+        let dir = TestDir::new(
+            "ql-driver-async-object-aliased-projected-root-static-alias-backed-dynamic-task-handle-reinit",
+        );
+        let source = dir.write(
+            "async_main_aliased_projected_root_static_alias_backed_dynamic_task_handle_reinit.ql",
+            r#"
+use SLOT as INDEX_ALIAS
+
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+static SLOT: Slot = Slot { value: 0 }
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var pending = Pending {
+        tasks: [worker(6), worker(9)],
+    }
+    let alias = pending.tasks
+    let first = await alias[INDEX_ALIAS.value]
+    pending.tasks[0] = worker(first + 2)
+    let second = await alias[INDEX_ALIAS.value]
+    let tail = await pending.tasks[1]
+    return second + tail
+}
+"#,
+        );
+        let output = dir.path().join(format!(
+            "artifacts/async_main_aliased_projected_root_static_alias_backed_dynamic_task_handle_reinit.{}",
+            if cfg!(windows) { "obj" } else { "o" }
+        ));
+        let options = BuildOptions {
+            emit: BuildEmit::Object,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "object build with async main aliased projected-root static alias-backed dynamic task-handle reinit should succeed",
+        );
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated object placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-object");
+    }
+
+    #[test]
     fn build_file_writes_object_with_async_main_aliased_guard_refined_projected_root_dynamic_task_handle_reinit()
      {
         let dir = TestDir::new(

@@ -3352,6 +3352,28 @@ fn projected_dynamic_task_handle_codegen_cases_match() {
 }
 
 #[test]
+fn static_alias_backed_projected_root_dynamic_task_handle_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "async_program_main_aliased_projected_root_static_alias_backed_dynamic_task_handle_reinit_exe",
+        source_relative: "fixtures/codegen/pass/async_program_main_aliased_projected_root_static_alias_backed_dynamic_task_handle_reinit.ql",
+        emit: "exe",
+        expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!(
+            "static alias-backed projected-root dynamic task-handle codegen regression:\n\n{message}"
+        );
+    }
+}
+
+#[test]
 fn guarded_cleanup_dynamic_task_handle_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = FailCase {
@@ -3526,6 +3548,17 @@ fn projected_dynamic_task_handle_pass_cases() -> Vec<PassCase> {
         PassCase {
             name: "async_program_main_aliased_projected_root_const_backed_dynamic_task_handle_reinit_exe",
             source_relative: "fixtures/codegen/pass/async_program_main_aliased_projected_root_const_backed_dynamic_task_handle_reinit.ql",
+            emit: "exe",
+            expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
+            mock_compiler: true,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
+            name: "async_program_main_aliased_projected_root_static_alias_backed_dynamic_task_handle_reinit_exe",
+            source_relative: "fixtures/codegen/pass/async_program_main_aliased_projected_root_static_alias_backed_dynamic_task_handle_reinit.ql",
             emit: "exe",
             expected_relative: "tests/codegen/pass/minimal_build.exe.txt",
             mock_compiler: true,
