@@ -4673,22 +4673,43 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     | Some(ValueResolution::SelfValue)
                     | Some(ValueResolution::Function(_))
                     | None => {
-                        let (place, ty) = guard_expr_place_with_ty(
+                        let rendered = if let Some((place, ty)) = guard_expr_place_with_ty(
                             self.emitter.input.hir,
                             self.emitter.input.resolution,
                             self.body,
                             &self.prepared.local_types,
                             None,
                             expr_id,
-                        )
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "prepared bool guard lowering at {span:?} should only render resolved scalar guard places"
-                            )
-                        });
-                        let rendered = self.render_operand(output, &Operand::Place(place), span);
+                        ) {
+                            let rendered =
+                                self.render_operand(output, &Operand::Place(place), span);
+                            assert!(
+                                ty.is_bool() || ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                                "prepared bool guard lowering at {span:?} should only render bool or Int guard places"
+                            );
+                            rendered
+                        } else {
+                            let (ptr, ty) = self
+                                .render_guard_projection_pointer(
+                                    output,
+                                    expr_id,
+                                    span,
+                                    guard_binding,
+                                )
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "prepared bool guard lowering at {span:?} should only render resolved scalar guard places"
+                                    )
+                                });
+                            assert!(
+                                ty.is_bool() || ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                                "prepared bool guard lowering at {span:?} should only render bool or Int guard places"
+                            );
+                            self.render_loaded_pointer_value(output, ptr, ty, span)
+                        };
                         assert!(
-                            ty.is_bool() || ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                            rendered.ty.is_bool()
+                                || rendered.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
                             "prepared bool guard lowering at {span:?} should only render bool or Int guard places"
                         );
                         rendered
@@ -4717,22 +4738,43 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         repr: value.to_string(),
                     }
                 } else {
-                    let (place, ty) = guard_expr_place_with_ty(
+                    let rendered = if let Some((place, ty)) = guard_expr_place_with_ty(
                         self.emitter.input.hir,
                         self.emitter.input.resolution,
                         self.body,
                         &self.prepared.local_types,
                         None,
                         expr_id,
-                    )
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "prepared bool guard lowering at {span:?} should only render supported scalar projection guards"
-                        )
-                    });
-                    let rendered = self.render_operand(output, &Operand::Place(place), span);
+                    ) {
+                        let rendered =
+                            self.render_operand(output, &Operand::Place(place), span);
+                        assert!(
+                            ty.is_bool() || ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                            "prepared bool guard lowering at {span:?} should only render bool or Int projection guards"
+                        );
+                        rendered
+                    } else {
+                        let (ptr, ty) = self
+                            .render_guard_projection_pointer(
+                                output,
+                                expr_id,
+                                span,
+                                guard_binding,
+                            )
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "prepared bool guard lowering at {span:?} should only render supported scalar projection guards"
+                                )
+                            });
+                        assert!(
+                            ty.is_bool() || ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                            "prepared bool guard lowering at {span:?} should only render bool or Int projection guards"
+                        );
+                        self.render_loaded_pointer_value(output, ptr, ty, span)
+                    };
                     assert!(
-                        ty.is_bool() || ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                        rendered.ty.is_bool()
+                            || rendered.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
                         "prepared bool guard lowering at {span:?} should only render bool or Int projection guards"
                     );
                     rendered
@@ -4758,6 +4800,152 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             _ => panic!(
                 "prepared bool guard lowering at {span:?} should only render supported scalar guard expressions"
             ),
+        }
+    }
+
+    fn render_loaded_pointer_value(
+        &mut self,
+        output: &mut String,
+        ptr: String,
+        ty: Ty,
+        span: Span,
+    ) -> LoweredValue {
+        if is_void_ty(&ty) {
+            return LoweredValue {
+                ty,
+                llvm_ty: "void".to_owned(),
+                repr: "void".to_owned(),
+            };
+        }
+
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&ty, span, "operand type")
+            .expect("prepared operand types should already be supported");
+        let temp = self.fresh_temp();
+        let _ = writeln!(output, "  {temp} = load {llvm_ty}, ptr {ptr}");
+        LoweredValue {
+            ty,
+            llvm_ty,
+            repr: temp,
+        }
+    }
+
+    fn render_guard_projection_pointer(
+        &mut self,
+        output: &mut String,
+        expr_id: hir::ExprId,
+        span: Span,
+        guard_binding: Option<&GuardBindingValue>,
+    ) -> Option<(String, Ty)> {
+        if let Some((place, _)) = guard_expr_place_with_ty(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            self.body,
+            &self.prepared.local_types,
+            None,
+            expr_id,
+        ) {
+            return Some(self.render_place_pointer(output, &place, span));
+        }
+
+        match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Member { object, field, .. } => {
+                let (current_ptr, current_ty) =
+                    self.render_guard_projection_pointer(output, *object, span, guard_binding)?;
+                let aggregate_llvm_ty = self
+                    .emitter
+                    .lower_llvm_type(&current_ty, span, "projection base type")
+                    .ok()?;
+                let step = self
+                    .emitter
+                    .resolve_projection_step(
+                        &current_ty,
+                        &mir::ProjectionElem::Field(field.clone()),
+                        span,
+                    )
+                    .ok()?;
+                let ResolvedProjectionStep::Field { index, ty } = step else {
+                    return None;
+                };
+                let next = self.fresh_temp();
+                let _ = writeln!(
+                    output,
+                    "  {next} = getelementptr inbounds {aggregate_llvm_ty}, ptr {current_ptr}, i32 0, i32 {index}"
+                );
+                Some((next, ty))
+            }
+            hir::ExprKind::Bracket { target, items } => {
+                let (mut current_ptr, mut current_ty) =
+                    self.render_guard_projection_pointer(output, *target, span, guard_binding)?;
+                for item in items {
+                    let aggregate_llvm_ty = self
+                        .emitter
+                        .lower_llvm_type(&current_ty, span, "projection base type")
+                        .ok()?;
+                    match &current_ty {
+                        Ty::Array { element, .. } => {
+                            let rendered_index =
+                                self.render_guard_scalar_expr(output, *item, span, guard_binding);
+                            assert!(
+                                rendered_index
+                                    .ty
+                                    .compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                                "prepared array index at {span:?} should have type Int"
+                            );
+                            let next = self.fresh_temp();
+                            let _ = writeln!(
+                                output,
+                                "  {next} = getelementptr inbounds {aggregate_llvm_ty}, ptr {current_ptr}, i64 0, {} {}",
+                                rendered_index.llvm_ty, rendered_index.repr
+                            );
+                            current_ptr = next;
+                            current_ty = element.as_ref().clone();
+                        }
+                        Ty::Tuple(_) => {
+                            let index = guard_literal_int(
+                                self.emitter.input.hir,
+                                self.emitter.input.resolution,
+                                *item,
+                            )?;
+                            if index < 0 {
+                                return None;
+                            }
+                            let step = self
+                                .emitter
+                                .resolve_projection_step(
+                                    &current_ty,
+                                    &mir::ProjectionElem::Index(Box::new(Operand::Constant(
+                                        Constant::Integer(index.to_string()),
+                                    ))),
+                                    span,
+                                )
+                                .ok()?;
+                            let ResolvedProjectionStep::TupleIndex { index, ty } = step else {
+                                return None;
+                            };
+                            let next = self.fresh_temp();
+                            let _ = writeln!(
+                                output,
+                                "  {next} = getelementptr inbounds {aggregate_llvm_ty}, ptr {current_ptr}, i32 0, i32 {index}"
+                            );
+                            current_ptr = next;
+                            current_ty = ty;
+                        }
+                        _ => return None,
+                    }
+                }
+                Some((current_ptr, current_ty))
+            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                self.emitter.input.hir.block(*block_id).tail.and_then(|tail| {
+                    self.render_guard_projection_pointer(output, tail, span, guard_binding)
+                })
+            }
+            hir::ExprKind::Question(inner) => {
+                self.render_guard_projection_pointer(output, *inner, span, guard_binding)
+            }
+            _ => None,
         }
     }
 
@@ -4792,17 +4980,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             };
         }
 
-        let llvm_ty = self
-            .emitter
-            .lower_llvm_type(&ty, span, "operand type")
-            .expect("prepared operand types should already be supported");
-        let temp = self.fresh_temp();
-        let _ = writeln!(output, "  {temp} = load {llvm_ty}, ptr {ptr}");
-        LoweredValue {
-            ty,
-            llvm_ty,
-            repr: temp,
-        }
+        self.render_loaded_pointer_value(output, ptr, ty, span)
     }
 
     fn prepared_place_type(&self, place: &Place, span: Span) -> Option<Ty> {
@@ -5209,7 +5387,7 @@ fn supported_guard_scalar_expr(
             | Some(ValueResolution::Param(_))
             | Some(ValueResolution::SelfValue)
             | Some(ValueResolution::Function(_))
-            | None => guard_expr_place_with_ty(
+            | None => guard_expr_ty(
                 module,
                 resolution,
                 body,
@@ -5217,7 +5395,7 @@ fn supported_guard_scalar_expr(
                 Some(arm_pattern),
                 expr_id,
             )
-            .and_then(|(_, ty)| guard_scalar_kind_for_ty(&ty)),
+            .and_then(|ty| guard_scalar_kind_for_ty(&ty)),
         },
         hir::ExprKind::Member { .. } | hir::ExprKind::Bracket { .. } => {
             if guard_literal_bool(module, resolution, expr_id).is_some() {
@@ -5225,7 +5403,7 @@ fn supported_guard_scalar_expr(
             } else if guard_literal_int(module, resolution, expr_id).is_some() {
                 Some(GuardScalarKind::Int)
             } else {
-                guard_expr_place_with_ty(
+                guard_expr_ty(
                     module,
                     resolution,
                     body,
@@ -5233,7 +5411,7 @@ fn supported_guard_scalar_expr(
                     Some(arm_pattern),
                     expr_id,
                 )
-                .and_then(|(_, ty)| guard_scalar_kind_for_ty(&ty))
+                .and_then(|ty| guard_scalar_kind_for_ty(&ty))
             }
         }
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
@@ -5412,6 +5590,51 @@ fn guard_expr_place_with_ty(
     }
 }
 
+fn guard_expr_ty(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    arm_pattern: Option<hir::PatternId>,
+    expr_id: hir::ExprId,
+) -> Option<Ty> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Name(_) => {
+            guard_expr_place_root(module, resolution, body, local_types, arm_pattern, expr_id)
+                .map(|(_, ty)| ty)
+        }
+        hir::ExprKind::Member { object, field, .. } => {
+            let current_ty =
+                guard_expr_ty(module, resolution, body, local_types, arm_pattern, *object)?;
+            guard_field_projection_ty(module, resolution, &current_ty, field)
+        }
+        hir::ExprKind::Bracket { target, items } => {
+            let mut current_ty =
+                guard_expr_ty(module, resolution, body, local_types, arm_pattern, *target)?;
+            for item in items {
+                current_ty = guard_index_expr_projection_ty(
+                    module,
+                    resolution,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    &current_ty,
+                    *item,
+                )?;
+            }
+            Some(current_ty)
+        }
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => module
+            .block(*block_id)
+            .tail
+            .and_then(|tail| guard_expr_ty(module, resolution, body, local_types, arm_pattern, tail)),
+        hir::ExprKind::Question(inner) => {
+            guard_expr_ty(module, resolution, body, local_types, arm_pattern, *inner)
+        }
+        _ => None,
+    }
+}
+
 fn guard_expr_place_root(
     _module: &hir::Module,
     resolution: &ResolutionMap,
@@ -5439,6 +5662,39 @@ fn guard_expr_place_root(
         ValueResolution::Item(_) | ValueResolution::Import(_) | ValueResolution::Function(_) => {
             None
         }
+    }
+}
+
+fn guard_index_expr_projection_ty(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    arm_pattern: Option<hir::PatternId>,
+    current_ty: &Ty,
+    expr_id: hir::ExprId,
+) -> Option<Ty> {
+    match current_ty {
+        Ty::Array { element, .. } => {
+            let arm_pattern = arm_pattern?;
+            (supported_guard_scalar_expr(
+                module,
+                resolution,
+                body,
+                local_types,
+                arm_pattern,
+                expr_id,
+            ) == Some(GuardScalarKind::Int))
+            .then_some(element.as_ref().clone())
+        }
+        Ty::Tuple(items) => {
+            let index = guard_literal_int(module, resolution, expr_id)?;
+            if index < 0 {
+                return None;
+            }
+            items.get(index as usize).cloned()
+        }
+        _ => None,
     }
 }
 
@@ -7638,6 +7894,32 @@ fn main() -> Int {
             rendered.contains("getelementptr inbounds [3 x i64], ptr %l2_values, i64 0, i64 %")
         );
         assert!(rendered.contains("icmp slt i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_match_guard_runtime_index_expr_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+fn main() -> Int {
+    let values = [1, 3, 5]
+    let index = 0
+    let value = 0
+    return match value {
+        current if values[index + 1] == values[current + 1] => 10,
+        _ => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.matches("add i64").count() >= 2);
+        assert!(
+            rendered.contains("getelementptr inbounds [3 x i64], ptr %l2_values, i64 0, i64 %")
+        );
+        assert!(rendered.contains("icmp eq i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

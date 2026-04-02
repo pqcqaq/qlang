@@ -9867,6 +9867,48 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_match_guard_runtime_index_expr() {
+        let dir = TestDir::new("ql-driver-llvm-ir-match-guard-runtime-index-expr");
+        let source = dir.write(
+            "match_guard_runtime_index_expr.ql",
+            r#"
+fn main() -> Int {
+    let values = [1, 3, 5]
+    let index = 0
+    let value = 0
+    return match value {
+        current if values[index + 1] == values[current + 1] => 10,
+        _ => 0,
+    }
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/match_guard_runtime_index_expr.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with match-guard runtime index expr should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.matches("add i64").count() >= 2);
+        assert!(
+            rendered.contains("getelementptr inbounds [3 x i64], ptr %l2_values, i64 0, i64 %")
+        );
+        assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_logical_bool_guard_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-logical-bool-guard-match");
         let source = dir.write(
