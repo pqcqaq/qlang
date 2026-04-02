@@ -353,8 +353,9 @@ impl<'a> Checker<'a> {
                             ),
                         );
                     }
-                    self.check_expr(*iterable, None);
-                    self.bind_pattern(*pattern, &Ty::Unknown);
+                    let iterable_ty = self.check_expr(*iterable, None);
+                    let item_ty = self.iterable_item_ty(&iterable_ty);
+                    self.bind_pattern(*pattern, &item_ty);
                     self.loop_depth += 1;
                     self.check_block(*body);
                     self.loop_depth -= 1;
@@ -2246,6 +2247,13 @@ impl<'a> Checker<'a> {
             });
         }
         result_ty.unwrap_or(Ty::Unknown)
+    }
+
+    fn iterable_item_ty(&self, iterable_ty: &Ty) -> Ty {
+        match iterable_ty {
+            Ty::Array { element, .. } => element.as_ref().clone(),
+            _ => Ty::Unknown,
+        }
     }
 
     fn bind_pattern(&mut self, pattern_id: PatternId, expected: &Ty) {

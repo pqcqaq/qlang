@@ -1582,6 +1582,65 @@ async fn main() -> Int {
 }
 
 #[test]
+fn binds_for_await_pattern_to_task_array_elements() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn make_handle(value: Int) -> Task[Int] {
+    return worker(value)
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var total = 0
+    for await task in [make_handle(1), make_handle(2)] {
+        total = total + await task
+    }
+    return total
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected for-await task-array element binding to succeed, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_precise_for_await_task_array_element_types() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn make_handle(value: Int) -> Task[Int] {
+    return worker(value)
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var total = 0
+    for await task in [make_handle(1), make_handle(2)] {
+        total = total + task
+    }
+    return total
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"binary operator `+` expects numeric operands, found `Int` and `Task[Int]`"
+                .to_string()
+        ),
+        "expected precise task-element diagnostic inside for-await, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_await_and_spawn_import_aliased_async_calls_inside_async_functions() {
     let diagnostics = diagnostic_messages(
         r#"
