@@ -94,6 +94,7 @@ P4/P5 地基已经落地，且当前正在保守扩展 Phase 7 async library/pro
 - 最小 async `dylib` 子集：在仍通过同步 `extern "c"` 顶层导出暴露公开 ABI 时，内部 async helper / `await` / 已支持的 task-handle lowering 也可进入 library build，并对 fixed-array iterable 打开同一条 `for await` lowering
 - 最小 async executable 子集：`BuildEmit::Executable` 下的 `async fn main`、已接入的 task-handle / aggregate payload lowering，以及 fixed-array iterable 的 `for await`
 - projected task-handle operand：tuple index / fixed-array literal index / struct-field 只读投影，也包括它们的递归嵌套组合（例如 `await pair[0]`、`await tasks[0]`、`spawn pair.task`、`await pending[0].task`）
+- dynamic fixed-array `Task[...]` 子集：generic dynamic path 继续保持 sibling-safe consume/spawn 与 maybe-overlap write/reinit，而 same immutable stable source path 会获得 precise consume/reinit；这条稳定化路径现在也已覆盖 same-file `const` / `static` item 及其 same-file `use ... as ...` alias，因此 `tasks[index]`、`tasks[slot.value]`、`tasks[INDEX]`、`tasks[STATIC_INDEX]`、`tasks[INDEX_ALIAS.value]` 都会尽量回收到同一条 stable 或 literal/projection path，而不是无差别退化成 generic dynamic overlap
 - arithmetic / compare / `Bool` unary `!` / short-circuit `&&` / `||` / branch / return
 - `.ll` 文本产物始终可用
 - `.obj` / `.o` / 基础 `.exe` 产物依赖 clang-style compiler

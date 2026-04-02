@@ -102,7 +102,7 @@ impl<'a> BodyAnalyzer<'a> {
             collect_task_handle_call_plans(hir, resolution, typeck, function);
         let mut binding_locals = HashMap::new();
         let immutable_binding_values = collect_immutable_binding_values(hir, function);
-        let immutable_temp_const_items = collect_immutable_temp_const_items(body);
+        let immutable_temp_const_items = collect_immutable_temp_const_items(hir, body);
         let immutable_temp_places = collect_immutable_temp_places(body);
         let mut param_locals = HashMap::new();
         let mut receiver_local = None;
@@ -1202,7 +1202,7 @@ impl<'a> BodyAnalyzer<'a> {
 
     fn const_item_value_expr(&self, item_id: hir::ItemId) -> Option<hir::ExprId> {
         match &self.hir.item(item_id).kind {
-            ItemKind::Const(global) => Some(global.value),
+            ItemKind::Const(global) | ItemKind::Static(global) => Some(global.value),
             _ => None,
         }
     }
@@ -1421,6 +1421,9 @@ impl<'a> BodyAnalyzer<'a> {
             Operand::Constant(Constant::Item { item, .. }) => self
                 .const_item_value_expr(*item)
                 .and_then(|expr_id| self.fixed_array_index_value_for_expr_inner(expr_id, visiting)),
+            Operand::Constant(Constant::Import(path)) => local_item_for_import_path(self.hir, path)
+                .and_then(|item_id| self.const_item_value_expr(item_id))
+                .and_then(|expr_id| self.fixed_array_index_value_for_expr_inner(expr_id, visiting)),
             Operand::Place(place) => self.fixed_array_index_value_for_place(place, visiting),
             Operand::Constant(_) => None,
         }
@@ -1521,18 +1524,25 @@ impl<'a> BodyAnalyzer<'a> {
                     visiting.locals.remove(hir_local);
                     resolved
                 }
-                ValueResolution::Item(item_id) => {
-                    let ItemKind::Const(global) = &self.hir.item(*item_id).kind else {
+                ValueResolution::Item(_) | ValueResolution::Import(_) => {
+                    let Some(item_id) =
+                        item_id_for_value_resolution(self.hir, self.resolution.expr_resolution(expr_id)?)
+                    else {
                         return Some(expr_id);
                     };
-                    if !visiting.items.insert(*item_id) {
+                    let (ItemKind::Const(global) | ItemKind::Static(global)) =
+                        &self.hir.item(item_id).kind
+                    else {
+                        return Some(expr_id);
+                    };
+                    if !visiting.items.insert(item_id) {
                         return None;
                     }
                     let resolved = self.normalized_immutable_source_expr(global.value, visiting);
-                    visiting.items.remove(item_id);
+                    visiting.items.remove(&item_id);
                     resolved
                 }
-                ValueResolution::Function(_) | ValueResolution::Import(_) => Some(expr_id),
+                ValueResolution::Function(_) => Some(expr_id),
             },
             hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => self
                 .hir
@@ -4081,7 +4091,10 @@ fn collect_immutable_binding_values(
     values
 }
 
-fn collect_immutable_temp_const_items(body: &MirBody) -> HashMap<MirLocalId, hir::ItemId> {
+fn collect_immutable_temp_const_items(
+    hir: &hir::Module,
+    body: &MirBody,
+) -> HashMap<MirLocalId, hir::ItemId> {
     let mut items = HashMap::new();
     for block_id in body.block_ids() {
         let block = body.block(block_id);
@@ -4095,10 +4108,17 @@ fn collect_immutable_temp_const_items(body: &MirBody) -> HashMap<MirLocalId, hir
             if !matches!(body.local(place.base).origin, LocalOrigin::Temp { .. }) {
                 continue;
             }
-            let Rvalue::Use(Operand::Constant(Constant::Item { item, .. })) = value else {
+            let item_id = match value {
+                Rvalue::Use(Operand::Constant(Constant::Item { item, .. })) => Some(*item),
+                Rvalue::Use(Operand::Constant(Constant::Import(path))) => {
+                    local_item_for_import_path(hir, path)
+                }
+                _ => None,
+            };
+            let Some(item_id) = item_id else {
                 continue;
             };
-            items.insert(place.base, *item);
+            items.insert(place.base, item_id);
         }
     }
     items
@@ -4530,6 +4550,22 @@ fn item_id_for_value_resolution(
         }
         _ => None,
     }
+}
+
+fn local_item_for_import_path(hir: &hir::Module, path: &ql_ast::Path) -> Option<hir::ItemId> {
+    let [name] = path.segments.as_slice() else {
+        return None;
+    };
+
+    hir.items.iter().copied().find(|item_id| match &hir.item(*item_id).kind {
+        ItemKind::Function(function) => function.name == *name,
+        ItemKind::Const(global) | ItemKind::Static(global) => global.name == *name,
+        ItemKind::Struct(struct_decl) => struct_decl.name == *name,
+        ItemKind::Enum(enum_decl) => enum_decl.name == *name,
+        ItemKind::Trait(trait_decl) => trait_decl.name == *name,
+        ItemKind::TypeAlias(alias) => alias.name == *name,
+        ItemKind::Impl(_) | ItemKind::Extend(_) | ItemKind::ExternBlock(_) => false,
+    })
 }
 
 fn local_item_for_import_binding(
