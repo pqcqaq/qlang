@@ -1046,6 +1046,24 @@ impl<'a> Checker<'a> {
     fn int_literal_expr(&self, expr_id: ExprId, visited: &mut HashSet<ItemId>) -> Option<i64> {
         match &self.module.expr(expr_id).kind {
             ExprKind::Integer(value) => ql_ast::parse_i64_literal(value),
+            ExprKind::Unary {
+                op: ql_ast::UnaryOp::Neg,
+                expr,
+            } => self
+                .int_literal_expr(*expr, visited)
+                .and_then(|value| value.checked_neg()),
+            ExprKind::Binary { left, op, right } => {
+                let left = self.int_literal_expr(*left, visited)?;
+                let right = self.int_literal_expr(*right, visited)?;
+                match op {
+                    BinaryOp::Add => left.checked_add(right),
+                    BinaryOp::Sub => left.checked_sub(right),
+                    BinaryOp::Mul => left.checked_mul(right),
+                    BinaryOp::Div => left.checked_div(right),
+                    BinaryOp::Rem => left.checked_rem(right),
+                    _ => None,
+                }
+            }
             ExprKind::Name(_)
             | ExprKind::Member { .. }
             | ExprKind::Bracket { .. }
@@ -1102,6 +1120,14 @@ impl<'a> Checker<'a> {
         match &self.module.expr(expr_id).kind {
             ExprKind::Bool(_)
             | ExprKind::Integer(_)
+            | ExprKind::Unary {
+                op: ql_ast::UnaryOp::Neg,
+                ..
+            }
+            | ExprKind::Binary {
+                op: BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem,
+                ..
+            }
             | ExprKind::Tuple(_)
             | ExprKind::Array(_)
             | ExprKind::StructLiteral { .. } => Some(expr_id),

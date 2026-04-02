@@ -9961,6 +9961,88 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_negative_int_const_path_and_guard_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-negative-int-const-path-and-guard-match");
+        let source = dir.write(
+            "negative_int_const_path_and_guard_match.ql",
+            r#"
+use LIMIT as THRESHOLD
+
+const LIMIT: Int = -1
+
+fn main() -> Int {
+    let value = 0
+    return match value {
+        THRESHOLD => 10,
+        0 if value > -2 => 20,
+        _ => 0,
+    }
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/negative_int_const_path_and_guard_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with negative Int const path and guard match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("icmp eq i64 %t1, -1"));
+        assert!(rendered.contains("sub i64 0, 2"));
+        assert!(rendered.contains("icmp sgt i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn build_file_writes_llvm_ir_with_const_arithmetic_path_and_guard_operands() {
+        let dir = TestDir::new("ql-driver-llvm-ir-const-arithmetic-path-and-guard-operands");
+        let source = dir.write(
+            "const_arithmetic_path_and_guard_operands.ql",
+            r#"
+const BASE: Int = 1
+const LIMIT: Int = BASE + 1
+
+fn main() -> Int {
+    let value = 2
+    return match value {
+        LIMIT if value + BASE == LIMIT + 1 => 10,
+        _ => 0,
+    }
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/const_arithmetic_path_and_guard_operands.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with const arithmetic path and guard operands should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("icmp eq i64 %t1, 2"));
+        assert!(rendered.matches("add i64").count() >= 2);
+        assert!(rendered.matches("icmp eq i64").count() >= 2);
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_integer_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-integer-match");
         let source = dir.write(

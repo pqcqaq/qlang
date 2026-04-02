@@ -4528,6 +4528,25 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         guard_binding: Option<&GuardBindingValue>,
     ) -> LoweredValue {
         match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Binary { left, op, right }
+                if matches!(
+                    op,
+                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem
+                ) =>
+            {
+                let left = self.render_guard_scalar_expr(output, *left, span, guard_binding);
+                let right = self.render_guard_scalar_expr(output, *right, span, guard_binding);
+                assert!(
+                    left.ty.compatible_with(&Ty::Builtin(BuiltinType::Int))
+                        && right.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                    "prepared bool guard lowering at {span:?} should only render Int arithmetic guard expressions"
+                );
+                self.render_binary(output, *op, left, right).unwrap_or_else(|| {
+                    panic!(
+                        "prepared bool guard lowering at {span:?} should only render supported arithmetic guard expressions"
+                    )
+                })
+            }
             hir::ExprKind::Binary {
                 op:
                     BinaryOp::AndAnd
@@ -4561,6 +4580,23 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 LoweredValue {
                     ty: Ty::Builtin(BuiltinType::Bool),
                     llvm_ty: "i1".to_owned(),
+                    repr: temp,
+                }
+            }
+            hir::ExprKind::Unary {
+                op: UnaryOp::Neg,
+                expr,
+            } => {
+                let inner = self.render_guard_scalar_expr(output, *expr, span, guard_binding);
+                assert!(
+                    inner.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                    "prepared bool guard lowering at {span:?} should only negate Int scalar guard expressions"
+                );
+                let temp = self.fresh_temp();
+                let _ = writeln!(output, "  {temp} = sub i64 0, {}", inner.repr);
+                LoweredValue {
+                    ty: Ty::Builtin(BuiltinType::Int),
+                    llvm_ty: "i64".to_owned(),
                     repr: temp,
                 }
             }
@@ -5073,6 +5109,31 @@ fn supported_guard_scalar_expr(
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(_) => Some(GuardScalarKind::Bool),
         hir::ExprKind::Integer(_) => Some(GuardScalarKind::Int),
+        hir::ExprKind::Binary { left, op, right }
+            if matches!(
+                op,
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem
+            ) =>
+        {
+            let left_kind = supported_guard_scalar_expr(
+                module,
+                resolution,
+                body,
+                local_types,
+                arm_pattern,
+                *left,
+            )?;
+            let right_kind = supported_guard_scalar_expr(
+                module,
+                resolution,
+                body,
+                local_types,
+                arm_pattern,
+                *right,
+            )?;
+            (left_kind == GuardScalarKind::Int && right_kind == GuardScalarKind::Int)
+                .then_some(GuardScalarKind::Int)
+        }
         hir::ExprKind::Binary {
             op:
                 BinaryOp::AndAnd
@@ -5098,6 +5159,11 @@ fn supported_guard_scalar_expr(
             expr,
         } => supported_bool_guard(module, resolution, body, local_types, arm_pattern, *expr)
             .map(|_| GuardScalarKind::Bool),
+        hir::ExprKind::Unary {
+            op: UnaryOp::Neg,
+            expr,
+        } => supported_guard_scalar_expr(module, resolution, body, local_types, arm_pattern, *expr)
+            .filter(|kind| *kind == GuardScalarKind::Int),
         hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
             Some(ValueResolution::Local(local_id))
                 if pattern_binds_local(module, arm_pattern, *local_id) =>
@@ -5505,6 +5571,23 @@ fn guard_literal_int_expr(
 ) -> Option<i64> {
     match &module.expr(expr_id).kind {
         hir::ExprKind::Integer(value) => ql_ast::parse_i64_literal(value),
+        hir::ExprKind::Unary {
+            op: UnaryOp::Neg,
+            expr,
+        } => guard_literal_int_expr(module, resolution, *expr, visited)
+            .and_then(|value| value.checked_neg()),
+        hir::ExprKind::Binary { left, op, right } => {
+            let left = guard_literal_int_expr(module, resolution, *left, visited)?;
+            let right = guard_literal_int_expr(module, resolution, *right, visited)?;
+            match op {
+                BinaryOp::Add => left.checked_add(right),
+                BinaryOp::Sub => left.checked_sub(right),
+                BinaryOp::Mul => left.checked_mul(right),
+                BinaryOp::Div => left.checked_div(right),
+                BinaryOp::Rem => left.checked_rem(right),
+                _ => None,
+            }
+        }
         hir::ExprKind::Name(_)
         | hir::ExprKind::Member { .. }
         | hir::ExprKind::Bracket { .. }
@@ -5531,6 +5614,13 @@ fn guard_literal_source_expr(
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(_)
         | hir::ExprKind::Integer(_)
+        | hir::ExprKind::Unary {
+            op: UnaryOp::Neg, ..
+        }
+        | hir::ExprKind::Binary {
+            op: BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem,
+            ..
+        }
         | hir::ExprKind::Tuple(_)
         | hir::ExprKind::Array(_)
         | hir::ExprKind::StructLiteral { .. } => Some(expr_id),
@@ -7624,6 +7714,56 @@ fn main() -> Int {
             !message.contains("could not resolve LLVM type for local")
                 && !message.contains("could not infer LLVM type for MIR local")
         }));
+    }
+
+    #[test]
+    fn emits_negative_int_const_path_and_guard_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+use LIMIT as THRESHOLD
+
+const LIMIT: Int = -1
+
+fn main() -> Int {
+    let value = 0
+    return match value {
+        THRESHOLD => 10,
+        0 if value > -2 => 20,
+        _ => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("icmp eq i64 %t1, -1"));
+        assert!(rendered.contains("sub i64 0, 2"));
+        assert!(rendered.contains("icmp sgt i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_const_arithmetic_path_and_guard_operand_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+const BASE: Int = 1
+const LIMIT: Int = BASE + 1
+
+fn main() -> Int {
+    let value = 2
+    return match value {
+        LIMIT if value + BASE == LIMIT + 1 => 10,
+        _ => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("icmp eq i64 %t1, 2"));
+        assert!(rendered.matches("add i64").count() >= 2);
+        assert!(rendered.matches("icmp eq i64").count() >= 2);
+        assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
     #[test]
