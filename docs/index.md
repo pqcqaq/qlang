@@ -39,7 +39,7 @@ features:
 
 - Phase 1 到 Phase 6 的基础能力已经落地
 - Phase 7 已建立最小 runtime/executor、task-handle 类型面、共享 runtime hook ABI skeleton，以及受控的 async library/program build 子集
-- 当前 build surface 已开放 fixed-array `for` 与最小 literal `match` lowering，其中 `Bool true|false|_` 与 `Int literal|_` 两条 `match` 子集都已可真实编译
+- 当前 build surface 已开放 fixed-array `for` 与最小 literal `match` lowering，其中 `Bool true|false|_|single-name binding` 与 `Int literal|_|single-name binding` 两条 `match` 子集都已可真实编译
 - 当前真实支持面与未支持边界已集中收口到 [当前支持基线](/roadmap/current-supported-surface)
 - 文档、测试和实现已经开始围绕同一份 phase 文档与回归矩阵收口
 

@@ -738,7 +738,7 @@ impl<'a> ModuleEmitter<'a> {
                                     PatternKind::Bool(false) => {
                                         false_target.get_or_insert(arm.target);
                                     }
-                                    PatternKind::Wildcard => {
+                                    PatternKind::Binding(_) | PatternKind::Wildcard => {
                                         true_target.get_or_insert(arm.target);
                                         false_target.get_or_insert(arm.target);
                                     }
@@ -778,7 +778,7 @@ impl<'a> ModuleEmitter<'a> {
                                             target: arm.target,
                                         });
                                     }
-                                    PatternKind::Wildcard => {
+                                    PatternKind::Binding(_) | PatternKind::Wildcard => {
                                         fallback_target = arm.target;
                                         break;
                                     }
@@ -5884,6 +5884,26 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_bool_match_with_binding_catch_all_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+fn main() -> Int {
+    let flag = false
+    return match flag {
+        true => 1,
+        other => if other { 2 } else { 0 },
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("%l4_other = alloca i1"));
+        assert!(rendered.contains("load i1, ptr %l4_other"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn emits_integer_match_lowering() {
         let rendered = emit_with_mode(
             r#"
@@ -5901,6 +5921,27 @@ fn main() -> Int {
 
         assert_eq!(rendered.matches("icmp eq i64").count(), 2);
         assert!(rendered.contains("bb0_match_dispatch1:"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_integer_match_with_binding_catch_all_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+fn main() -> Int {
+    let value = 2
+    return match value {
+        1 => 10,
+        other => other,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert_eq!(rendered.matches("icmp eq i64").count(), 1);
+        assert!(rendered.contains("%l4_other = alloca i64"));
+        assert!(rendered.contains("load i64, ptr %l4_other"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

@@ -223,6 +223,32 @@ fn choose(flag: Bool) -> Int {
 }
 
 #[test]
+fn accepts_function_matches_with_binding_catch_all_returning_on_all_paths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose(flag: Bool) -> Int {
+    match flag {
+        true => {
+            return 1
+        }
+        other => {
+            if other {
+                return 2
+            }
+            return 0
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_function_matches_over_bool_when_both_cases_return() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -233,6 +259,29 @@ fn choose(flag: Bool) -> Int {
         }
         false => {
             return 0
+        }
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn accepts_function_matches_over_int_with_binding_catch_all_returning_on_all_paths() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn choose(value: Int) -> Int {
+    match value {
+        1 => {
+            return 1
+        }
+        other => {
+            return other
         }
     }
 }

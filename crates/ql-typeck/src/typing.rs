@@ -1046,7 +1046,7 @@ impl<'a> Checker<'a> {
     fn pattern_matches_bool_literal(&self, pattern_id: PatternId, value: bool) -> bool {
         match &self.module.pattern(pattern_id).kind {
             PatternKind::Bool(pattern_value) => *pattern_value == value,
-            PatternKind::Wildcard => true,
+            PatternKind::Binding(_) | PatternKind::Wildcard => true,
             _ => false,
         }
     }
@@ -1058,7 +1058,7 @@ impl<'a> Checker<'a> {
         variant_name: &str,
     ) -> bool {
         match &self.module.pattern(pattern_id).kind {
-            PatternKind::Wildcard => true,
+            PatternKind::Binding(_) | PatternKind::Wildcard => true,
             _ => self
                 .enum_variant_name_for_pattern(enum_item_id, pattern_id)
                 .is_some_and(|name| name == variant_name),
@@ -1093,8 +1093,10 @@ impl<'a> Checker<'a> {
 
     fn match_has_catch_all_arm(&self, arms: &[MatchArm]) -> bool {
         arms.iter().any(|arm| {
-            matches!(self.module.pattern(arm.pattern).kind, PatternKind::Wildcard)
-                && self.arm_counts_for_exhaustiveness(arm)
+            matches!(
+                self.module.pattern(arm.pattern).kind,
+                PatternKind::Binding(_) | PatternKind::Wildcard
+            ) && self.arm_counts_for_exhaustiveness(arm)
         })
     }
 
@@ -1129,7 +1131,7 @@ impl<'a> Checker<'a> {
             match &self.module.pattern(arm.pattern).kind {
                 PatternKind::Bool(true) => saw_true = true,
                 PatternKind::Bool(false) => saw_false = true,
-                PatternKind::Wildcard => return true,
+                PatternKind::Binding(_) | PatternKind::Wildcard => return true,
                 _ => {}
             }
         }
