@@ -498,6 +498,8 @@ pub struct StructLiteralField {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinaryOp {
     Assign,
+    OrOr,
+    AndAnd,
     Add,
     Sub,
     Mul,

@@ -887,9 +887,27 @@ impl<'a> Checker<'a> {
                 }
                 flow
             }
-            ExprKind::Binary { left, right, .. } => {
-                self.expr_flow(*left).then(self.expr_flow(*right))
-            }
+            ExprKind::Binary { left, op, right } => match op {
+                BinaryOp::AndAnd => {
+                    let left_flow = self.expr_flow(*left);
+                    let right_flow = self.expr_flow(*right);
+                    match self.bool_literal(*left) {
+                        Some(true) => left_flow.then(right_flow),
+                        Some(false) => left_flow.then(ControlFlowSummary::normal()),
+                        None => left_flow.then(right_flow.union(ControlFlowSummary::normal())),
+                    }
+                }
+                BinaryOp::OrOr => {
+                    let left_flow = self.expr_flow(*left);
+                    let right_flow = self.expr_flow(*right);
+                    match self.bool_literal(*left) {
+                        Some(true) => left_flow.then(ControlFlowSummary::normal()),
+                        Some(false) => left_flow.then(right_flow),
+                        None => left_flow.then(right_flow.union(ControlFlowSummary::normal())),
+                    }
+                }
+                _ => self.expr_flow(*left).then(self.expr_flow(*right)),
+            },
             ExprKind::Unary { expr, .. } | ExprKind::Question(expr) => self.expr_flow(*expr),
             ExprKind::Name(_)
             | ExprKind::Integer(_)
@@ -988,6 +1006,8 @@ impl<'a> Checker<'a> {
                     self.bool_literal_expr(*right, visited),
                 ) {
                     match op {
+                        BinaryOp::OrOr => Some(left || right),
+                        BinaryOp::AndAnd => Some(left && right),
                         BinaryOp::EqEq => Some(left == right),
                         BinaryOp::BangEq => Some(left != right),
                         _ => None,
@@ -1882,6 +1902,29 @@ impl<'a> Checker<'a> {
                     self.report_type_mismatch(right, &left_ty, &right_ty, "assignment");
                 }
                 Ty::Unknown
+            }
+            BinaryOp::OrOr | BinaryOp::AndAnd => {
+                let right_ty =
+                    self.check_expr(right, Some(&Ty::Builtin(ql_resolve::BuiltinType::Bool)));
+                if (left_ty.is_bool() || left_ty.is_unknown())
+                    && (right_ty.is_bool() || right_ty.is_unknown())
+                {
+                    Ty::Builtin(ql_resolve::BuiltinType::Bool)
+                } else {
+                    self.diagnostics.push(
+                        Diagnostic::error(format!(
+                            "logical operator `{}` expects `Bool` operands, found `{}` and `{}`",
+                            op_text(op),
+                            left_ty,
+                            right_ty
+                        ))
+                        .with_label(
+                            Label::new(self.module.expr(expr_id).span)
+                                .with_message("expression here"),
+                        ),
+                    );
+                    Ty::Unknown
+                }
             }
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
                 let right_ty = self.check_expr(right, None);
@@ -2826,6 +2869,8 @@ fn function_scope(function: &Function, resolution: &ResolutionMap) -> Option<ql_
 fn op_text(op: BinaryOp) -> &'static str {
     match op {
         BinaryOp::Assign => "=",
+        BinaryOp::OrOr => "||",
+        BinaryOp::AndAnd => "&&",
         BinaryOp::Add => "+",
         BinaryOp::Sub => "-",
         BinaryOp::Mul => "*",

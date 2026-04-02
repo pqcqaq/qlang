@@ -225,6 +225,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "bool_short_circuit_expr_llvm_ir",
+            source_relative: "fixtures/codegen/pass/bool_short_circuit_expr.ql",
+            emit: "llvm-ir",
+            expected_relative: "tests/codegen/pass/bool_short_circuit_expr.ll",
+            mock_compiler: false,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "alias_const_guard_match_llvm_ir",
             source_relative: "fixtures/codegen/pass/alias_const_guard_match.ql",
             emit: "llvm-ir",

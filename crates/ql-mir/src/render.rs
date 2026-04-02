@@ -503,6 +503,8 @@ fn render_pattern(hir: &hir::Module, pattern_id: PatternId) -> String {
 fn render_binary(op: BinaryOp) -> &'static str {
     match op {
         BinaryOp::Assign => "=",
+        BinaryOp::OrOr => "||",
+        BinaryOp::AndAnd => "&&",
         BinaryOp::Add => "+",
         BinaryOp::Sub => "-",
         BinaryOp::Mul => "*",

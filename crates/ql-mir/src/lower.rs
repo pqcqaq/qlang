@@ -600,6 +600,20 @@ impl<'a> BodyBuilder<'a> {
                 let (current, local) = self.materialize_operand(current, scope, expr.span, value);
                 (current, Operand::Place(Place::local(local)))
             }
+            ExprKind::Binary {
+                op: BinaryOp::AndAnd | BinaryOp::OrOr,
+                ..
+            } => {
+                let target = self.alloc_temp(scope, expr.span);
+                self.push_statement(
+                    current,
+                    expr.span,
+                    StatementKind::StorageLive { local: target },
+                );
+                let join = self.new_block(expr.span);
+                self.lower_expr_into_target(expr_id, current, scope, Place::local(target), join);
+                (join, Operand::Place(Place::local(target)))
+            }
             ExprKind::Binary { left, op, right } => {
                 let (current, left) = self.lower_expr_to_operand(*left, current, scope);
                 let (current, right) = self.lower_expr_to_operand(*right, current, scope);
@@ -784,6 +798,45 @@ impl<'a> BodyBuilder<'a> {
                         else_target: join,
                     },
                 );
+            }
+            ExprKind::Binary { left, op, right }
+                if matches!(op, BinaryOp::AndAnd | BinaryOp::OrOr) =>
+            {
+                let (condition_block, left_value) = self.lower_expr_to_operand(*left, entry, scope);
+                let rhs_entry = self.new_block(self.hir.expr(*right).span);
+                let short_entry = self.new_block(expr.span);
+
+                let (then_target, else_target, short_value) = match op {
+                    BinaryOp::AndAnd => (rhs_entry, short_entry, false),
+                    BinaryOp::OrOr => (short_entry, rhs_entry, true),
+                    _ => unreachable!("short-circuit lowering should only handle &&/||"),
+                };
+
+                self.set_terminator(
+                    condition_block,
+                    expr.span,
+                    TerminatorKind::Branch {
+                        condition: left_value,
+                        then_target,
+                        else_target,
+                    },
+                );
+
+                self.push_statement(
+                    short_entry,
+                    expr.span,
+                    StatementKind::Assign {
+                        place: target.clone(),
+                        value: Rvalue::Use(Operand::Constant(Constant::Bool(short_value))),
+                    },
+                );
+                self.set_terminator(
+                    short_entry,
+                    expr.span,
+                    TerminatorKind::Goto { target: join },
+                );
+
+                self.lower_expr_into_target(*right, rhs_entry, scope, target, join);
             }
             _ => {
                 let (current, value) = self.lower_expr_to_operand(expr_id, entry, scope);

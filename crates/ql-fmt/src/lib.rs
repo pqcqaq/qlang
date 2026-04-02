@@ -687,6 +687,8 @@ fn format_expr(expr: &Expr, indent: usize, out: &mut String) {
             out.push(' ');
             out.push_str(match op {
                 BinaryOp::Assign => "=",
+                BinaryOp::OrOr => "||",
+                BinaryOp::AndAnd => "&&",
                 BinaryOp::Add => "+",
                 BinaryOp::Sub => "-",
                 BinaryOp::Mul => "*",

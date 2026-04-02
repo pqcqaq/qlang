@@ -1206,6 +1206,57 @@ fn main() -> Int {
 }
 
 #[test]
+fn accepts_short_circuit_bool_expressions() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let left = true
+    let right = false
+    let both = left && right
+    let either = left || right
+
+    if both || either {
+        return 1
+    }
+
+    while both && either {
+        return 2
+    }
+
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_non_bool_logical_operands() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main() -> Int {
+    let broken = 1 && true
+    if broken {
+        return 1
+    }
+    return 0
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(
+            &"logical operator `&&` expects `Bool` operands, found `Int` and `Bool`".to_string()
+        ),
+        "expected logical-operand diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_break_and_continue_outside_loops() {
     let diagnostics = diagnostic_messages(
         r#"

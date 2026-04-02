@@ -81,6 +81,8 @@ pub enum TokenKind {
     Question,
     Eq,
     EqEq,
+    AmpAmp,
+    PipePipe,
     Bang,
     BangEq,
     Plus,
@@ -295,6 +297,40 @@ impl<'a> Lexer<'a> {
                             text: "=".into(),
                             span: Span::new(start, self.current_offset()),
                         })
+                    }
+                }
+                '&' => {
+                    self.bump();
+                    if self.peek_char() == Some('&') {
+                        self.bump();
+                        Some(Token {
+                            kind: TokenKind::AmpAmp,
+                            text: "&&".into(),
+                            span: Span::new(start, self.current_offset()),
+                        })
+                    } else {
+                        errors.push(LexError {
+                            message: "unexpected `&`; only `&&` is currently supported".into(),
+                            span: Span::new(start, self.current_offset()),
+                        });
+                        None
+                    }
+                }
+                '|' => {
+                    self.bump();
+                    if self.peek_char() == Some('|') {
+                        self.bump();
+                        Some(Token {
+                            kind: TokenKind::PipePipe,
+                            text: "||".into(),
+                            span: Span::new(start, self.current_offset()),
+                        })
+                    } else {
+                        errors.push(LexError {
+                            message: "unexpected `|`; only `||` is currently supported".into(),
+                            span: Span::new(start, self.current_offset()),
+                        });
+                        None
                     }
                 }
                 '!' => {
@@ -673,6 +709,21 @@ mod tests {
         assert_eq!(
             token_kinds("!flag"),
             vec![TokenKind::Bang, TokenKind::Ident, TokenKind::Eof]
+        );
+    }
+
+    #[test]
+    fn lexes_logical_and_or_tokens() {
+        assert_eq!(
+            token_kinds("left && right || tail"),
+            vec![
+                TokenKind::Ident,
+                TokenKind::AmpAmp,
+                TokenKind::Ident,
+                TokenKind::PipePipe,
+                TokenKind::Ident,
+                TokenKind::Eof
+            ]
         );
     }
 

@@ -1065,6 +1065,12 @@ impl<'a> ModuleEmitter<'a> {
                         local_types,
                         async_task_handles,
                     );
+                    self.propagate_inferred_local_types_from_statement(
+                        body,
+                        statement,
+                        local_types,
+                        async_task_handles,
+                    );
                 }
             }
             if local_types.len() == before {
@@ -1109,6 +1115,64 @@ impl<'a> ModuleEmitter<'a> {
                 self.seed_expected_temp_from_call_args(body, value, local_types);
             }
             StatementKind::StorageLive { .. }
+            | StatementKind::StorageDead { .. }
+            | StatementKind::RegisterCleanup { .. }
+            | StatementKind::RunCleanup { .. } => {}
+        }
+    }
+
+    fn propagate_inferred_local_types_from_statement(
+        &self,
+        body: &mir::MirBody,
+        statement: &mir::Statement,
+        local_types: &mut HashMap<mir::LocalId, Ty>,
+        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
+    ) {
+        match &statement.kind {
+            StatementKind::Assign { place, value } => {
+                let mut scratch = Vec::new();
+                let expected_ty = self.assignment_place_type(
+                    body,
+                    place,
+                    local_types,
+                    async_task_handles,
+                    statement.span,
+                    &mut scratch,
+                );
+                let mut infer = TypeInferenceContext {
+                    body,
+                    local_types,
+                    async_task_handles,
+                    diagnostics: &mut scratch,
+                };
+                if let Some(ty) =
+                    self.infer_rvalue_type(value, expected_ty.as_ref(), &mut infer, statement.span)
+                {
+                    if place.projections.is_empty() {
+                        seed_inferred_local_type(local_types, place.base, ty);
+                    }
+                }
+            }
+            StatementKind::BindPattern {
+                pattern, source, ..
+            } => {
+                let mut scratch = Vec::new();
+                let source_ty = self.infer_operand_type(
+                    body,
+                    source,
+                    local_types,
+                    async_task_handles,
+                    &mut scratch,
+                    statement.span,
+                );
+                if let (Some(binding_local), Some(source_ty)) =
+                    (self.binding_local_for_pattern(body, *pattern), source_ty)
+                {
+                    seed_inferred_local_type(local_types, binding_local, source_ty);
+                }
+            }
+            StatementKind::Eval { .. }
+            | StatementKind::StorageLive { .. }
             | StatementKind::StorageDead { .. }
             | StatementKind::RegisterCleanup { .. }
             | StatementKind::RunCleanup { .. } => {}
@@ -2107,6 +2171,9 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         match op {
+            BinaryOp::OrOr | BinaryOp::AndAnd => {
+                panic!("short-circuit boolean operators should lower structurally in MIR")
+            }
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
                 if is_numeric_ty(left_ty) {
                     Some(left_ty.clone())
@@ -3953,6 +4020,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         let temp = self.fresh_temp();
 
         match op {
+            BinaryOp::OrOr | BinaryOp::AndAnd => {
+                panic!("short-circuit boolean operators should lower structurally in MIR")
+            }
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
                 let opcode = arithmetic_opcode(op, &left.ty);
                 let _ = writeln!(
@@ -5182,6 +5252,8 @@ fn guard_literal_bool_expr(
                 guard_literal_bool_expr(module, resolution, *right, visited),
             ) {
                 match op {
+                    BinaryOp::OrOr => Some(left || right),
+                    BinaryOp::AndAnd => Some(left && right),
                     BinaryOp::EqEq => Some(left == right),
                     BinaryOp::BangEq => Some(left != right),
                     _ => None,
@@ -7092,6 +7164,55 @@ fn main() -> Int {
         assert!(rendered.contains("%l4_other = alloca i1"));
         assert!(rendered.contains("load i1, ptr %l4_other"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_short_circuit_bool_expression_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+fn left_true() -> Bool {
+    return true
+}
+
+fn left_false() -> Bool {
+    return false
+}
+
+fn right_true() -> Bool {
+    return true
+}
+
+fn right_false() -> Bool {
+    return false
+}
+
+fn main() -> Int {
+    let both = left_false() && right_true()
+    let either = left_true() || right_false()
+
+    if both {
+        return 1
+    }
+
+    if either && !both {
+        return 3
+    }
+
+    return 4
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("call i1 @ql_1_left_false()"));
+        assert!(rendered.contains("call i1 @ql_2_right_true()"));
+        assert!(rendered.contains("call i1 @ql_0_left_true()"));
+        assert!(rendered.contains("call i1 @ql_3_right_false()"));
+        assert!(rendered.contains("store i1 false"));
+        assert!(rendered.contains("store i1 true"));
+        assert!(rendered.contains("br i1"));
+        assert!(!rendered.contains(" and i1 "));
+        assert!(!rendered.contains(" or i1 "));
     }
 
     #[test]
