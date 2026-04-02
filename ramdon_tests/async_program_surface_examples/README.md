@@ -112,12 +112,13 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `111_async_main_import_alias_tuple_submit.ql`
 - `112_async_main_import_alias_forward_submit.ql`
 - `113_async_main_import_alias_helper_task_submit.ql`
+- `114_async_main_import_alias_helper_forward_submit.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-thirteen examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-fourteen examples with the real local toolchain and locks their exit codes.
 
 Expected exit codes:
 
@@ -231,6 +232,7 @@ Expected exit codes:
 - `111_async_main_import_alias_tuple_submit.ql` -> `42`
 - `112_async_main_import_alias_forward_submit.ql` -> `42`
 - `113_async_main_import_alias_helper_task_submit.ql` -> `42`
+- `114_async_main_import_alias_helper_forward_submit.ql` -> `42`
 
 Try one file directly:
 
