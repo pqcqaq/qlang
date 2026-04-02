@@ -727,9 +727,16 @@ impl<'a> ModuleEmitter<'a> {
                             let mut false_target = None;
                             let mut supported = true;
                             for arm in arms {
-                                if arm.guard.is_some() {
-                                    supported = false;
-                                    break;
+                                match arm.guard {
+                                    None => {}
+                                    Some(guard) => match guard_literal_bool(self.input.hir, guard) {
+                                        Some(true) => {}
+                                        Some(false) => continue,
+                                        None => {
+                                            supported = false;
+                                            break;
+                                        }
+                                    },
                                 }
                                 match pattern_kind(self.input.hir, arm.pattern) {
                                     PatternKind::Bool(true) => {
@@ -767,9 +774,16 @@ impl<'a> ModuleEmitter<'a> {
                             let mut supported = true;
 
                             for arm in arms {
-                                if arm.guard.is_some() {
-                                    supported = false;
-                                    break;
+                                match arm.guard {
+                                    None => {}
+                                    Some(guard) => match guard_literal_bool(self.input.hir, guard) {
+                                        Some(true) => {}
+                                        Some(false) => continue,
+                                        None => {
+                                            supported = false;
+                                            break;
+                                        }
+                                    },
                                 }
                                 match pattern_kind(self.input.hir, arm.pattern) {
                                     PatternKind::Integer(value) => {
@@ -4173,6 +4187,13 @@ fn pattern_kind(module: &hir::Module, pattern: hir::PatternId) -> &PatternKind {
     &module.pattern(pattern).kind
 }
 
+fn guard_literal_bool(module: &hir::Module, expr_id: hir::ExprId) -> Option<bool> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Bool(value) => Some(*value),
+        _ => None,
+    }
+}
+
 fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnostic> {
     match ty {
         Ty::Array { element, len } => {
@@ -5942,6 +5963,27 @@ fn main() -> Int {
         assert_eq!(rendered.matches("icmp eq i64").count(), 1);
         assert!(rendered.contains("%l4_other = alloca i64"));
         assert!(rendered.contains("load i64, ptr %l4_other"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_bool_match_with_literal_guard_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+fn main() -> Int {
+    let flag = false
+    return match flag {
+        true if false => 1,
+        true if true => 2,
+        other if true => if other { 3 } else { 0 },
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("%l4_other = alloca i1"));
+        assert!(rendered.contains("load i1, ptr %l4_other"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

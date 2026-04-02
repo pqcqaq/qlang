@@ -9860,6 +9860,41 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_literal_guard_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-literal-guard-match");
+        let source = dir.write(
+            "literal_guard_match.ql",
+            r#"
+fn main() -> Int {
+    let value = 2
+    return match value {
+        1 if false => 10,
+        2 if true => 20,
+        other if true => other,
+    }
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/literal_guard_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with literal-guard match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered.matches("icmp eq i64").count(), 1);
+        assert!(rendered.contains("%l4_other = alloca i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_surfaces_for_lowering_diagnostics() {
         let dir = TestDir::new("ql-driver-for-unsupported");
         let source = dir.write(
