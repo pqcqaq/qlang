@@ -808,9 +808,11 @@ impl<'a> ModuleEmitter<'a> {
                                         }
                                     },
                                 };
-                                let Some(pattern) =
-                                    supported_bool_match_pattern(self.input.hir, arm.pattern)
-                                else {
+                                let Some(pattern) = supported_bool_match_pattern(
+                                    self.input.hir,
+                                    self.input.resolution,
+                                    arm.pattern,
+                                ) else {
                                     supported = false;
                                     break;
                                 };
@@ -907,11 +909,17 @@ impl<'a> ModuleEmitter<'a> {
                                     },
                                 };
                                 match pattern_kind(self.input.hir, arm.pattern) {
-                                    PatternKind::Integer(value) => {
+                                    PatternKind::Integer(_) | PatternKind::Path(_) => {
+                                        let Some(value) = supported_integer_match_pattern(
+                                            self.input.hir,
+                                            self.input.resolution,
+                                            arm.pattern,
+                                        ) else {
+                                            supported = false;
+                                            break;
+                                        };
                                         ordered_arms.push(SupportedGuardedIntegerMatchArm {
-                                            pattern: SupportedIntegerMatchPattern::Literal(
-                                                value.clone(),
-                                            ),
+                                            pattern: SupportedIntegerMatchPattern::Literal(value),
                                             binding_local: None,
                                             guard,
                                             target: arm.target,
@@ -2321,13 +2329,19 @@ impl<'a> ModuleEmitter<'a> {
         span: Span,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
-        if !matches!(
-            pattern_kind(self.input.hir, pattern),
+        let supported = match pattern_kind(self.input.hir, pattern) {
             PatternKind::Binding(_)
-                | PatternKind::Integer(_)
-                | PatternKind::Bool(_)
-                | PatternKind::Wildcard
-        ) {
+            | PatternKind::Integer(_)
+            | PatternKind::Bool(_)
+            | PatternKind::Wildcard => true,
+            PatternKind::Path(_) => {
+                pattern_literal_bool(self.input.hir, self.input.resolution, pattern).is_some()
+                    || pattern_literal_int(self.input.hir, self.input.resolution, pattern).is_some()
+            }
+            _ => false,
+        };
+
+        if !supported {
             diagnostics.push(unsupported(
                 span,
                 "LLVM IR backend foundation only supports single-name binding patterns",
@@ -3284,7 +3298,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         llvm_slot_name(self.body, binding_local)
                     );
                 }
-                PatternKind::Integer(_) | PatternKind::Bool(_) | PatternKind::Wildcard => {}
+                PatternKind::Path(_)
+                | PatternKind::Integer(_)
+                | PatternKind::Bool(_)
+                | PatternKind::Wildcard => {}
                 _ => panic!("prepared patterns should only contain supported bind patterns"),
             },
             StatementKind::Eval { value } => {
@@ -4909,6 +4926,36 @@ fn guard_literal_int(
     guard_literal_int_expr(module, resolution, expr_id, &mut visited)
 }
 
+fn pattern_literal_bool(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    pattern: hir::PatternId,
+) -> Option<bool> {
+    let source = pattern_literal_source_expr(module, resolution, pattern)?;
+    let mut visited = HashSet::new();
+    guard_literal_bool_expr(module, resolution, source, &mut visited)
+}
+
+fn pattern_literal_int(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    pattern: hir::PatternId,
+) -> Option<i64> {
+    let source = pattern_literal_source_expr(module, resolution, pattern)?;
+    let mut visited = HashSet::new();
+    guard_literal_int_expr(module, resolution, source, &mut visited)
+}
+
+fn pattern_literal_source_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    pattern: hir::PatternId,
+) -> Option<hir::ExprId> {
+    let item_id = local_item_for_value_resolution(module, resolution.pattern_resolution(pattern)?)?;
+    let mut visited = HashSet::new();
+    guard_literal_source_item(module, resolution, item_id, &mut visited)
+}
+
 enum SupportedBoolGuardAnalysis {
     Always,
     Skip,
@@ -5130,13 +5177,35 @@ fn guard_scalar_kind_for_ty(ty: &Ty) -> Option<GuardScalarKind> {
 
 fn supported_bool_match_pattern(
     module: &hir::Module,
+    resolution: &ResolutionMap,
     pattern: hir::PatternId,
 ) -> Option<SupportedBoolMatchPattern> {
     match pattern_kind(module, pattern) {
         PatternKind::Bool(true) => Some(SupportedBoolMatchPattern::True),
         PatternKind::Bool(false) => Some(SupportedBoolMatchPattern::False),
+        PatternKind::Path(_) => pattern_literal_bool(module, resolution, pattern).map(|value| {
+            if value {
+                SupportedBoolMatchPattern::True
+            } else {
+                SupportedBoolMatchPattern::False
+            }
+        }),
         PatternKind::Binding(_) | PatternKind::Wildcard => {
             Some(SupportedBoolMatchPattern::CatchAll)
+        }
+        _ => None,
+    }
+}
+
+fn supported_integer_match_pattern(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    pattern: hir::PatternId,
+) -> Option<String> {
+    match pattern_kind(module, pattern) {
+        PatternKind::Integer(value) => Some(value.clone()),
+        PatternKind::Path(_) => {
+            pattern_literal_int(module, resolution, pattern).map(|value| value.to_string())
         }
         _ => None,
     }
@@ -7408,6 +7477,42 @@ fn main() -> Int {
 
         assert!(rendered.contains(" and i1 "));
         assert!(rendered.contains("icmp sgt i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_const_path_match_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+use ENABLE as ON
+use LIMIT as THRESHOLD
+
+const ENABLE: Bool = true
+const LIMIT: Int = 2
+
+fn choose_flag(flag: Bool) -> Int {
+    return match flag {
+        ON => 10,
+        false => 0,
+    }
+}
+
+fn choose_value(value: Int) -> Int {
+    return match value {
+        THRESHOLD => 20,
+        _ => 0,
+    }
+}
+
+fn main() -> Int {
+    return choose_flag(true) + choose_value(2)
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("br i1"));
+        assert_eq!(rendered.matches("icmp eq i64").count(), 1);
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

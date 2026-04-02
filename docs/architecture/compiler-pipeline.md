@@ -113,7 +113,7 @@ source
 - 新增 invalid struct-literal root diagnostics：已知不支持 struct-style field construction 的 root 现在会显式报错，而不是静默退化成 `unknown`
 - 新增 invalid pattern-root shape diagnostics：已解析成功但 struct/tuple pattern 构造形状确定不匹配的 root 现在会显式报错，而不是静默退化成 `unknown`
 - 新增 invalid path-pattern root diagnostics：已解析成功但 bare path pattern 构造形状确定不匹配的 root 现在会显式报错，而不是静默退化成 `unknown`
-- 新增 unsupported const/static path-pattern diagnostics：同文件 `const` / `static` item 及其 local import alias 作为 bare path pattern 时，现在会显式报 unsupported，而不是静默漏诊
+- 新增 same-file const path-pattern literal folding：同文件 `const` item 及其 local import alias 作为 bare path pattern 时，如果能折叠成 `Bool` / `Int` literal，就会复用现有 literal pattern typing / exhaustiveness surface；`static` 与不能折叠成 `Bool` / `Int` 的 const path pattern 仍显式报 unsupported，而不是静默漏诊
 - 新增 pattern root / literal compatibility checking
 - 新增 struct pattern unknown-field checking，并复用 same-file local import alias -> local item 的 canonicalization
 
@@ -129,8 +129,8 @@ source
 - deferred multi-segment type path 当前也保持 source-backed `Named` 表示，不再把首段解析出来的 same-file local item / import alias 过早伪装成真实 concrete type
 - deferred multi-segment `impl` / `extend` target 当前也不会被投影到 concrete local receiver surface：member typing / analysis completion 只继续枚举真实 receiver 的稳定候选，不把 `Counter.Scope.Config` 这类 deferred path 的方法伪装成 same-file `Counter` 成员
 - invalid pattern-root shape diagnostics 当前也只在“pattern root 已解析成功且构造形状已知必错”时触发；same-file 已解析二段 enum variant path 的 unknown variant 现在也会显式报错，但 path pattern shape / deeper module-path case 仍保持保守，不提前下结论
-- invalid path-pattern root diagnostics 当前也只在“path pattern root 已解析成功且 bare path 形状已知必错”时触发；unit variant 仍允许，same-file 已解析二段 enum variant path 的 unknown variant 与 const/static path 语义现在也会给出显式诊断，但 deeper module-path case 仍保持保守，不提前下结论
-- const/static bare path pattern 现在也已经改成显式 unsupported diagnostics；但这仍然只覆盖 same-file root / same-file local import alias，cross-file / deeper module-path case 继续保守
+- invalid path-pattern root diagnostics 当前也只在“path pattern root 已解析成功且 bare path 形状已知必错”时触发；unit variant 仍允许，same-file 已解析二段 enum variant path 的 unknown variant 现在也会显式报错；同文件 bare const path 如果能折叠成 `Bool` / `Int` literal 则会继续参与 literal compatibility checking，否则仍给出显式诊断；deeper module-path case 仍保持保守，不提前下结论
+- static 或非标量 const bare path pattern 当前也已经改成显式 unsupported diagnostics；但这仍然只覆盖 same-file root / same-file local import alias，cross-file / deeper module-path case 继续保守
 - ambiguous method 的 type diagnostics 已开放，但 query / completion / rename 仍只接受唯一 candidate，不提前伪造模糊成员 truth surface
 - bare single-segment unresolved diagnostics 已落地，但 multi-segment unresolved global / unresolved type diagnostics 仍然延后
 - 完整 trait solving、泛型实参推断、effect checking 和 flow-sensitive narrowing 还未开始

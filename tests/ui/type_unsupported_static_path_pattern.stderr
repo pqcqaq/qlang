@@ -1,0 +1,6 @@
+error: tests/ui/type_unsupported_static_path_pattern.ql:7:9: path pattern syntax is not supported for `TOTAL`
+          TOTAL => 1,
+          ^^^^^ pattern here
+error: tests/ui/type_unsupported_static_path_pattern.ql:8:9: path pattern syntax is not supported for `Count`
+          Count => 2,
+          ^^^^^ pattern here

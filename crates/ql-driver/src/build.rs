@@ -9911,6 +9911,56 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_const_path_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-const-path-match");
+        let source = dir.write(
+            "const_path_match.ql",
+            r#"
+use ENABLE as ON
+use LIMIT as THRESHOLD
+
+const ENABLE: Bool = true
+const LIMIT: Int = 2
+
+fn choose_flag(flag: Bool) -> Int {
+    return match flag {
+        ON => 10,
+        false => 0,
+    }
+}
+
+fn choose_value(value: Int) -> Int {
+    return match value {
+        THRESHOLD => 20,
+        _ => 0,
+    }
+}
+
+fn main() -> Int {
+    return choose_flag(true) + choose_value(2)
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/const_path_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with const path match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("br i1"));
+        assert_eq!(rendered.matches("icmp eq i64").count(), 1);
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_integer_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-integer-match");
         let source = dir.write(

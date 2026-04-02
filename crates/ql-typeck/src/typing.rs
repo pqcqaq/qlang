@@ -1063,6 +1063,41 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn path_pattern_const_source_expr(&self, pattern_id: PatternId) -> Option<ExprId> {
+        let item_id = self
+            .resolution
+            .pattern_resolution(pattern_id)
+            .and_then(|resolution| self.item_id_for_value_resolution(resolution))?;
+        let mut visited = HashSet::new();
+        self.const_source_item(item_id, &mut visited)
+    }
+
+    fn path_pattern_bool_literal(&self, pattern_id: PatternId) -> Option<bool> {
+        let source = self.path_pattern_const_source_expr(pattern_id)?;
+        let mut visited = HashSet::new();
+        self.bool_literal_expr(source, &mut visited)
+    }
+
+    fn path_pattern_int_literal(&self, pattern_id: PatternId) -> Option<i64> {
+        let source = self.path_pattern_const_source_expr(pattern_id)?;
+        let mut visited = HashSet::new();
+        self.int_literal_expr(source, &mut visited)
+    }
+
+    fn const_item_path_pattern_ty(&self, item_id: ItemId) -> Option<Ty> {
+        let mut visited = HashSet::new();
+        let source = self.const_source_item(item_id, &mut visited)?;
+
+        let mut bool_visited = HashSet::new();
+        if self.bool_literal_expr(source, &mut bool_visited).is_some() {
+            return Some(Ty::Builtin(ql_resolve::BuiltinType::Bool));
+        }
+
+        let mut int_visited = HashSet::new();
+        self.int_literal_expr(source, &mut int_visited)
+            .map(|_| Ty::Builtin(ql_resolve::BuiltinType::Int))
+    }
+
     fn const_source_expr(&self, expr_id: ExprId, visited: &mut HashSet<ItemId>) -> Option<ExprId> {
         match &self.module.expr(expr_id).kind {
             ExprKind::Bool(_)
@@ -1212,6 +1247,7 @@ impl<'a> Checker<'a> {
     fn pattern_matches_bool_literal(&self, pattern_id: PatternId, value: bool) -> bool {
         match &self.module.pattern(pattern_id).kind {
             PatternKind::Bool(pattern_value) => *pattern_value == value,
+            PatternKind::Path(_) => self.path_pattern_bool_literal(pattern_id) == Some(value),
             PatternKind::Binding(_) | PatternKind::Wildcard => true,
             _ => false,
         }
@@ -1294,11 +1330,11 @@ impl<'a> Checker<'a> {
             if !self.arm_counts_for_exhaustiveness(arm) {
                 continue;
             }
-            match &self.module.pattern(arm.pattern).kind {
-                PatternKind::Bool(true) => saw_true = true,
-                PatternKind::Bool(false) => saw_false = true,
-                PatternKind::Binding(_) | PatternKind::Wildcard => return true,
-                _ => {}
+            if self.pattern_matches_bool_literal(arm.pattern, true) {
+                saw_true = true;
+            }
+            if self.pattern_matches_bool_literal(arm.pattern, false) {
+                saw_false = true;
             }
         }
 
@@ -2279,7 +2315,21 @@ impl<'a> Checker<'a> {
                 }
             }
             PatternKind::Path(_) => {
-                if let Some(message) = self.invalid_path_pattern_root_message(pattern_id) {
+                if self.path_pattern_bool_literal(pattern_id).is_some() {
+                    self.check_literal_pattern(
+                        pattern_id,
+                        expected,
+                        &Ty::Builtin(ql_resolve::BuiltinType::Bool),
+                        "path pattern",
+                    );
+                } else if self.path_pattern_int_literal(pattern_id).is_some() {
+                    self.check_literal_pattern(
+                        pattern_id,
+                        expected,
+                        &Ty::Builtin(ql_resolve::BuiltinType::Int),
+                        "path pattern",
+                    );
+                } else if let Some(message) = self.invalid_path_pattern_root_message(pattern_id) {
                     self.diagnostics.push(
                         Diagnostic::error(message)
                             .with_label(Label::new(pattern.span).with_message("pattern here")),
@@ -2426,8 +2476,12 @@ impl<'a> Checker<'a> {
                 "path pattern syntax is not supported for `{path_text}`"
             )),
             ItemKind::Struct(_) | ItemKind::Enum(_) => None,
-            ItemKind::Const(_)
-            | ItemKind::Static(_)
+            ItemKind::Const(_) if path.segments.len() == 1 => self
+                .const_item_path_pattern_ty(item_id)
+                .is_none()
+                .then(|| format!("path pattern syntax is not supported for `{path_text}`")),
+            ItemKind::Const(_) => None,
+            ItemKind::Static(_)
             | ItemKind::Function(_)
             | ItemKind::Trait(_)
             | ItemKind::TypeAlias(_)
@@ -2440,8 +2494,7 @@ impl<'a> Checker<'a> {
                     "path pattern syntax is not supported for `{path_text}`"
                 ))
             }
-            ItemKind::Const(_)
-            | ItemKind::Static(_)
+            ItemKind::Static(_)
             | ItemKind::Function(_)
             | ItemKind::Trait(_)
             | ItemKind::TypeAlias(_)
@@ -2607,6 +2660,9 @@ impl<'a> Checker<'a> {
             .and_then(|resolution| self.item_id_for_value_resolution(resolution))?;
 
         match &self.module.item(item_id).kind {
+            ItemKind::Const(_) if path.segments.len() == 1 => {
+                self.const_item_path_pattern_ty(item_id)
+            }
             ItemKind::Struct(_) if path.segments.len() == 1 => Some(Ty::Item {
                 item_id,
                 name: item_display_name(self.module, item_id),

@@ -24,6 +24,7 @@
   - `Int` scrutinee：unguarded integer literal + `_` 或单名 binding catch-all arm 会 lower 成稳定 compare-chain。
 - 当前 build surface 也已开放普通表达式、`if` / `while` 条件里的 `Bool` 短路 `&&` / `||`，以及通用 `Bool` unary `!`。
 - 上述两条子集现在都额外支持 literal `if true` / `if false` guard、same-file `const`-backed `Bool` guard 和其 same-file `use ... as ...` 别名，以及包裹当前 bool guard 子集的一层 unary `!`；`if false` arm 会在 lowering 时被裁剪，`if true` arm 会按普通 arm 处理。
+- 上述两条 `match` pattern 子集现在也接受 same-file `const` bare path 及其 same-file local import alias，只要该 bare path 能折叠成 `Bool` / `Int` literal；`static` 与不能折叠成 `Bool` / `Int` 的 bare path pattern 仍维持显式拒绝。
 - 上述两条子集现在也额外支持当前简单 scalar comparison guard 子集：`Bool` `==` / `!=`，以及由 integer literal、same-file const/alias `Int`、以 local / parameter / `self` 为根的 read-only scalar projection operand、以及能经由 struct field / tuple literal-index / fixed-array index 折叠成 scalar 的 same-file `const` / alias-backed aggregate projection operand 组成的 `Int` `==` / `!=` / `>` / `>=` / `<` / `<=`。
 - `Bool` scrutinee 子集现在还额外支持 direct bool-valued guard：same-scope `Bool` local / parameter、以 local / parameter / `self` 为根的 read-only bool scalar projection，以及能折叠成 `Bool` 的 same-file `const` / alias-backed aggregate projection；但当前只开放在后续 arm 仍提供 guaranteed fallback coverage 的 ordered 子集内。
 - `Int` scrutinee 子集现在还额外支持 integer-literal arm 与 guarded catch-all arm 上的同一组 direct bool-valued guard，但当前只开放在后续存在 unguarded catch-all fallback 的 ordered 子集内。
@@ -76,7 +77,7 @@
 - 更广义的 async executable / program bootstrap，除当前 `async fn main` 最小子集以外仍未开放。
 - 更广义的 async `dylib` surface，以及任何需要公开 async ABI 的共享库承诺。
 - 非 fixed-array iterable 的 `for` / `for await`。
-- 更广义动态 guard 的 `match`（包括超出当前 `!` / `&&` / `||` + `Bool ==/!=` 与 `Int ==/!=/>/>=/</<=` 子集之外的任意表达式 guard、超出当前 read-only local / parameter / `self` root 与 same-file `const` / alias-backed aggregate root 子集的投影 operand、基于当前 arm 新绑定名继续做 member/index projection、`Bool` scrutinee 上不具备 guaranteed fallback coverage 的 direct bool-valued guard，以及 `Int` scrutinee 上不具备 later unguarded catch-all fallback 的 direct bool-valued guard）、非 `Bool` / `Int` scrutinee `match`、以及超出 `Bool true|false|_|single-name binding` / `Int literal|_|single-name binding` 的更广义 match pattern lowering。
+- 更广义动态 guard 的 `match`（包括超出当前 `!` / `&&` / `||` + `Bool ==/!=` 与 `Int ==/!=/>/>=/</<=` 子集之外的任意表达式 guard、超出当前 read-only local / parameter / `self` root 与 same-file `const` / alias-backed aggregate root 子集的投影 operand、基于当前 arm 新绑定名继续做 member/index projection、`Bool` scrutinee 上不具备 guaranteed fallback coverage 的 direct bool-valued guard，以及 `Int` scrutinee 上不具备 later unguarded catch-all fallback 的 direct bool-valued guard）、非 `Bool` / `Int` scrutinee `match`、以及超出 `Bool true|false|same-file const/alias bare path|_|single-name binding` / `Int literal|same-file const/alias bare path|_|single-name binding` 的更广义 match pattern lowering。
 - cleanup lowering / cleanup codegen。
 - cancellation / polling / drop 语义。
 - generic async ABI / layout substitution。

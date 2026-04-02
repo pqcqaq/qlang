@@ -253,7 +253,7 @@
 - invalid struct-literal root diagnostics
 - invalid pattern-root shape diagnostics
 - invalid path-pattern root diagnostics
-- unsupported const/static path-pattern diagnostics
+- same-file const bare path-pattern literal folding + unsupported static/non-scalar path-pattern diagnostics
 - pattern root / literal compatibility
 - calling non-callable values
 
