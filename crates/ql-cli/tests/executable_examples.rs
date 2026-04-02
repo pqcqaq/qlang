@@ -463,6 +463,31 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/82_async_main_guarded_static_alias_backed_triple_root_triple_source_row_slot_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql",
             expected_exit: 81,
         },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/83_async_main_guarded_static_alias_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql",
+            expected_exit: 84,
+        },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_forwarded_alias_nested_array_repackage_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/84_async_main_guarded_static_alias_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_forwarded_alias_nested_array_repackage_spawn.ql",
+            expected_exit: 86,
+        },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queued_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/85_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queued_spawn.ql",
+            expected_exit: 88,
+        },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/86_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_spawn.ql",
+            expected_exit: 90,
+        },
+        ExecutableExampleCase {
+            name: "async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_alias_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/87_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_alias_spawn.ql",
+            expected_exit: 92,
+        },
     ];
 
     assert_example_cases_run(

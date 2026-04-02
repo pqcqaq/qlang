@@ -81,12 +81,17 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `80_async_main_guarded_static_alias_backed_double_root_double_source_row_slot_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql`
 - `81_async_main_guarded_static_alias_backed_triple_root_double_source_row_slot_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql`
 - `82_async_main_guarded_static_alias_backed_triple_root_triple_source_row_slot_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql`
+- `83_async_main_guarded_static_alias_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql`
+- `84_async_main_guarded_static_alias_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_forwarded_alias_nested_array_repackage_spawn.ql`
+- `85_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queued_spawn.ql`
+- `86_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_spawn.ql`
+- `87_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_alias_spawn.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these eighty-two examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these eighty-seven examples with the real local toolchain and locks their exit codes.
 
 Expected exit codes:
 
@@ -169,6 +174,11 @@ Expected exit codes:
 - `80_async_main_guarded_static_alias_backed_double_root_double_source_row_slot_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql` -> `77`
 - `81_async_main_guarded_static_alias_backed_triple_root_double_source_row_slot_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql` -> `79`
 - `82_async_main_guarded_static_alias_backed_triple_root_triple_source_row_slot_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql` -> `81`
+- `83_async_main_guarded_static_alias_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_forwarded_nested_array_repackage_spawn.ql` -> `84`
+- `84_async_main_guarded_static_alias_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_forwarded_alias_nested_array_repackage_spawn.ql` -> `86`
+- `85_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queued_spawn.ql` -> `88`
+- `86_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_spawn.ql` -> `90`
+- `87_async_main_guarded_static_alias_backed_triple_root_triple_source_tail_queue_root_alias_spawn.ql` -> `92`
 
 Try one file directly:
 
