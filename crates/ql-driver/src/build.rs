@@ -9866,6 +9866,51 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_match_guard_binding_operands() {
+        let dir = TestDir::new("ql-driver-llvm-ir-match-guard-binding-operands");
+        let source = dir.write(
+            "match_guard_binding_operands.ql",
+            r#"
+fn choose_flag(flag: Bool, enabled: Bool) -> Int {
+    return match flag {
+        state if state && enabled => 10,
+        true => 20,
+        false => 0,
+    }
+}
+
+fn choose_value(value: Int, limit: Int) -> Int {
+    return match value {
+        current if current > limit => 10,
+        _ => 0,
+    }
+}
+
+fn main() -> Int {
+    return choose_flag(true, true) + choose_value(3, 1)
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/match_guard_binding_operands.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with match-guard binding operands should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains(" and i1 "));
+        assert!(rendered.contains("icmp sgt i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_integer_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-integer-match");
         let source = dir.write(

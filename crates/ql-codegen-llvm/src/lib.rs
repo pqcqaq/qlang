@@ -128,6 +128,12 @@ struct LoweredValue {
 }
 
 #[derive(Clone, Debug)]
+struct GuardBindingValue {
+    local: hir::LocalId,
+    value: LoweredValue,
+}
+
+#[derive(Clone, Debug)]
 struct SupportedForLoopLowering {
     iterable_place: Place,
     item_local: mir::LocalId,
@@ -159,6 +165,7 @@ enum SupportedMatchLowering {
 #[derive(Clone, Debug)]
 struct SupportedBoolMatchArm {
     pattern: SupportedBoolMatchPattern,
+    binding_local: Option<hir::LocalId>,
     guard: SupportedBoolGuard,
     target: mir::BasicBlockId,
 }
@@ -185,6 +192,7 @@ struct SupportedIntegerMatchArm {
 #[derive(Clone, Debug)]
 struct SupportedGuardedIntegerMatchArm {
     pattern: SupportedIntegerMatchPattern,
+    binding_local: Option<hir::LocalId>,
     guard: SupportedBoolGuard,
     target: mir::BasicBlockId,
 }
@@ -828,6 +836,10 @@ impl<'a> ModuleEmitter<'a> {
 
                                 ordered_arms.push(SupportedBoolMatchArm {
                                     pattern,
+                                    binding_local: match pattern_kind(self.input.hir, arm.pattern) {
+                                        PatternKind::Binding(local) => Some(*local),
+                                        _ => None,
+                                    },
                                     guard,
                                     target: arm.target,
                                 });
@@ -900,11 +912,12 @@ impl<'a> ModuleEmitter<'a> {
                                             pattern: SupportedIntegerMatchPattern::Literal(
                                                 value.clone(),
                                             ),
+                                            binding_local: None,
                                             guard,
                                             target: arm.target,
                                         });
                                     }
-                                    PatternKind::Binding(_) | PatternKind::Wildcard => {
+                                    PatternKind::Binding(local) => {
                                         if matches!(guard, SupportedBoolGuard::Always) {
                                             fallback_target = arm.target;
                                             guaranteed_fallback = true;
@@ -912,6 +925,20 @@ impl<'a> ModuleEmitter<'a> {
                                         }
                                         ordered_arms.push(SupportedGuardedIntegerMatchArm {
                                             pattern: SupportedIntegerMatchPattern::CatchAll,
+                                            binding_local: Some(*local),
+                                            guard,
+                                            target: arm.target,
+                                        });
+                                    }
+                                    PatternKind::Wildcard => {
+                                        if matches!(guard, SupportedBoolGuard::Always) {
+                                            fallback_target = arm.target;
+                                            guaranteed_fallback = true;
+                                            break;
+                                        }
+                                        ordered_arms.push(SupportedGuardedIntegerMatchArm {
+                                            pattern: SupportedIntegerMatchPattern::CatchAll,
+                                            binding_local: None,
                                             guard,
                                             target: arm.target,
                                         });
@@ -3412,8 +3439,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
 
                             if let SupportedBoolGuard::Dynamic(expr_id) = arm.guard {
                                 let _ = writeln!(output, "{guard_target}:");
-                                let condition =
-                                    self.render_bool_guard_expr(output, expr_id, terminator.span);
+                                let guard_binding =
+                                    arm.binding_local.map(|local| GuardBindingValue {
+                                        local,
+                                        value: rendered.clone(),
+                                    });
+                                let condition = self.render_bool_guard_expr(
+                                    output,
+                                    expr_id,
+                                    terminator.span,
+                                    guard_binding.as_ref(),
+                                );
                                 let _ = writeln!(
                                     output,
                                     "  br i1 {}, label %bb{}, label %{next_target}",
@@ -3529,8 +3565,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
 
                             if let SupportedBoolGuard::Dynamic(expr_id) = arm.guard {
                                 let _ = writeln!(output, "{guard_target}:");
-                                let condition =
-                                    self.render_bool_guard_expr(output, expr_id, terminator.span);
+                                let guard_binding =
+                                    arm.binding_local.map(|local| GuardBindingValue {
+                                        local,
+                                        value: rendered.clone(),
+                                    });
+                                let condition = self.render_bool_guard_expr(
+                                    output,
+                                    expr_id,
+                                    terminator.span,
+                                    guard_binding.as_ref(),
+                                );
                                 let _ = writeln!(
                                     output,
                                     "  br i1 {}, label %bb{}, label %{false_target}",
@@ -4377,12 +4422,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         output: &mut String,
         expr_id: hir::ExprId,
         span: Span,
+        guard_binding: Option<&GuardBindingValue>,
     ) -> LoweredValue {
         match &self.emitter.input.hir.expr(expr_id).kind {
             hir::ExprKind::Binary { left, op, right } => match op {
                 BinaryOp::AndAnd | BinaryOp::OrOr => {
-                    let left = self.render_bool_guard_expr(output, *left, span);
-                    let right = self.render_bool_guard_expr(output, *right, span);
+                    let left = self.render_bool_guard_expr(output, *left, span, guard_binding);
+                    let right = self.render_bool_guard_expr(output, *right, span, guard_binding);
                     assert!(
                         left.ty.is_bool() && right.ty.is_bool(),
                         "prepared bool guard lowering at {span:?} should only combine bool guard expressions with &&/||"
@@ -4405,8 +4451,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     }
                 }
                 _ => {
-                    let left = self.render_guard_scalar_expr(output, *left, span);
-                    let right = self.render_guard_scalar_expr(output, *right, span);
+                    let left = self.render_guard_scalar_expr(output, *left, span, guard_binding);
+                    let right = self.render_guard_scalar_expr(output, *right, span, guard_binding);
                     assert_eq!(
                         left.ty, right.ty,
                         "prepared bool guard lowering at {span:?} should only compare same-typed supported guard operands"
@@ -4447,7 +4493,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 }
             },
             _ => {
-                let rendered = self.render_guard_scalar_expr(output, expr_id, span);
+                let rendered = self.render_guard_scalar_expr(output, expr_id, span, guard_binding);
                 assert!(
                     rendered.ty.is_bool(),
                     "prepared bool guard lowering at {span:?} should only render bool-valued guard expressions"
@@ -4462,6 +4508,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         output: &mut String,
         expr_id: hir::ExprId,
         span: Span,
+        guard_binding: Option<&GuardBindingValue>,
     ) -> LoweredValue {
         match &self.emitter.input.hir.expr(expr_id).kind {
             hir::ExprKind::Binary {
@@ -4476,7 +4523,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     | BinaryOp::LtEq,
                 ..
             } => {
-                let rendered = self.render_bool_guard_expr(output, expr_id, span);
+                let rendered = self.render_bool_guard_expr(output, expr_id, span, guard_binding);
                 assert!(
                     rendered.ty.is_bool(),
                     "prepared bool guard lowering at {span:?} should only render bool-valued binary guard expressions"
@@ -4487,7 +4534,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 op: UnaryOp::Not,
                 expr,
             } => {
-                let inner = self.render_bool_guard_expr(output, *expr, span);
+                let inner = self.render_bool_guard_expr(output, *expr, span, guard_binding);
                 assert!(
                     inner.ty.is_bool(),
                     "prepared bool guard lowering at {span:?} should only negate bool guard expressions"
@@ -4512,6 +4559,11 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             },
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
+                    Some(ValueResolution::Local(local))
+                        if guard_binding.is_some_and(|binding| binding.local == *local) =>
+                    {
+                        guard_binding.expect("checked above").value.clone()
+                    }
                     Some(ValueResolution::Item(_)) | Some(ValueResolution::Import(_)) => {
                         if let Some(value) = guard_literal_bool(
                             self.emitter.input.hir,
@@ -4621,9 +4673,11 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                             "prepared bool guard lowering at {span:?} should only render block guard operands with tails"
                         )
                     });
-                self.render_guard_scalar_expr(output, tail, span)
+                self.render_guard_scalar_expr(output, tail, span, guard_binding)
             }
-            hir::ExprKind::Question(inner) => self.render_guard_scalar_expr(output, *inner, span),
+            hir::ExprKind::Question(inner) => {
+                self.render_guard_scalar_expr(output, *inner, span, guard_binding)
+            }
             _ => panic!(
                 "prepared bool guard lowering at {span:?} should only render supported scalar guard expressions"
             ),
@@ -4998,6 +5052,13 @@ fn supported_guard_scalar_expr(
         } => supported_bool_guard(module, resolution, body, local_types, arm_pattern, *expr)
             .map(|_| GuardScalarKind::Bool),
         hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
+            Some(ValueResolution::Local(local_id))
+                if pattern_binds_local(module, arm_pattern, *local_id) =>
+            {
+                let local = mir_local_for_hir_local(body, *local_id)?;
+                let ty = local_types.get(&local)?;
+                guard_scalar_kind_for_ty(ty)
+            }
             Some(ValueResolution::Item(_)) | Some(ValueResolution::Import(_)) => {
                 if guard_literal_bool(module, resolution, expr_id).is_some() {
                     Some(GuardScalarKind::Bool)
@@ -7316,6 +7377,37 @@ fn main() -> Int {
         assert!(rendered.contains("bb0_match_guard1:"));
         assert!(rendered.contains(" and i1 "));
         assert!(rendered.contains(" or i1 "));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_match_guard_binding_operand_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+fn choose_flag(flag: Bool, enabled: Bool) -> Int {
+    return match flag {
+        state if state && enabled => 10,
+        true => 20,
+        false => 0,
+    }
+}
+
+fn choose_value(value: Int, limit: Int) -> Int {
+    return match value {
+        current if current > limit => 10,
+        _ => 0,
+    }
+}
+
+fn main() -> Int {
+    return choose_flag(true, true) + choose_value(3, 1)
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains(" and i1 "));
+        assert!(rendered.contains("icmp sgt i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
