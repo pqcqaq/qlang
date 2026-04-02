@@ -668,6 +668,21 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/121_async_main_import_alias_awaited_aggregate_task_array_for_await.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "async_main_inline_awaited_task_array_for_await",
+            source_relative: "ramdon_tests/async_program_surface_examples/122_async_main_inline_awaited_task_array_for_await.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "async_main_awaited_tuple_projected_task_array_for_await",
+            source_relative: "ramdon_tests/async_program_surface_examples/123_async_main_awaited_tuple_projected_task_array_for_await.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "async_main_awaited_array_projected_task_array_for_await",
+            source_relative: "ramdon_tests/async_program_surface_examples/124_async_main_awaited_array_projected_task_array_for_await.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
