@@ -763,6 +763,26 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/136_async_main_void_task_tuple_for_await.ql",
             expected_exit: 2,
         },
+        ExecutableExampleCase {
+            name: "async_main_const_tuple_for_await",
+            source_relative: "ramdon_tests/async_program_surface_examples/137_async_main_const_tuple_for_await.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "async_main_static_array_for_await",
+            source_relative: "ramdon_tests/async_program_surface_examples/138_async_main_static_array_for_await.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "async_main_import_alias_projected_const_tuple_for_await",
+            source_relative: "ramdon_tests/async_program_surface_examples/139_async_main_import_alias_projected_const_tuple_for_await.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "async_main_import_alias_projected_static_array_for_await",
+            source_relative: "ramdon_tests/async_program_surface_examples/140_async_main_import_alias_projected_static_array_for_await.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
