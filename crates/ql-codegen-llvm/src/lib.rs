@@ -1958,7 +1958,7 @@ impl<'a> ModuleEmitter<'a> {
                     None
                 }
                 Constant::Item { item, .. } => match &self.input.hir.item(*item).kind {
-                    ItemKind::Const(global) => {
+                    ItemKind::Const(global) | ItemKind::Static(global) => {
                         Some(lower_type(self.input.hir, self.input.resolution, global.ty))
                     }
                     _ => {
@@ -1983,13 +1983,20 @@ impl<'a> ModuleEmitter<'a> {
                     ));
                     None
                 }
-                Constant::Import(_) => {
-                    diagnostics.push(unsupported(
-                        span,
-                        "LLVM IR backend foundation does not support imported value lowering yet",
-                    ));
-                    None
-                }
+                Constant::Import(path) => local_item_for_import_path(self.input.hir, path)
+                    .and_then(|item_id| match &self.input.hir.item(item_id).kind {
+                        ItemKind::Const(global) | ItemKind::Static(global) => {
+                            Some(lower_type(self.input.hir, self.input.resolution, global.ty))
+                        }
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation does not support imported value lowering yet",
+                        ));
+                        None
+                    }),
                 Constant::UnresolvedName(_) => {
                     diagnostics.push(unsupported(
                         span,
@@ -4152,8 +4159,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         item_id: ItemId,
         span: Span,
     ) -> LoweredValue {
-        let ItemKind::Const(global) = &self.emitter.input.hir.item(item_id).kind else {
-            panic!("prepared const item lowering at {span:?} should only materialize const items");
+        let (ItemKind::Const(global) | ItemKind::Static(global)) =
+            &self.emitter.input.hir.item(item_id).kind
+        else {
+            panic!(
+                "prepared const item lowering at {span:?} should only materialize const/static items"
+            );
         };
         let ty = lower_type(
             self.emitter.input.hir,
@@ -4187,8 +4198,18 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     Some(ValueResolution::Item(item_id)) => {
                         self.render_item_constant(output, *item_id, span)
                     }
+                    Some(ValueResolution::Import(import_binding)) => self.render_item_constant(
+                        output,
+                        local_item_for_import_binding(self.emitter.input.hir, import_binding)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "prepared const item lowering at {span:?} should only reference resolved local const/static imports"
+                                )
+                            }),
+                        span,
+                    ),
                     _ => panic!(
-                        "prepared const item lowering at {span:?} should only reference resolved const items"
+                        "prepared const item lowering at {span:?} should only reference resolved const/static items"
                     ),
                 }
             }
@@ -4450,9 +4471,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 Constant::Item { item, .. } => self.render_item_constant(output, *item, span),
                 Constant::String { .. }
                 | Constant::None
-                | Constant::Import(_)
                 | Constant::UnresolvedName(_) => {
                     panic!("prepared operands should not contain unsupported constants")
+                }
+                Constant::Import(path) => {
+                    let item_id =
+                        local_item_for_import_path(self.emitter.input.hir, path).unwrap_or_else(|| {
+                            panic!(
+                                "prepared operands should only contain local const/static imports"
+                            )
+                        });
+                    self.render_item_constant(output, item_id, span)
                 }
             },
         }
@@ -5999,6 +6028,26 @@ fn local_item_for_value_resolution(
         }
         _ => None,
     }
+}
+
+fn local_item_for_import_path(module: &hir::Module, path: &ql_ast::Path) -> Option<ItemId> {
+    let [name] = path.segments.as_slice() else {
+        return None;
+    };
+
+    module
+        .items
+        .iter()
+        .copied()
+        .find(|item_id| match &module.item(*item_id).kind {
+            ItemKind::Function(function) => function.name == *name,
+            ItemKind::Const(global) | ItemKind::Static(global) => global.name == *name,
+            ItemKind::Struct(struct_decl) => struct_decl.name == *name,
+            ItemKind::Enum(enum_decl) => enum_decl.name == *name,
+            ItemKind::Trait(trait_decl) => trait_decl.name == *name,
+            ItemKind::TypeAlias(alias) => alias.name == *name,
+            ItemKind::Impl(_) | ItemKind::Extend(_) | ItemKind::ExternBlock(_) => false,
+        })
 }
 
 fn local_item_for_import_binding(
@@ -7957,6 +8006,38 @@ fn main() -> Int {
         assert!(rendered.contains("br i1"));
         assert_eq!(rendered.matches("icmp eq i64").count(), 1);
         assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_static_item_values_in_expressions() {
+        let rendered = emit_with_mode(
+            r#"
+use LIMIT as THRESHOLD
+use READY as ENABLED
+use LIMITS as VALUES
+
+static LIMIT: Int = 2
+static READY: Bool = true
+static LIMITS: [Int; 3] = [1, 3, 5]
+
+fn main() -> Int {
+    let values = VALUES
+    let value = THRESHOLD + values[1]
+    if ENABLED {
+        return value
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("store [3 x i64]"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr %l1_values, i64 0, i64 1"));
+        assert!(rendered.contains("add i64 2, %"));
+        assert!(rendered.contains("br i1 true"));
+        assert!(!rendered.contains("does not support item values here"));
+        assert!(!rendered.contains("does not support imported value lowering yet"));
     }
 
     #[test]

@@ -19,6 +19,7 @@
 
 - `ql build --emit llvm-ir|obj|exe|dylib|staticlib` 已是仓库内真实支持能力，不再只是设计目标。
 - fixed-array iterable 的 sync `for` 已开放在当前 program / library build surface 内，不依赖 async runtime hook。
+- 当前普通表达式与 `if` / `while` 条件里，也已开放 same-file foldable `const` / `static` item value 及其 same-file `use ... as ...` alias 的直接 materialize；当前已支持的 tuple / fixed-array / plain-struct literal 子集会复用同一条 const-evaluation lowering。
 - 最小 literal `match` lowering 已开放在当前 program / library build surface 内：
   - `Bool` scrutinee：unguarded `true` / `false` + `_` 或单名 binding catch-all arm 会直接 lower 成 LLVM branch。
   - `Int` scrutinee：unguarded integer literal + `_` 或单名 binding catch-all arm 会 lower 成稳定 compare-chain。

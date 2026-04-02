@@ -9909,6 +9909,54 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_static_item_values_in_expressions() {
+        let dir = TestDir::new("ql-driver-llvm-ir-static-item-values-in-expressions");
+        let source = dir.write(
+            "static_item_values_in_expressions.ql",
+            r#"
+use LIMIT as THRESHOLD
+use READY as ENABLED
+use LIMITS as VALUES
+
+static LIMIT: Int = 2
+static READY: Bool = true
+static LIMITS: [Int; 3] = [1, 3, 5]
+
+fn main() -> Int {
+    let values = VALUES
+    let value = THRESHOLD + values[1]
+    if ENABLED {
+        return value
+    }
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/static_item_values_in_expressions.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with static item values in expressions should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("store [3 x i64]"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr %l1_values, i64 0, i64 1"));
+        assert!(rendered.contains("add i64 2, %"));
+        assert!(rendered.contains("br i1 true"));
+        assert!(!rendered.contains("does not support item values here"));
+        assert!(!rendered.contains("does not support imported value lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_logical_bool_guard_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-logical-bool-guard-match");
         let source = dir.write(
