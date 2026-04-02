@@ -418,6 +418,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/73_async_main_aliased_guard_refined_static_alias_backed_projected_root.ql",
             expected_exit: 35,
         },
+        ExecutableExampleCase {
+            name: "async_main_aliased_guard_refined_static_alias_backed_nested_repackage_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/74_async_main_aliased_guard_refined_static_alias_backed_nested_repackage_spawn.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
