@@ -397,12 +397,10 @@ impl<'a> ModuleEmitter<'a> {
     }
 
     fn collect_rvalue_callees(&self, value: &Rvalue, queue: &mut VecDeque<FunctionRef>) {
-        if let Rvalue::Call {
-            callee: Operand::Constant(Constant::Function { function, .. }),
-            ..
-        } = value
+        if let Rvalue::Call { callee, .. } = value
+            && let Some(function) = self.resolve_direct_callee_function(callee)
         {
-            queue.push_back(*function);
+            queue.push_back(function);
         }
     }
 
@@ -1252,10 +1250,10 @@ impl<'a> ModuleEmitter<'a> {
         let Rvalue::Call { callee, args } = value else {
             return;
         };
-        let Operand::Constant(Constant::Function { function, .. }) = callee else {
+        let Some(function) = self.resolve_direct_callee_function(callee) else {
             return;
         };
-        let Some(signature) = self.signatures.get(function) else {
+        let Some(signature) = self.signatures.get(&function) else {
             return;
         };
 
@@ -1265,6 +1263,20 @@ impl<'a> ModuleEmitter<'a> {
 
         for (arg, param) in ordered_args.into_iter().zip(signature.params.iter()) {
             self.seed_expected_temp_from_operand(body, &arg.value, &param.ty, local_types);
+        }
+    }
+
+    fn resolve_direct_callee_function(&self, callee: &Operand) -> Option<FunctionRef> {
+        match callee {
+            Operand::Constant(Constant::Function { function, .. }) => Some(*function),
+            Operand::Constant(Constant::Import(path)) => {
+                let item_id = local_item_for_import_path(self.input.hir, path)?;
+                match &self.input.hir.item(item_id).kind {
+                    ItemKind::Function(_) => Some(FunctionRef::Item(item_id)),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -1484,10 +1496,10 @@ impl<'a> ModuleEmitter<'a> {
                 let Rvalue::Call { callee, .. } = value else {
                     continue;
                 };
-                let Operand::Constant(Constant::Function { function, .. }) = callee else {
+                let Some(function) = self.resolve_direct_callee_function(callee) else {
                     continue;
                 };
-                let Some(signature) = self.signatures.get(function) else {
+                let Some(signature) = self.signatures.get(&function) else {
                     continue;
                 };
                 if !signature.is_async {
@@ -1594,7 +1606,7 @@ impl<'a> ModuleEmitter<'a> {
                 span,
             ),
             Rvalue::Call { callee, args } => {
-                let Operand::Constant(Constant::Function { function, .. }) = callee else {
+                let Some(function) = self.resolve_direct_callee_function(callee) else {
                     ctx.diagnostics.push(unsupported(
                         span,
                         "LLVM IR backend foundation only supports direct resolved function calls",
@@ -1602,7 +1614,7 @@ impl<'a> ModuleEmitter<'a> {
                     return None;
                 };
 
-                let Some(signature) = self.signatures.get(function) else {
+                let Some(signature) = self.signatures.get(&function) else {
                     ctx.diagnostics.push(unsupported(
                         span,
                         "LLVM IR backend foundation could not resolve the direct callee declaration",
@@ -3720,13 +3732,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         match value {
             Rvalue::Use(operand) => Some(self.render_operand(output, operand, span)),
             Rvalue::Call { callee, args } => {
-                let Operand::Constant(Constant::Function { function, .. }) = callee else {
+                let Some(function) = self.emitter.resolve_direct_callee_function(callee) else {
                     panic!("prepared calls should only contain direct resolved callees");
                 };
                 let signature = self
                     .emitter
                     .signatures
-                    .get(function)
+                    .get(&function)
                     .expect("callee signatures should exist");
                 let rendered_args = self
                     .emitter
@@ -6603,6 +6615,27 @@ fn main() -> Int {
         assert!(rendered.contains("store [0 x i64] zeroinitializer"));
         assert!(rendered.contains("call i64 @ql_0_collect([0 x i64] %t0, i64 22, i64 20)"));
         assert!(!rendered.contains("does not support named call arguments yet"));
+    }
+
+    #[test]
+    fn emits_llvm_ir_for_same_file_import_alias_named_calls() {
+        let rendered = emit(
+            r#"
+use collect as run
+
+fn collect(values: [Int; 0], left: Int, right: Int) -> Int {
+    return left + right + 7
+}
+
+fn main() -> Int {
+    return run(right: 20, values: [], left: 22)
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @ql_0_collect([0 x i64] %arg0, i64 %arg1, i64 %arg2)"));
+        assert!(rendered.contains("call i64 @ql_0_collect([0 x i64] %t0, i64 22, i64 20)"));
+        assert!(!rendered.contains("only supports direct resolved function calls"));
     }
 
     #[test]

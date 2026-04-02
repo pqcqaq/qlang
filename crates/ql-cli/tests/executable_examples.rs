@@ -49,6 +49,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/05_sync_named_call_arguments.ql",
             expected_exit: 47,
         },
+        ExecutableExampleCase {
+            name: "sync_import_alias_named_call_arguments",
+            source_relative: "ramdon_tests/executable_examples/06_sync_import_alias_named_call_arguments.ql",
+            expected_exit: 49,
+        },
     ];
 
     assert_example_cases_run(
