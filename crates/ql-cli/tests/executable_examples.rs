@@ -393,6 +393,21 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/69_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_chain_inline_forward_await.ql",
             expected_exit: 134,
         },
+        ExecutableExampleCase {
+            name: "async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_forward_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/70_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_forward_spawn.ql",
+            expected_exit: 136,
+        },
+        ExecutableExampleCase {
+            name: "async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_alias_forward_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/71_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_alias_forward_spawn.ql",
+            expected_exit: 138,
+        },
+        ExecutableExampleCase {
+            name: "async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_chain_forward_spawn",
+            source_relative: "ramdon_tests/async_program_surface_examples/72_async_main_guarded_const_backed_triple_root_triple_source_tail_bundle_chain_forward_spawn.ql",
+            expected_exit: 140,
+        },
     ];
 
     assert_example_cases_run(

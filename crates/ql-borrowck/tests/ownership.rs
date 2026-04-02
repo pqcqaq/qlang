@@ -3735,6 +3735,249 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_bundle_forwarded_task_handle_after_forwarded_alias()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Bundle {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Envelope {
+    bundle: Bundle,
+    tail: Task[Wrap],
+}
+
+const INDEX: Int = 0
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row_root = INDEX
+    let row = row_root
+    let slots = [row, row]
+    let slot_root = slots
+    let slot_alias_root = slot_root
+    let alias_slots = slot_alias_root
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let root = pending.tasks
+    let root_alias = root
+    let alias = root_alias
+    let slot = Slot { value: INDEX }
+    let slot_alias = slot
+    if slot_alias.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let tail_tasks = pending.tasks
+    let forwarded = forward(alias[alias_slots[row]])
+    let running_task = forwarded
+    let env = Envelope {
+        bundle: Bundle {
+            tasks: [running_task, worker()],
+        },
+        tail: tail_tasks[1],
+    }
+    let bundle_tasks = env.bundle.tasks
+    let bundled = bundle_tasks[0]
+    let bundle_ready = forward(bundled)
+    let second = await env.tail
+    let running = spawn bundle_ready
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded const-backed triple-root triple-source row-slot-tail bundle-forwarded spawn after forwarded alias to preserve sibling array element availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_bundle_alias_forwarded_task_handle_after_forwarded_alias()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Bundle {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Envelope {
+    bundle: Bundle,
+    tail: Task[Wrap],
+}
+
+const INDEX: Int = 0
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row_root = INDEX
+    let row = row_root
+    let slots = [row, row]
+    let slot_root = slots
+    let slot_alias_root = slot_root
+    let alias_slots = slot_alias_root
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let root = pending.tasks
+    let root_alias = root
+    let alias = root_alias
+    let slot = Slot { value: INDEX }
+    let slot_alias = slot
+    if slot_alias.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let tail_tasks = pending.tasks
+    let forwarded = forward(alias[alias_slots[row]])
+    let running_task = forwarded
+    let env = Envelope {
+        bundle: Bundle {
+            tasks: [running_task, worker()],
+        },
+        tail: tail_tasks[1],
+    }
+    let bundle_root = env.bundle.tasks
+    let bundle_tasks = bundle_root
+    let bundled = bundle_tasks[0]
+    let bundle_ready = forward(bundled)
+    let second = await env.tail
+    let running = spawn bundle_ready
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded const-backed triple-root triple-source row-slot-tail bundle-alias-forwarded spawn after forwarded alias to preserve sibling array element availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_bundle_chain_forwarded_task_handle_after_forwarded_alias()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Bundle {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Envelope {
+    bundle: Bundle,
+    tail: Task[Wrap],
+}
+
+const INDEX: Int = 0
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row_root = INDEX
+    let row = row_root
+    let slots = [row, row]
+    let slot_root = slots
+    let slot_alias_root = slot_root
+    let alias_slots = slot_alias_root
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let root = pending.tasks
+    let root_alias = root
+    let alias = root_alias
+    let slot = Slot { value: INDEX }
+    let slot_alias = slot
+    if slot_alias.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let tail_tasks = pending.tasks
+    let forwarded = forward(alias[alias_slots[row]])
+    let running_task = forwarded
+    let env = Envelope {
+        bundle: Bundle {
+            tasks: [running_task, worker()],
+        },
+        tail: tail_tasks[1],
+    }
+    let bundle_root = env.bundle.tasks
+    let bundle_alias_root = bundle_root
+    let bundle_tasks = bundle_alias_root
+    let bundled = bundle_tasks[0]
+    let bundle_ready = forward(bundled)
+    let second = await env.tail
+    let running = spawn bundle_ready
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded const-backed triple-root triple-source row-slot-tail bundle-chain-forwarded spawn after forwarded alias to preserve sibling array element availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_tail_inline_forwarded_task_handle_after_forwarded_alias()
  {
     let diagnostics = diagnostic_messages(
