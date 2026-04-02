@@ -103,7 +103,7 @@ P4/P5 地基已经落地，且当前正在保守扩展 Phase 7 async library/pro
 - codegen 会在 program mode 下把 Qlang 用户入口 lower 成内部符号，并额外生成宿主 `main` wrapper
 - `dylib` 和 `staticlib` 都走 library mode，因此当前单文件库不要求顶层 `main`
 - async public build 当前已开放两类受控子集：`staticlib` 与 `dylib` 都支持已接入 backend 的 async library body，并为 fixed-array iterable 打开 `for await` lowering；`BuildEmit::LlvmIr` / `BuildEmit::Object` / `BuildEmit::Executable` 也已开放 `async fn main` 的最小程序入口生命周期与 fixed-array `for await` 子集。其中 `dylib` 仍只开放不暴露 async ABI 的最小 library-style 子集；更广义的 async program/bootstrap surface，以及非 fixed-array iterable 的 `for await` 仍保持保守拒绝
-- 当前最小 async executable program subset 还额外由 80 个 committed 样例锁定，见 `ramdon_tests/async_program_surface_examples/` 与 `crates/ql-cli/tests/executable_examples.rs`
+- 当前最小 async executable program subset 还额外由 82 个 committed 样例锁定，见 `ramdon_tests/async_program_surface_examples/` 与 `crates/ql-cli/tests/executable_examples.rs`
 - sync executable examples 现也额外收录 `ramdon_tests/executable_examples/04_sync_static_item_values.ql`，把 same-file foldable `const` / `static` item value 及其 same-file `use ... as ...` alias 的普通表达式 / bool 条件 lowering 锁进真实 `--emit exe` 合同
 - `dylib` 当前要求模块里至少存在一个 public 顶层 `extern "c"` 函数定义，避免生成没有明确导出面的共享库
 - direct `extern "c"` 调用现在会在 program mode 和 library mode 下都 lower 成 LLVM `declare @symbol` + `call @symbol`
