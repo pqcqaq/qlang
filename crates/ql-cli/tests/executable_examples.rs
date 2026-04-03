@@ -1188,6 +1188,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/192_async_main_guard_refined_dynamic_path_families.ql",
             expected_exit: 40,
         },
+        ExecutableExampleCase {
+            name: "async_main_static_alias_projected_root_dynamic_reinit_families",
+            source_relative: "ramdon_tests/async_program_surface_examples/193_async_main_static_alias_projected_root_dynamic_reinit_families.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(

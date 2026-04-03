@@ -132,6 +132,7 @@
   - same immutable stable source path precise consume / reinit
   - projected-root stable dynamic reinit / conditional reinit
   - direct / projected / aliased guard-refined dynamic reinit
+  - same-file static/import-alias-backed projected-root dynamic reinit
   - same-file `const` / `static` / `use ... as ...` alias 回收到 literal/projection path
   - equality-guard refinement
   - projected-root / alias-root canonicalization
@@ -154,12 +155,12 @@
 截至当前代码：
 
 - sync executable examples：`39`
-- async executable examples：`189`
+- async executable examples：`190`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `192`，但真实 `.ql` 文件数是 `189`，不是 `192`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `189` 个 async executable case 和 `39` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `193`，但真实 `.ql` 文件数是 `190`，不是 `193`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `190` 个 async executable case 和 `39` 个 sync executable case
 
 ## 当前明确未开放
 
