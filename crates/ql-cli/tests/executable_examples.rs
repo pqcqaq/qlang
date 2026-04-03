@@ -204,6 +204,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/36_sync_inline_projected_fixed_shapes.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_import_alias_inline_projected_fixed_shapes",
+            source_relative: "ramdon_tests/executable_examples/37_sync_import_alias_inline_projected_fixed_shapes.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
