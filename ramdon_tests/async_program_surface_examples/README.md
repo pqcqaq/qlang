@@ -174,13 +174,15 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `173_async_main_awaited_match_nested_call_root_inline_combos.ql`
 - `174_async_main_spawned_aggregate_results.ql`
 - `175_async_main_zero_sized_and_recursive_aggregate_results.ql`
+- `176_async_main_zero_sized_helper_task_handle_flows.ql`
+- `177_async_main_zero_sized_projected_task_handle_consumes.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-seventy-two examples with the real local toolchain and locks their exit codes.
-- The filenames run from `04` through `175`, but the real async executable example count is `172`.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-seventy-four examples with the real local toolchain and locks their exit codes.
+- The filenames run from `04` through `177`, but the real async executable example count is `174`.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -242,6 +244,8 @@ Current status:
 - `173_async_main_awaited_match_nested_call_root_inline_combos.ql` now locks the awaited nested call-root inline-combo variant for `async fn main`, where `match first { current if [pack(current).values[slot(current)], current + 1, 6][0] == 4 => ... }`, `match second { current if contains([current, pack(current).values[slot(current)], 9], 4) => ... }`, and `match third { current if matches((8, pack(current).values[slot(current)]), 4) => ... }` confirm that nested call-root runtime projections can now continue flowing into inline projection roots plus inline array/tuple guard-call arguments through the current executable async surface and still exit with `42`.
 - `174_async_main_spawned_aggregate_results.ql` now locks the spawned aggregate result variant for `async fn main`, where `spawn tuple_worker()`, `spawn array_worker()`, and `spawn pair_worker()` each return fixed-shape aggregate payloads that can be awaited back into tuple / fixed-array / struct values on the executable surface and still exit with `21`.
 - `175_async_main_zero_sized_and_recursive_aggregate_results.ql` now locks the zero-sized plus recursive aggregate result family for `async fn main`, where zero-sized `[Int; 0]` / `Wrap` results and recursive `(Pair, [Int; 2])` fixed-shape aggregate results both succeed through direct `await` and `spawn -> await` paths on the executable surface and still exit with `22`.
+- `176_async_main_zero_sized_helper_task_handle_flows.ql` now locks the zero-sized helper task-handle flow family for `async fn main`, where helper-returned `Task[Wrap]`, bound helper handles, `spawn schedule()`, forwarded zero-sized handles, and `spawn forward(next)` all survive the executable surface and still exit with `5`.
+- `177_async_main_zero_sized_projected_task_handle_consumes.ql` now locks the zero-sized projected task-handle consume family for `async fn main`, where tuple / fixed-array / struct-field projections can mix `await` and `spawn -> await` on `Task[Wrap]` payloads through the executable surface and still exit with `6`.
 
 Expected exit codes:
 
@@ -417,6 +421,8 @@ Expected exit codes:
 - `173_async_main_awaited_match_nested_call_root_inline_combos.ql` -> `42`
 - `174_async_main_spawned_aggregate_results.ql` -> `21`
 - `175_async_main_zero_sized_and_recursive_aggregate_results.ql` -> `22`
+- `176_async_main_zero_sized_helper_task_handle_flows.ql` -> `5`
+- `177_async_main_zero_sized_projected_task_handle_consumes.ql` -> `6`
 
 Try one file directly:
 
