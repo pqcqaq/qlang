@@ -70,6 +70,12 @@ async fn guard_refined_reinit(index: Int) -> Wrap {
     return await tasks[0]
 }
 
+async fn dynamic_assignment(index: Int) -> Int {
+    var tasks = [int_worker(8), int_worker(9)]
+    tasks[index] = int_worker(10)
+    return await tasks[0]
+}
+
 async fn spawn_sibling(index: Int) -> Int {
     let pending = PendingInt {
         tasks: [int_worker(5), int_worker(6)],
@@ -87,8 +93,9 @@ async fn helper() -> Int {
     let third_wrap = await guard_refined_reinit(0)
     let first = await composed_reinit(0)
     let second = await alias_composed_reinit(0)
-    let third = await spawn_sibling(1)
-    return first + second + third
+    let third = await dynamic_assignment(1)
+    let fourth = await spawn_sibling(1)
+    return first + second + third + fourth
 }
 
 extern "c" pub fn q_export() -> Int {
