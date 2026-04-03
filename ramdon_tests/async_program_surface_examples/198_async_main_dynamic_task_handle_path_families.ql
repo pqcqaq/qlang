@@ -1,5 +1,7 @@
 use SELECTED_INDEX as SELECTED_INDEX_ALIAS
 use SELECTED_SLOT as SELECTED_SLOT_ALIAS
+use ARITH_INDEX as ARITH_INDEX_ALIAS
+use ARITH_SLOT as ARITH_SLOT_ALIAS
 
 struct Pending {
     tasks: [Task[Int]; 2],
@@ -20,6 +22,8 @@ static SELECTED_SLOT: Slot = match MATCH_KEY {
     1 => Slot { value: 0 },
     _ => Slot { value: 1 },
 }
+static BASE: Int = 2
+static ARITH_SLOT: Slot = Slot { value: BASE - 2 }
 
 async fn worker(value: Int) -> Int {
     return value
@@ -116,6 +120,21 @@ async fn main() -> Int {
     aliased_branch_static_pending.tasks[0] = worker(aliased_branch_static_first + 5)
     let aliased_branch_static_second = await aliased_branch_static_alias[SELECTED_SLOT_ALIAS.value]
 
+    var aliased_arithmetic_const_tasks = [worker(10), worker(16)]
+    let aliased_arithmetic_const_first = await aliased_arithmetic_const_tasks[ARITH_INDEX_ALIAS]
+    aliased_arithmetic_const_tasks[0] = worker(aliased_arithmetic_const_first + 2)
+    let aliased_arithmetic_const_second = await aliased_arithmetic_const_tasks[ARITH_INDEX_ALIAS]
+
+    var aliased_arithmetic_static_pending = Pending {
+        tasks: [worker(5), worker(17)],
+    }
+    let aliased_arithmetic_static_alias = aliased_arithmetic_static_pending.tasks
+    let aliased_arithmetic_static_first =
+        await aliased_arithmetic_static_alias[ARITH_SLOT_ALIAS.value]
+    aliased_arithmetic_static_pending.tasks[0] = worker(aliased_arithmetic_static_first + 4)
+    let aliased_arithmetic_static_second =
+        await aliased_arithmetic_static_alias[ARITH_SLOT_ALIAS.value]
+
     return first
         + second
         + tail
@@ -142,4 +161,8 @@ async fn main() -> Int {
         + aliased_branch_const_second
         + aliased_branch_static_first
         + aliased_branch_static_second
+        + aliased_arithmetic_const_first
+        + aliased_arithmetic_const_second
+        + aliased_arithmetic_static_first
+        + aliased_arithmetic_static_second
 }

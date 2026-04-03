@@ -6397,6 +6397,38 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn reports_use_after_move_for_same_arithmetic_const_alias_backed_dynamic_task_handle_array_index_and_literal_reuse()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+use INDEX as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+const STEP: Int = 1
+const INDEX: Int = STEP - 1
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let tasks = [worker(), worker()]
+    let first = await tasks[INDEX_ALIAS]
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected arithmetic const alias-backed dynamic task-handle index reuse through tasks[0] to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_reinitializing_same_arithmetic_projected_dynamic_task_handle_array_index_before_literal_reuse()
 {
     let diagnostics = diagnostic_messages(
@@ -6426,6 +6458,43 @@ async fn main() -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected arithmetic projected dynamic task-handle index reinit to restore tasks[0], got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_same_arithmetic_static_alias_backed_projected_dynamic_task_handle_array_index_before_reuse()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+use SLOT as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+static BASE: Int = 2
+static SLOT: Slot = Slot { value: BASE - 2 }
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var tasks = [worker(), worker()]
+    let first = await tasks[INDEX_ALIAS.value]
+    tasks[0] = worker()
+    return await tasks[INDEX_ALIAS.value]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected arithmetic static alias-backed projected dynamic task-handle index reinit to restore tasks[0], got {diagnostics:?}"
     );
 }
 
