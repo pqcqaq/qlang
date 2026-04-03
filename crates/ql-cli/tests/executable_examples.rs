@@ -99,6 +99,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/15_sync_match_guard_binding_projection_roots.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_match_binding_catch_all_aggregate_scrutinees",
+            source_relative: "ramdon_tests/executable_examples/16_sync_match_binding_catch_all_aggregate_scrutinees.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(

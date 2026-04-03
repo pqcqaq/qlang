@@ -1042,7 +1042,7 @@ impl<'a> ModuleEmitter<'a> {
                                 match pattern_kind(self.input.hir, arm.pattern) {
                                     PatternKind::Binding(local) => {
                                         if matches!(guard, SupportedBoolGuard::Always) {
-                                            supported = false;
+                                            fallback_target = arm.target;
                                             break;
                                         }
                                         ordered_arms.push(SupportedGuardOnlyMatchArm {
@@ -8909,6 +8909,53 @@ fn main() -> Int {
         assert!(rendered.contains("getelementptr inbounds { i64, i64 }"));
         assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
         assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_match_binding_catch_all_lowering_for_aggregate_scrutinees() {
+        let rendered = emit_with_mode(
+            r#"
+struct Slot {
+    ready: Bool,
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+}
+
+fn pick_state(state: State) -> Int {
+    return match state {
+        current => current.slot.value,
+    }
+}
+
+fn pick_pair(pair: (Int, Int)) -> Int {
+    return match pair {
+        current => current[0] + current[1],
+    }
+}
+
+fn pick_values(values: [Int; 3]) -> Int {
+    return match values {
+        current => current[0] + current[2],
+    }
+}
+
+fn main() -> Int {
+    return pick_state(State {
+        slot: Slot { ready: true, value: 10 },
+    }) + pick_pair((10, 2)) + pick_values([1, 7, 19])
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("define i64 @ql_").count() >= 4);
+        assert!(rendered.contains("getelementptr inbounds { { i1, i64 } }"));
+        assert!(rendered.contains("getelementptr inbounds { i64, i64 }"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

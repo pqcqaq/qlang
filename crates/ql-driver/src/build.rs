@@ -10198,6 +10198,70 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_match_binding_catch_all_for_aggregate_scrutinees() {
+        let dir = TestDir::new("ql-driver-llvm-ir-match-binding-catch-all-aggregate-scrutinees");
+        let source = dir.write(
+            "match_binding_catch_all_aggregate_scrutinees.ql",
+            r#"
+struct Slot {
+    ready: Bool,
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+}
+
+fn pick_state(state: State) -> Int {
+    return match state {
+        current => current.slot.value,
+    }
+}
+
+fn pick_pair(pair: (Int, Int)) -> Int {
+    return match pair {
+        current => current[0] + current[1],
+    }
+}
+
+fn pick_values(values: [Int; 3]) -> Int {
+    return match values {
+        current => current[0] + current[2],
+    }
+}
+
+fn main() -> Int {
+    return pick_state(State {
+        slot: Slot { ready: true, value: 10 },
+    }) + pick_pair((10, 2)) + pick_values([1, 7, 19])
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/match_binding_catch_all_aggregate_scrutinees.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "llvm-ir build with match binding catch-all for aggregate scrutinees should succeed",
+        );
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.matches("define i64 @ql_").count() >= 4);
+        assert!(rendered.contains("getelementptr inbounds { { i1, i64 } }"));
+        assert!(rendered.contains("getelementptr inbounds { i64, i64 }"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_match_guard_runtime_index_expr() {
         let dir = TestDir::new("ql-driver-llvm-ir-match-guard-runtime-index-expr");
         let source = dir.write(
