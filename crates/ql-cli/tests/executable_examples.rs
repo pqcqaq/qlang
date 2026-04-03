@@ -1448,6 +1448,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/223_async_const_backed_tuple_assignment_expressions.ql",
             expected_exit: 22,
         },
+        ExecutableExampleCase {
+            name: "async_main_projected_const_item_values",
+            source_relative: "ramdon_tests/async_program_surface_examples/224_async_main_projected_const_item_values.ql",
+            expected_exit: 5,
+        },
     ];
 
     assert_example_cases_run(

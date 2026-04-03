@@ -175,6 +175,8 @@
   - homogeneous tuple
   - task-array / task-tuple auto-await
   - projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
+- 普通表达式与 `if` / `while` 条件里的 same-file foldable `const` / `static`
+  - 包括 computed/projected item value
 - awaited `match` guard 子集
   - awaited scalar + direct-call guard
   - awaited aggregate + projection guard
@@ -189,12 +191,12 @@
 截至当前代码：
 
 - sync executable examples：`60`
-- async executable examples：`220`
+- async executable examples：`221`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `223`，但真实 `.ql` 文件数是 `220`，不是 `223`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `220` 个 async executable case 和 `60` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `224`，但真实 `.ql` 文件数是 `221`，不是 `224`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `221` 个 async executable case 和 `60` 个 sync executable case
 
 ## 当前明确未开放
 

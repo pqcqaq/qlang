@@ -222,6 +222,7 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `221_async_import_alias_call_root_nested_projected_tuple_assignment_expressions.ql`
 - `222_async_inline_nested_projected_tuple_assignment_expressions.ql`
 - `223_async_const_backed_tuple_assignment_expressions.ql`
+- `224_async_main_projected_const_item_values.ql`
 
 Current status:
 
@@ -338,6 +339,7 @@ Current status:
 - `221_async_import_alias_call_root_nested_projected_tuple_assignment_expressions.ql` now locks the async import-alias call-root nested projected tuple assignment-expression surface, where `env().inner.pair[0] = await worker(...)` and `env().inner.pair[1] = ...` both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `22`.
 - `222_async_inline_nested_projected_tuple_assignment_expressions.ql` now locks the async inline nested projected tuple assignment-expression surface, where `(Env { ... }).inner.pair[0] = await worker(...)` and `(Env { ... }).inner.pair[1] = ...` both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `22`.
 - `223_async_const_backed_tuple_assignment_expressions.ql` now locks the async tuple constant-index read/write surface where same-file `const` / `static` items, struct-field projections, integer arithmetic, same-file `use ... as ...` aliases, and immutable direct local aliases can drive tuple indices inside `async fn main`, and the executable surface still exits with `22`.
+- `224_async_main_projected_const_item_values.ql` now locks the async ordinary-expression const-evaluation surface where same-file projected/computed `const` / `static` item values can feed bool conditions and ordinary scalar arguments inside `async fn main`, and the executable surface still exits with `5`.
 
 Expected exit codes:
 
@@ -561,6 +563,7 @@ Expected exit codes:
 - `221_async_import_alias_call_root_nested_projected_tuple_assignment_expressions.ql` -> `22`
 - `222_async_inline_nested_projected_tuple_assignment_expressions.ql` -> `22`
 - `223_async_const_backed_tuple_assignment_expressions.ql` -> `22`
+- `224_async_main_projected_const_item_values.ql` -> `5`
 
 Try one file directly:
 
