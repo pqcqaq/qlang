@@ -4759,7 +4759,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     )
                 })
             }
-            hir::ExprKind::Member { .. } | hir::ExprKind::Bracket { .. } => {
+            hir::ExprKind::Member { .. }
+            | hir::ExprKind::Bracket { .. }
+            | hir::ExprKind::If { .. }
+            | hir::ExprKind::Match { .. } => {
                 let mut visited = HashSet::new();
                 let source = guard_literal_source_expr(
                     self.emitter.input.hir,
@@ -4769,12 +4772,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 )
                 .unwrap_or_else(|| {
                     panic!(
-                        "prepared const item lowering at {span:?} should only use foldable projection const expressions"
+                        "prepared const item lowering at {span:?} should only use foldable projected or branch-selected const expressions"
                     )
                 });
                 if source == expr_id {
                     panic!(
-                        "prepared const item lowering at {span:?} should resolve projected const expressions to their folded source"
+                        "prepared const item lowering at {span:?} should resolve projected or branch-selected const expressions to their folded source"
                     );
                 }
                 self.render_const_expr(output, source, expected_ty, span)
@@ -7529,6 +7532,8 @@ fn guard_literal_bool_expr(
         hir::ExprKind::Name(_)
         | hir::ExprKind::Member { .. }
         | hir::ExprKind::Bracket { .. }
+        | hir::ExprKind::If { .. }
+        | hir::ExprKind::Match { .. }
         | hir::ExprKind::Block(_)
         | hir::ExprKind::Unsafe(_)
         | hir::ExprKind::Question(_) => {
@@ -7571,6 +7576,8 @@ fn guard_literal_int_expr(
         hir::ExprKind::Name(_)
         | hir::ExprKind::Member { .. }
         | hir::ExprKind::Bracket { .. }
+        | hir::ExprKind::If { .. }
+        | hir::ExprKind::Match { .. }
         | hir::ExprKind::Block(_)
         | hir::ExprKind::Unsafe(_)
         | hir::ExprKind::Question(_) => {
@@ -7649,6 +7656,21 @@ fn guard_literal_source_expr(
             }?;
             guard_literal_source_expr(module, resolution, value, visited).or(Some(value))
         }
+        hir::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => guard_literal_if_source_expr(
+            module,
+            resolution,
+            *condition,
+            *then_branch,
+            *else_branch,
+            visited,
+        ),
+        hir::ExprKind::Match { value, arms } => {
+            guard_literal_match_source_expr(module, resolution, *value, arms, visited)
+        }
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => module
             .block(*block_id)
             .tail
@@ -7658,6 +7680,99 @@ fn guard_literal_source_expr(
         }
         _ => None,
     }
+}
+
+fn guard_literal_if_source_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    condition: hir::ExprId,
+    then_branch: hir::BlockId,
+    else_branch: Option<hir::ExprId>,
+    visited: &mut HashSet<ItemId>,
+) -> Option<hir::ExprId> {
+    if guard_literal_bool_expr(module, resolution, condition, visited)? {
+        let tail = module.block(then_branch).tail?;
+        guard_literal_source_expr(module, resolution, tail, visited).or(Some(tail))
+    } else {
+        let other = else_branch?;
+        guard_literal_source_expr(module, resolution, other, visited).or(Some(other))
+    }
+}
+
+fn guard_literal_match_source_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    value: hir::ExprId,
+    arms: &[hir::MatchArm],
+    visited: &mut HashSet<ItemId>,
+) -> Option<hir::ExprId> {
+    if let Some(scrutinee) = guard_literal_bool_expr(module, resolution, value, visited) {
+        for arm in arms {
+            let matches = match pattern_kind(module, arm.pattern) {
+                PatternKind::Bool(pattern) => *pattern == scrutinee,
+                PatternKind::Path(_) => {
+                    pattern_literal_bool(module, resolution, arm.pattern)? == scrutinee
+                }
+                PatternKind::Binding(_) | PatternKind::Wildcard => true,
+                _ => return None,
+            };
+            if !matches {
+                continue;
+            }
+            let guard = arm
+                .guard
+                .map(|guard| guard_literal_bool_expr(module, resolution, guard, visited))
+                .unwrap_or(Some(true))?;
+            if guard {
+                return guard_literal_source_expr(module, resolution, arm.body, visited)
+                    .or(Some(arm.body));
+            }
+        }
+        return None;
+    }
+
+    if let Some(scrutinee) = guard_literal_int_expr(module, resolution, value, visited) {
+        for arm in arms {
+            let matches = match pattern_kind(module, arm.pattern) {
+                PatternKind::Integer(pattern) => ql_ast::parse_i64_literal(pattern)? == scrutinee,
+                PatternKind::Path(_) => {
+                    pattern_literal_int(module, resolution, arm.pattern)? == scrutinee
+                }
+                PatternKind::Binding(_) | PatternKind::Wildcard => true,
+                _ => return None,
+            };
+            if !matches {
+                continue;
+            }
+            let guard = arm
+                .guard
+                .map(|guard| guard_literal_bool_expr(module, resolution, guard, visited))
+                .unwrap_or(Some(true))?;
+            if guard {
+                return guard_literal_source_expr(module, resolution, arm.body, visited)
+                    .or(Some(arm.body));
+            }
+        }
+        return None;
+    }
+
+    for arm in arms {
+        match pattern_kind(module, arm.pattern) {
+            PatternKind::Binding(_) | PatternKind::Wildcard => {
+                let guard = arm
+                    .guard
+                    .map(|guard| guard_literal_bool_expr(module, resolution, guard, visited))
+                    .unwrap_or(Some(true))?;
+                if guard {
+                    return guard_literal_source_expr(module, resolution, arm.body, visited)
+                        .or(Some(arm.body));
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    None
 }
 
 fn guard_literal_source_item(

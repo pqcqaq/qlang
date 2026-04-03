@@ -7,7 +7,7 @@ Files:
 - `01_sync_minimal.ql`: free functions, arithmetic, compare, `if`
 - `02_sync_data_shapes.ql`: structs, tuples, arrays, nested projections, dynamic array assignment, zero-sized arrays with expected context
 - `03_sync_extern_c_export.ql`: top-level `extern "c" pub fn` definition plus normal `main`
-- `04_sync_static_item_values.ql`: same-file `const` / `static` item values, projected/computed item values, plus `use ... as ...` aliases in ordinary expressions and bool conditions
+- `04_sync_static_item_values.ql`: same-file `const` / `static` item values, projected/computed item values, plus `use ... as ...` aliases and foldable const `if` / literal `match` branch selection in ordinary expressions and bool conditions
 - `05_sync_named_call_arguments.ql`: direct named call arguments lowered in parameter order, including expected-type back-propagation for `[]`
 - `06_sync_import_alias_named_call_arguments.ql`: same-file `use ... as ...` function alias calls plus named arguments, lowered as the original direct callee in parameter order
 - `07_sync_for_fixed_array.ql`: direct fixed-array `for` lowering in executable mode

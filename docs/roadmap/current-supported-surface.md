@@ -64,7 +64,7 @@
   - projected-root dynamic array projections
   - direct-root / projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root assignment-expression result form
   - nested projected-root assignment-expression result form
-- 普通表达式与 `if` / `while` 条件里的 same-file foldable `const` / `static`，包括 computed/projected item value
+- 普通表达式与 `if` / `while` 条件里的 same-file foldable `const` / `static`，包括 computed/projected item value，以及 foldable const `if` / 最小 literal `match` 选出的 branch-selected item value
 - `Bool` `&&` / `||` / unary `!`
 - 最小 literal `match` lowering
   - `Bool` / `Int` literal-path 子集
@@ -177,6 +177,7 @@
   - projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
 - 普通表达式与 `if` / `while` 条件里的 same-file foldable `const` / `static`
   - 包括 computed/projected item value
+  - 包括 foldable const `if` / 最小 literal `match` 选出的 branch-selected item value
 - awaited `match` guard 子集
   - awaited scalar + direct-call guard
   - awaited aggregate + projection guard
