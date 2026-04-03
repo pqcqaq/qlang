@@ -107,6 +107,7 @@
   - recursive aggregate params on direct `await` / `spawn`
 - scalar 与 fixed-shape aggregate payload
   - tuple / fixed-array / non-generic struct
+  - regular-size direct / spawn aggregate result family
   - zero-sized aggregate
   - direct / spawn recursive fixed-shape aggregate result
   - aggregate 内继续携带 `Task[T]`
@@ -158,12 +159,12 @@
 截至当前代码：
 
 - sync executable examples：`39`
-- async executable examples：`193`
+- async executable examples：`194`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `196`，但真实 `.ql` 文件数是 `193`，不是 `196`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `193` 个 async executable case 和 `39` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `197`，但真实 `.ql` 文件数是 `194`，不是 `197`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `194` 个 async executable case 和 `39` 个 sync executable case
 
 ## 当前明确未开放
 
