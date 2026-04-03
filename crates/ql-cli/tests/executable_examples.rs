@@ -1293,6 +1293,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/207_async_projected_root_tuple_assignment_expressions.ql",
             expected_exit: 19,
         },
+        ExecutableExampleCase {
+            name: "async_scalar_dynamic_array_assignments",
+            source_relative: "ramdon_tests/async_program_surface_examples/208_async_scalar_dynamic_array_assignments.ql",
+            expected_exit: 23,
+        },
     ];
 
     assert_example_cases_run(

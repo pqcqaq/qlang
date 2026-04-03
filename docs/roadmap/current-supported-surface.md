@@ -97,6 +97,9 @@
 - 动态 `Task[...]` 数组索引赋值的当前可运行子集
   - generic direct-root write-before-consume success path
   - generic projected-root write-before-consume success path
+- async 普通标量动态数组索引赋值的当前可运行子集
+  - direct-root non-`Task[...]` arrays
+  - projected-root non-`Task[...]` arrays
 - 最小 async `match` family
   - direct-call guard
   - projection guard
@@ -180,12 +183,12 @@
 截至当前代码：
 
 - sync executable examples：`45`
-- async executable examples：`204`
+- async executable examples：`205`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `207`，但真实 `.ql` 文件数是 `204`，不是 `207`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `204` 个 async executable case 和 `45` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `208`，但真实 `.ql` 文件数是 `205`，不是 `208`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `205` 个 async executable case 和 `45` 个 sync executable case
 
 ## 当前明确未开放
 
