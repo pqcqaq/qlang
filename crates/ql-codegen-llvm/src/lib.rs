@@ -4721,6 +4721,44 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 llvm_ty: "i1".to_owned(),
                 repr: if *value { "true" } else { "false" }.to_owned(),
             },
+            hir::ExprKind::Unary { op, expr } => match op {
+                UnaryOp::Not => {
+                    let operand = self.render_const_expr(output, *expr, expected_ty, span);
+                    let temp = self.fresh_temp();
+                    let _ = writeln!(output, "  {temp} = xor i1 {}, true", operand.repr);
+                    LoweredValue {
+                        ty: Ty::Builtin(BuiltinType::Bool),
+                        llvm_ty: "i1".to_owned(),
+                        repr: temp,
+                    }
+                }
+                UnaryOp::Neg => {
+                    let operand = self.render_const_expr(output, *expr, expected_ty, span);
+                    let temp = self.fresh_temp();
+                    if is_float_ty(&operand.ty) {
+                        let _ = writeln!(output, "  {temp} = fneg {} {}", operand.llvm_ty, operand.repr);
+                    } else {
+                        let _ = writeln!(output, "  {temp} = sub {} 0, {}", operand.llvm_ty, operand.repr);
+                    }
+                    LoweredValue {
+                        ty: operand.ty,
+                        llvm_ty: operand.llvm_ty,
+                        repr: temp,
+                    }
+                }
+                UnaryOp::Await | UnaryOp::Spawn => panic!(
+                    "prepared const item lowering at {span:?} should not contain async unary expressions"
+                ),
+            },
+            hir::ExprKind::Binary { left, op, right } => {
+                let left = self.render_const_expr(output, *left, None, span);
+                let right = self.render_const_expr(output, *right, None, span);
+                self.render_binary(output, *op, left, right).unwrap_or_else(|| {
+                    panic!(
+                        "prepared const item lowering at {span:?} should only use supported binary const expressions"
+                    )
+                })
+            }
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
                     Some(ValueResolution::Item(item_id)) => {

@@ -109,6 +109,7 @@ struct Checker<'a> {
     expr_types: HashMap<ExprId, Ty>,
     pattern_types: HashMap<PatternId, Ty>,
     local_types: HashMap<LocalId, Ty>,
+    immutable_local_values: HashMap<LocalId, ExprId>,
     mutable_locals: HashSet<LocalId>,
     member_targets: HashMap<ExprId, MemberTarget>,
     param_types: HashMap<ParamBinding, Ty>,
@@ -128,6 +129,7 @@ impl<'a> Checker<'a> {
             expr_types: HashMap::new(),
             pattern_types: HashMap::new(),
             local_types: HashMap::new(),
+            immutable_local_values: HashMap::new(),
             mutable_locals: HashSet::new(),
             member_targets: HashMap::new(),
             param_types: HashMap::new(),
@@ -282,6 +284,11 @@ impl<'a> Checker<'a> {
                 } => {
                     let value_ty = self.check_expr(*value, None);
                     self.bind_pattern(*pattern, &value_ty);
+                    if !*mutable
+                        && let PatternKind::Binding(local_id) = &self.module.pattern(*pattern).kind
+                    {
+                        self.immutable_local_values.insert(*local_id, *value);
+                    }
                     if *mutable {
                         self.record_mutable_pattern_bindings(*pattern);
                     }
@@ -1149,11 +1156,17 @@ impl<'a> Checker<'a> {
             | ExprKind::Tuple(_)
             | ExprKind::Array(_)
             | ExprKind::StructLiteral { .. } => Some(expr_id),
-            ExprKind::Name(_) => self
-                .resolution
-                .expr_resolution(expr_id)
-                .and_then(|resolution| self.item_id_for_value_resolution(resolution))
-                .and_then(|item_id| self.const_source_item(item_id, visited)),
+            ExprKind::Name(_) => match self.resolution.expr_resolution(expr_id) {
+                Some(ValueResolution::Local(local_id)) => self
+                    .immutable_local_values
+                    .get(local_id)
+                    .copied()
+                    .and_then(|value| self.const_source_expr(value, visited)),
+                Some(resolution) => self
+                    .item_id_for_value_resolution(resolution)
+                    .and_then(|item_id| self.const_source_item(item_id, visited)),
+                None => None,
+            },
             ExprKind::Member { object, field, .. } => {
                 let object = self.const_source_expr(*object, visited)?;
                 let ExprKind::StructLiteral { fields, .. } = &self.module.expr(object).kind else {

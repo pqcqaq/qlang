@@ -1874,7 +1874,7 @@ fn main() -> Int {
 }
 
 #[test]
-fn accepts_foldable_const_backed_tuple_assignment_targets() {
+fn accepts_foldable_const_backed_and_local_alias_tuple_assignment_targets() {
     let diagnostics = diagnostic_messages(
         r#"
 use INDEXES as ALIAS
@@ -1891,8 +1891,10 @@ static EDGE: Int = NEXT
 
 fn main() -> Int {
     var pair = (1, 2)
-    let first = pair[ALIAS.left + 0] = 7
-    let second = pair[EDGE - 0] = 9
+    let left = ALIAS.left + 0
+    let right = EDGE - 0
+    let first = pair[left] = 7
+    let second = pair[right] = first + 2
     return pair[NEXT - 1] + second
 }
 "#,
@@ -1900,7 +1902,7 @@ fn main() -> Int {
 
     assert!(
         diagnostics.is_empty(),
-        "expected foldable const-backed tuple read/write indexing to type-check, got {diagnostics:?}"
+        "expected foldable const-backed and direct immutable-local tuple read/write indexing to type-check, got {diagnostics:?}"
     );
 }
 

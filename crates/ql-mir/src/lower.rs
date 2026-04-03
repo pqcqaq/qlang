@@ -99,6 +99,7 @@ fn lower_function_body(
 fn fold_int_constant_expr(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    immutable_local_values: &HashMap<hir::LocalId, ExprId>,
     expr_id: ExprId,
     visited: &mut HashSet<ItemId>,
 ) -> Option<i64> {
@@ -107,11 +108,18 @@ fn fold_int_constant_expr(
         ExprKind::Unary {
             op: UnaryOp::Neg,
             expr,
-        } => fold_int_constant_expr(module, resolution, *expr, visited)
+        } => fold_int_constant_expr(module, resolution, immutable_local_values, *expr, visited)
             .and_then(|value| value.checked_neg()),
         ExprKind::Binary { left, op, right } => {
-            let left = fold_int_constant_expr(module, resolution, *left, visited)?;
-            let right = fold_int_constant_expr(module, resolution, *right, visited)?;
+            let left =
+                fold_int_constant_expr(module, resolution, immutable_local_values, *left, visited)?;
+            let right = fold_int_constant_expr(
+                module,
+                resolution,
+                immutable_local_values,
+                *right,
+                visited,
+            )?;
             match op {
                 BinaryOp::Add => left.checked_add(right),
                 BinaryOp::Sub => left.checked_sub(right),
@@ -127,11 +135,17 @@ fn fold_int_constant_expr(
         | ExprKind::Block(_)
         | ExprKind::Unsafe(_)
         | ExprKind::Question(_) => {
-            let source = fold_constant_source_expr(module, resolution, expr_id, visited)?;
+            let source = fold_constant_source_expr(
+                module,
+                resolution,
+                immutable_local_values,
+                expr_id,
+                visited,
+            )?;
             if source == expr_id {
                 None
             } else {
-                fold_int_constant_expr(module, resolution, source, visited)
+                fold_int_constant_expr(module, resolution, immutable_local_values, source, visited)
             }
         }
         _ => None,
@@ -141,6 +155,7 @@ fn fold_int_constant_expr(
 fn fold_constant_source_expr(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    immutable_local_values: &HashMap<hir::LocalId, ExprId>,
     expr_id: ExprId,
     visited: &mut HashSet<ItemId>,
 ) -> Option<ExprId> {
@@ -172,12 +187,39 @@ fn fold_constant_source_expr(
         | ExprKind::Tuple(_)
         | ExprKind::Array(_)
         | ExprKind::StructLiteral { .. } => Some(expr_id),
-        ExprKind::Name(_) => resolution
-            .expr_resolution(expr_id)
-            .and_then(|resolution| local_item_for_value_resolution(module, resolution))
-            .and_then(|item_id| fold_constant_source_item(module, resolution, item_id, visited)),
+        ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
+            Some(ValueResolution::Local(local_id)) => immutable_local_values
+                .get(local_id)
+                .copied()
+                .and_then(|value| {
+                    fold_constant_source_expr(
+                        module,
+                        resolution,
+                        immutable_local_values,
+                        value,
+                        visited,
+                    )
+                }),
+            Some(value_resolution) => local_item_for_value_resolution(module, value_resolution)
+                .and_then(|item_id| {
+                    fold_constant_source_item(
+                        module,
+                        resolution,
+                        immutable_local_values,
+                        item_id,
+                        visited,
+                    )
+                }),
+            None => None,
+        },
         ExprKind::Member { object, field, .. } => {
-            let object = fold_constant_source_expr(module, resolution, *object, visited)?;
+            let object = fold_constant_source_expr(
+                module,
+                resolution,
+                immutable_local_values,
+                *object,
+                visited,
+            )?;
             let ExprKind::StructLiteral { fields, .. } = &module.expr(object).kind else {
                 return None;
             };
@@ -185,26 +227,43 @@ fn fold_constant_source_expr(
                 .iter()
                 .find(|candidate| candidate.name == *field)?
                 .value;
-            fold_constant_source_expr(module, resolution, value, visited).or(Some(value))
+            fold_constant_source_expr(module, resolution, immutable_local_values, value, visited)
+                .or(Some(value))
         }
         ExprKind::Bracket { target, items } if items.len() == 1 => {
-            let index = fold_int_constant_expr(module, resolution, items[0], visited)?;
+            let index = fold_int_constant_expr(
+                module,
+                resolution,
+                immutable_local_values,
+                items[0],
+                visited,
+            )?;
             if index < 0 {
                 return None;
             }
             let index = index as usize;
-            let target = fold_constant_source_expr(module, resolution, *target, visited)?;
+            let target = fold_constant_source_expr(
+                module,
+                resolution,
+                immutable_local_values,
+                *target,
+                visited,
+            )?;
             let value = match &module.expr(target).kind {
                 ExprKind::Tuple(items) | ExprKind::Array(items) => items.get(index).copied(),
                 _ => None,
             }?;
-            fold_constant_source_expr(module, resolution, value, visited).or(Some(value))
+            fold_constant_source_expr(module, resolution, immutable_local_values, value, visited)
+                .or(Some(value))
         }
-        ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => module
-            .block(*block_id)
-            .tail
-            .and_then(|tail| fold_constant_source_expr(module, resolution, tail, visited)),
-        ExprKind::Question(inner) => fold_constant_source_expr(module, resolution, *inner, visited),
+        ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
+            module.block(*block_id).tail.and_then(|tail| {
+                fold_constant_source_expr(module, resolution, immutable_local_values, tail, visited)
+            })
+        }
+        ExprKind::Question(inner) => {
+            fold_constant_source_expr(module, resolution, immutable_local_values, *inner, visited)
+        }
         _ => None,
     }
 }
@@ -212,6 +271,7 @@ fn fold_constant_source_expr(
 fn fold_constant_source_item(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    immutable_local_values: &HashMap<hir::LocalId, ExprId>,
     item_id: ItemId,
     visited: &mut HashSet<ItemId>,
 ) -> Option<ExprId> {
@@ -220,9 +280,13 @@ fn fold_constant_source_item(
     }
 
     let result = match &module.item(item_id).kind {
-        ItemKind::Const(global) | ItemKind::Static(global) => {
-            fold_constant_source_expr(module, resolution, global.value, visited)
-        }
+        ItemKind::Const(global) | ItemKind::Static(global) => fold_constant_source_expr(
+            module,
+            resolution,
+            immutable_local_values,
+            global.value,
+            visited,
+        ),
         _ => None,
     };
 
@@ -278,6 +342,7 @@ struct BodyBuilder<'a> {
     function: &'a Function,
     body: MirBody,
     local_map: HashMap<hir::LocalId, LocalId>,
+    immutable_local_values: HashMap<hir::LocalId, ExprId>,
     param_locals: Vec<Option<LocalId>>,
     self_local: Option<LocalId>,
     temp_counter: usize,
@@ -315,6 +380,7 @@ impl<'a> BodyBuilder<'a> {
                 closure_data: Vec::new(),
             },
             local_map: HashMap::new(),
+            immutable_local_values: HashMap::new(),
             param_locals: vec![None; function.params.len()],
             self_local: None,
             temp_counter: 0,
@@ -470,8 +536,13 @@ impl<'a> BodyBuilder<'a> {
                 pattern,
                 value,
             } => {
-                let (current, value) = self.lower_expr_to_operand(*value, current, scope);
-                self.emit_pattern_binding(current, *pattern, scope, *mutable, value);
+                let (current, operand) = self.lower_expr_to_operand(*value, current, scope);
+                self.emit_pattern_binding(current, *pattern, scope, *mutable, operand);
+                if !*mutable
+                    && let PatternKind::Binding(local_id) = &self.hir.pattern(*pattern).kind
+                {
+                    self.immutable_local_values.insert(*local_id, *value);
+                }
                 Some(current)
             }
             StmtKind::Return(expr) => {
@@ -1050,9 +1121,15 @@ impl<'a> BodyBuilder<'a> {
                 for item in items {
                     let folded = {
                         let mut visited = HashSet::new();
-                        fold_int_constant_expr(self.hir, self.resolution, *item, &mut visited)
-                            .filter(|value| *value >= 0)
-                            .map(|value| Operand::Constant(Constant::Integer(value.to_string())))
+                        fold_int_constant_expr(
+                            self.hir,
+                            self.resolution,
+                            &self.immutable_local_values,
+                            *item,
+                            &mut visited,
+                        )
+                        .filter(|value| *value >= 0)
+                        .map(|value| Operand::Constant(Constant::Integer(value.to_string())))
                     };
                     let (next, value) = if let Some(value) = folded {
                         (current, value)

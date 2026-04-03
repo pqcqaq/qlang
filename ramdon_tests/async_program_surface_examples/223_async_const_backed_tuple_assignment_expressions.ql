@@ -16,7 +16,9 @@ async fn worker(value: Int) -> Int {
 
 async fn main() -> Int {
     var pair = (1, 2)
-    let first = pair[ALIAS.left + 0] = await worker(8)
-    let second = pair[EDGE - 0] = first + 6
+    let left = ALIAS.left + 0
+    let right = EDGE - 0
+    let first = pair[left] = await worker(8)
+    let second = pair[right] = first + 6
     return pair[NEXT - 1] + second
 }
