@@ -90,6 +90,12 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/13_sync_match_partial_dynamic_guard.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_match_partial_integer_dynamic_guard",
+            source_relative:
+                "ramdon_tests/executable_examples/14_sync_match_partial_integer_dynamic_guard.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(

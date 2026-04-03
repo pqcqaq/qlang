@@ -10659,6 +10659,45 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_integer_partial_dynamic_guard_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-integer-partial-dynamic-guard-match");
+        let source = dir.write(
+            "integer_partial_dynamic_guard_match.ql",
+            r#"
+fn choose(value: Int, enabled: Bool) -> Int {
+    return match value {
+        1 if enabled => 10,
+        2 => 20,
+    }
+}
+
+fn main() -> Int {
+    return choose(1, true)
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/integer_partial_dynamic_guard_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with integer partial dynamic-guard match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("load i1, ptr %l2_enabled"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_integer_comparison_guard_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-integer-comparison-guard-match");
         let source = dir.write(

@@ -891,7 +891,6 @@ impl<'a> ModuleEmitter<'a> {
                             let mut lowered_arms = Vec::new();
                             let mut ordered_arms = Vec::new();
                             let mut fallback_target = *else_target;
-                            let mut guaranteed_fallback = false;
                             let mut dynamic_guard_seen = false;
                             let mut supported = true;
 
@@ -942,7 +941,6 @@ impl<'a> ModuleEmitter<'a> {
                                     PatternKind::Binding(local) => {
                                         if matches!(guard, SupportedBoolGuard::Always) {
                                             fallback_target = arm.target;
-                                            guaranteed_fallback = true;
                                             break;
                                         }
                                         ordered_arms.push(SupportedGuardedIntegerMatchArm {
@@ -955,7 +953,6 @@ impl<'a> ModuleEmitter<'a> {
                                     PatternKind::Wildcard => {
                                         if matches!(guard, SupportedBoolGuard::Always) {
                                             fallback_target = arm.target;
-                                            guaranteed_fallback = true;
                                             break;
                                         }
                                         ordered_arms.push(SupportedGuardedIntegerMatchArm {
@@ -974,14 +971,10 @@ impl<'a> ModuleEmitter<'a> {
 
                             if supported {
                                 if dynamic_guard_seen {
-                                    if guaranteed_fallback {
-                                        Some(SupportedMatchLowering::IntegerGuarded {
-                                            arms: ordered_arms,
-                                            fallback_target,
-                                        })
-                                    } else {
-                                        None
-                                    }
+                                    Some(SupportedMatchLowering::IntegerGuarded {
+                                        arms: ordered_arms,
+                                        fallback_target,
+                                    })
                                 } else {
                                     lowered_arms.extend(ordered_arms.into_iter().map(|arm| {
                                         SupportedIntegerMatchArm {
@@ -8950,6 +8943,29 @@ fn main() -> Int {
 
         assert_eq!(rendered.matches("icmp eq i64").count(), 1);
         assert!(rendered.contains("%l4_other = alloca i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_integer_guarded_match_lowering_without_catch_all_fallback() {
+        let rendered = emit_with_mode(
+            r#"
+fn choose(value: Int, enabled: Bool) -> Int {
+    return match value {
+        1 if enabled => 10,
+        2 => 20,
+    }
+}
+
+fn main() -> Int {
+    return choose(1, true)
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("load i1, ptr %l2_enabled"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
