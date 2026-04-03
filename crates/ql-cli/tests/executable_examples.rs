@@ -114,6 +114,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/18_sync_match_guard_direct_calls.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_match_guard_call_projection_roots",
+            source_relative: "ramdon_tests/executable_examples/19_sync_match_guard_call_projection_roots.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(

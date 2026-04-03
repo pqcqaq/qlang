@@ -10429,6 +10429,74 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_match_guard_call_projection_roots() {
+        let dir = TestDir::new("ql-driver-llvm-ir-match-guard-call-projection-roots");
+        let source = dir.write(
+            "match_guard_call_projection_roots.ql",
+            r#"
+struct State {
+    value: Int,
+}
+
+fn pair(value: Int) -> (Int, Int) {
+    return (0, value)
+}
+
+fn state(value: Int) -> State {
+    return State { value: value }
+}
+
+fn values(seed: Int) -> [Int; 3] {
+    return [seed, seed + 1, seed + 2]
+}
+
+fn main() -> Int {
+    let first = match 22 {
+        current if pair(current)[1] == 22 => 10,
+        _ => 0,
+    }
+    let second = match 12 {
+        current if state(current).value == 12 => 12,
+        _ => 0,
+    }
+    let third = match 3 {
+        current if values(current)[1] == 4 => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/match_guard_call_projection_roots.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with match-guard call projection roots should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.matches("call { i64, i64 } @ql_").count() >= 1);
+        assert!(rendered.matches("call { i64 } @ql_").count() >= 1);
+        assert!(rendered.matches("call [3 x i64] @ql_").count() >= 1);
+        assert!(rendered.contains("alloca { i64, i64 }"));
+        assert!(rendered.contains("alloca { i64 }"));
+        assert!(rendered.contains("alloca [3 x i64]"));
+        assert!(rendered.contains("getelementptr inbounds { i64, i64 }"));
+        assert!(rendered.contains("getelementptr inbounds { i64 }"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_static_item_values_in_expressions() {
         let dir = TestDir::new("ql-driver-llvm-ir-static-item-values-in-expressions");
         let source = dir.write(

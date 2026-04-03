@@ -440,11 +440,9 @@ impl<'a> ModuleEmitter<'a> {
     fn collect_guard_expr_callees(&self, expr_id: hir::ExprId, queue: &mut VecDeque<FunctionRef>) {
         match &self.input.hir.expr(expr_id).kind {
             hir::ExprKind::Call { callee, args } => {
-                if let Some(function) = guard_direct_callee_function(
-                    self.input.hir,
-                    self.input.resolution,
-                    *callee,
-                ) {
+                if let Some(function) =
+                    guard_direct_callee_function(self.input.hir, self.input.resolution, *callee)
+                {
                     queue.push_back(function);
                 }
                 self.collect_guard_expr_callees(*callee, queue);
@@ -5140,68 +5138,14 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 repr: if *value { "true" } else { "false" }.to_owned(),
             },
             hir::ExprKind::Call { callee, args } => {
-                let function = guard_direct_callee_function(
-                    self.emitter.input.hir,
-                    self.emitter.input.resolution,
-                    *callee,
-                )
-                .unwrap_or_else(|| {
-                    panic!(
-                        "prepared bool guard lowering at {span:?} should only render direct resolved guard calls"
-                    )
-                });
-                let signature = self.emitter.signatures.get(&function).unwrap_or_else(|| {
-                    panic!(
-                        "prepared bool guard lowering at {span:?} should resolve guard-call signatures"
-                    )
-                });
+                let rendered =
+                    self.render_guard_call_value(output, *callee, args, span, guard_binding);
                 assert!(
-                    !signature.is_async,
-                    "prepared bool guard lowering at {span:?} should only render sync guard calls"
+                    rendered.ty.is_bool()
+                        || rendered.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                    "prepared bool guard lowering at {span:?} should only render scalar guard-call results"
                 );
-                let ordered_args = ordered_guard_call_args(args, signature).unwrap_or_else(|| {
-                    panic!(
-                        "prepared bool guard lowering at {span:?} should preserve direct guard-call argument mapping"
-                    )
-                });
-                let rendered_args = ordered_args
-                    .into_iter()
-                    .zip(signature.params.iter())
-                    .map(|(arg, param)| {
-                        let expected_kind =
-                            guard_scalar_kind_for_ty(&param.ty).unwrap_or_else(|| {
-                                panic!(
-                                    "prepared bool guard lowering at {span:?} should only render scalar guard-call parameters"
-                                )
-                            });
-                        let expr_id = guard_call_arg_expr(arg);
-                        let rendered = match expected_kind {
-                            GuardScalarKind::Bool => {
-                                self.render_bool_guard_expr(output, expr_id, span, guard_binding)
-                            }
-                            GuardScalarKind::Int => {
-                                self.render_guard_scalar_expr(output, expr_id, span, guard_binding)
-                            }
-                        };
-                        assert!(
-                            guard_scalar_kind_for_ty(&rendered.ty) == Some(expected_kind),
-                            "prepared bool guard lowering at {span:?} should only render compatible scalar guard-call arguments"
-                        );
-                        format!("{} {}", rendered.llvm_ty, rendered.repr)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let temp = self.fresh_temp();
-                let _ = writeln!(
-                    output,
-                    "  {temp} = call {} @{}({rendered_args})",
-                    signature.return_llvm_ty, signature.llvm_name
-                );
-                LoweredValue {
-                    ty: signature.return_ty.clone(),
-                    llvm_ty: signature.return_llvm_ty.clone(),
-                    repr: temp,
-                }
+                rendered
             }
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
@@ -5399,6 +5343,79 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_guard_call_value(
+        &mut self,
+        output: &mut String,
+        callee_expr: hir::ExprId,
+        args: &[hir::CallArg],
+        span: Span,
+        guard_binding: Option<&GuardBindingValue>,
+    ) -> LoweredValue {
+        let function = guard_direct_callee_function(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            callee_expr,
+        )
+        .unwrap_or_else(|| {
+            panic!(
+                "prepared bool guard lowering at {span:?} should only render direct resolved guard calls"
+            )
+        });
+        let signature = self.emitter.signatures.get(&function).unwrap_or_else(|| {
+            panic!("prepared bool guard lowering at {span:?} should resolve guard-call signatures")
+        });
+        assert!(
+            !signature.is_async,
+            "prepared bool guard lowering at {span:?} should only render sync guard calls"
+        );
+        assert!(
+            !is_void_ty(&signature.return_ty),
+            "prepared bool guard lowering at {span:?} should only render valued guard calls"
+        );
+        let ordered_args = ordered_guard_call_args(args, signature).unwrap_or_else(|| {
+            panic!(
+                "prepared bool guard lowering at {span:?} should preserve direct guard-call argument mapping"
+            )
+        });
+        let rendered_args = ordered_args
+            .into_iter()
+            .zip(signature.params.iter())
+            .map(|(arg, param)| {
+                let expected_kind = guard_scalar_kind_for_ty(&param.ty).unwrap_or_else(|| {
+                    panic!(
+                        "prepared bool guard lowering at {span:?} should only render scalar guard-call parameters"
+                    )
+                });
+                let expr_id = guard_call_arg_expr(arg);
+                let rendered = match expected_kind {
+                    GuardScalarKind::Bool => {
+                        self.render_bool_guard_expr(output, expr_id, span, guard_binding)
+                    }
+                    GuardScalarKind::Int => {
+                        self.render_guard_scalar_expr(output, expr_id, span, guard_binding)
+                    }
+                };
+                assert!(
+                    guard_scalar_kind_for_ty(&rendered.ty) == Some(expected_kind),
+                    "prepared bool guard lowering at {span:?} should only render compatible scalar guard-call arguments"
+                );
+                format!("{} {}", rendered.llvm_ty, rendered.repr)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let temp = self.fresh_temp();
+        let _ = writeln!(
+            output,
+            "  {temp} = call {} @{}({rendered_args})",
+            signature.return_llvm_ty, signature.llvm_name
+        );
+        LoweredValue {
+            ty: signature.return_ty.clone(),
+            llvm_ty: signature.return_llvm_ty.clone(),
+            repr: temp,
+        }
+    }
+
     fn materialize_guard_item_root(
         &mut self,
         output: &mut String,
@@ -5440,6 +5457,18 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
 
         match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Call { callee, args } => {
+                let rendered =
+                    self.render_guard_call_value(output, *callee, args, span, guard_binding);
+                let slot = self.fresh_temp();
+                let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {slot}",
+                    rendered.llvm_ty, rendered.repr
+                );
+                Some((slot, rendered.ty))
+            }
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
                     Some(ValueResolution::Local(local))
@@ -6508,29 +6537,17 @@ fn supported_guard_call_expr(
     callee_expr: hir::ExprId,
     args: &[hir::CallArg],
 ) -> Option<GuardScalarKind> {
-    let function = guard_direct_callee_function(module, resolution, callee_expr)?;
-    let signature = signatures.get(&function)?;
-    if signature.is_async {
-        return None;
-    }
+    let (_, signature, _) = supported_guard_call(
+        module,
+        resolution,
+        signatures,
+        body,
+        local_types,
+        arm_pattern,
+        callee_expr,
+        args,
+    )?;
     let return_kind = guard_scalar_kind_for_ty(&signature.return_ty)?;
-    let ordered_args = ordered_guard_call_args(args, signature)?;
-    for (arg, param) in ordered_args.into_iter().zip(signature.params.iter()) {
-        let expected_kind = guard_scalar_kind_for_ty(&param.ty)?;
-        let expr_id = guard_call_arg_expr(arg);
-        let actual_kind = supported_guard_scalar_expr(
-            module,
-            resolution,
-            signatures,
-            body,
-            local_types,
-            arm_pattern,
-            expr_id,
-        )?;
-        if actual_kind != expected_kind {
-            return None;
-        }
-    }
     Some(return_kind)
 }
 
@@ -6822,14 +6839,17 @@ fn guard_expr_ty(
             arm_pattern,
             *inner,
         ),
-        hir::ExprKind::Call { callee, args } => {
-            guard_direct_callee_function(module, resolution, *callee)
-                .and_then(|function| signatures.get(&function))
-                .filter(|signature| !signature.is_async)
-                .and_then(|signature| {
-                    ordered_guard_call_args(args, signature).map(|_| signature.return_ty.clone())
-                })
-        }
+        hir::ExprKind::Call { callee, args } => supported_guard_call(
+            module,
+            resolution,
+            signatures,
+            body,
+            local_types,
+            arm_pattern?,
+            *callee,
+            args,
+        )
+        .map(|(_, signature, _)| signature.return_ty.clone()),
         _ => None,
     }
 }
@@ -7324,6 +7344,41 @@ fn ordered_guard_call_args<'a>(
     }
 
     ordered.into_iter().collect()
+}
+
+fn supported_guard_call<'a>(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    signatures: &'a HashMap<FunctionRef, FunctionSignature>,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    arm_pattern: hir::PatternId,
+    callee_expr: hir::ExprId,
+    args: &'a [hir::CallArg],
+) -> Option<(FunctionRef, &'a FunctionSignature, Vec<&'a hir::CallArg>)> {
+    let function = guard_direct_callee_function(module, resolution, callee_expr)?;
+    let signature = signatures.get(&function)?;
+    if signature.is_async {
+        return None;
+    }
+    let ordered_args = ordered_guard_call_args(args, signature)?;
+    for (arg, param) in ordered_args.iter().copied().zip(signature.params.iter()) {
+        let expected_kind = guard_scalar_kind_for_ty(&param.ty)?;
+        let expr_id = guard_call_arg_expr(arg);
+        let actual_kind = supported_guard_scalar_expr(
+            module,
+            resolution,
+            signatures,
+            body,
+            local_types,
+            arm_pattern,
+            expr_id,
+        )?;
+        if actual_kind != expected_kind {
+            return None;
+        }
+    }
+    Some((function, signature, ordered_args))
 }
 
 fn guard_call_arg_expr(arg: &hir::CallArg) -> hir::ExprId {
@@ -9780,6 +9835,58 @@ fn main() -> Int {
         assert!(rendered.matches("call i1 @ql_").count() >= 1);
         assert!(rendered.matches("call i64 @ql_").count() >= 1);
         assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_match_guard_call_projection_root_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+struct State {
+    value: Int,
+}
+
+fn pair(value: Int) -> (Int, Int) {
+    return (0, value)
+}
+
+fn state(value: Int) -> State {
+    return State { value: value }
+}
+
+fn values(seed: Int) -> [Int; 3] {
+    return [seed, seed + 1, seed + 2]
+}
+
+fn main() -> Int {
+    let first = match 22 {
+        current if pair(current)[1] == 22 => 10,
+        _ => 0,
+    }
+    let second = match 12 {
+        current if state(current).value == 12 => 12,
+        _ => 0,
+    }
+    let third = match 3 {
+        current if values(current)[1] == 4 => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.matches("call { i64, i64 } @ql_").count() >= 1);
+        assert!(rendered.matches("call { i64 } @ql_").count() >= 1);
+        assert!(rendered.matches("call [3 x i64] @ql_").count() >= 1);
+        assert!(rendered.contains("alloca { i64, i64 }"));
+        assert!(rendered.contains("alloca { i64 }"));
+        assert!(rendered.contains("alloca [3 x i64]"));
+        assert!(rendered.contains("getelementptr inbounds { i64, i64 }"));
+        assert!(rendered.contains("getelementptr inbounds { i64 }"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
