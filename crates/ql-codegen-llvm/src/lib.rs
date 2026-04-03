@@ -873,14 +873,10 @@ impl<'a> ModuleEmitter<'a> {
 
                             if supported {
                                 if dynamic_guard_seen {
-                                    if guaranteed_true && guaranteed_false {
-                                        Some(SupportedMatchLowering::BoolGuarded {
-                                            arms: ordered_arms,
-                                            fallback_target: *else_target,
-                                        })
-                                    } else {
-                                        None
-                                    }
+                                    Some(SupportedMatchLowering::BoolGuarded {
+                                        arms: ordered_arms,
+                                        fallback_target: *else_target,
+                                    })
                                 } else {
                                     Some(SupportedMatchLowering::Bool {
                                         true_target: true_target.unwrap_or(*else_target),
@@ -9007,14 +9003,38 @@ fn main() -> Int {
     }
 
     #[test]
-    fn rejects_guarded_match_lowering_without_true_fallback() {
-        let messages = emit_error(
+    fn emits_guarded_match_lowering_without_true_fallback() {
+        let rendered = emit_with_mode(
             r#"
 fn main() -> Int {
     let flag = true
     let enabled = false
     return match flag {
         true if enabled => 1,
+        false => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("load i1, ptr %l2_enabled"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn rejects_guarded_match_lowering_with_function_call_guard() {
+        let messages = emit_error(
+            r#"
+fn enabled() -> Bool {
+    return false
+}
+
+fn main() -> Int {
+    let flag = true
+    return match flag {
+        true if enabled() => 1,
         false => 0,
     }
 }

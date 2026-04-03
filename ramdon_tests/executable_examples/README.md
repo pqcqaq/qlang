@@ -16,6 +16,7 @@ Files:
 - `10_sync_for_const_static_fixed_shape.ql`: same-file `const` / `static` fixed-shape `for` roots, including a `use ... as ...` const alias
 - `11_sync_match_scrutinee_self_guard.ql`: bool `match` self-guard folding in executable mode, where `true if flag` can lower when the guard is the scrutinee itself
 - `12_sync_match_scrutinee_bool_comparison_guard.ql`: bool `match` scrutinee-comparison guard folding in executable mode, where `true if flag == ON` can lower when the comparison is just the scrutinee against a foldable bool literal/const/alias
+- `13_sync_match_partial_dynamic_guard.ql`: bool `match` partial dynamic-guard lowering in executable mode, where `true if enabled` no longer needs a later `true` fallback arm just to pass backend lowering
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -34,6 +35,7 @@ Expected exit codes for the sync examples:
 - `10_sync_for_const_static_fixed_shape.ql` -> `42`
 - `11_sync_match_scrutinee_self_guard.ql` -> `42`
 - `12_sync_match_scrutinee_bool_comparison_guard.ql` -> `42`
+- `13_sync_match_partial_dynamic_guard.ql` -> `42`
 
 Build one verified executable example:
 

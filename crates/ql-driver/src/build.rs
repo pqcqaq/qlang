@@ -8421,12 +8421,15 @@ fn main() -> Int {
             r#"
 extern "c" fn first()
 
+fn enabled() -> Bool {
+    return false
+}
+
 fn main() -> Int {
     let flag = true
-    let enabled = false
     defer first()
     return match flag {
-        true if enabled => 1,
+        true if enabled() => 1,
         false => 0,
     }
 }
@@ -8474,11 +8477,14 @@ fn main() -> Int {
         let source = dir.write(
             "match_question.ql",
             r#"
+fn enabled() -> Bool {
+    return false
+}
+
 fn helper() -> Int {
     let flag = true
-    let enabled = false
     return match flag {
-        true if enabled => 1,
+        true if enabled() => 1,
         false => 0,
     }
 }
@@ -9952,11 +9958,14 @@ async fn helper() -> Int {
         let source = dir.write(
             "match_main.ql",
             r#"
+fn enabled() -> Bool {
+    return false
+}
+
 fn main() -> Int {
     let flag = true
-    let enabled = false
     return match flag {
-        true if enabled => 1,
+        true if enabled() => 1,
         false => 0,
     }
 }
@@ -10011,6 +10020,43 @@ fn main() -> Int {
 
         assert_eq!(artifact.path, output);
         assert!(rendered.contains("br i1"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn build_file_writes_llvm_ir_with_bool_partial_dynamic_guard_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-bool-partial-dynamic-guard-match");
+        let source = dir.write(
+            "bool_partial_dynamic_guard_match.ql",
+            r#"
+fn main() -> Int {
+    let flag = true
+    let enabled = false
+    return match flag {
+        true if enabled => 1,
+        false => 0,
+    }
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/bool_partial_dynamic_guard_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with bool partial dynamic-guard match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("load i1, ptr %l2_enabled"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

@@ -85,6 +85,11 @@ fn executable_examples_build_and_run() {
                 "ramdon_tests/executable_examples/12_sync_match_scrutinee_bool_comparison_guard.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_match_partial_dynamic_guard",
+            source_relative: "ramdon_tests/executable_examples/13_sync_match_partial_dynamic_guard.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
