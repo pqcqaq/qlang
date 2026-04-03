@@ -1213,6 +1213,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/197_async_main_aggregate_result_families.ql",
             expected_exit: 62,
         },
+        ExecutableExampleCase {
+            name: "async_main_dynamic_task_handle_path_families",
+            source_relative: "ramdon_tests/async_program_surface_examples/198_async_main_dynamic_task_handle_path_families.ql",
+            expected_exit: 55,
+        },
     ];
 
     assert_example_cases_run(

@@ -1,0 +1,63 @@
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+const INDEX: Int = 0
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn choose() -> Int {
+    return 0
+}
+
+async fn main() -> Int {
+    var pending = Pending {
+        tasks: [worker(5), worker(8)],
+    }
+    let slot = Slot { value: 0 }
+    let alias = pending.tasks
+    let first = await alias[slot.value]
+    pending.tasks[slot.value] = worker(first + 4)
+    let second = await alias[slot.value]
+    let tail = await pending.tasks[1]
+
+    var const_pending = Pending {
+        tasks: [worker(6), worker(9)],
+    }
+    let const_alias = const_pending.tasks
+    let const_first = await const_alias[INDEX]
+    const_pending.tasks[0] = worker(const_first + 2)
+    let const_second = await const_alias[INDEX]
+    let const_tail = await const_pending.tasks[1]
+
+    let row = choose()
+    var composed = [worker(1), worker(2)]
+    let slots = [row, row]
+    let composed_first = await composed[slots[row]]
+    composed[slots[row]] = worker(composed_first + 1)
+    let composed_final = await composed[slots[row]]
+
+    var alias_sourced = [worker(3), worker(4)]
+    let more_slots = [row, row]
+    let slot_alias = more_slots
+    let alias_sourced_first = await alias_sourced[slot_alias[row]]
+    alias_sourced[more_slots[row]] = worker(alias_sourced_first + 1)
+    let alias_sourced_final = await alias_sourced[slot_alias[row]]
+
+    return first
+        + second
+        + tail
+        + const_first
+        + const_second
+        + const_tail
+        + composed_first
+        + composed_final
+        + alias_sourced_first
+        + alias_sourced_final
+}

@@ -135,6 +135,8 @@
   - generic dynamic sibling-safe consume / spawn
   - same immutable stable source path precise consume / reinit
   - projected-root stable dynamic reinit / conditional reinit
+  - aliased / const-backed alias-root stable-dynamic reinit
+  - composed / alias-sourced composed dynamic reinit
   - direct / projected / aliased guard-refined dynamic reinit
   - same-file static/import-alias-backed projected-root dynamic reinit
   - same-file `const` / `static` / `use ... as ...` alias 回收到 literal/projection path
@@ -159,12 +161,12 @@
 截至当前代码：
 
 - sync executable examples：`39`
-- async executable examples：`194`
+- async executable examples：`195`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `197`，但真实 `.ql` 文件数是 `194`，不是 `197`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `194` 个 async executable case 和 `39` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `198`，但真实 `.ql` 文件数是 `195`，不是 `198`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `195` 个 async executable case 和 `39` 个 sync executable case
 
 ## 当前明确未开放
 
