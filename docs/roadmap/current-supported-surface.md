@@ -115,6 +115,7 @@
   - tuple index
   - fixed-array literal index
   - struct field
+  - regular-size fixed-array projected reinit / conditional reinit
   - zero-sized tuple / fixed-array / struct projection `await` / `spawn`
   - zero-sized tuple / fixed-array / struct projection reinit
   - direct call-root / awaited-aggregate / import-alias / inline / nested-call-root zero-sized consume
@@ -129,6 +130,7 @@
 - dynamic fixed-array `Task[...]` 的保守子集
   - generic dynamic sibling-safe consume / spawn
   - same immutable stable source path precise consume / reinit
+  - projected-root stable dynamic reinit / conditional reinit
   - same-file `const` / `static` / `use ... as ...` alias 回收到 literal/projection path
   - equality-guard refinement
   - projected-root / alias-root canonicalization
@@ -151,12 +153,12 @@
 截至当前代码：
 
 - sync executable examples：`39`
-- async executable examples：`187`
+- async executable examples：`188`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `190`，但真实 `.ql` 文件数是 `187`，不是 `190`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `187` 个 async executable case 和 `39` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `191`，但真实 `.ql` 文件数是 `188`，不是 `191`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `188` 个 async executable case 和 `39` 个 sync executable case
 
 ## 当前明确未开放
 
