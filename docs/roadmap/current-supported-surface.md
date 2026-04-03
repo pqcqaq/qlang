@@ -60,6 +60,7 @@
 - 动态数组索引赋值的当前可运行子集
   - non-`Task[...]` element arrays
   - nested dynamic array projections
+  - projected-root dynamic array projections
 - 普通表达式与 `if` / `while` 条件里的 same-file foldable `const` / `static`
 - `Bool` `&&` / `||` / unary `!`
 - 最小 literal `match` lowering
@@ -94,6 +95,7 @@
   - fixed-array literal index projection
 - 动态 `Task[...]` 数组索引赋值的当前可运行子集
   - generic direct-root write-before-consume success path
+  - generic projected-root write-before-consume success path
 - 最小 async `match` family
   - direct-call guard
   - projection guard
@@ -176,13 +178,13 @@
 
 截至当前代码：
 
-- sync executable examples：`43`
-- async executable examples：`201`
+- sync executable examples：`44`
+- async executable examples：`202`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `204`，但真实 `.ql` 文件数是 `201`，不是 `204`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `201` 个 async executable case 和 `43` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `205`，但真实 `.ql` 文件数是 `202`，不是 `205`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `202` 个 async executable case 和 `44` 个 sync executable case
 
 ## 当前明确未开放
 
