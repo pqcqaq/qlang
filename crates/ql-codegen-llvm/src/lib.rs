@@ -10888,6 +10888,77 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_match_guard_projection_backed_nested_call_root_combo_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+struct Slot {
+    value: Int,
+}
+
+struct Config {
+    slot: Slot,
+}
+
+struct State {
+    ready: Bool,
+}
+
+fn state(flag: Bool) -> State {
+    return State { ready: flag }
+}
+
+fn bundle(seed: Int) -> [Int; 3] {
+    return [seed, seed + 1, seed + 2]
+}
+
+fn offset(value: Int) -> Int {
+    return value - 2
+}
+
+fn enabled(state: State, extra: Bool) -> Bool {
+    return state.ready && extra
+}
+
+fn matches(value: Int, expected: Int) -> Bool {
+    return value == expected
+}
+
+fn main() -> Int {
+    let config = Config {
+        slot: Slot { value: 3 },
+    }
+    let first = match true {
+        true if enabled(extra: bundle(config.slot.value)[offset(config.slot.value)] == 4, state: state(bundle(config.slot.value)[offset(config.slot.value)] == 4)) => 10,
+        false => 0,
+    }
+    let second = match 3 {
+        current if [bundle(config.slot.value)[offset(config.slot.value)], current + 5, 9][0] == 4 => 12,
+        _ => 0,
+    }
+    let third = match 3 {
+        current if matches(expected: 4, value: [bundle(config.slot.value)[offset(config.slot.value)], current, 9][0]) => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.contains("call [3 x i64] @ql_"));
+        assert!(rendered.contains("call i1 @ql_"));
+        assert!(rendered.contains("call { i1 } @ql_"));
+        assert!(rendered.contains("insertvalue [3 x i64]"));
+        assert!(rendered.contains("getelementptr inbounds { { i64 } }, ptr"));
+        assert!(rendered.contains("getelementptr inbounds { i64 }, ptr"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(rendered.contains("sub i64 %"));
+        assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn emits_negative_int_const_path_and_guard_lowering() {
         let rendered = emit_with_mode(
             r#"

@@ -174,6 +174,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/30_sync_match_guard_binding_backed_nested_call_root_combos.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_match_guard_projection_backed_nested_call_root_combos",
+            source_relative: "ramdon_tests/executable_examples/31_sync_match_guard_projection_backed_nested_call_root_combos.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
