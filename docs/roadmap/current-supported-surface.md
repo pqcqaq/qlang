@@ -167,7 +167,7 @@
   - composed / alias-sourced composed dynamic reinit
   - foldable integer arithmetic expression 回收到 concrete literal/projection path
   - direct inline foldable `if` / 最小 literal `match` integer expression 回收到 concrete literal path consume / reinit
-  - direct / projected / aliased guard-refined dynamic reinit
+  - direct / projected / aliased guard-refined dynamic reinit，包括 arithmetic-backed refined source
   - same-file static/import-alias-backed projected-root dynamic reinit
   - same-file `const` / `static` / `use ... as ...` alias 回收到 literal/projection path，包括 computed/projected item value、branch-selected const `if` / 最小 literal `match` item value，以及这些 item value 的 same-file `use ... as ...` alias 包裹形态
   - equality-guard refinement

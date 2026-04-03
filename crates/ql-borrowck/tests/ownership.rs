@@ -5696,6 +5696,74 @@ async fn main(slot: Slot) -> Wrap {
 }
 
 #[test]
+fn allows_reinitializing_guard_refined_arithmetic_const_backed_dynamic_task_handle_array_index_before_literal_reuse()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+const STEP: Int = 1
+const INDEX: Int = STEP - 1
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var tasks = [worker(), worker()]
+    if INDEX == 0 {
+        let first = await tasks[INDEX]
+        tasks[0] = worker()
+    }
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guard-refined arithmetic const-backed dynamic task-handle reinit through tasks[0] to restore availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_guard_refined_arithmetic_projected_dynamic_task_handle_array_index_before_literal_reuse()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var tasks = [worker(), worker()]
+    let slot = Slot { value: 2 - 2 }
+    if slot.value == 0 {
+        let first = await tasks[slot.value]
+        tasks[0] = worker()
+    }
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guard-refined arithmetic projected dynamic task-handle reinit through tasks[0] to restore availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_use_after_move_for_same_immutable_projected_dynamic_task_handle_array_index_without_reinit()
  {
     let diagnostics = diagnostic_messages(

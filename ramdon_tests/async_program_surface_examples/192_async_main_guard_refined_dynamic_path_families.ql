@@ -7,6 +7,8 @@ struct Pending {
 }
 
 const INDEX: Int = 0
+const STEP: Int = 1
+const ARITH_INDEX: Int = STEP - 1
 
 async fn worker(value: Int) -> Int {
     return value
@@ -65,10 +67,35 @@ async fn const_backed_alias_root_guard_refine() -> Int {
     return final_value + tail
 }
 
+async fn arithmetic_const_guard_refine() -> Int {
+    var tasks = [worker(9), worker(10)]
+    if ARITH_INDEX == 0 {
+        let first = await tasks[ARITH_INDEX]
+        tasks[0] = worker(first + 1)
+    }
+    let final_value = await tasks[0]
+    let tail = await tasks[1]
+    return final_value + tail
+}
+
+async fn arithmetic_projected_guard_refine() -> Int {
+    var tasks = [worker(11), worker(12)]
+    let slot = Slot { value: 2 - 2 }
+    if slot.value == 0 {
+        let first = await tasks[slot.value]
+        tasks[0] = worker(first + 1)
+    }
+    let final_value = await tasks[0]
+    let tail = await tasks[1]
+    return final_value + tail
+}
+
 async fn main() -> Int {
     let first = await direct_guard_refine(0)
     let second = await projected_guard_refine()
     let third = await aliased_projected_root_guard_refine()
     let fourth = await const_backed_alias_root_guard_refine()
-    return first + second + third + fourth
+    let fifth = await arithmetic_const_guard_refine()
+    let sixth = await arithmetic_projected_guard_refine()
+    return first + second + third + fourth + fifth + sixth
 }

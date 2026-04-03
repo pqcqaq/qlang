@@ -307,7 +307,7 @@ Current status:
 - `189_async_main_spawn_bound_task_handles.ql` now locks the bound-task `spawn` family for `async fn main`, where already-bound local `Task[Int]` values can be spawned and awaited back through the executable surface and still exit with `3`.
 - `190_async_main_returned_task_handle_shapes.ql` now locks the regular-size returned task-handle shape family for `async fn main`, where sync helper-returned `Task[Int]`, awaited `Task[Int]` returned from an async helper, and awaited aggregate-carried `Task[Int]` fields all survive both direct `await` and `spawn -> await` paths on the executable surface and still exit with `21`.
 - `191_async_main_projected_task_handle_reinit_families.ql` now locks the regular-size projected reinit family for `async fn main`, where fixed-array literal projected reinit, dominated conditional literal reinit, stable projected dynamic reinit, conditional projected dynamic reinit, and projected-root dynamic reinit all survive the executable surface and still exit with `50`.
-- `192_async_main_guard_refined_dynamic_path_families.ql` now locks the guard-refined dynamic path family for `async fn main`, where direct dynamic reinit, projected dynamic reinit, aliased projected-root guard refinement, and const-backed alias-root guard refinement all survive the executable surface and still exit with `40`.
+- `192_async_main_guard_refined_dynamic_path_families.ql` now locks the guard-refined dynamic path family for `async fn main`, where direct dynamic reinit, projected dynamic reinit, aliased projected-root guard refinement, const-backed alias-root guard refinement, and arithmetic-backed direct / projected guard refinement all survive the executable surface and still exit with `84`.
 - `193_async_main_static_alias_projected_root_dynamic_reinit_families.ql` now locks the static-alias-backed projected-root dynamic reinit family for `async fn main`, where a same-file `static` item plus `use ... as ...` alias drives both direct projected-root dynamic reinit and its equality-guard-refined variant through the executable surface, and the program still exits with `42`.
 - `194_async_main_helper_task_handle_flows.ql` now locks the regular-size helper task-handle flow family for `async fn main`, where helper-returned `Task[Int]`, helper-bound handles, `spawn schedule(...)`, helper-bound `spawn`, local-return handles, forwarded handles, and `spawn forward(task)` all survive the executable surface and still exit with `28`.
 - `195_async_main_task_handle_payload_families.ql` now locks the regular-size task-handle payload family for `async fn main`, where chained awaited `Task[Int]` results, tuple task payloads, fixed-array task payloads, and nested aggregate task-field payloads all survive mixed `await` / `spawn -> await` consume paths on the executable surface and still exit with `61`.
@@ -531,7 +531,7 @@ Expected exit codes:
 - `189_async_main_spawn_bound_task_handles.ql` -> `3`
 - `190_async_main_returned_task_handle_shapes.ql` -> `21`
 - `191_async_main_projected_task_handle_reinit_families.ql` -> `50`
-- `192_async_main_guard_refined_dynamic_path_families.ql` -> `40`
+- `192_async_main_guard_refined_dynamic_path_families.ql` -> `84`
 - `193_async_main_static_alias_projected_root_dynamic_reinit_families.ql` -> `42`
 - `194_async_main_helper_task_handle_flows.ql` -> `28`
 - `195_async_main_task_handle_payload_families.ql` -> `61`
