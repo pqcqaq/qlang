@@ -1143,6 +1143,16 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/183_async_main_import_alias_zero_sized_projected_task_handle_consumes.ql",
             expected_exit: 6,
         },
+        ExecutableExampleCase {
+            name: "async_main_zero_sized_inline_projected_task_handle_consumes",
+            source_relative: "ramdon_tests/async_program_surface_examples/184_async_main_zero_sized_inline_projected_task_handle_consumes.ql",
+            expected_exit: 4,
+        },
+        ExecutableExampleCase {
+            name: "async_main_zero_sized_nested_call_root_projected_task_handle_consumes",
+            source_relative: "ramdon_tests/async_program_surface_examples/185_async_main_zero_sized_nested_call_root_projected_task_handle_consumes.ql",
+            expected_exit: 4,
+        },
     ];
 
     assert_example_cases_run(

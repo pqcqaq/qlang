@@ -114,7 +114,7 @@
   - struct field
   - zero-sized tuple / fixed-array / struct projection `await` / `spawn`
   - zero-sized tuple / fixed-array / struct projection reinit
-  - direct call-root / awaited-aggregate / import-alias zero-sized consume
+  - direct call-root / awaited-aggregate / import-alias / inline / nested-call-root zero-sized consume
   - direct call-root / nested call-root / awaited-aggregate / inline aggregate
 - zero-sized conditional task-handle control flow
   - branch-local `spawn` + reinit
@@ -145,12 +145,12 @@
 截至当前代码：
 
 - sync executable examples：`39`
-- async executable examples：`180`
+- async executable examples：`182`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `183`，但真实 `.ql` 文件数是 `180`，不是 `183`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `180` 个 async executable case 和 `39` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `185`，但真实 `.ql` 文件数是 `182`，不是 `185`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `182` 个 async executable case 和 `39` 个 sync executable case
 
 ## 当前明确未开放
 

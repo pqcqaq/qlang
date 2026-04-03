@@ -182,13 +182,15 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `181_async_main_zero_sized_aggregate_params.ql`
 - `182_async_main_zero_sized_call_root_projected_task_handle_consumes.ql`
 - `183_async_main_import_alias_zero_sized_projected_task_handle_consumes.ql`
+- `184_async_main_zero_sized_inline_projected_task_handle_consumes.ql`
+- `185_async_main_zero_sized_nested_call_root_projected_task_handle_consumes.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-eighty examples with the real local toolchain and locks their exit codes.
-- The filenames run from `04` through `183`, but the real async executable example count is `180`.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-eighty-two examples with the real local toolchain and locks their exit codes.
+- The filenames run from `04` through `185`, but the real async executable example count is `182`.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -258,6 +260,8 @@ Current status:
 - `181_async_main_zero_sized_aggregate_params.ql` now locks the zero-sized aggregate parameter family for `async fn main`, where `[Int; 0]`, `Wrap`, and `[[Int; 0]; 1]` parameters all survive both direct `await worker(...)` and `spawn worker(...) -> await task` paths on the executable surface and still exit with `14`.
 - `182_async_main_zero_sized_call_root_projected_task_handle_consumes.ql` now locks the zero-sized call-root and awaited-aggregate projected task-handle consume family for `async fn main`, where `await tuple_tasks()[0]`, `spawn pair_tasks().left`, `await bundle_tasks().tasks[0]`, `await (await make_tuple_env()).payload.values[0]`, `spawn (await make_pair_env()).payload.left`, and `await (await make_deep_env()).outer.payload.tasks[0]` all survive the executable surface and still exit with `6`.
 - `183_async_main_import_alias_zero_sized_projected_task_handle_consumes.ql` now locks the same-file import-alias version of that zero-sized consume family for `async fn main`, where `await tuples()[0]`, `spawn pairs().left`, `await bundles().tasks[0]`, `await (await tuple_env()).payload.values[0]`, `spawn (await pair_env()).payload.left`, and `await (await deep_env()).outer.payload.tasks[0]` all survive the executable surface and still exit with `6`.
+- `184_async_main_zero_sized_inline_projected_task_handle_consumes.ql` now locks the zero-sized inline projected consume family for `async fn main`, where inline tuple / struct / deep aggregate roots can project `Task[Wrap]` values into `await` and `spawn -> await` consume sites through the executable surface and still exit with `4`.
+- `185_async_main_zero_sized_nested_call_root_projected_task_handle_consumes.ql` now locks the zero-sized nested call-root projected consume family for `async fn main`, where `tuple_env().payload.values[0]`, `pair_env().payload.left`, and `deep_env().outer.payload.tasks[...]` all survive `await` and `spawn -> await` consume paths through the executable surface and still exit with `4`.
 
 Expected exit codes:
 
@@ -441,6 +445,8 @@ Expected exit codes:
 - `181_async_main_zero_sized_aggregate_params.ql` -> `14`
 - `182_async_main_zero_sized_call_root_projected_task_handle_consumes.ql` -> `6`
 - `183_async_main_import_alias_zero_sized_projected_task_handle_consumes.ql` -> `6`
+- `184_async_main_zero_sized_inline_projected_task_handle_consumes.ql` -> `4`
+- `185_async_main_zero_sized_nested_call_root_projected_task_handle_consumes.ql` -> `4`
 
 Try one file directly:
 
