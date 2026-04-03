@@ -66,16 +66,16 @@
 - 最小 runtime hook ABI skeleton 已成立
 - `staticlib` 与最小 async `dylib` 已开放受控 async library build 子集
 - `BuildEmit::LlvmIr` / `Object` / `Executable` 已开放最小 `async fn main` program 子集
-- fixed-shape `for await`、task-handle payload / projection consume、dynamic task-array 的保守成功路径、stable-dynamic path family、guard-refined dynamic path family、static-alias-backed dynamic reinit family、aliased projected-root repackage/spawn family、sync/async `unsafe fn` body executable surface、awaited `match` guard families，以及 regular-size / spawned / zero-sized / recursive aggregate result family、regular-size / zero-sized helper task-handle flow family、regular-size task-handle payload family、regular-size / zero-sized task-handle family、regular-size / zero-sized projected reinit family、regular-size / zero-sized / recursive aggregate param family、regular-size conditional / bound / returned task-handle family，以及 zero-sized call-root/import-alias/inline/nested consume family 都已进入真实回归矩阵
+- fixed-shape `for await`、task-handle payload / projection consume、dynamic task-array 的保守成功路径、stable-dynamic path family、guard-refined dynamic path family、static-alias-backed dynamic reinit family、aliased projected-root repackage/spawn family、sync/async `unsafe fn` body executable surface、sync/async assignment expression executable surface、awaited `match` guard families，以及 regular-size / spawned / zero-sized / recursive aggregate result family、regular-size / zero-sized helper task-handle flow family、regular-size task-handle payload family、regular-size / zero-sized task-handle family、regular-size / zero-sized projected reinit family、regular-size / zero-sized / recursive aggregate param family、regular-size conditional / bound / returned task-handle family，以及 zero-sized call-root/import-alias/inline/nested consume family 都已进入真实回归矩阵
 
 ## 当前进度与代码核对结果
 
 本轮已按代码和测试重新核对当前文档入口，结论如下：
 
-- `ramdon_tests/executable_examples/` 当前真实是 `40` 个 sync executable 样例
-- `ramdon_tests/async_program_surface_examples/` 当前真实是 `198` 个 async executable 样例
+- `ramdon_tests/executable_examples/` 当前真实是 `41` 个 sync executable 样例
+- `ramdon_tests/async_program_surface_examples/` 当前真实是 `199` 个 async executable 样例
 - `crates/ql-cli/tests/executable_examples.rs` 与目录数量一致
-- async 目录现在最新文件编号是 `201`，但真实样例数是 `198`；不要再把文件编号误当成文件数
+- async 目录现在最新文件编号是 `202`，但真实样例数是 `199`；不要再把文件编号误当成文件数
 
 ## 当前最值得继续推进的方向
 

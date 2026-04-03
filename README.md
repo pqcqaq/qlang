@@ -37,8 +37,8 @@ Detailed design merges and archived slice notes live under [`docs/plans/`](./doc
 
 Current user-facing executable smoke surface:
 
-- `40` sync executable examples under `ramdon_tests/executable_examples/`
-- `198` async executable examples under `ramdon_tests/async_program_surface_examples/`
+- `41` sync executable examples under `ramdon_tests/executable_examples/`
+- `199` async executable examples under `ramdon_tests/async_program_surface_examples/`
 
 Current library/codegen surface is locked in `crates/ql-cli/tests/codegen.rs`.
 

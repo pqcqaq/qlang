@@ -52,6 +52,10 @@
   - homogeneous tuple
   - projected root / call-root / nested call-root / inline projected root
   - same-file `const` / `static` root 及其 same-file alias
+- 赋值表达式的当前可运行子集
+  - mutable local
+  - struct field
+  - fixed-array literal index projection
 - 普通表达式与 `if` / `while` 条件里的 same-file foldable `const` / `static`
 - `Bool` `&&` / `||` / unary `!`
 - 最小 literal `match` lowering
@@ -80,6 +84,9 @@
   - homogeneous tuple
   - task-array / task-tuple auto-await
   - projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
+- 普通标量赋值表达式的当前可运行子集
+  - struct field
+  - fixed-array literal index projection
 - 最小 async `match` family
   - direct-call guard
   - projection guard
@@ -162,13 +169,13 @@
 
 截至当前代码：
 
-- sync executable examples：`40`
-- async executable examples：`198`
+- sync executable examples：`41`
+- async executable examples：`199`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `201`，但真实 `.ql` 文件数是 `198`，不是 `201`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `198` 个 async executable case 和 `40` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `202`，但真实 `.ql` 文件数是 `199`，不是 `202`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `199` 个 async executable case 和 `41` 个 sync executable case
 
 ## 当前明确未开放
 

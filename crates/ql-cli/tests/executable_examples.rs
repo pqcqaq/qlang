@@ -224,6 +224,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/40_sync_unsafe_function_bodies.ql",
             expected_exit: 5,
         },
+        ExecutableExampleCase {
+            name: "sync_assignment_expressions",
+            source_relative: "ramdon_tests/executable_examples/41_sync_assignment_expressions.ql",
+            expected_exit: 38,
+        },
     ];
 
     assert_example_cases_run(
@@ -1237,6 +1242,11 @@ fn async_program_surface_examples_build_and_run() {
             name: "async_unsafe_function_bodies",
             source_relative: "ramdon_tests/async_program_surface_examples/201_async_unsafe_function_bodies.ql",
             expected_exit: 7,
+        },
+        ExecutableExampleCase {
+            name: "async_assignment_expressions",
+            source_relative: "ramdon_tests/async_program_surface_examples/202_async_assignment_expressions.ql",
+            expected_exit: 27,
         },
     ];
 

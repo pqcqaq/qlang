@@ -44,6 +44,7 @@ Files:
 - `38_sync_inline_projected_fixed_shapes_without_parens.ql`: unparenthesized inline aggregate projected fixed-shape `for` lowering in executable mode, where `for value in ArrayPayload { values: [10, 11] }.values`, `for value in TuplePayload { values: (7, 8) }.values`, and `for value in DeepPayload { inner: ArrayPayload { values: [3, 3] } }.inner.values` now all lower through the same inline aggregate materialization plus projected fixed-array / homogeneous tuple iterable paths without requiring an extra outer pair of parentheses
 - `39_sync_unparenthesized_inline_projected_control_flow_heads.ql`: unparenthesized inline aggregate projected `if` / `while` / `match` head lowering in executable mode, where `if FlagState { ready: true }.ready`, `while FlagState { ready: false }.ready`, and `match PairPayload { values: (20, 22) }.values[1]` now all lower without requiring an extra outer pair of parentheses around the inline aggregate root
 - `40_sync_unsafe_function_bodies.ql`: sync `unsafe fn` body lowering in executable mode, where ordinary unsafe-marked helper bodies now share the same arithmetic/call executable path and still exit with `5`
+- `41_sync_assignment_expressions.ql`: sync assignment-expression lowering in executable mode, where mutable-local, struct-field, and fixed-array literal-index assignments can yield a result value that immediately participates in later scalar computation and still exits with `38`
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -90,6 +91,7 @@ Expected exit codes for the sync examples:
 - `38_sync_inline_projected_fixed_shapes_without_parens.ql` -> `42`
 - `39_sync_unparenthesized_inline_projected_control_flow_heads.ql` -> `42`
 - `40_sync_unsafe_function_bodies.ql` -> `5`
+- `41_sync_assignment_expressions.ql` -> `38`
 
 Build one verified executable example:
 
