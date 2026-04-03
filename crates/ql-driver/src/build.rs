@@ -8421,15 +8421,20 @@ fn main() -> Int {
             r#"
 extern "c" fn first()
 
-fn enabled() -> Bool {
-    return false
+struct State {
+    ready: Bool,
+}
+
+fn enabled(state: State) -> Bool {
+    return state.ready
 }
 
 fn main() -> Int {
     let flag = true
+    let state = State { ready: false }
     defer first()
     return match flag {
-        true if enabled() => 1,
+        true if enabled(state) => 1,
         false => 0,
     }
 }
@@ -8477,14 +8482,19 @@ fn main() -> Int {
         let source = dir.write(
             "match_question.ql",
             r#"
-fn enabled() -> Bool {
-    return false
+struct State {
+    ready: Bool,
+}
+
+fn enabled(state: State) -> Bool {
+    return state.ready
 }
 
 fn helper() -> Int {
     let flag = true
+    let state = State { ready: false }
     return match flag {
-        true if enabled() => 1,
+        true if enabled(state) => 1,
         false => 0,
     }
 }
@@ -9958,14 +9968,19 @@ async fn helper() -> Int {
         let source = dir.write(
             "match_main.ql",
             r#"
-fn enabled() -> Bool {
-    return false
+struct State {
+    ready: Bool,
+}
+
+fn enabled(state: State) -> Bool {
+    return state.ready
 }
 
 fn main() -> Int {
     let flag = true
+    let state = State { ready: false }
     return match flag {
-        true if enabled() => 1,
+        true if enabled(state) => 1,
         false => 0,
     }
 }
@@ -10359,6 +10374,56 @@ fn main() -> Int {
         assert!(rendered.matches("insertvalue [3 x i64]").count() >= 9);
         assert!(rendered.matches("getelementptr inbounds [3 x i64]").count() >= 3);
         assert!(rendered.matches("add i64").count() >= 2);
+        assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn build_file_writes_llvm_ir_with_match_guard_direct_calls() {
+        let dir = TestDir::new("ql-driver-llvm-ir-match-guard-direct-calls");
+        let source = dir.write(
+            "match_guard_direct_calls.ql",
+            r#"
+use shift as offset
+
+fn enabled() -> Bool {
+    return true
+}
+
+fn shift(value: Int, delta: Int) -> Int {
+    return value + delta
+}
+
+fn main() -> Int {
+    let first = match true {
+        true if enabled() => 10,
+        false => 0,
+    }
+    let second = match 20 {
+        current if offset(delta: 2, value: current) == 22 => 32,
+        _ => 0,
+    }
+    return first + second
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/match_guard_direct_calls.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with direct scalar guard calls should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.matches("_match_guard0").count() >= 2);
+        assert!(rendered.matches("call i1 @ql_").count() >= 1);
+        assert!(rendered.matches("call i64 @ql_").count() >= 1);
         assert!(rendered.contains("icmp eq i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }

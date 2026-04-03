@@ -415,6 +415,13 @@ impl<'a> ModuleEmitter<'a> {
                         self.collect_rvalue_callees(value, &mut queue);
                     }
                 }
+                if let TerminatorKind::Match { arms, .. } = &block.terminator.kind {
+                    for arm in arms {
+                        if let Some(guard) = arm.guard {
+                            self.collect_guard_expr_callees(guard, &mut queue);
+                        }
+                    }
+                }
             }
         }
 
@@ -427,6 +434,83 @@ impl<'a> ModuleEmitter<'a> {
             && let Some(function) = self.resolve_direct_callee_function(callee)
         {
             queue.push_back(function);
+        }
+    }
+
+    fn collect_guard_expr_callees(&self, expr_id: hir::ExprId, queue: &mut VecDeque<FunctionRef>) {
+        match &self.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Call { callee, args } => {
+                if let Some(function) = guard_direct_callee_function(
+                    self.input.hir,
+                    self.input.resolution,
+                    *callee,
+                ) {
+                    queue.push_back(function);
+                }
+                self.collect_guard_expr_callees(*callee, queue);
+                for arg in args {
+                    self.collect_guard_expr_callees(guard_call_arg_expr(arg), queue);
+                }
+            }
+            hir::ExprKind::Unary { expr, .. } => self.collect_guard_expr_callees(*expr, queue),
+            hir::ExprKind::Binary { left, right, .. } => {
+                self.collect_guard_expr_callees(*left, queue);
+                self.collect_guard_expr_callees(*right, queue);
+            }
+            hir::ExprKind::Member { object, .. } => {
+                self.collect_guard_expr_callees(*object, queue);
+            }
+            hir::ExprKind::Bracket { target, items } => {
+                self.collect_guard_expr_callees(*target, queue);
+                for item in items {
+                    self.collect_guard_expr_callees(*item, queue);
+                }
+            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                if let Some(tail) = self.input.hir.block(*block_id).tail {
+                    self.collect_guard_expr_callees(tail, queue);
+                }
+            }
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_guard_expr_callees(*condition, queue);
+                if let Some(tail) = self.input.hir.block(*then_branch).tail {
+                    self.collect_guard_expr_callees(tail, queue);
+                }
+                if let Some(other) = else_branch {
+                    self.collect_guard_expr_callees(*other, queue);
+                }
+            }
+            hir::ExprKind::Match { value, arms } => {
+                self.collect_guard_expr_callees(*value, queue);
+                for arm in arms {
+                    if let Some(guard) = arm.guard {
+                        self.collect_guard_expr_callees(guard, queue);
+                    }
+                    self.collect_guard_expr_callees(arm.body, queue);
+                }
+            }
+            hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => {
+                for item in items {
+                    self.collect_guard_expr_callees(*item, queue);
+                }
+            }
+            hir::ExprKind::StructLiteral { fields, .. } => {
+                for field in fields {
+                    self.collect_guard_expr_callees(field.value, queue);
+                }
+            }
+            hir::ExprKind::Closure { body, .. } | hir::ExprKind::Question(body) => {
+                self.collect_guard_expr_callees(*body, queue);
+            }
+            hir::ExprKind::Name(_)
+            | hir::ExprKind::Integer(_)
+            | hir::ExprKind::String { .. }
+            | hir::ExprKind::Bool(_)
+            | hir::ExprKind::NoneLiteral => {}
         }
     }
 
@@ -814,6 +898,7 @@ impl<'a> ModuleEmitter<'a> {
                                     Some(guard) => match supported_bool_guard(
                                         self.input.hir,
                                         self.input.resolution,
+                                        &self.signatures,
                                         body,
                                         &local_types,
                                         &immutable_place_aliases,
@@ -911,6 +996,7 @@ impl<'a> ModuleEmitter<'a> {
                                     Some(guard) => match supported_bool_guard(
                                         self.input.hir,
                                         self.input.resolution,
+                                        &self.signatures,
                                         body,
                                         &local_types,
                                         &immutable_place_aliases,
@@ -1018,6 +1104,7 @@ impl<'a> ModuleEmitter<'a> {
                                     Some(guard) => match supported_bool_guard(
                                         self.input.hir,
                                         self.input.resolution,
+                                        &self.signatures,
                                         body,
                                         &local_types,
                                         &immutable_place_aliases,
@@ -5052,6 +5139,70 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 llvm_ty: "i1".to_owned(),
                 repr: if *value { "true" } else { "false" }.to_owned(),
             },
+            hir::ExprKind::Call { callee, args } => {
+                let function = guard_direct_callee_function(
+                    self.emitter.input.hir,
+                    self.emitter.input.resolution,
+                    *callee,
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "prepared bool guard lowering at {span:?} should only render direct resolved guard calls"
+                    )
+                });
+                let signature = self.emitter.signatures.get(&function).unwrap_or_else(|| {
+                    panic!(
+                        "prepared bool guard lowering at {span:?} should resolve guard-call signatures"
+                    )
+                });
+                assert!(
+                    !signature.is_async,
+                    "prepared bool guard lowering at {span:?} should only render sync guard calls"
+                );
+                let ordered_args = ordered_guard_call_args(args, signature).unwrap_or_else(|| {
+                    panic!(
+                        "prepared bool guard lowering at {span:?} should preserve direct guard-call argument mapping"
+                    )
+                });
+                let rendered_args = ordered_args
+                    .into_iter()
+                    .zip(signature.params.iter())
+                    .map(|(arg, param)| {
+                        let expected_kind =
+                            guard_scalar_kind_for_ty(&param.ty).unwrap_or_else(|| {
+                                panic!(
+                                    "prepared bool guard lowering at {span:?} should only render scalar guard-call parameters"
+                                )
+                            });
+                        let expr_id = guard_call_arg_expr(arg);
+                        let rendered = match expected_kind {
+                            GuardScalarKind::Bool => {
+                                self.render_bool_guard_expr(output, expr_id, span, guard_binding)
+                            }
+                            GuardScalarKind::Int => {
+                                self.render_guard_scalar_expr(output, expr_id, span, guard_binding)
+                            }
+                        };
+                        assert!(
+                            guard_scalar_kind_for_ty(&rendered.ty) == Some(expected_kind),
+                            "prepared bool guard lowering at {span:?} should only render compatible scalar guard-call arguments"
+                        );
+                        format!("{} {}", rendered.llvm_ty, rendered.repr)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let temp = self.fresh_temp();
+                let _ = writeln!(
+                    output,
+                    "  {temp} = call {} @{}({rendered_args})",
+                    signature.return_llvm_ty, signature.llvm_name
+                );
+                LoweredValue {
+                    ty: signature.return_ty.clone(),
+                    llvm_ty: signature.return_llvm_ty.clone(),
+                    repr: temp,
+                }
+            }
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
                     Some(ValueResolution::Local(local))
@@ -5863,6 +6014,7 @@ enum GuardScalarKind {
 fn supported_bool_guard(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
     immutable_place_aliases: &HashMap<mir::LocalId, mir::Place>,
@@ -5876,6 +6028,7 @@ fn supported_bool_guard(
         None => fold_bool_guard_against_scrutinee(
             module,
             resolution,
+            signatures,
             body,
             local_types,
             immutable_place_aliases,
@@ -5887,6 +6040,7 @@ fn supported_bool_guard(
             runtime_bool_guard_supported(
                 module,
                 resolution,
+                signatures,
                 body,
                 local_types,
                 arm_pattern,
@@ -5900,6 +6054,7 @@ fn supported_bool_guard(
 fn fold_bool_guard_against_scrutinee(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
     immutable_place_aliases: &HashMap<mir::LocalId, mir::Place>,
@@ -5911,6 +6066,7 @@ fn fold_bool_guard_against_scrutinee(
     let relation = bool_guard_relation_to_scrutinee(
         module,
         resolution,
+        signatures,
         body,
         local_types,
         immutable_place_aliases,
@@ -5957,6 +6113,7 @@ fn bool_guard_relation_from_scrutinee_bool_compare(
 fn bool_guard_relation_to_scrutinee(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
     immutable_place_aliases: &HashMap<mir::LocalId, mir::Place>,
@@ -5973,6 +6130,7 @@ fn bool_guard_relation_to_scrutinee(
             if let Some(relation) = bool_guard_relation_to_scrutinee(
                 module,
                 resolution,
+                signatures,
                 body,
                 local_types,
                 immutable_place_aliases,
@@ -5987,6 +6145,7 @@ fn bool_guard_relation_to_scrutinee(
             if let Some(relation) = bool_guard_relation_to_scrutinee(
                 module,
                 resolution,
+                signatures,
                 body,
                 local_types,
                 immutable_place_aliases,
@@ -6006,6 +6165,7 @@ fn bool_guard_relation_to_scrutinee(
         } => match bool_guard_relation_to_scrutinee(
             module,
             resolution,
+            signatures,
             body,
             local_types,
             immutable_place_aliases,
@@ -6021,6 +6181,7 @@ fn bool_guard_relation_to_scrutinee(
                 bool_guard_relation_to_scrutinee(
                     module,
                     resolution,
+                    signatures,
                     body,
                     local_types,
                     immutable_place_aliases,
@@ -6033,6 +6194,7 @@ fn bool_guard_relation_to_scrutinee(
         hir::ExprKind::Question(inner) => bool_guard_relation_to_scrutinee(
             module,
             resolution,
+            signatures,
             body,
             local_types,
             immutable_place_aliases,
@@ -6065,6 +6227,7 @@ fn bool_guard_relation_to_scrutinee(
 fn runtime_bool_guard_supported(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
     arm_pattern: hir::PatternId,
@@ -6074,26 +6237,41 @@ fn runtime_bool_guard_supported(
         hir::ExprKind::Unary {
             op: UnaryOp::Not,
             expr,
-        } => {
-            runtime_bool_guard_supported(module, resolution, body, local_types, arm_pattern, *expr)
-        }
+        } => runtime_bool_guard_supported(
+            module,
+            resolution,
+            signatures,
+            body,
+            local_types,
+            arm_pattern,
+            *expr,
+        ),
         hir::ExprKind::Binary { left, op, right }
             if matches!(op, BinaryOp::AndAnd | BinaryOp::OrOr) =>
         {
-            runtime_bool_guard_supported(module, resolution, body, local_types, arm_pattern, *left)
-                && runtime_bool_guard_supported(
-                    module,
-                    resolution,
-                    body,
-                    local_types,
-                    arm_pattern,
-                    *right,
-                )
+            runtime_bool_guard_supported(
+                module,
+                resolution,
+                signatures,
+                body,
+                local_types,
+                arm_pattern,
+                *left,
+            ) && runtime_bool_guard_supported(
+                module,
+                resolution,
+                signatures,
+                body,
+                local_types,
+                arm_pattern,
+                *right,
+            )
         }
         hir::ExprKind::Binary { left, op, right } => {
             let Some(left_kind) = supported_guard_scalar_expr(
                 module,
                 resolution,
+                signatures,
                 body,
                 local_types,
                 arm_pattern,
@@ -6104,6 +6282,7 @@ fn runtime_bool_guard_supported(
             let Some(right_kind) = supported_guard_scalar_expr(
                 module,
                 resolution,
+                signatures,
                 body,
                 local_types,
                 arm_pattern,
@@ -6127,8 +6306,15 @@ fn runtime_bool_guard_supported(
                 }
         }
         _ => {
-            supported_guard_scalar_expr(module, resolution, body, local_types, arm_pattern, expr_id)
-                == Some(GuardScalarKind::Bool)
+            supported_guard_scalar_expr(
+                module,
+                resolution,
+                signatures,
+                body,
+                local_types,
+                arm_pattern,
+                expr_id,
+            ) == Some(GuardScalarKind::Bool)
         }
     }
 }
@@ -6136,6 +6322,7 @@ fn runtime_bool_guard_supported(
 fn supported_guard_scalar_expr(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
     arm_pattern: hir::PatternId,
@@ -6153,6 +6340,7 @@ fn supported_guard_scalar_expr(
             let left_kind = supported_guard_scalar_expr(
                 module,
                 resolution,
+                signatures,
                 body,
                 local_types,
                 arm_pattern,
@@ -6161,6 +6349,7 @@ fn supported_guard_scalar_expr(
             let right_kind = supported_guard_scalar_expr(
                 module,
                 resolution,
+                signatures,
                 body,
                 local_types,
                 arm_pattern,
@@ -6183,6 +6372,7 @@ fn supported_guard_scalar_expr(
         } => runtime_bool_guard_supported(
             module,
             resolution,
+            signatures,
             body,
             local_types,
             arm_pattern,
@@ -6197,6 +6387,7 @@ fn supported_guard_scalar_expr(
                 || runtime_bool_guard_supported(
                     module,
                     resolution,
+                    signatures,
                     body,
                     local_types,
                     arm_pattern,
@@ -6211,8 +6402,26 @@ fn supported_guard_scalar_expr(
         hir::ExprKind::Unary {
             op: UnaryOp::Neg,
             expr,
-        } => supported_guard_scalar_expr(module, resolution, body, local_types, arm_pattern, *expr)
-            .filter(|kind| *kind == GuardScalarKind::Int),
+        } => supported_guard_scalar_expr(
+            module,
+            resolution,
+            signatures,
+            body,
+            local_types,
+            arm_pattern,
+            *expr,
+        )
+        .filter(|kind| *kind == GuardScalarKind::Int),
+        hir::ExprKind::Call { callee, args } => supported_guard_call_expr(
+            module,
+            resolution,
+            signatures,
+            body,
+            local_types,
+            arm_pattern,
+            *callee,
+            args,
+        ),
         hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id) {
             Some(ValueResolution::Local(local_id))
                 if pattern_binds_local(module, arm_pattern, *local_id) =>
@@ -6237,6 +6446,7 @@ fn supported_guard_scalar_expr(
             | None => guard_expr_ty(
                 module,
                 resolution,
+                signatures,
                 body,
                 local_types,
                 Some(arm_pattern),
@@ -6253,6 +6463,7 @@ fn supported_guard_scalar_expr(
                 guard_expr_ty(
                     module,
                     resolution,
+                    signatures,
                     body,
                     local_types,
                     Some(arm_pattern),
@@ -6266,6 +6477,7 @@ fn supported_guard_scalar_expr(
                 supported_guard_scalar_expr(
                     module,
                     resolution,
+                    signatures,
                     body,
                     local_types,
                     arm_pattern,
@@ -6273,11 +6485,53 @@ fn supported_guard_scalar_expr(
                 )
             })
         }
-        hir::ExprKind::Question(inner) => {
-            supported_guard_scalar_expr(module, resolution, body, local_types, arm_pattern, *inner)
-        }
+        hir::ExprKind::Question(inner) => supported_guard_scalar_expr(
+            module,
+            resolution,
+            signatures,
+            body,
+            local_types,
+            arm_pattern,
+            *inner,
+        ),
         _ => None,
     }
+}
+
+fn supported_guard_call_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    signatures: &HashMap<FunctionRef, FunctionSignature>,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    arm_pattern: hir::PatternId,
+    callee_expr: hir::ExprId,
+    args: &[hir::CallArg],
+) -> Option<GuardScalarKind> {
+    let function = guard_direct_callee_function(module, resolution, callee_expr)?;
+    let signature = signatures.get(&function)?;
+    if signature.is_async {
+        return None;
+    }
+    let return_kind = guard_scalar_kind_for_ty(&signature.return_ty)?;
+    let ordered_args = ordered_guard_call_args(args, signature)?;
+    for (arg, param) in ordered_args.into_iter().zip(signature.params.iter()) {
+        let expected_kind = guard_scalar_kind_for_ty(&param.ty)?;
+        let expr_id = guard_call_arg_expr(arg);
+        let actual_kind = supported_guard_scalar_expr(
+            module,
+            resolution,
+            signatures,
+            body,
+            local_types,
+            arm_pattern,
+            expr_id,
+        )?;
+        if actual_kind != expected_kind {
+            return None;
+        }
+    }
+    Some(return_kind)
 }
 
 fn guard_scalar_kind_for_ty(ty: &Ty) -> Option<GuardScalarKind> {
@@ -6498,6 +6752,7 @@ fn guard_expr_place_with_ty(
 fn guard_expr_ty(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
     arm_pattern: Option<hir::PatternId>,
@@ -6510,17 +6765,32 @@ fn guard_expr_ty(
                 .or_else(|| guard_expr_item_root_ty(module, resolution, expr_id))
         }
         hir::ExprKind::Member { object, field, .. } => {
-            let current_ty =
-                guard_expr_ty(module, resolution, body, local_types, arm_pattern, *object)?;
+            let current_ty = guard_expr_ty(
+                module,
+                resolution,
+                signatures,
+                body,
+                local_types,
+                arm_pattern,
+                *object,
+            )?;
             guard_field_projection_ty(module, resolution, &current_ty, field)
         }
         hir::ExprKind::Bracket { target, items } => {
-            let mut current_ty =
-                guard_expr_ty(module, resolution, body, local_types, arm_pattern, *target)?;
+            let mut current_ty = guard_expr_ty(
+                module,
+                resolution,
+                signatures,
+                body,
+                local_types,
+                arm_pattern,
+                *target,
+            )?;
             for item in items {
                 current_ty = guard_index_expr_projection_ty(
                     module,
                     resolution,
+                    signatures,
                     body,
                     local_types,
                     arm_pattern,
@@ -6532,11 +6802,33 @@ fn guard_expr_ty(
         }
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
             module.block(*block_id).tail.and_then(|tail| {
-                guard_expr_ty(module, resolution, body, local_types, arm_pattern, tail)
+                guard_expr_ty(
+                    module,
+                    resolution,
+                    signatures,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    tail,
+                )
             })
         }
-        hir::ExprKind::Question(inner) => {
-            guard_expr_ty(module, resolution, body, local_types, arm_pattern, *inner)
+        hir::ExprKind::Question(inner) => guard_expr_ty(
+            module,
+            resolution,
+            signatures,
+            body,
+            local_types,
+            arm_pattern,
+            *inner,
+        ),
+        hir::ExprKind::Call { callee, args } => {
+            guard_direct_callee_function(module, resolution, *callee)
+                .and_then(|function| signatures.get(&function))
+                .filter(|signature| !signature.is_async)
+                .and_then(|signature| {
+                    ordered_guard_call_args(args, signature).map(|_| signature.return_ty.clone())
+                })
         }
         _ => None,
     }
@@ -6598,6 +6890,7 @@ fn guard_expr_place_root(
 fn guard_index_expr_projection_ty(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
     arm_pattern: Option<hir::PatternId>,
@@ -6610,6 +6903,7 @@ fn guard_index_expr_projection_ty(
             (supported_guard_scalar_expr(
                 module,
                 resolution,
+                signatures,
                 body,
                 local_types,
                 arm_pattern,
@@ -6972,6 +7266,71 @@ fn local_item_for_import_binding(
             ItemKind::TypeAlias(alias) => alias.name == *name,
             ItemKind::Impl(_) | ItemKind::Extend(_) | ItemKind::ExternBlock(_) => false,
         })
+}
+
+fn guard_direct_callee_function(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    callee_expr: hir::ExprId,
+) -> Option<FunctionRef> {
+    match resolution.expr_resolution(callee_expr)? {
+        ValueResolution::Function(function_ref) => Some(*function_ref),
+        ValueResolution::Import(import_binding) => {
+            let item_id = local_item_for_import_binding(module, import_binding)?;
+            matches!(&module.item(item_id).kind, ItemKind::Function(_))
+                .then_some(FunctionRef::Item(item_id))
+        }
+        ValueResolution::Local(_)
+        | ValueResolution::Param(_)
+        | ValueResolution::SelfValue
+        | ValueResolution::Item(_) => None,
+    }
+}
+
+fn ordered_guard_call_args<'a>(
+    args: &'a [hir::CallArg],
+    signature: &FunctionSignature,
+) -> Option<Vec<&'a hir::CallArg>> {
+    if args
+        .iter()
+        .all(|arg| matches!(arg, hir::CallArg::Positional(_)))
+    {
+        return (args.len() == signature.params.len()).then(|| args.iter().collect());
+    }
+
+    let mut ordered = vec![None; signature.params.len()];
+    let mut next_positional = 0usize;
+
+    for arg in args {
+        let index = if let hir::CallArg::Named { name, .. } = arg {
+            signature
+                .params
+                .iter()
+                .position(|param| param.name == *name)?
+        } else {
+            while next_positional < ordered.len() && ordered[next_positional].is_some() {
+                next_positional += 1;
+            }
+            if next_positional == ordered.len() {
+                return None;
+            }
+            next_positional
+        };
+
+        if ordered[index].is_some() {
+            return None;
+        }
+        ordered[index] = Some(arg);
+    }
+
+    ordered.into_iter().collect()
+}
+
+fn guard_call_arg_expr(arg: &hir::CallArg) -> hir::ExprId {
+    match arg {
+        hir::CallArg::Positional(expr_id) => *expr_id,
+        hir::CallArg::Named { value, .. } => *value,
+    }
 }
 
 fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnostic> {
@@ -9389,17 +9748,58 @@ fn main() -> Int {
     }
 
     #[test]
-    fn rejects_guarded_match_lowering_with_function_call_guard() {
+    fn emits_match_guard_direct_call_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+use shift as offset
+
+fn enabled() -> Bool {
+    return true
+}
+
+fn shift(value: Int, delta: Int) -> Int {
+    return value + delta
+}
+
+fn main() -> Int {
+    let first = match true {
+        true if enabled() => 10,
+        false => 0,
+    }
+    let second = match 20 {
+        current if offset(delta: 2, value: current) == 22 => 32,
+        _ => 0,
+    }
+    return first + second
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("_match_guard0").count() >= 2);
+        assert!(rendered.matches("call i1 @ql_").count() >= 1);
+        assert!(rendered.matches("call i64 @ql_").count() >= 1);
+        assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn rejects_guarded_match_lowering_with_non_scalar_function_call_guard_args() {
         let messages = emit_error(
             r#"
-fn enabled() -> Bool {
-    return false
+struct State {
+    ready: Bool,
+}
+
+fn enabled(state: State) -> Bool {
+    return state.ready
 }
 
 fn main() -> Int {
     let flag = true
+    let state = State { ready: false }
     return match flag {
-        true if enabled() => 1,
+        true if enabled(state) => 1,
         false => 0,
     }
 }
