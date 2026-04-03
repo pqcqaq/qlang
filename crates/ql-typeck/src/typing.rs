@@ -1038,6 +1038,8 @@ impl<'a> Checker<'a> {
             ExprKind::Name(_)
             | ExprKind::Member { .. }
             | ExprKind::Bracket { .. }
+            | ExprKind::If { .. }
+            | ExprKind::Match { .. }
             | ExprKind::Block(_)
             | ExprKind::Unsafe(_)
             | ExprKind::Question(_) => {
@@ -1076,6 +1078,8 @@ impl<'a> Checker<'a> {
             ExprKind::Name(_)
             | ExprKind::Member { .. }
             | ExprKind::Bracket { .. }
+            | ExprKind::If { .. }
+            | ExprKind::Match { .. }
             | ExprKind::Block(_)
             | ExprKind::Unsafe(_)
             | ExprKind::Question(_) => {
@@ -1191,6 +1195,12 @@ impl<'a> Checker<'a> {
                 }?;
                 self.const_source_expr(value, visited).or(Some(value))
             }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => self.const_if_source_expr(*condition, *then_branch, *else_branch, visited),
+            ExprKind::Match { value, arms } => self.const_match_source_expr(*value, arms, visited),
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self
                 .module
                 .block(*block_id)
@@ -1199,6 +1209,96 @@ impl<'a> Checker<'a> {
             ExprKind::Question(inner) => self.const_source_expr(*inner, visited),
             _ => None,
         }
+    }
+
+    fn const_if_source_expr(
+        &self,
+        condition: ExprId,
+        then_branch: BlockId,
+        else_branch: Option<ExprId>,
+        visited: &mut HashSet<ItemId>,
+    ) -> Option<ExprId> {
+        if self.bool_literal_expr(condition, visited)? {
+            let tail = self.module.block(then_branch).tail?;
+            self.const_source_expr(tail, visited).or(Some(tail))
+        } else {
+            let other = else_branch?;
+            self.const_source_expr(other, visited).or(Some(other))
+        }
+    }
+
+    fn const_match_source_expr(
+        &self,
+        value: ExprId,
+        arms: &[MatchArm],
+        visited: &mut HashSet<ItemId>,
+    ) -> Option<ExprId> {
+        if let Some(scrutinee) = self.bool_literal_expr(value, visited) {
+            for arm in arms {
+                let matches = match self.module.pattern(arm.pattern).kind.clone() {
+                    PatternKind::Bool(pattern) => pattern == scrutinee,
+                    PatternKind::Path(_) => {
+                        self.path_pattern_bool_literal(arm.pattern)? == scrutinee
+                    }
+                    PatternKind::Binding(_) | PatternKind::Wildcard => true,
+                    _ => return None,
+                };
+                if !matches {
+                    continue;
+                }
+                let guard = arm
+                    .guard
+                    .map(|guard| self.bool_literal_expr(guard, visited))
+                    .unwrap_or(Some(true))?;
+                if guard {
+                    return self.const_source_expr(arm.body, visited).or(Some(arm.body));
+                }
+            }
+            return None;
+        }
+
+        if let Some(scrutinee) = self.int_literal_expr(value, visited) {
+            for arm in arms {
+                let matches = match self.module.pattern(arm.pattern).kind.clone() {
+                    PatternKind::Integer(pattern) => {
+                        ql_ast::parse_i64_literal(&pattern)? == scrutinee
+                    }
+                    PatternKind::Path(_) => {
+                        self.path_pattern_int_literal(arm.pattern)? == scrutinee
+                    }
+                    PatternKind::Binding(_) | PatternKind::Wildcard => true,
+                    _ => return None,
+                };
+                if !matches {
+                    continue;
+                }
+                let guard = arm
+                    .guard
+                    .map(|guard| self.bool_literal_expr(guard, visited))
+                    .unwrap_or(Some(true))?;
+                if guard {
+                    return self.const_source_expr(arm.body, visited).or(Some(arm.body));
+                }
+            }
+            return None;
+        }
+
+        for arm in arms {
+            match &self.module.pattern(arm.pattern).kind {
+                PatternKind::Binding(_) | PatternKind::Wildcard => {
+                    let guard = arm
+                        .guard
+                        .map(|guard| self.bool_literal_expr(guard, visited))
+                        .unwrap_or(Some(true))?;
+                    if guard {
+                        return self.const_source_expr(arm.body, visited).or(Some(arm.body));
+                    }
+                }
+                _ => return None,
+            }
+        }
+
+        None
     }
 
     fn const_source_item(&self, item_id: ItemId, visited: &mut HashSet<ItemId>) -> Option<ExprId> {

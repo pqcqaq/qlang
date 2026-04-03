@@ -132,6 +132,8 @@ fn fold_int_constant_expr(
         ExprKind::Name(_)
         | ExprKind::Member { .. }
         | ExprKind::Bracket { .. }
+        | ExprKind::If { .. }
+        | ExprKind::Match { .. }
         | ExprKind::Block(_)
         | ExprKind::Unsafe(_)
         | ExprKind::Question(_) => {
@@ -146,6 +148,89 @@ fn fold_int_constant_expr(
                 None
             } else {
                 fold_int_constant_expr(module, resolution, immutable_local_values, source, visited)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn fold_bool_constant_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    immutable_local_values: &HashMap<hir::LocalId, ExprId>,
+    expr_id: ExprId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<bool> {
+    match &module.expr(expr_id).kind {
+        ExprKind::Bool(value) => Some(*value),
+        ExprKind::Unary {
+            op: UnaryOp::Not,
+            expr,
+        } => fold_bool_constant_expr(module, resolution, immutable_local_values, *expr, visited)
+            .map(|value| !value),
+        ExprKind::Binary { left, op, right } => {
+            if let (Some(left), Some(right)) = (
+                fold_bool_constant_expr(module, resolution, immutable_local_values, *left, visited),
+                fold_bool_constant_expr(
+                    module,
+                    resolution,
+                    immutable_local_values,
+                    *right,
+                    visited,
+                ),
+            ) {
+                match op {
+                    BinaryOp::OrOr => Some(left || right),
+                    BinaryOp::AndAnd => Some(left && right),
+                    BinaryOp::EqEq => Some(left == right),
+                    BinaryOp::BangEq => Some(left != right),
+                    _ => None,
+                }
+            } else {
+                let left = fold_int_constant_expr(
+                    module,
+                    resolution,
+                    immutable_local_values,
+                    *left,
+                    visited,
+                )?;
+                let right = fold_int_constant_expr(
+                    module,
+                    resolution,
+                    immutable_local_values,
+                    *right,
+                    visited,
+                )?;
+                match op {
+                    BinaryOp::EqEq => Some(left == right),
+                    BinaryOp::BangEq => Some(left != right),
+                    BinaryOp::Gt => Some(left > right),
+                    BinaryOp::GtEq => Some(left >= right),
+                    BinaryOp::Lt => Some(left < right),
+                    BinaryOp::LtEq => Some(left <= right),
+                    _ => None,
+                }
+            }
+        }
+        ExprKind::Name(_)
+        | ExprKind::Member { .. }
+        | ExprKind::Bracket { .. }
+        | ExprKind::If { .. }
+        | ExprKind::Match { .. }
+        | ExprKind::Block(_)
+        | ExprKind::Unsafe(_)
+        | ExprKind::Question(_) => {
+            let source = fold_constant_source_expr(
+                module,
+                resolution,
+                immutable_local_values,
+                expr_id,
+                visited,
+            )?;
+            if source == expr_id {
+                None
+            } else {
+                fold_bool_constant_expr(module, resolution, immutable_local_values, source, visited)
             }
         }
         _ => None,
@@ -256,6 +341,174 @@ fn fold_constant_source_expr(
             fold_constant_source_expr(module, resolution, immutable_local_values, value, visited)
                 .or(Some(value))
         }
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            if fold_bool_constant_expr(
+                module,
+                resolution,
+                immutable_local_values,
+                *condition,
+                visited,
+            )? {
+                let tail = module.block(*then_branch).tail?;
+                fold_constant_source_expr(module, resolution, immutable_local_values, tail, visited)
+                    .or(Some(tail))
+            } else {
+                let other = (*else_branch)?;
+                fold_constant_source_expr(
+                    module,
+                    resolution,
+                    immutable_local_values,
+                    other,
+                    visited,
+                )
+                .or(Some(other))
+            }
+        }
+        ExprKind::Match { value, arms } => {
+            if let Some(scrutinee) =
+                fold_bool_constant_expr(module, resolution, immutable_local_values, *value, visited)
+            {
+                for arm in arms {
+                    let matches = match &module.pattern(arm.pattern).kind {
+                        PatternKind::Bool(pattern) => *pattern == scrutinee,
+                        PatternKind::Path(_) => {
+                            let source = fold_path_pattern_source_expr(
+                                module,
+                                resolution,
+                                immutable_local_values,
+                                arm.pattern,
+                            )?;
+                            fold_bool_constant_expr(
+                                module,
+                                resolution,
+                                immutable_local_values,
+                                source,
+                                visited,
+                            )? == scrutinee
+                        }
+                        PatternKind::Binding(_) | PatternKind::Wildcard => true,
+                        _ => return None,
+                    };
+                    if !matches {
+                        continue;
+                    }
+                    let guard = arm
+                        .guard
+                        .map(|guard| {
+                            fold_bool_constant_expr(
+                                module,
+                                resolution,
+                                immutable_local_values,
+                                guard,
+                                visited,
+                            )
+                        })
+                        .unwrap_or(Some(true))?;
+                    if guard {
+                        return fold_constant_source_expr(
+                            module,
+                            resolution,
+                            immutable_local_values,
+                            arm.body,
+                            visited,
+                        )
+                        .or(Some(arm.body));
+                    }
+                }
+                return None;
+            }
+
+            if let Some(scrutinee) =
+                fold_int_constant_expr(module, resolution, immutable_local_values, *value, visited)
+            {
+                for arm in arms {
+                    let matches = match &module.pattern(arm.pattern).kind {
+                        PatternKind::Integer(pattern) => {
+                            ql_ast::parse_i64_literal(pattern)? == scrutinee
+                        }
+                        PatternKind::Path(_) => {
+                            let source = fold_path_pattern_source_expr(
+                                module,
+                                resolution,
+                                immutable_local_values,
+                                arm.pattern,
+                            )?;
+                            fold_int_constant_expr(
+                                module,
+                                resolution,
+                                immutable_local_values,
+                                source,
+                                visited,
+                            )? == scrutinee
+                        }
+                        PatternKind::Binding(_) | PatternKind::Wildcard => true,
+                        _ => return None,
+                    };
+                    if !matches {
+                        continue;
+                    }
+                    let guard = arm
+                        .guard
+                        .map(|guard| {
+                            fold_bool_constant_expr(
+                                module,
+                                resolution,
+                                immutable_local_values,
+                                guard,
+                                visited,
+                            )
+                        })
+                        .unwrap_or(Some(true))?;
+                    if guard {
+                        return fold_constant_source_expr(
+                            module,
+                            resolution,
+                            immutable_local_values,
+                            arm.body,
+                            visited,
+                        )
+                        .or(Some(arm.body));
+                    }
+                }
+                return None;
+            }
+
+            for arm in arms {
+                match &module.pattern(arm.pattern).kind {
+                    PatternKind::Binding(_) | PatternKind::Wildcard => {
+                        let guard = arm
+                            .guard
+                            .map(|guard| {
+                                fold_bool_constant_expr(
+                                    module,
+                                    resolution,
+                                    immutable_local_values,
+                                    guard,
+                                    visited,
+                                )
+                            })
+                            .unwrap_or(Some(true))?;
+                        if guard {
+                            return fold_constant_source_expr(
+                                module,
+                                resolution,
+                                immutable_local_values,
+                                arm.body,
+                                visited,
+                            )
+                            .or(Some(arm.body));
+                        }
+                    }
+                    _ => return None,
+                }
+            }
+
+            None
+        }
         ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
             module.block(*block_id).tail.and_then(|tail| {
                 fold_constant_source_expr(module, resolution, immutable_local_values, tail, visited)
@@ -292,6 +545,24 @@ fn fold_constant_source_item(
 
     visited.remove(&item_id);
     result
+}
+
+fn fold_path_pattern_source_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    immutable_local_values: &HashMap<hir::LocalId, ExprId>,
+    pattern_id: PatternId,
+) -> Option<ExprId> {
+    let item_id =
+        local_item_for_value_resolution(module, resolution.pattern_resolution(pattern_id)?)?;
+    let mut visited = HashSet::new();
+    fold_constant_source_item(
+        module,
+        resolution,
+        immutable_local_values,
+        item_id,
+        &mut visited,
+    )
 }
 
 fn local_item_for_value_resolution(

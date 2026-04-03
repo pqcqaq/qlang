@@ -9,6 +9,15 @@ const BASE: Int = 0
 const NEXT: Int = BASE + 1
 const INDEXES: Slots = Slots { left: BASE, right: NEXT }
 static EDGE: Int = NEXT
+const PICKED: Slots = if NEXT == 1 {
+    ALIAS
+} else {
+    Slots { left: EDGE, right: BASE }
+}
+static SELECTED_RIGHT: Int = match NEXT {
+    1 if PICKED.right == 1 => PICKED.right,
+    _ => BASE,
+}
 
 async fn worker(value: Int) -> Int {
     return value
@@ -16,9 +25,9 @@ async fn worker(value: Int) -> Int {
 
 async fn main() -> Int {
     var pair = (1, 2)
-    let left = ALIAS.left + 0
-    let right = EDGE - 0
+    let left = PICKED.left + 0
+    let right = SELECTED_RIGHT - 0
     let first = pair[left] = await worker(8)
     let second = pair[right] = first + 6
-    return pair[NEXT - 1] + second
+    return pair[SELECTED_RIGHT - 1] + second
 }

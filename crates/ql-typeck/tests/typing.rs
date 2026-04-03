@@ -2101,6 +2101,48 @@ fn main(index: Int) -> Int {
 }
 
 #[test]
+fn accepts_branch_selected_const_tuple_assignment_indices() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use INDEXES as ALIAS
+
+struct Slots {
+    left: Int,
+    right: Int,
+}
+
+const BASE: Int = 0
+const NEXT: Int = BASE + 1
+const INDEXES: Slots = Slots { left: BASE, right: NEXT }
+static EDGE: Int = NEXT
+const PICKED: Slots = if NEXT == 1 {
+    ALIAS
+} else {
+    Slots { left: EDGE, right: BASE }
+}
+static SELECTED_RIGHT: Int = match NEXT {
+    1 if PICKED.right == 1 => PICKED.right,
+    _ => BASE,
+}
+
+fn main() -> Int {
+    var pair = (1, 2)
+    let left = PICKED.left + 0
+    let right = SELECTED_RIGHT - 0
+    let first = pair[left] = 7
+    let second = pair[right] = first + 6
+    return pair[SELECTED_RIGHT - 1] + second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "branch-selected const tuple assignment indices should be accepted, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_unknown_struct_members() {
     let diagnostics = diagnostic_messages(
         r#"
