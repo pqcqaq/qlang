@@ -101,6 +101,47 @@ async fn main() -> Int {
     let arithmetic_static_extra = await arithmetic_static_env.bundle.right
     let arithmetic_static_tail = await arithmetic_static_env.tail
 
+    let arithmetic_const_row = ARITH_INDEX_ALIAS
+    let arithmetic_const_slots = [arithmetic_const_row, arithmetic_const_row]
+    let arithmetic_const_slot_alias = arithmetic_const_slots
+    var arithmetic_const_composed_pending = Pending {
+        tasks: [worker(1), worker(4)],
+    }
+    let arithmetic_const_composed_alias = arithmetic_const_composed_pending.tasks
+    let arithmetic_const_composed_first =
+        await arithmetic_const_composed_alias[arithmetic_const_slot_alias[arithmetic_const_row]]
+    arithmetic_const_composed_pending.tasks[arithmetic_const_slots[arithmetic_const_row]] =
+        worker(arithmetic_const_composed_first + 2)
+    let arithmetic_const_composed_pair = (
+        arithmetic_const_composed_alias[arithmetic_const_slot_alias[arithmetic_const_row]],
+        worker(5),
+    )
+    let arithmetic_const_composed_second = await arithmetic_const_composed_pair[0]
+    let arithmetic_const_composed_extra = await arithmetic_const_composed_pair[1]
+    let arithmetic_const_composed_tail = await arithmetic_const_composed_pending.tasks[1]
+
+    let arithmetic_static_row = ARITH_SLOT_ALIAS.value
+    let arithmetic_static_slots = [arithmetic_static_row, arithmetic_static_row]
+    let arithmetic_static_slot_alias = arithmetic_static_slots
+    var arithmetic_static_composed_pending = Pending {
+        tasks: [worker(2), worker(6)],
+    }
+    let arithmetic_static_composed_alias = arithmetic_static_composed_pending.tasks
+    let arithmetic_static_composed_first =
+        await arithmetic_static_composed_alias[arithmetic_static_slot_alias[arithmetic_static_row]]
+    arithmetic_static_composed_pending.tasks[arithmetic_static_slots[arithmetic_static_row]] =
+        worker(arithmetic_static_composed_first + 3)
+    let arithmetic_static_composed_env = Envelope {
+        bundle: Bundle {
+            left: arithmetic_static_composed_alias[arithmetic_static_slot_alias[arithmetic_static_row]],
+            right: worker(7),
+        },
+        tail: arithmetic_static_composed_pending.tasks[1],
+    }
+    let arithmetic_static_composed_second = await arithmetic_static_composed_env.bundle.left
+    let arithmetic_static_composed_extra = await arithmetic_static_composed_env.bundle.right
+    let arithmetic_static_composed_tail = await arithmetic_static_composed_env.tail
+
     return tuple_second
         + tuple_extra
         + tuple_tail
@@ -116,4 +157,10 @@ async fn main() -> Int {
         + arithmetic_static_second
         + arithmetic_static_extra
         + arithmetic_static_tail
+        + arithmetic_const_composed_second
+        + arithmetic_const_composed_extra
+        + arithmetic_const_composed_tail
+        + arithmetic_static_composed_second
+        + arithmetic_static_composed_extra
+        + arithmetic_static_composed_tail
 }
