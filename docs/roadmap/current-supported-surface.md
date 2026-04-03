@@ -63,6 +63,7 @@
   - nested dynamic array projections
   - projected-root dynamic array projections
   - direct-root / projected-root assignment-expression result form
+  - nested projected-root assignment-expression result form
 - 普通表达式与 `if` / `while` 条件里的 same-file foldable `const` / `static`
 - `Bool` `&&` / `||` / unary `!`
 - 最小 literal `match` lowering
@@ -104,6 +105,7 @@
   - direct-root non-`Task[...]` arrays
   - projected-root non-`Task[...]` arrays
   - direct-root / projected-root assignment-expression result form
+  - nested projected-root assignment-expression result form
 - 最小 async `match` family
   - direct-call guard
   - projection guard
@@ -186,13 +188,13 @@
 
 截至当前代码：
 
-- sync executable examples：`47`
-- async executable examples：`207`
+- sync executable examples：`48`
+- async executable examples：`208`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `210`，但真实 `.ql` 文件数是 `207`，不是 `210`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `207` 个 async executable case 和 `47` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `211`，但真实 `.ql` 文件数是 `208`，不是 `211`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `208` 个 async executable case 和 `48` 个 sync executable case
 
 ## 当前明确未开放
 

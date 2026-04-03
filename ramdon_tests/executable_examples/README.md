@@ -51,6 +51,7 @@ Files:
 - `45_sync_projected_root_tuple_assignment_expressions.ql`: sync projected-root tuple assignment-expression lowering in executable mode, where a struct field carrying a tuple can be assigned through tuple literal-index expressions and still exit with `19`
 - `46_sync_projected_root_assignment_expressions.ql`: sync projected-root assignment-expression lowering in executable mode, where nested `holder.pair.value = ...` and `holder.pair.values[1] = ...` writes both yield a result value that immediately participates in later scalar computation and still exit with `13`
 - `47_sync_dynamic_assignment_expressions.ql`: sync dynamic assignment-expression lowering in executable mode, where both `values[index] = ...` and `wrap.values[index] = ...` on non-`Task[...]` arrays yield a result value that immediately participates in later scalar computation and still exit with `38`
+- `48_sync_nested_projected_dynamic_assignment_expressions.ql`: sync nested projected-root dynamic assignment-expression lowering in executable mode, where `env.payload.values[index] = ...` yields a result value that immediately participates in later scalar computation and still exits with `16`
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -104,6 +105,7 @@ Expected exit codes for the sync examples:
 - `45_sync_projected_root_tuple_assignment_expressions.ql` -> `19`
 - `46_sync_projected_root_assignment_expressions.ql` -> `13`
 - `47_sync_dynamic_assignment_expressions.ql` -> `38`
+- `48_sync_nested_projected_dynamic_assignment_expressions.ql` -> `16`
 
 Build one verified executable example:
 
