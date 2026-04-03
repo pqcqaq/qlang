@@ -48,6 +48,7 @@ Files:
 - `42_sync_dynamic_array_assignments.ql`: sync dynamic array assignment lowering in executable mode, where non-`Task[...]` element arrays and nested dynamic array projections can both be assigned through runtime indices and still exit with `18`
 - `43_sync_tuple_assignment_expressions.ql`: sync tuple assignment-expression lowering in executable mode, where tuple literal-index assignments yield a result value that immediately participates in later scalar computation and still exit with `19`
 - `44_sync_projected_root_dynamic_array_assignments.ql`: sync projected-root dynamic array assignment lowering in executable mode, where a struct field carrying a non-`Task[...]` fixed array can be assigned through a runtime index and still exit with `8`
+- `45_sync_projected_root_tuple_assignment_expressions.ql`: sync projected-root tuple assignment-expression lowering in executable mode, where a struct field carrying a tuple can be assigned through tuple literal-index expressions and still exit with `19`
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -98,6 +99,7 @@ Expected exit codes for the sync examples:
 - `42_sync_dynamic_array_assignments.ql` -> `18`
 - `43_sync_tuple_assignment_expressions.ql` -> `19`
 - `44_sync_projected_root_dynamic_array_assignments.ql` -> `8`
+- `45_sync_projected_root_tuple_assignment_expressions.ql` -> `19`
 
 Build one verified executable example:
 

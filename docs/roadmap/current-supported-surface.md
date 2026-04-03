@@ -179,13 +179,13 @@
 
 截至当前代码：
 
-- sync executable examples：`44`
-- async executable examples：`203`
+- sync executable examples：`45`
+- async executable examples：`204`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `206`，但真实 `.ql` 文件数是 `203`，不是 `206`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `203` 个 async executable case 和 `44` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `207`，但真实 `.ql` 文件数是 `204`，不是 `207`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `204` 个 async executable case 和 `45` 个 sync executable case
 
 ## 当前明确未开放
 

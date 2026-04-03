@@ -244,6 +244,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/44_sync_projected_root_dynamic_array_assignments.ql",
             expected_exit: 8,
         },
+        ExecutableExampleCase {
+            name: "sync_projected_root_tuple_assignment_expressions",
+            source_relative: "ramdon_tests/executable_examples/45_sync_projected_root_tuple_assignment_expressions.ql",
+            expected_exit: 19,
+        },
     ];
 
     assert_example_cases_run(
@@ -1282,6 +1287,11 @@ fn async_program_surface_examples_build_and_run() {
             name: "async_local_assignment_expressions",
             source_relative: "ramdon_tests/async_program_surface_examples/206_async_local_assignment_expressions.ql",
             expected_exit: 31,
+        },
+        ExecutableExampleCase {
+            name: "async_projected_root_tuple_assignment_expressions",
+            source_relative: "ramdon_tests/async_program_surface_examples/207_async_projected_root_tuple_assignment_expressions.ql",
+            expected_exit: 19,
         },
     ];
 
