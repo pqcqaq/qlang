@@ -164,12 +164,14 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `163_async_main_awaited_match_nested_call_root_guards.ql`
 - `164_async_main_awaited_match_call_backed_nested_call_root_guards.ql`
 - `165_async_main_awaited_match_alias_backed_nested_call_root_guards.ql`
+- `166_async_main_awaited_match_binding_backed_nested_call_root_guards.ql`
+- `167_async_main_awaited_match_projection_backed_nested_call_root_guards.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-sixty-five examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-sixty-seven examples with the real local toolchain and locks their exit codes.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -221,6 +223,8 @@ Current status:
 - `163_async_main_awaited_match_nested_call_root_guards.ql` now locks the awaited nested call-root `match` guard variant for `async fn main`, where `match first { current if pack(current).values[slot(current)] == 4 => ... }`, `match second { current if ready(pack(current).values[slot(current)]) => ... }`, and `match third { current if check(value: pack(current).values[slot(current)], expected: 4) => ... }` confirm that awaited scalar scrutinees can now feed nested call-root runtime projections into direct scalar comparison guards, direct predicate guards, and scalar guard-call arguments through the current executable async surface and still exit with `42`.
 - `164_async_main_awaited_match_call_backed_nested_call_root_guards.ql` now locks the awaited call-backed nested call-root `match` guard variant for `async fn main`, where `match first { true if enabled(extra: flag(pack(3)[slot(3)] == 4), state: flag_state(flag(pack(3)[slot(3)] == 4))) => ... }`, `match second { current if [pack(current)[slot(current)], seed(8), seed(9)][0] == seed(4) => ... }`, and `match third { current if equal(expected: seed(4), value: [pack(current)[slot(current)], seed(8), 9][0]) => ... }` confirm that awaited scrutinees can now carry call-backed nested call-root projections into direct predicate guards, inline aggregate element guards, and scalar guard-call arguments through the current executable async surface and still exit with `42`.
 - `165_async_main_awaited_match_alias_backed_nested_call_root_guards.ql` now locks the awaited alias-backed nested call-root `match` guard variant for `async fn main`, where `match first { true if allow(extra: flag(pack(3)[slot(3)] == literal(4)), state: make(flag(pack(3)[slot(3)] == literal(4)))) => ... }`, `match second { current if [pack(current)[slot(current)], literal(8), literal(9)][0] == literal(4) => ... }`, and `match third { current if check(expected: literal(4), value: [pack(current)[slot(current)], literal(8), 9][0]) => ... }` confirm that awaited scrutinees can now carry same-file import-alias backed nested call-root projections into direct predicate guards, inline aggregate element guards, and scalar guard-call arguments through the current executable async surface and still exit with `42`.
+- `166_async_main_awaited_match_binding_backed_nested_call_root_guards.ql` now locks the awaited binding-backed nested call-root `match` guard variant for `async fn main`, where `match first { current if enabled(extra: bundle(current.value)[offset(current.value)] == 4, state: current) => ... }`, `match second { current if [bundle(current.value)[offset(current.value)], current.value + 5, 9][0] == 4 => ... }`, and `match third { current if matches(expected: 4, value: [bundle(current.value)[offset(current.value)], current.value, 9][0]) => ... }` confirm that awaited aggregate scrutinees can now use their current binding directly as both guard input and nested call-root projection source through the current executable async surface and still exit with `42`.
+- `167_async_main_awaited_match_projection_backed_nested_call_root_guards.ql` now locks the awaited projection-backed nested call-root `match` guard variant for `async fn main`, where `match first { true if enabled(extra: bundle(config.slot.value)[offset(config.slot.value)] == 4, state: state(bundle(config.slot.value)[offset(config.slot.value)] == 4)) => ... }`, `match second { current if [bundle(config.slot.value)[offset(config.slot.value)], current + 5, 9][0] == 4 => ... }`, and `match third { current if matches(expected: 4, value: [bundle(config.slot.value)[offset(config.slot.value)], current, 9][0]) => ... }` confirm that read-only projection roots can now feed awaited `match` guards together with nested call-root projections through the current executable async surface and still exit with `42`.
 
 Expected exit codes:
 
@@ -386,6 +390,8 @@ Expected exit codes:
 - `163_async_main_awaited_match_nested_call_root_guards.ql` -> `42`
 - `164_async_main_awaited_match_call_backed_nested_call_root_guards.ql` -> `42`
 - `165_async_main_awaited_match_alias_backed_nested_call_root_guards.ql` -> `42`
+- `166_async_main_awaited_match_binding_backed_nested_call_root_guards.ql` -> `42`
+- `167_async_main_awaited_match_projection_backed_nested_call_root_guards.ql` -> `42`
 
 Try one file directly:
 

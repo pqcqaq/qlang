@@ -37,6 +37,19 @@ struct FlagState {
     ready: Bool,
 }
 
+struct BindingState {
+    ready: Bool,
+    value: Int,
+}
+
+struct IndexSlot {
+    value: Int,
+}
+
+struct Config {
+    slot: IndexSlot,
+}
+
 async fn fetch_flag(value: Bool) -> Bool {
     return value
 }
@@ -117,6 +130,14 @@ fn seed(value: Int) -> Int {
 }
 
 fn enabled(state: FlagState, extra: Bool) -> Bool {
+    return state.ready && extra
+}
+
+async fn load_binding_state(flag: Bool, value: Int) -> BindingState {
+    return BindingState { ready: flag, value: value }
+}
+
+fn binding_enabled(state: BindingState, extra: Bool) -> Bool {
     return state.ready && extra
 }
 
@@ -217,6 +238,45 @@ async fn helper() -> Int {
         _ => 0,
     }
 
+    let seventeenth = await load_binding_state(flag: true, value: 3)
+    let from_binding_backed_bool = match seventeenth {
+        current if binding_enabled(extra: pack(current.value)[slot(current.value)] == 4, state: current) => 10,
+        _ => 0,
+    }
+
+    let eighteenth = await load_binding_state(flag: true, value: 3)
+    let from_binding_backed_inline = match eighteenth {
+        current if [pack(current.value)[slot(current.value)], current.value + 5, 9][0] == 4 => 12,
+        _ => 0,
+    }
+
+    let nineteenth = await load_binding_state(flag: true, value: 3)
+    let from_binding_backed_guard_call = match nineteenth {
+        current if equal(expected: 4, value: [pack(current.value)[slot(current.value)], current.value, 9][0]) => 20,
+        _ => 0,
+    }
+
+    let config = Config {
+        slot: IndexSlot { value: 3 },
+    }
+    let twentieth = await fetch_flag(value: true)
+    let from_projection_backed_bool = match twentieth {
+        true if enabled(extra: pack(config.slot.value)[slot(config.slot.value)] == 4, state: make(pack(config.slot.value)[slot(config.slot.value)] == 4)) => 10,
+        false => 0,
+    }
+
+    let twenty_first = await load_scalar(value: 3)
+    let from_projection_backed_inline = match twenty_first {
+        current if [pack(config.slot.value)[slot(config.slot.value)], current + 5, 9][0] == 4 => 12,
+        _ => 0,
+    }
+
+    let twenty_second = await load_scalar(value: 3)
+    let from_projection_backed_guard_call = match twenty_second {
+        current if equal(expected: 4, value: [pack(config.slot.value)[slot(config.slot.value)], current, 9][0]) => 20,
+        _ => 0,
+    }
+
     return from_scalar
         + from_aggregate
         + from_pair_projection
@@ -233,4 +293,10 @@ async fn helper() -> Int {
         + from_alias_backed_bool
         + from_alias_backed_inline
         + from_alias_backed_guard_call
+        + from_binding_backed_bool
+        + from_binding_backed_inline
+        + from_binding_backed_guard_call
+        + from_projection_backed_bool
+        + from_projection_backed_inline
+        + from_projection_backed_guard_call
 }
