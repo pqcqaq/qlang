@@ -41,7 +41,7 @@ features:
 - Phase 7 已建立最小 runtime/executor、task-handle 类型面、共享 runtime hook ABI skeleton，以及受控的 async library/program build 子集
 - 当前真实支持面与未支持边界已集中收口到 [当前支持基线](/roadmap/current-supported-surface)
 - 历史长文与逐轮记录已迁移到 [路线图归档](/roadmap/archive/index)，当前入口页只保留可依赖结论
-- executable smoke harness 当前锁定 `39` 个 sync 示例与 `192` 个 async 示例；这两个数字已按目录与测试代码重新核对
+- executable smoke harness 当前锁定 `39` 个 sync 示例与 `193` 个 async 示例；这两个数字已按目录与测试代码重新核对
 
 建议先看：
 

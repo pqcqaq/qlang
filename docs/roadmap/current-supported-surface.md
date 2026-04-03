@@ -101,6 +101,7 @@
 - direct async call / helper-returned task handle / `spawn` / `await`
   - regular-size helper-returned / forwarded task-handle flow
   - bound local task-handle `spawn`
+  - regular-size aggregate params on direct `await` / `spawn`
   - zero-sized helper-returned / forwarded task-handle flow
   - zero-sized aggregate params on direct `await` / `spawn`
   - recursive aggregate params on direct `await` / `spawn`
@@ -157,12 +158,12 @@
 截至当前代码：
 
 - sync executable examples：`39`
-- async executable examples：`192`
+- async executable examples：`193`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `195`，但真实 `.ql` 文件数是 `192`，不是 `195`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `192` 个 async executable case 和 `39` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `196`，但真实 `.ql` 文件数是 `193`，不是 `196`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `193` 个 async executable case 和 `39` 个 sync executable case
 
 ## 当前明确未开放
 
