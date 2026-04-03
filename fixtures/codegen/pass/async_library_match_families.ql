@@ -1,3 +1,9 @@
+use fetch_value as load_scalar
+use load_pair_state as load_pairs
+use offset as shift
+use matches as check
+use pair as make_pair
+
 struct Slot {
     ready: Bool,
     value: Int,
@@ -78,5 +84,29 @@ async fn helper() -> Int {
         _ => 0,
     }
 
-    return from_scalar + from_aggregate + from_pair_projection + from_pair_call_root
+    let fifth = await load_scalar(value: 20)
+    let from_alias_scalar = match fifth {
+        current if shift(delta: 2, value: current) == 22 => 20,
+        _ => 0,
+    }
+
+    let sixth = await load_pairs(value: 20)
+    let from_alias_projection = match sixth {
+        current if check(expected: 22, value: current.values) => 20,
+        _ => 0,
+    }
+
+    let seventh = await load_pairs(value: 20)
+    let from_alias_call_root = match seventh {
+        current if check(expected: 22, value: make_pair(value: current.values.left)) => 22,
+        _ => 0,
+    }
+
+    return from_scalar
+        + from_aggregate
+        + from_pair_projection
+        + from_pair_call_root
+        + from_alias_scalar
+        + from_alias_projection
+        + from_alias_call_root
 }
