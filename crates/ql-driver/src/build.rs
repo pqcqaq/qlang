@@ -9775,29 +9775,32 @@ async fn main[T]() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_async_and_unsafe_codegen_diagnostics() {
-        let dir = TestDir::new("ql-driver-async-unsafe-unsupported");
+    fn build_file_writes_llvm_ir_with_async_unsafe_main() {
+        let dir = TestDir::new("ql-driver-async-unsafe-main");
         let source = dir.write(
             "async_unsafe_main.ql",
             r#"
 async unsafe fn main() -> Int {
-    return 0
+    return 7
 }
 "#,
         );
+        let output = dir.path().join("artifacts/async_unsafe_main.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
 
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("async/unsafe codegen rejection should return diagnostics");
+        let artifact = build_file(&source, &options).expect("build should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support `async fn` yet"
-        }));
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message
-                == "LLVM IR backend foundation does not support `unsafe fn` bodies yet"
-        }));
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("define i32 @main()"));
+        assert!(rendered.contains("define ptr @ql_0_main()"));
+        assert!(!rendered.contains("does not support `unsafe fn` bodies yet"));
     }
 
     #[test]

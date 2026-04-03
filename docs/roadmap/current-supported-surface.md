@@ -41,6 +41,7 @@
 当前 sync build surface 已稳定覆盖：
 
 - 顶层 free function
+- `unsafe fn` body
 - `extern "c"` 顶层声明、extern block、顶层导出定义
 - `main` 程序入口
 - 标量整数 / `Bool` / `Void`
@@ -94,6 +95,7 @@
 - `BuildEmit::Object`
 - `BuildEmit::Executable`
 - 程序入口限定为最小 `async fn main`
+- `async unsafe fn` body 会沿当前最小 `async fn main` 子集一起 lowering
 
 当前 program-mode async 子集真实覆盖：
 
@@ -160,13 +162,13 @@
 
 截至当前代码：
 
-- sync executable examples：`39`
-- async executable examples：`197`
+- sync executable examples：`40`
+- async executable examples：`198`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `200`，但真实 `.ql` 文件数是 `197`，不是 `200`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `197` 个 async executable case 和 `39` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `201`，但真实 `.ql` 文件数是 `198`，不是 `201`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `198` 个 async executable case 和 `40` 个 sync executable case
 
 ## 当前明确未开放
 

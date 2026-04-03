@@ -531,12 +531,6 @@ impl<'a> ModuleEmitter<'a> {
                 "LLVM IR backend foundation does not support generic functions yet",
             ));
         }
-        if function.is_unsafe && body_style == FunctionBodyStyle::Definition {
-            diagnostics.push(unsupported(
-                function.span,
-                "LLVM IR backend foundation does not support `unsafe fn` bodies yet",
-            ));
-        }
         if body_style == FunctionBodyStyle::Definition {
             match function.abi.as_deref() {
                 Some("c") | None => {}

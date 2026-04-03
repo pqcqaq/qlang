@@ -219,6 +219,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/39_sync_unparenthesized_inline_projected_control_flow_heads.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_unsafe_function_bodies",
+            source_relative: "ramdon_tests/executable_examples/40_sync_unsafe_function_bodies.ql",
+            expected_exit: 5,
+        },
     ];
 
     assert_example_cases_run(
@@ -1227,6 +1232,11 @@ fn async_program_surface_examples_build_and_run() {
             name: "async_main_aliased_projected_root_spawn_families",
             source_relative: "ramdon_tests/async_program_surface_examples/200_async_main_aliased_projected_root_spawn_families.ql",
             expected_exit: 164,
+        },
+        ExecutableExampleCase {
+            name: "async_unsafe_function_bodies",
+            source_relative: "ramdon_tests/async_program_surface_examples/201_async_unsafe_function_bodies.ql",
+            expected_exit: 7,
         },
     ];
 

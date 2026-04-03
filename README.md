@@ -9,7 +9,8 @@ Qlang is an LLVM-based compiled language project implemented as a Rust workspace
 - The stable external interop boundary is still C ABI.
 - Async support is real, but intentionally narrow:
   - async library build for `staticlib` and the current minimal `dylib` subset
-  - minimal program-mode `async fn main`
+- minimal program-mode `async fn main`
+- executable `unsafe fn` bodies on the current sync / async program subset
   - fixed-shape `for await`
   - task-handle payload / projection / guarded-match slices that are already regression-locked
 
@@ -36,8 +37,8 @@ Detailed design merges and archived slice notes live under [`docs/plans/`](./doc
 
 Current user-facing executable smoke surface:
 
-- `39` sync executable examples under `ramdon_tests/executable_examples/`
-- `197` async executable examples under `ramdon_tests/async_program_surface_examples/`
+- `40` sync executable examples under `ramdon_tests/executable_examples/`
+- `198` async executable examples under `ramdon_tests/async_program_surface_examples/`
 
 Current library/codegen surface is locked in `crates/ql-cli/tests/codegen.rs`.
 
