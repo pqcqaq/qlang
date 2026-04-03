@@ -46,6 +46,7 @@ Files:
 - `40_sync_unsafe_function_bodies.ql`: sync `unsafe fn` body lowering in executable mode, where ordinary unsafe-marked helper bodies now share the same arithmetic/call executable path and still exit with `5`
 - `41_sync_assignment_expressions.ql`: sync assignment-expression lowering in executable mode, where mutable-local, struct-field, and fixed-array literal-index assignments can yield a result value that immediately participates in later scalar computation and still exits with `38`
 - `42_sync_dynamic_array_assignments.ql`: sync dynamic array assignment lowering in executable mode, where non-`Task[...]` element arrays and nested dynamic array projections can both be assigned through runtime indices and still exit with `18`
+- `43_sync_tuple_assignment_expressions.ql`: sync tuple assignment-expression lowering in executable mode, where tuple literal-index assignments yield a result value that immediately participates in later scalar computation and still exit with `19`
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -94,6 +95,7 @@ Expected exit codes for the sync examples:
 - `40_sync_unsafe_function_bodies.ql` -> `5`
 - `41_sync_assignment_expressions.ql` -> `38`
 - `42_sync_dynamic_array_assignments.ql` -> `18`
+- `43_sync_tuple_assignment_expressions.ql` -> `19`
 
 Build one verified executable example:
 

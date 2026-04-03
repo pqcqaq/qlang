@@ -72,10 +72,10 @@
 
 本轮已按代码和测试重新核对当前文档入口，结论如下：
 
-- `ramdon_tests/executable_examples/` 当前真实是 `42` 个 sync executable 样例
-- `ramdon_tests/async_program_surface_examples/` 当前真实是 `200` 个 async executable 样例
+- `ramdon_tests/executable_examples/` 当前真实是 `43` 个 sync executable 样例
+- `ramdon_tests/async_program_surface_examples/` 当前真实是 `201` 个 async executable 样例
 - `crates/ql-cli/tests/executable_examples.rs` 与目录数量一致
-- async 目录现在最新文件编号是 `203`，但真实样例数是 `200`；不要再把文件编号误当成文件数
+- async 目录现在最新文件编号是 `204`，但真实样例数是 `201`；不要再把文件编号误当成文件数
 
 ## 当前最值得继续推进的方向
 

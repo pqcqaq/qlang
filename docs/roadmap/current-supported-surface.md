@@ -54,6 +54,7 @@
   - same-file `const` / `static` root 及其 same-file alias
 - 赋值表达式的当前可运行子集
   - mutable local
+  - tuple literal index projection
   - struct field
   - fixed-array literal index projection
 - 动态数组索引赋值的当前可运行子集
@@ -88,6 +89,7 @@
   - task-array / task-tuple auto-await
   - projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
 - 普通标量赋值表达式的当前可运行子集
+  - tuple literal index projection
   - struct field
   - fixed-array literal index projection
 - 动态 `Task[...]` 数组索引赋值的当前可运行子集
@@ -174,13 +176,13 @@
 
 截至当前代码：
 
-- sync executable examples：`42`
-- async executable examples：`200`
+- sync executable examples：`43`
+- async executable examples：`201`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `203`，但真实 `.ql` 文件数是 `200`，不是 `203`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `200` 个 async executable case 和 `42` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `204`，但真实 `.ql` 文件数是 `201`，不是 `204`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `201` 个 async executable case 和 `43` 个 sync executable case
 
 ## 当前明确未开放
 
