@@ -215,13 +215,16 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `214_async_call_root_nested_projected_assignment_expressions.ql`
 - `215_async_import_alias_call_root_nested_projected_assignment_expressions.ql`
 - `216_async_inline_nested_projected_assignment_expressions.ql`
+- `217_async_call_root_nested_projected_dynamic_assignment_expressions.ql`
+- `218_async_import_alias_call_root_nested_projected_dynamic_assignment_expressions.ql`
+- `219_async_inline_nested_projected_dynamic_assignment_expressions.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these two-hundred-thirteen examples with the real local toolchain and locks their exit codes.
-- The filenames run from `04` through `216`, but the real async executable example count is `213`.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these two-hundred-sixteen examples with the real local toolchain and locks their exit codes.
+- The filenames run from `04` through `219`, but the real async executable example count is `216`.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -324,6 +327,9 @@ Current status:
 - `214_async_call_root_nested_projected_assignment_expressions.ql` now locks the async call-root nested projected assignment-expression surface, where `make_env().holder.pair.value = await worker(...)` and `make_env().holder.pair.values[1] = ...` both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `14`.
 - `215_async_import_alias_call_root_nested_projected_assignment_expressions.ql` now locks the async import-alias call-root nested projected assignment-expression surface, where `env().holder.pair.value = await worker(...)` and `env().holder.pair.values[1] = ...` both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `14`.
 - `216_async_inline_nested_projected_assignment_expressions.ql` now locks the async inline nested projected assignment-expression surface, where `(Env { ... }).holder.pair.value = await worker(...)` and `(Env { ... }).holder.pair.values[1] = ...` both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `14`.
+- `217_async_call_root_nested_projected_dynamic_assignment_expressions.ql` now locks the async call-root nested projected dynamic assignment-expression surface, where `make_env().payload.values[index] = ...` yields a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `14`.
+- `218_async_import_alias_call_root_nested_projected_dynamic_assignment_expressions.ql` now locks the async import-alias call-root nested projected dynamic assignment-expression surface, where `env().payload.values[index] = ...` yields a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `14`.
+- `219_async_inline_nested_projected_dynamic_assignment_expressions.ql` now locks the async inline nested projected dynamic assignment-expression surface, where `(Env { ... }).payload.values[index] = ...` yields a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `14`.
 
 Expected exit codes:
 
@@ -540,6 +546,9 @@ Expected exit codes:
 - `214_async_call_root_nested_projected_assignment_expressions.ql` -> `14`
 - `215_async_import_alias_call_root_nested_projected_assignment_expressions.ql` -> `14`
 - `216_async_inline_nested_projected_assignment_expressions.ql` -> `14`
+- `217_async_call_root_nested_projected_dynamic_assignment_expressions.ql` -> `14`
+- `218_async_import_alias_call_root_nested_projected_dynamic_assignment_expressions.ql` -> `14`
+- `219_async_inline_nested_projected_dynamic_assignment_expressions.ql` -> `14`
 
 Try one file directly:
 

@@ -62,7 +62,7 @@
   - non-`Task[...]` element arrays
   - nested dynamic array projections
   - projected-root dynamic array projections
-  - direct-root / projected-root assignment-expression result form
+  - direct-root / projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root assignment-expression result form
   - nested projected-root assignment-expression result form
 - 普通表达式与 `if` / `while` 条件里的 same-file foldable `const` / `static`
 - `Bool` `&&` / `||` / unary `!`
@@ -104,7 +104,7 @@
 - async 普通标量动态数组索引赋值的当前可运行子集
   - direct-root non-`Task[...]` arrays
   - projected-root non-`Task[...]` arrays
-  - direct-root / projected-root assignment-expression result form
+  - direct-root / projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root assignment-expression result form
   - nested projected-root assignment-expression result form
 - 最小 async `match` family
   - direct-call guard
@@ -188,13 +188,13 @@
 
 截至当前代码：
 
-- sync executable examples：`53`
-- async executable examples：`213`
+- sync executable examples：`56`
+- async executable examples：`216`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `216`，但真实 `.ql` 文件数是 `213`，不是 `216`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `213` 个 async executable case 和 `53` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `219`，但真实 `.ql` 文件数是 `216`，不是 `219`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `216` 个 async executable case 和 `56` 个 sync executable case
 
 ## 当前明确未开放
 
