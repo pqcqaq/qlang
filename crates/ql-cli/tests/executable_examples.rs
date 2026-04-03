@@ -1173,6 +1173,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/189_async_main_spawn_bound_task_handles.ql",
             expected_exit: 3,
         },
+        ExecutableExampleCase {
+            name: "async_main_returned_task_handle_shapes",
+            source_relative: "ramdon_tests/async_program_surface_examples/190_async_main_returned_task_handle_shapes.ql",
+            expected_exit: 21,
+        },
     ];
 
     assert_example_cases_run(

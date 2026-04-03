@@ -188,13 +188,14 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `187_async_main_spawned_recursive_aggregate_params.ql`
 - `188_async_main_conditional_task_handle_flows.ql`
 - `189_async_main_spawn_bound_task_handles.ql`
+- `190_async_main_returned_task_handle_shapes.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-eighty-six examples with the real local toolchain and locks their exit codes.
-- The filenames run from `04` through `189`, but the real async executable example count is `186`.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-eighty-seven examples with the real local toolchain and locks their exit codes.
+- The filenames run from `04` through `190`, but the real async executable example count is `187`.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -270,6 +271,7 @@ Current status:
 - `187_async_main_spawned_recursive_aggregate_params.ql` now locks the spawned recursive aggregate parameter family for `async fn main`, where that same non-zero-sized struct plus fixed-array parameter flow also survives `spawn worker(...) -> await task` and still exits with `6`.
 - `188_async_main_conditional_task_handle_flows.ql` now locks the regular-size conditional task-handle flow family for `async fn main`, where branch-local `spawn task; task = fresh_worker()`, the reverse-branch shape, conditional async-call `spawn`, and conditional helper-task `spawn` all survive the executable surface and still exit with `6`.
 - `189_async_main_spawn_bound_task_handles.ql` now locks the bound-task `spawn` family for `async fn main`, where already-bound local `Task[Int]` values can be spawned and awaited back through the executable surface and still exit with `3`.
+- `190_async_main_returned_task_handle_shapes.ql` now locks the regular-size returned task-handle shape family for `async fn main`, where sync helper-returned `Task[Int]`, awaited `Task[Int]` returned from an async helper, and awaited aggregate-carried `Task[Int]` fields all survive both direct `await` and `spawn -> await` paths on the executable surface and still exit with `21`.
 
 Expected exit codes:
 
@@ -459,6 +461,7 @@ Expected exit codes:
 - `187_async_main_spawned_recursive_aggregate_params.ql` -> `6`
 - `188_async_main_conditional_task_handle_flows.ql` -> `6`
 - `189_async_main_spawn_bound_task_handles.ql` -> `3`
+- `190_async_main_returned_task_handle_shapes.ql` -> `21`
 
 Try one file directly:
 
