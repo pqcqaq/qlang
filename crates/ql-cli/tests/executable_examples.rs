@@ -1023,6 +1023,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/159_async_main_inline_projected_fixed_shape_for_await_without_parens.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "async_main_awaited_match_guards",
+            source_relative: "ramdon_tests/async_program_surface_examples/160_async_main_awaited_match_guards.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
