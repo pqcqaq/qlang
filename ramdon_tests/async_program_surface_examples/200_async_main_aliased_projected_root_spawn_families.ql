@@ -182,6 +182,55 @@ async fn main() -> Int {
     let arithmetic_static_composed_extra = await arithmetic_static_composed_env.bundle.tasks[1]
     let arithmetic_static_composed_tail = await arithmetic_static_composed_env.tail
 
+    let guarded_arithmetic_const_row = ARITH_INDEX_ALIAS
+    let guarded_arithmetic_const_slots = [guarded_arithmetic_const_row, guarded_arithmetic_const_row]
+    let guarded_arithmetic_const_slot_alias = guarded_arithmetic_const_slots
+    var guarded_arithmetic_const_pending = Pending {
+        tasks: [worker(1), worker(3)],
+    }
+    let guarded_arithmetic_const_alias = guarded_arithmetic_const_pending.tasks
+    if ARITH_INDEX_ALIAS == 0 {
+        let guarded_arithmetic_const_first =
+            await guarded_arithmetic_const_alias[guarded_arithmetic_const_slot_alias[guarded_arithmetic_const_row]]
+        guarded_arithmetic_const_pending.tasks[guarded_arithmetic_const_slots[guarded_arithmetic_const_row]] =
+            worker(guarded_arithmetic_const_first + 1)
+    }
+    let guarded_arithmetic_const_tasks = [
+        guarded_arithmetic_const_alias[guarded_arithmetic_const_slot_alias[guarded_arithmetic_const_row]],
+        worker(4),
+    ]
+    let guarded_arithmetic_const_running = spawn guarded_arithmetic_const_tasks[0]
+    let guarded_arithmetic_const_second = await guarded_arithmetic_const_running
+    let guarded_arithmetic_const_extra = await guarded_arithmetic_const_tasks[1]
+    let guarded_arithmetic_const_tail = await guarded_arithmetic_const_pending.tasks[1]
+
+    let guarded_arithmetic_static_row = ARITH_SLOT_ALIAS.value
+    let guarded_arithmetic_static_slots = [guarded_arithmetic_static_row, guarded_arithmetic_static_row]
+    let guarded_arithmetic_static_slot_alias = guarded_arithmetic_static_slots
+    var guarded_arithmetic_static_pending = Pending {
+        tasks: [worker(2), worker(4)],
+    }
+    let guarded_arithmetic_static_alias = guarded_arithmetic_static_pending.tasks
+    if ARITH_SLOT_ALIAS.value == 0 {
+        let guarded_arithmetic_static_first =
+            await guarded_arithmetic_static_alias[guarded_arithmetic_static_slot_alias[guarded_arithmetic_static_row]]
+        guarded_arithmetic_static_pending.tasks[guarded_arithmetic_static_slots[guarded_arithmetic_static_row]] =
+            worker(guarded_arithmetic_static_first + 2)
+    }
+    let guarded_arithmetic_static_env = ArrayEnvelope {
+        bundle: ArrayBundle {
+            tasks: [
+                forward(guarded_arithmetic_static_alias[guarded_arithmetic_static_slot_alias[guarded_arithmetic_static_row]]),
+                worker(5),
+            ],
+        },
+        tail: guarded_arithmetic_static_pending.tasks[1],
+    }
+    let guarded_arithmetic_static_running = spawn guarded_arithmetic_static_env.bundle.tasks[0]
+    let guarded_arithmetic_static_second = await guarded_arithmetic_static_running
+    let guarded_arithmetic_static_extra = await guarded_arithmetic_static_env.bundle.tasks[1]
+    let guarded_arithmetic_static_tail = await guarded_arithmetic_static_env.tail
+
     return nested_second
         + nested_extra
         + nested_tail
@@ -206,4 +255,10 @@ async fn main() -> Int {
         + arithmetic_static_composed_second
         + arithmetic_static_composed_extra
         + arithmetic_static_composed_tail
+        + guarded_arithmetic_const_second
+        + guarded_arithmetic_const_extra
+        + guarded_arithmetic_const_tail
+        + guarded_arithmetic_static_second
+        + guarded_arithmetic_static_extra
+        + guarded_arithmetic_static_tail
 }

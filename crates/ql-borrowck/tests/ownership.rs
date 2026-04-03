@@ -2484,6 +2484,57 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn allows_passing_guarded_arithmetic_const_alias_sourced_composed_dynamic_task_handle_to_helper_and_consuming_sibling_array_element()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+use INDEX as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+const STEP: Int = 1
+const INDEX: Int = STEP - 1
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row = INDEX_ALIAS
+    let slots = [row, row]
+    let alias_slots = slots
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let alias = pending.tasks
+    if INDEX_ALIAS == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let forwarded = forward(alias[alias_slots[row]])
+    let second = await pending.tasks[1]
+    return await forwarded
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded arithmetic const alias-sourced composed dynamic helper consume to preserve sibling array element availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_passing_guarded_const_backed_alias_sourced_composed_dynamic_task_handle_to_helper_and_consuming_sibling_array_element()
  {
     let diagnostics = diagnostic_messages(
@@ -3049,6 +3100,64 @@ async fn main() -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected arithmetic static alias-sourced composed dynamic queued spawn after forwarded alias to preserve sibling array element availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_spawning_guarded_arithmetic_static_alias_sourced_composed_dynamic_queued_task_handle_after_forwarded_alias()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+use SLOT as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+static BASE: Int = 2
+static SLOT: Slot = Slot { value: BASE - 2 }
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row = INDEX_ALIAS.value
+    let slots = [row, row]
+    let alias_slots = slots
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let alias = pending.tasks
+    if INDEX_ALIAS.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let tail_tasks = pending.tasks
+    let forwarded = forward(alias[alias_slots[row]])
+    let queued = forwarded
+    let second = await tail_tasks[1]
+    let running = spawn queued
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded arithmetic static alias-sourced composed dynamic queued spawn after forwarded alias to preserve sibling array element availability, got {diagnostics:?}"
     );
 }
 
