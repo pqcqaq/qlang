@@ -1,5 +1,6 @@
 use fetch_value as load_scalar
 use load_pair_state as load_pairs
+use LIMITS as INPUT
 use offset as shift
 use matches as check
 use pair as make_pair
@@ -10,6 +11,8 @@ use scalar_matches as equal
 use enabled as allow
 use flag_state as make
 use seed as literal
+
+static LIMITS: [Int; 3] = [4, 8, 9]
 
 struct Slot {
     ready: Bool,
@@ -277,6 +280,24 @@ async fn helper() -> Int {
         _ => 0,
     }
 
+    let twenty_third = await fetch_flag(value: true)
+    let from_item_backed_bool = match twenty_third {
+        true if enabled(extra: INPUT[0] == pack(3)[slot(3)], state: flag_state(pack(3)[slot(3)] == 4)) => 10,
+        false => 0,
+    }
+
+    let twenty_fourth = await load_scalar(value: 3)
+    let from_item_backed_inline = match twenty_fourth {
+        current if [pack(current)[slot(current)], INPUT[1], INPUT[2]][0] == INPUT[0] => 12,
+        _ => 0,
+    }
+
+    let twenty_fifth = await load_scalar(value: 3)
+    let from_item_backed_guard_call = match twenty_fifth {
+        current if equal(expected: INPUT[0], value: [pack(current)[slot(current)], 8, 9][0]) => 20,
+        _ => 0,
+    }
+
     return from_scalar
         + from_aggregate
         + from_pair_projection
@@ -299,6 +320,9 @@ async fn helper() -> Int {
         + from_projection_backed_bool
         + from_projection_backed_inline
         + from_projection_backed_guard_call
+        + from_item_backed_bool
+        + from_item_backed_inline
+        + from_item_backed_guard_call
 }
 
 extern "c" pub fn q_export() -> Int {
