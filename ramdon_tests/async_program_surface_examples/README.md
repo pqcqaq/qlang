@@ -157,12 +157,13 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `156_async_main_awaited_aggregate_projected_fixed_shape_for_await.ql`
 - `157_async_main_import_alias_awaited_aggregate_projected_fixed_shape_for_await.ql`
 - `158_async_main_nested_call_root_projected_task_handle_consumes.ql`
+- `159_async_main_inline_projected_fixed_shape_for_await_without_parens.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-fifty-eight examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-fifty-nine examples with the real local toolchain and locks their exit codes.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -207,6 +208,7 @@ Current status:
 - `156_async_main_awaited_aggregate_projected_fixed_shape_for_await.ql` now locks the awaited-aggregate projected fixed-shape `for await` variant, where `for await value in (await array_env(8)).payload.values`, `for await value in (await tuple_env(4)).payload.values`, `for await value in (await task_tuple_env(2)).payload.values`, and `for await value in (await deep_task_env(5)).outer.payload.tasks` all iterate directly from awaited aggregate projected iterable expressions and still exit with `42`.
 - `157_async_main_import_alias_awaited_aggregate_projected_fixed_shape_for_await.ql` now locks the same-file import-alias awaited-aggregate projected fixed-shape `for await` variant, where `for await value in (await arrays(8)).payload.values`, `for await value in (await tuples(4)).payload.values`, `for await value in (await task_tuples(2)).payload.values`, and `for await value in (await deep(5)).outer.payload.tasks` all iterate directly from import-aliased awaited aggregate projected iterable expressions and still exit with `42`.
 - `158_async_main_nested_call_root_projected_task_handle_consumes.ql` now locks the direct nested call-root projected task-handle consume variant, where `await tuple_env(10).payload.values[0]`, `spawn pair_env(11).payload.left`, `await deep_env(20).outer.payload.tasks[0]`, and `spawn deep_env(0).outer.payload.tasks[1]` all consume projected task handles directly from nested call-root expressions and still exit with `42`.
+- `159_async_main_inline_projected_fixed_shape_for_await_without_parens.ql` now locks the unparenthesized inline aggregate projected fixed-shape `for await` variant, where `for await value in ScalarArrayPayload { values: [8, 9] }.values`, `for await value in ScalarTuplePayload { values: (4, 5) }.values`, `for await value in TaskTuplePayload { values: (worker(2), worker(3)) }.values`, and `for await value in DeepPending { outer: PendingEnvelope { payload: Pending { tasks: [worker(5), worker(6)] } } }.outer.payload.tasks` all iterate directly from inline aggregate projected iterable expressions without requiring an extra outer pair of parentheses and still exit with `42`.
 
 Expected exit codes:
 
@@ -365,6 +367,7 @@ Expected exit codes:
 - `156_async_main_awaited_aggregate_projected_fixed_shape_for_await.ql` -> `42`
 - `157_async_main_import_alias_awaited_aggregate_projected_fixed_shape_for_await.ql` -> `42`
 - `158_async_main_nested_call_root_projected_task_handle_consumes.ql` -> `42`
+- `159_async_main_inline_projected_fixed_shape_for_await_without_parens.ql` -> `42`
 
 Try one file directly:
 

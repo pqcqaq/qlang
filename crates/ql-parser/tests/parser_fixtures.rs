@@ -233,6 +233,146 @@ fn probe() {
 }
 
 #[test]
+fn parses_for_heads_with_unparenthesized_struct_literal_iterables() {
+    let source = r#"
+struct Payload {
+    values: [Int; 2],
+}
+
+async fn probe() {
+    for value in Payload { values: [1, 2] }.values {}
+    for await value in Payload { values: [3, 4] }.values {}
+}
+"#;
+    let module = parse_source(source).expect("for heads should allow struct literal iterables");
+    let function = match &module.items[1].kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+    let body = function.body.as_ref().expect("function should have a body");
+
+    assert!(matches!(
+        &body.statements[0].kind,
+        StmtKind::For {
+            is_await: false,
+            iterable,
+            ..
+        } if matches!(
+            &iterable.kind,
+            ExprKind::Member { object, field, .. }
+                if field == "values"
+                    && matches!(
+                        &object.kind,
+                        ExprKind::StructLiteral { path, .. }
+                            if path.segments.as_slice() == ["Payload"]
+                    )
+        )
+    ));
+    assert!(matches!(
+        &body.statements[1].kind,
+        StmtKind::For {
+            is_await: true,
+            iterable,
+            ..
+        } if matches!(
+            &iterable.kind,
+            ExprKind::Member { object, field, .. }
+                if field == "values"
+                    && matches!(
+                        &object.kind,
+                        ExprKind::StructLiteral { path, .. }
+                            if path.segments.as_slice() == ["Payload"]
+                    )
+        )
+    ));
+}
+
+#[test]
+fn parses_projected_struct_literals_in_control_flow_heads_without_paren_wrappers() {
+    let source = r#"
+struct FlagState {
+    ready: Bool,
+}
+
+struct PairPayload {
+    values: (Int, Int),
+}
+
+fn probe() {
+    if FlagState { ready: true }.ready {}
+    while FlagState { ready: false }.ready {}
+    let value = match PairPayload { values: (1, 2) }.values[0] {
+        1 => 42,
+        _ => 0,
+    }
+}
+"#;
+    let module = parse_source(source).expect("projected control-flow heads should parse");
+    let function = match &module.items[2].kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+    let body = function.body.as_ref().expect("function should have a body");
+
+    assert!(matches!(
+        &body.statements[0].kind,
+        StmtKind::Expr { expr, .. }
+            if matches!(
+                &expr.kind,
+                ExprKind::If { condition, .. }
+                    if matches!(
+                        &condition.kind,
+                        ExprKind::Member { object, field, .. }
+                            if field == "ready"
+                                && matches!(
+                                    &object.kind,
+                                    ExprKind::StructLiteral { path, .. }
+                                        if path.segments.as_slice() == ["FlagState"]
+                                )
+                    )
+            )
+    ));
+    assert!(matches!(
+        &body.statements[1].kind,
+        StmtKind::While { condition, .. }
+            if matches!(
+                &condition.kind,
+                ExprKind::Member { object, field, .. }
+                    if field == "ready"
+                        && matches!(
+                            &object.kind,
+                            ExprKind::StructLiteral { path, .. }
+                                if path.segments.as_slice() == ["FlagState"]
+                        )
+            )
+    ));
+    assert!(matches!(
+        &body.statements[2].kind,
+        StmtKind::Let { value, .. }
+            if matches!(
+                &value.kind,
+                ExprKind::Match { value, .. }
+                    if matches!(
+                        &value.kind,
+                        ExprKind::Bracket { target, items }
+                            if items.len() == 1
+                                && matches!(&items[0].kind, ExprKind::Integer(index) if index == "0")
+                                && matches!(
+                                    &target.kind,
+                                    ExprKind::Member { object, field, .. }
+                                        if field == "values"
+                                            && matches!(
+                                                &object.kind,
+                                                ExprKind::StructLiteral { path, .. }
+                                                    if path.segments.as_slice() == ["PairPayload"]
+                                            )
+                                )
+                    )
+            )
+    ));
+}
+
+#[test]
 fn preserves_single_element_tuple_types() {
     let source = "fn takes_one(value: (Int,)) -> (Int,) { return value }";
     let module = parse_source(source).expect("single-element tuple types should parse");

@@ -7,7 +7,7 @@ use super::{Parser, expr_to_path};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StructLiteralMode {
     Allow,
-    Disallow,
+    HeadProjected,
 }
 
 impl Parser {
@@ -16,7 +16,7 @@ impl Parser {
     }
 
     pub(super) fn parse_head_expr(&mut self) -> Result<Expr, ()> {
-        self.parse_expr_with_struct_literals(StructLiteralMode::Disallow)
+        self.parse_expr_with_struct_literals(StructLiteralMode::HeadProjected)
     }
 
     fn parse_expr_with_struct_literals(
@@ -320,20 +320,39 @@ impl Parser {
                 continue;
             }
 
-            if struct_literal_mode == StructLiteralMode::Allow
-                && self.at(TokenKind::LBrace)
+            if self.at(TokenKind::LBrace)
                 && self.looks_like_struct_literal()
                 && let Some(path) = expr_to_path(&expr)
             {
-                let start = expr.span.start;
-                self.bump();
-                let fields = self.parse_struct_literal_fields()?;
-                self.expect(TokenKind::RBrace, "expected `}` after struct literal")?;
-                expr = Expr::new(
-                    Span::new(start, self.previous_end()),
-                    ExprKind::StructLiteral { path, fields },
-                );
-                continue;
+                match struct_literal_mode {
+                    StructLiteralMode::Allow => {
+                        let start = expr.span.start;
+                        self.bump();
+                        let fields = self.parse_struct_literal_fields()?;
+                        self.expect(TokenKind::RBrace, "expected `}` after struct literal")?;
+                        expr = Expr::new(
+                            Span::new(start, self.previous_end()),
+                            ExprKind::StructLiteral { path, fields },
+                        );
+                        continue;
+                    }
+                    StructLiteralMode::HeadProjected => {
+                        let checkpoint = self.idx;
+                        let start = expr.span.start;
+                        self.bump();
+                        let fields = self.parse_struct_literal_fields()?;
+                        self.expect(TokenKind::RBrace, "expected `}` after struct literal")?;
+                        if !matches!(self.current().kind, TokenKind::Dot | TokenKind::LBracket) {
+                            self.idx = checkpoint;
+                            break;
+                        }
+                        expr = Expr::new(
+                            Span::new(start, self.previous_end()),
+                            ExprKind::StructLiteral { path, fields },
+                        );
+                        continue;
+                    }
+                }
             }
 
             break;

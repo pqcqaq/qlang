@@ -41,6 +41,8 @@ Files:
 - `35_sync_import_alias_nested_call_root_fixed_shapes.ql`: same-file import-alias nested call-root fixed-shape `for` lowering in executable mode, where `for value in arrays(10).payload.values`, `for value in tuples(7).payload.values`, and `for value in deep(3).outer.payload.values` now all lower through the existing alias-call canonicalization plus nested projection and fixed-array / homogeneous tuple iterable paths
 - `36_sync_inline_projected_fixed_shapes.ql`: parenthesized inline aggregate projected fixed-shape `for` lowering in executable mode, where `for value in (ArrayPayload { values: [10, 11] }).values`, `for value in (TuplePayload { values: (7, 8) }).values`, and `for value in (DeepPayload { inner: ArrayPayload { values: [3, 3] } }).inner.values` now all lower through the existing inline aggregate materialization plus projected fixed-array / homogeneous tuple iterable paths
 - `37_sync_import_alias_inline_projected_fixed_shapes.ql`: same-file import-alias parenthesized inline aggregate projected fixed-shape `for` lowering in executable mode, where `for value in (ArrayPayload { values: [make_value(10), make_value(11)] }).values`, `for value in (TuplePayload { values: (make_value(7), make_value(8)) }).values`, and `for value in (DeepPayload { inner: ArrayPayload { values: [make_value(3), make_value(3)] } }).inner.values` now all lower through the existing alias-call canonicalization plus inline aggregate materialization and projected fixed-array / homogeneous tuple iterable paths
+- `38_sync_inline_projected_fixed_shapes_without_parens.ql`: unparenthesized inline aggregate projected fixed-shape `for` lowering in executable mode, where `for value in ArrayPayload { values: [10, 11] }.values`, `for value in TuplePayload { values: (7, 8) }.values`, and `for value in DeepPayload { inner: ArrayPayload { values: [3, 3] } }.inner.values` now all lower through the same inline aggregate materialization plus projected fixed-array / homogeneous tuple iterable paths without requiring an extra outer pair of parentheses
+- `39_sync_unparenthesized_inline_projected_control_flow_heads.ql`: unparenthesized inline aggregate projected `if` / `while` / `match` head lowering in executable mode, where `if FlagState { ready: true }.ready`, `while FlagState { ready: false }.ready`, and `match PairPayload { values: (20, 22) }.values[1]` now all lower without requiring an extra outer pair of parentheses around the inline aggregate root
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -84,6 +86,8 @@ Expected exit codes for the sync examples:
 - `35_sync_import_alias_nested_call_root_fixed_shapes.ql` -> `42`
 - `36_sync_inline_projected_fixed_shapes.ql` -> `42`
 - `37_sync_import_alias_inline_projected_fixed_shapes.ql` -> `42`
+- `38_sync_inline_projected_fixed_shapes_without_parens.ql` -> `42`
+- `39_sync_unparenthesized_inline_projected_control_flow_heads.ql` -> `42`
 
 Build one verified executable example:
 

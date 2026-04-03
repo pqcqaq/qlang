@@ -209,6 +209,16 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/37_sync_import_alias_inline_projected_fixed_shapes.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_inline_projected_fixed_shapes_without_parens",
+            source_relative: "ramdon_tests/executable_examples/38_sync_inline_projected_fixed_shapes_without_parens.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "sync_unparenthesized_inline_projected_control_flow_heads",
+            source_relative: "ramdon_tests/executable_examples/39_sync_unparenthesized_inline_projected_control_flow_heads.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
@@ -1006,6 +1016,11 @@ fn async_program_surface_examples_build_and_run() {
         ExecutableExampleCase {
             name: "async_main_nested_call_root_projected_task_handle_consumes",
             source_relative: "ramdon_tests/async_program_surface_examples/158_async_main_nested_call_root_projected_task_handle_consumes.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "async_main_inline_projected_fixed_shape_for_await_without_parens",
+            source_relative: "ramdon_tests/async_program_surface_examples/159_async_main_inline_projected_fixed_shape_for_await_without_parens.ql",
             expected_exit: 42,
         },
     ];
