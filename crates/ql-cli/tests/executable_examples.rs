@@ -1278,6 +1278,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/205_async_projected_root_dynamic_task_array_assignments.ql",
             expected_exit: 12,
         },
+        ExecutableExampleCase {
+            name: "async_local_assignment_expressions",
+            source_relative: "ramdon_tests/async_program_surface_examples/206_async_local_assignment_expressions.ql",
+            expected_exit: 31,
+        },
     ];
 
     assert_example_cases_run(

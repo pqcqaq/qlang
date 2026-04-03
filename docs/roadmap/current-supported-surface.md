@@ -90,6 +90,7 @@
   - task-array / task-tuple auto-await
   - projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
 - 普通标量赋值表达式的当前可运行子集
+  - mutable local
   - tuple literal index projection
   - struct field
   - fixed-array literal index projection
@@ -179,12 +180,12 @@
 截至当前代码：
 
 - sync executable examples：`44`
-- async executable examples：`202`
+- async executable examples：`203`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `205`，但真实 `.ql` 文件数是 `202`，不是 `205`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `202` 个 async executable case 和 `44` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `206`，但真实 `.ql` 文件数是 `203`，不是 `206`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `203` 个 async executable case 和 `44` 个 sync executable case
 
 ## 当前明确未开放
 
