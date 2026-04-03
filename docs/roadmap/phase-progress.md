@@ -66,16 +66,16 @@
 - 最小 runtime hook ABI skeleton 已成立
 - `staticlib` 与最小 async `dylib` 已开放受控 async library build 子集
 - `BuildEmit::LlvmIr` / `Object` / `Executable` 已开放最小 `async fn main` program 子集
-- fixed-shape `for await`、task-handle payload / projection consume、dynamic task-array 的保守成功路径、awaited `match` guard families 都已进入真实回归矩阵
+- fixed-shape `for await`、task-handle payload / projection consume、dynamic task-array 的保守成功路径、awaited `match` guard families，以及 spawned / zero-sized / recursive aggregate result families 都已进入真实回归矩阵
 
 ## 当前进度与代码核对结果
 
 本轮已按代码和测试重新核对当前文档入口，结论如下：
 
 - `ramdon_tests/executable_examples/` 当前真实是 `39` 个 sync executable 样例
-- `ramdon_tests/async_program_surface_examples/` 当前真实是 `170` 个 async executable 样例
+- `ramdon_tests/async_program_surface_examples/` 当前真实是 `172` 个 async executable 样例
 - `crates/ql-cli/tests/executable_examples.rs` 与目录数量一致
-- 此前部分文档把 async 样例数误写成 `173`，这是把文件编号误当成了文件数，现已修正
+- async 目录现在最新文件编号是 `175`，但真实样例数是 `172`；不要再把文件编号误当成文件数
 
 ## 当前最值得继续推进的方向
 

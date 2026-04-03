@@ -1093,6 +1093,16 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/173_async_main_awaited_match_nested_call_root_inline_combos.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "async_main_spawned_aggregate_results",
+            source_relative: "ramdon_tests/async_program_surface_examples/174_async_main_spawned_aggregate_results.ql",
+            expected_exit: 21,
+        },
+        ExecutableExampleCase {
+            name: "async_main_zero_sized_and_recursive_aggregate_results",
+            source_relative: "ramdon_tests/async_program_surface_examples/175_async_main_zero_sized_and_recursive_aggregate_results.ql",
+            expected_exit: 22,
+        },
     ];
 
     assert_example_cases_run(

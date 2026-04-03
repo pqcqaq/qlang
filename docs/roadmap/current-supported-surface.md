@@ -102,6 +102,7 @@
 - scalar 与 fixed-shape aggregate payload
   - tuple / fixed-array / non-generic struct
   - zero-sized aggregate
+  - direct / spawn recursive fixed-shape aggregate result
   - aggregate 内继续携带 `Task[T]`
   - nested task-handle payload
 - projected task-handle consume
@@ -134,12 +135,12 @@
 截至当前代码：
 
 - sync executable examples：`39`
-- async executable examples：`170`
+- async executable examples：`172`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `173`，但真实 `.ql` 文件数是 `170`，不是 `173`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `170` 个 async executable case 和 `39` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `175`，但真实 `.ql` 文件数是 `172`，不是 `175`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `172` 个 async executable case 和 `39` 个 sync executable case
 
 ## 当前明确未开放
 

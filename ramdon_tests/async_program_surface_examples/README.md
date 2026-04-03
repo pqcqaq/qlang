@@ -172,13 +172,15 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `171_async_main_awaited_match_inline_aggregate_call_args.ql`
 - `172_async_main_awaited_match_inline_projection_roots.ql`
 - `173_async_main_awaited_match_nested_call_root_inline_combos.ql`
+- `174_async_main_spawned_aggregate_results.ql`
+- `175_async_main_zero_sized_and_recursive_aggregate_results.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-seventy examples with the real local toolchain and locks their exit codes.
-- The filenames run from `04` through `173`, but the real async executable example count is `170`.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-seventy-two examples with the real local toolchain and locks their exit codes.
+- The filenames run from `04` through `175`, but the real async executable example count is `172`.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -238,6 +240,8 @@ Current status:
 - `171_async_main_awaited_match_inline_aggregate_call_args.ql` now locks the awaited inline aggregate guard-call argument variant for `async fn main`, where `match first { true if enabled(State { ready: true }) => ... }`, `match second { current if matches((0, current), 22) => ... }`, and `match third { current if contains([current, current + 1, current + 2], 4) => ... }` confirm that inline struct, tuple, and array aggregate arguments can now flow directly into awaited `match` guard calls through the current executable async surface and still exit with `42`.
 - `172_async_main_awaited_match_inline_projection_roots.ql` now locks the awaited inline projection-root variant for `async fn main`, where `match first { current if (0, current)[1] == 22 => ... }`, `match second { current if State { value: current }.value == 22 => ... }`, and `match third { current if [current, current + 1, current + 2][1] == 4 => ... }` confirm that inline tuple, struct, and array projection roots can now participate directly in awaited `match` guards through the current executable async surface and still exit with `42`.
 - `173_async_main_awaited_match_nested_call_root_inline_combos.ql` now locks the awaited nested call-root inline-combo variant for `async fn main`, where `match first { current if [pack(current).values[slot(current)], current + 1, 6][0] == 4 => ... }`, `match second { current if contains([current, pack(current).values[slot(current)], 9], 4) => ... }`, and `match third { current if matches((8, pack(current).values[slot(current)]), 4) => ... }` confirm that nested call-root runtime projections can now continue flowing into inline projection roots plus inline array/tuple guard-call arguments through the current executable async surface and still exit with `42`.
+- `174_async_main_spawned_aggregate_results.ql` now locks the spawned aggregate result variant for `async fn main`, where `spawn tuple_worker()`, `spawn array_worker()`, and `spawn pair_worker()` each return fixed-shape aggregate payloads that can be awaited back into tuple / fixed-array / struct values on the executable surface and still exit with `21`.
+- `175_async_main_zero_sized_and_recursive_aggregate_results.ql` now locks the zero-sized plus recursive aggregate result family for `async fn main`, where zero-sized `[Int; 0]` / `Wrap` results and recursive `(Pair, [Int; 2])` fixed-shape aggregate results both succeed through direct `await` and `spawn -> await` paths on the executable surface and still exit with `22`.
 
 Expected exit codes:
 
@@ -411,6 +415,8 @@ Expected exit codes:
 - `171_async_main_awaited_match_inline_aggregate_call_args.ql` -> `42`
 - `172_async_main_awaited_match_inline_projection_roots.ql` -> `42`
 - `173_async_main_awaited_match_nested_call_root_inline_combos.ql` -> `42`
+- `174_async_main_spawned_aggregate_results.ql` -> `21`
+- `175_async_main_zero_sized_and_recursive_aggregate_results.ql` -> `22`
 
 Try one file directly:
 
