@@ -10828,6 +10828,66 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_match_guard_binding_backed_nested_call_root_combo_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+struct State {
+    ready: Bool,
+    value: Int,
+}
+
+fn state(flag: Bool, value: Int) -> State {
+    return State { ready: flag, value: value }
+}
+
+fn bundle(seed: Int) -> [Int; 3] {
+    return [seed, seed + 1, seed + 2]
+}
+
+fn offset(value: Int) -> Int {
+    return value - 2
+}
+
+fn enabled(state: State, extra: Bool) -> Bool {
+    return state.ready && extra
+}
+
+fn matches(value: Int, expected: Int) -> Bool {
+    return value == expected
+}
+
+fn main() -> Int {
+    let first = match state(flag: true, value: 3) {
+        current if enabled(extra: bundle(current.value)[offset(current.value)] == 4, state: current) => 10,
+        _ => 0,
+    }
+    let second = match state(flag: true, value: 3) {
+        current if [bundle(current.value)[offset(current.value)], current.value + 5, 9][0] == 4 => 12,
+        _ => 0,
+    }
+    let third = match state(flag: true, value: 3) {
+        current if matches(expected: 4, value: [bundle(current.value)[offset(current.value)], current.value, 9][0]) => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.contains("call { i1, i64 } @ql_"));
+        assert!(rendered.contains("call [3 x i64] @ql_"));
+        assert!(rendered.contains("call i1 @ql_"));
+        assert!(rendered.contains("insertvalue [3 x i64]"));
+        assert!(rendered.contains("getelementptr inbounds { i1, i64 }, ptr"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(rendered.contains("sub i64 %"));
+        assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn emits_negative_int_const_path_and_guard_lowering() {
         let rendered = emit_with_mode(
             r#"

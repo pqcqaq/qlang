@@ -33,6 +33,7 @@ Files:
 - `27_sync_match_guard_item_backed_nested_call_root_combos.ql`: item-backed nested call-root guard combos in executable mode, where `enabled(extra: INPUT[0] == bundle(3)[offset(3)], state: state(bundle(3)[offset(3)] == 4))`, `[bundle(current)[offset(current)], INPUT[1], INPUT[2]][0]`, and `check(expected: INPUT[0], value: [bundle(current)[offset(current)], 8, 9][0])` now lower through the existing item-root materialize / nested call-root projection / inline aggregate / guard-call paths
 - `28_sync_match_guard_call_backed_nested_call_root_combos.ql`: call-backed nested call-root guard combos in executable mode, where `enabled(extra: flag(pack(3)[slot(3)] == 4), state: state(flag(pack(3)[slot(3)] == 4)))`, `[pack(current)[slot(current)], seed(8), seed(9)][0]`, and `check(expected: seed(4), value: [pack(current)[slot(current)], seed(8), 9][0])` now lower through the existing call-root materialize / call-backed scalar / inline aggregate / guard-call paths
 - `29_sync_match_guard_alias_backed_nested_call_root_combos.ql`: alias-backed nested call-root guard combos in executable mode, where `allow(extra: flag(pack(3)[slot(3)] == literal(4)), state: make(flag(pack(3)[slot(3)] == literal(4))))`, `[pack(current)[slot(current)], literal(8), literal(9)][0]`, and `check(expected: literal(4), value: [pack(current)[slot(current)], literal(8), 9][0])` now lower through the existing import-alias call canonicalization / nested call-root projection / inline aggregate / guard-call paths
+- `30_sync_match_guard_binding_backed_nested_call_root_combos.ql`: binding-backed nested call-root guard combos in executable mode, where `enabled(extra: bundle(current.value)[offset(current.value)] == 4, state: current)`, `[bundle(current.value)[offset(current.value)], current.value + 5, 9][0]`, and `matches(expected: 4, value: [bundle(current.value)[offset(current.value)], current.value, 9][0])` now lower through the existing non-scalar current-binding guard path / nested call-root projection / inline aggregate / guard-call paths
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -68,6 +69,7 @@ Expected exit codes for the sync examples:
 - `27_sync_match_guard_item_backed_nested_call_root_combos.ql` -> `42`
 - `28_sync_match_guard_call_backed_nested_call_root_combos.ql` -> `42`
 - `29_sync_match_guard_alias_backed_nested_call_root_combos.ql` -> `42`
+- `30_sync_match_guard_binding_backed_nested_call_root_combos.ql` -> `42`
 
 Build one verified executable example:
 
