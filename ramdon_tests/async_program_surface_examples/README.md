@@ -176,13 +176,15 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `175_async_main_zero_sized_and_recursive_aggregate_results.ql`
 - `176_async_main_zero_sized_helper_task_handle_flows.ql`
 - `177_async_main_zero_sized_projected_task_handle_consumes.ql`
+- `178_async_main_zero_sized_projected_task_handle_reinits.ql`
+- `179_async_main_zero_sized_conditional_task_handle_flows.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-seventy-four examples with the real local toolchain and locks their exit codes.
-- The filenames run from `04` through `177`, but the real async executable example count is `174`.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-seventy-six examples with the real local toolchain and locks their exit codes.
+- The filenames run from `04` through `179`, but the real async executable example count is `176`.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -246,6 +248,8 @@ Current status:
 - `175_async_main_zero_sized_and_recursive_aggregate_results.ql` now locks the zero-sized plus recursive aggregate result family for `async fn main`, where zero-sized `[Int; 0]` / `Wrap` results and recursive `(Pair, [Int; 2])` fixed-shape aggregate results both succeed through direct `await` and `spawn -> await` paths on the executable surface and still exit with `22`.
 - `176_async_main_zero_sized_helper_task_handle_flows.ql` now locks the zero-sized helper task-handle flow family for `async fn main`, where helper-returned `Task[Wrap]`, bound helper handles, `spawn schedule()`, forwarded zero-sized handles, and `spawn forward(next)` all survive the executable surface and still exit with `5`.
 - `177_async_main_zero_sized_projected_task_handle_consumes.ql` now locks the zero-sized projected task-handle consume family for `async fn main`, where tuple / fixed-array / struct-field projections can mix `await` and `spawn -> await` on `Task[Wrap]` payloads through the executable surface and still exit with `6`.
+- `178_async_main_zero_sized_projected_task_handle_reinits.ql` now locks the zero-sized projected task-handle reinit family for `async fn main`, where tuple / fixed-array / struct-field projections can be awaited, reinitialized, and awaited again, while the same literal-index array path also survives a dominated conditional reinit, and the executable surface still exits with `7`.
+- `179_async_main_zero_sized_conditional_task_handle_flows.ql` now locks the zero-sized conditional task-handle flow family for `async fn main`, where branch-local `spawn task; task = fresh_worker()`, the reverse-branch shape, conditional async-call `spawn`, and conditional helper-task `spawn` all survive the executable surface and still exit with `6`.
 
 Expected exit codes:
 
@@ -423,6 +427,8 @@ Expected exit codes:
 - `175_async_main_zero_sized_and_recursive_aggregate_results.ql` -> `22`
 - `176_async_main_zero_sized_helper_task_handle_flows.ql` -> `5`
 - `177_async_main_zero_sized_projected_task_handle_consumes.ql` -> `6`
+- `178_async_main_zero_sized_projected_task_handle_reinits.ql` -> `7`
+- `179_async_main_zero_sized_conditional_task_handle_flows.ql` -> `6`
 
 Try one file directly:
 
