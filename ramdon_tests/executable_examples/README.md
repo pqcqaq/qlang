@@ -28,6 +28,7 @@ Files:
 - `22_sync_match_guard_inline_projection_roots.ql`: inline aggregate-literal projection-root guard lowering in executable mode, where `(0, current)[1]`, `State { value: current }.value`, and `[current, current + 1, current + 2][1]` can now lower inside `match` guards
 - `23_sync_match_guard_item_backed_inline_combos.ql`: same-file item/import-alias-backed inline aggregate guard combos in executable mode, where `enabled(extra: true, state: state)`, `(INPUT[0], current)[1]`, and `[INPUT[0], current + 1, INPUT[2]][current - 2]` now lower through the existing guard-call / inline aggregate / projection paths
 - `24_sync_match_guard_call_backed_combos.ql`: direct sync call-backed guard combos in executable mode, where `enabled(extra: ready(true), state: State { ready: ready(true) })`, `matches((seed(0), current), 22)`, and `items(current)[slot(current)]` now lower through the existing guard-call / inline aggregate / projection paths
+- `25_sync_match_guard_call_root_nested_runtime_projection.ql`: direct sync call-root nested runtime projection combos in executable mode, where `pack(current).values[offset(current)]`, `ready(pack(current).values[offset(current)])`, and `check(expected: 4, value: pack(current).values[offset(current)])` now lower through the existing call-root materialize / nested projection / scalar guard-call paths
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -58,6 +59,7 @@ Expected exit codes for the sync examples:
 - `22_sync_match_guard_inline_projection_roots.ql` -> `42`
 - `23_sync_match_guard_item_backed_inline_combos.ql` -> `42`
 - `24_sync_match_guard_call_backed_combos.ql` -> `42`
+- `25_sync_match_guard_call_root_nested_runtime_projection.ql` -> `42`
 
 Build one verified executable example:
 

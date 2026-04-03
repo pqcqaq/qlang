@@ -10506,6 +10506,62 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_match_guard_call_root_nested_runtime_projection_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+use bundle as pack
+use matches as check
+
+struct Bundle {
+    values: [Int; 3],
+}
+
+fn bundle(seed: Int) -> Bundle {
+    return Bundle { values: [seed, seed + 1, seed + 2] }
+}
+
+fn offset(value: Int) -> Int {
+    return value - 2
+}
+
+fn ready(value: Int) -> Bool {
+    return value == 4
+}
+
+fn matches(value: Int, expected: Int) -> Bool {
+    return value == expected
+}
+
+fn main() -> Int {
+    let first = match 3 {
+        current if pack(current).values[offset(current)] == 4 => 10,
+        _ => 0,
+    }
+    let second = match 3 {
+        current if ready(pack(current).values[offset(current)]) => 12,
+        _ => 0,
+    }
+    let third = match 3 {
+        current if check(expected: 4, value: pack(current).values[offset(current)]) => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.contains("call { [3 x i64] } @ql_"));
+        assert!(rendered.contains("call i64 @ql_"));
+        assert!(rendered.contains("call i1 @ql_"));
+        assert!(rendered.contains("getelementptr inbounds { [3 x i64] }, ptr"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(rendered.contains("sub i64 %"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn emits_negative_int_const_path_and_guard_lowering() {
         let rendered = emit_with_mode(
             r#"
