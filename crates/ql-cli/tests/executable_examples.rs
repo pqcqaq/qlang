@@ -1331,7 +1331,7 @@ fn async_program_surface_examples_build_and_run() {
         ExecutableExampleCase {
             name: "async_main_aliased_projected_root_spawn_families",
             source_relative: "ramdon_tests/async_program_surface_examples/200_async_main_aliased_projected_root_spawn_families.ql",
-            expected_exit: 248,
+            expected_exit: 268,
         },
         ExecutableExampleCase {
             name: "async_unsafe_function_bodies",

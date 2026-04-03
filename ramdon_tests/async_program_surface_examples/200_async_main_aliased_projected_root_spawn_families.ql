@@ -231,6 +231,38 @@ async fn main() -> Int {
     let guarded_arithmetic_static_extra = await guarded_arithmetic_static_env.bundle.tasks[1]
     let guarded_arithmetic_static_tail = await guarded_arithmetic_static_env.tail
 
+    let guarded_arithmetic_bundle_row = ARITH_SLOT_ALIAS.value
+    let guarded_arithmetic_bundle_slots = [guarded_arithmetic_bundle_row, guarded_arithmetic_bundle_row]
+    let guarded_arithmetic_bundle_slot_alias = guarded_arithmetic_bundle_slots
+    var guarded_arithmetic_bundle_pending = Pending {
+        tasks: [worker(2), worker(5)],
+    }
+    let guarded_arithmetic_bundle_alias = guarded_arithmetic_bundle_pending.tasks
+    if ARITH_SLOT_ALIAS.value == 0 {
+        let guarded_arithmetic_bundle_first =
+            await guarded_arithmetic_bundle_alias[guarded_arithmetic_bundle_slot_alias[guarded_arithmetic_bundle_row]]
+        guarded_arithmetic_bundle_pending.tasks[guarded_arithmetic_bundle_slots[guarded_arithmetic_bundle_row]] =
+            worker(guarded_arithmetic_bundle_first + 4)
+    }
+    let guarded_arithmetic_bundle_tail_tasks = guarded_arithmetic_bundle_pending.tasks
+    let guarded_arithmetic_bundle_forwarded =
+        forward(guarded_arithmetic_bundle_alias[guarded_arithmetic_bundle_slot_alias[guarded_arithmetic_bundle_row]])
+    let guarded_arithmetic_bundle_running_task = guarded_arithmetic_bundle_forwarded
+    let guarded_arithmetic_bundle_env = ArrayEnvelope {
+        bundle: ArrayBundle {
+            tasks: [guarded_arithmetic_bundle_running_task, worker(9)],
+        },
+        tail: guarded_arithmetic_bundle_tail_tasks[1],
+    }
+    let guarded_arithmetic_bundle_root = guarded_arithmetic_bundle_env.bundle.tasks
+    let guarded_arithmetic_bundle_tasks = guarded_arithmetic_bundle_root
+    let guarded_arithmetic_bundle_bundled = guarded_arithmetic_bundle_tasks[0]
+    let guarded_arithmetic_bundle_ready = forward(guarded_arithmetic_bundle_bundled)
+    let guarded_arithmetic_bundle_running = spawn guarded_arithmetic_bundle_ready
+    let guarded_arithmetic_bundle_second = await guarded_arithmetic_bundle_running
+    let guarded_arithmetic_bundle_extra = await guarded_arithmetic_bundle_env.bundle.tasks[1]
+    let guarded_arithmetic_bundle_tail = await guarded_arithmetic_bundle_env.tail
+
     return nested_second
         + nested_extra
         + nested_tail
@@ -261,4 +293,7 @@ async fn main() -> Int {
         + guarded_arithmetic_static_second
         + guarded_arithmetic_static_extra
         + guarded_arithmetic_static_tail
+        + guarded_arithmetic_bundle_second
+        + guarded_arithmetic_bundle_extra
+        + guarded_arithmetic_bundle_tail
 }
