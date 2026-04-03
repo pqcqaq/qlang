@@ -159,6 +159,10 @@
   - zero-sized branch-local `spawn` + reinit
   - zero-sized conditional async-call `spawn`
   - zero-sized conditional helper-task `spawn`
+- aliased projected-root aggregate repackage / submit
+  - tuple / struct / nested aggregate repackage before `await`
+  - fixed-array / nested fixed-array / helper-forwarded nested fixed-array repackage before `spawn`
+  - source-root reinit 后的 same-file arithmetic item / same-file `use ... as ...` alias 驱动 direct alias-root 与 projected-root 形态
 - dynamic fixed-array `Task[...]` 的保守子集
   - generic dynamic sibling-safe consume / spawn
   - same immutable stable source path precise consume / reinit

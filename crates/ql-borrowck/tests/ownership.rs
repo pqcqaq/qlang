@@ -6788,6 +6788,40 @@ async fn main(index: Int) -> Wrap {
 }
 
 #[test]
+fn reports_use_after_move_when_aliased_arithmetic_const_dynamic_task_handle_root_is_repackaged_into_tuple()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+use INDEX as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+const STEP: Int = 1
+const INDEX: Int = STEP - 1
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let tasks = [worker(), worker()]
+    let alias = tasks
+    let first = await tasks[INDEX_ALIAS]
+    let pair = (alias[INDEX_ALIAS], worker())
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected repackaging an aliased arithmetic const-backed moved dynamic task-handle element into a tuple to report a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_repackaging_aliased_projected_root_task_handle_after_source_path_reinit() {
     let diagnostics = diagnostic_messages(
         r#"
@@ -6819,6 +6853,51 @@ async fn main(index: Int) -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected repackaging an aliased projected-root task handle after source-path reinit to succeed, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_repackaging_aliased_arithmetic_static_projected_root_task_handle_after_source_path_reinit()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+use SLOT as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+static BASE: Int = 2
+static SLOT: Slot = Slot { value: BASE - 2 }
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let alias = pending.tasks
+    let first = await pending.tasks[INDEX_ALIAS.value]
+    pending.tasks[0] = worker()
+    let pair = (alias[INDEX_ALIAS.value], worker())
+    return await pair[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected repackaging an aliased arithmetic static-backed projected-root task handle after source-path reinit to succeed, got {diagnostics:?}"
     );
 }
 
