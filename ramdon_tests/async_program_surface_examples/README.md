@@ -207,13 +207,14 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `206_async_local_assignment_expressions.ql`
 - `207_async_projected_root_tuple_assignment_expressions.ql`
 - `208_async_scalar_dynamic_array_assignments.ql`
+- `209_async_projected_root_assignment_expressions.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these two-hundred-five examples with the real local toolchain and locks their exit codes.
-- The filenames run from `04` through `208`, but the real async executable example count is `205`.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these two-hundred-six examples with the real local toolchain and locks their exit codes.
+- The filenames run from `04` through `209`, but the real async executable example count is `206`.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -308,6 +309,7 @@ Current status:
 - `206_async_local_assignment_expressions.ql` now locks the async mutable-local assignment-expression executable surface, where `total = await worker(...)` and later `total = first + 5` can both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `31`.
 - `207_async_projected_root_tuple_assignment_expressions.ql` now locks the async projected-root tuple assignment-expression surface, where `inner.pair[0] = await worker(...)` and later `inner.pair[1] = first + 5` can both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `19`.
 - `208_async_scalar_dynamic_array_assignments.ql` now locks the async scalar dynamic array assignment surface, where both `values[index] = ...` and `wrap.values[index] = ...` on non-`Task[...]` arrays can execute through runtime indices inside `async fn main`, and the executable surface still exits with `23`.
+- `209_async_projected_root_assignment_expressions.ql` now locks the async projected-root assignment-expression surface, where `holder.pair.value = await worker(...)` and later `holder.pair.values[1] = first + 5` can both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `13`.
 
 Expected exit codes:
 
@@ -516,6 +518,7 @@ Expected exit codes:
 - `206_async_local_assignment_expressions.ql` -> `31`
 - `207_async_projected_root_tuple_assignment_expressions.ql` -> `19`
 - `208_async_scalar_dynamic_array_assignments.ql` -> `23`
+- `209_async_projected_root_assignment_expressions.ql` -> `13`
 
 Try one file directly:
 
