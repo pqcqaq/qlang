@@ -184,6 +184,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/32_sync_for_call_root_fixed_shapes.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_import_alias_call_root_fixed_shapes",
+            source_relative: "ramdon_tests/executable_examples/33_sync_import_alias_call_root_fixed_shapes.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
@@ -911,6 +916,11 @@ fn async_program_surface_examples_build_and_run() {
         ExecutableExampleCase {
             name: "async_main_call_root_fixed_shape_for_await",
             source_relative: "ramdon_tests/async_program_surface_examples/144_async_main_call_root_fixed_shape_for_await.ql",
+            expected_exit: 42,
+        },
+        ExecutableExampleCase {
+            name: "async_main_import_alias_call_root_fixed_shape_for_await",
+            source_relative: "ramdon_tests/async_program_surface_examples/145_async_main_import_alias_call_root_fixed_shape_for_await.ql",
             expected_exit: 42,
         },
     ];

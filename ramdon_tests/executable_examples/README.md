@@ -36,6 +36,7 @@ Files:
 - `30_sync_match_guard_binding_backed_nested_call_root_combos.ql`: binding-backed nested call-root guard combos in executable mode, where `enabled(extra: bundle(current.value)[offset(current.value)] == 4, state: current)`, `[bundle(current.value)[offset(current.value)], current.value + 5, 9][0]`, and `matches(expected: 4, value: [bundle(current.value)[offset(current.value)], current.value, 9][0])` now lower through the existing non-scalar current-binding guard path / nested call-root projection / inline aggregate / guard-call paths
 - `31_sync_match_guard_projection_backed_nested_call_root_combos.ql`: projection-backed nested call-root guard combos in executable mode, where `enabled(extra: bundle(config.slot.value)[offset(config.slot.value)] == 4, state: state(bundle(config.slot.value)[offset(config.slot.value)] == 4))`, `[bundle(config.slot.value)[offset(config.slot.value)], current + 5, 9][0]`, and `matches(expected: 4, value: [bundle(config.slot.value)[offset(config.slot.value)], current, 9][0])` now lower through the existing read-only projection-root guard path / nested call-root projection / inline aggregate / guard-call paths
 - `32_sync_for_call_root_fixed_shapes.ql`: direct call-root fixed-shape `for` lowering in executable mode, where `for value in array_values(10)`, `for value in tuple_values(7)`, and `for value in make_payload(3).values` now all lower through the existing fixed-array / homogeneous tuple / projected fixed-shape iterable paths
+- `33_sync_import_alias_call_root_fixed_shapes.ql`: same-file import-alias call-root fixed-shape `for` lowering in executable mode, where `for value in values(10)`, `for value in pairs(7)`, and `for value in payload(3).values` now all lower through the existing alias-call canonicalization plus fixed-array / homogeneous tuple / projected fixed-shape iterable paths
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -74,6 +75,7 @@ Expected exit codes for the sync examples:
 - `30_sync_match_guard_binding_backed_nested_call_root_combos.ql` -> `42`
 - `31_sync_match_guard_projection_backed_nested_call_root_combos.ql` -> `42`
 - `32_sync_for_call_root_fixed_shapes.ql` -> `42`
+- `33_sync_import_alias_call_root_fixed_shapes.ql` -> `42`
 
 Build one verified executable example:
 
