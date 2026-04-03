@@ -109,6 +109,7 @@
   - zero-sized aggregate
   - direct / spawn recursive fixed-shape aggregate result
   - aggregate 内继续携带 `Task[T]`
+  - regular-size tuple / array / nested aggregate task-handle payload family
   - nested task-handle payload
   - regular-size returned / nested / struct-carried task-handle shapes
   - zero-sized returned / nested / struct-carried task-handle shapes
@@ -156,12 +157,12 @@
 截至当前代码：
 
 - sync executable examples：`39`
-- async executable examples：`191`
+- async executable examples：`192`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `194`，但真实 `.ql` 文件数是 `191`，不是 `194`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `191` 个 async executable case 和 `39` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `195`，但真实 `.ql` 文件数是 `192`，不是 `195`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `192` 个 async executable case 和 `39` 个 sync executable case
 
 ## 当前明确未开放
 

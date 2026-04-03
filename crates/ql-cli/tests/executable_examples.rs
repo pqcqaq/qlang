@@ -1198,6 +1198,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/194_async_main_helper_task_handle_flows.ql",
             expected_exit: 28,
         },
+        ExecutableExampleCase {
+            name: "async_main_task_handle_payload_families",
+            source_relative: "ramdon_tests/async_program_surface_examples/195_async_main_task_handle_payload_families.ql",
+            expected_exit: 61,
+        },
     ];
 
     assert_example_cases_run(

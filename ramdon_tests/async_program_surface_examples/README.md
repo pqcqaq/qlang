@@ -193,13 +193,14 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `192_async_main_guard_refined_dynamic_path_families.ql`
 - `193_async_main_static_alias_projected_root_dynamic_reinit_families.ql`
 - `194_async_main_helper_task_handle_flows.ql`
+- `195_async_main_task_handle_payload_families.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-ninety-one examples with the real local toolchain and locks their exit codes.
-- The filenames run from `04` through `194`, but the real async executable example count is `191`.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-ninety-two examples with the real local toolchain and locks their exit codes.
+- The filenames run from `04` through `195`, but the real async executable example count is `192`.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -280,6 +281,7 @@ Current status:
 - `192_async_main_guard_refined_dynamic_path_families.ql` now locks the guard-refined dynamic path family for `async fn main`, where direct dynamic reinit, projected dynamic reinit, aliased projected-root guard refinement, and const-backed alias-root guard refinement all survive the executable surface and still exit with `40`.
 - `193_async_main_static_alias_projected_root_dynamic_reinit_families.ql` now locks the static-alias-backed projected-root dynamic reinit family for `async fn main`, where a same-file `static` item plus `use ... as ...` alias drives both direct projected-root dynamic reinit and its equality-guard-refined variant through the executable surface, and the program still exits with `42`.
 - `194_async_main_helper_task_handle_flows.ql` now locks the regular-size helper task-handle flow family for `async fn main`, where helper-returned `Task[Int]`, helper-bound handles, `spawn schedule(...)`, helper-bound `spawn`, local-return handles, forwarded handles, and `spawn forward(task)` all survive the executable surface and still exit with `28`.
+- `195_async_main_task_handle_payload_families.ql` now locks the regular-size task-handle payload family for `async fn main`, where chained awaited `Task[Int]` results, tuple task payloads, fixed-array task payloads, and nested aggregate task-field payloads all survive mixed `await` / `spawn -> await` consume paths on the executable surface and still exit with `61`.
 
 Expected exit codes:
 
@@ -474,6 +476,7 @@ Expected exit codes:
 - `192_async_main_guard_refined_dynamic_path_families.ql` -> `40`
 - `193_async_main_static_alias_projected_root_dynamic_reinit_families.ql` -> `42`
 - `194_async_main_helper_task_handle_flows.ql` -> `28`
+- `195_async_main_task_handle_payload_families.ql` -> `61`
 
 Try one file directly:
 
