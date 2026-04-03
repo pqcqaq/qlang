@@ -1,16 +1,26 @@
-use LIMIT as THRESHOLD
+use TOTAL as THRESHOLD
 use READY as ENABLED
-use LIMITS as VALUES
+use BOX as STATE
 
-static LIMIT: Int = 2
-static READY: Bool = true
-static LIMITS: [Int; 3] = [1, 3, 5]
+struct Payload {
+    pair: (Int, Int),
+    order: (Int, Int),
+    ready: Bool,
+}
+
+const BASE: (Int, Int) = (2, 3)
+static BOX: Payload = Payload {
+    pair: BASE,
+    order: (1, 0),
+    ready: true,
+}
+const FIRST: Int = STATE.pair[STATE.order[1]]
+static TOTAL: Int = FIRST + BASE[STATE.order[0]]
+static READY: Bool = TOTAL > FIRST
 
 fn main() -> Int {
-    let values = VALUES
-    let total = THRESHOLD + values[1]
     if ENABLED {
-        return total
+        return THRESHOLD
     }
     return 0
 }

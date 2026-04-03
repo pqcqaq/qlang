@@ -4759,6 +4759,26 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     )
                 })
             }
+            hir::ExprKind::Member { .. } | hir::ExprKind::Bracket { .. } => {
+                let mut visited = HashSet::new();
+                let source = guard_literal_source_expr(
+                    self.emitter.input.hir,
+                    self.emitter.input.resolution,
+                    expr_id,
+                    &mut visited,
+                )
+                .unwrap_or_else(|| {
+                    panic!(
+                        "prepared const item lowering at {span:?} should only use foldable projection const expressions"
+                    )
+                });
+                if source == expr_id {
+                    panic!(
+                        "prepared const item lowering at {span:?} should resolve projected const expressions to their folded source"
+                    );
+                }
+                self.render_const_expr(output, source, expected_ty, span)
+            }
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
                     Some(ValueResolution::Item(item_id)) => {
