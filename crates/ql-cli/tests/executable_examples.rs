@@ -1183,6 +1183,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/191_async_main_projected_task_handle_reinit_families.ql",
             expected_exit: 50,
         },
+        ExecutableExampleCase {
+            name: "async_main_guard_refined_dynamic_path_families",
+            source_relative: "ramdon_tests/async_program_surface_examples/192_async_main_guard_refined_dynamic_path_families.ql",
+            expected_exit: 40,
+        },
     ];
 
     assert_example_cases_run(
