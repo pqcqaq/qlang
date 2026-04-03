@@ -973,6 +973,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/152_async_main_inline_projected_fixed_shape_for_await.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "async_main_inline_projected_task_handle_consumes",
+            source_relative: "ramdon_tests/async_program_surface_examples/153_async_main_inline_projected_task_handle_consumes.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
