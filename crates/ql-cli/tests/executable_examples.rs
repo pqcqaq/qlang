@@ -958,6 +958,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/150_async_main_import_alias_awaited_aggregate_projected_task_handle_consumes.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "async_main_awaited_aggregate_projected_task_handle_consumes",
+            source_relative: "ramdon_tests/async_program_surface_examples/151_async_main_awaited_aggregate_projected_task_handle_consumes.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
