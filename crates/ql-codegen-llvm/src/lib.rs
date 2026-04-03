@@ -10392,6 +10392,55 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_match_guard_item_backed_inline_combo_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+use LIMITS as INPUT
+use check as enabled
+
+static LIMITS: [Int; 3] = [3, 4, 5]
+
+struct State {
+    ready: Bool,
+    value: Int,
+}
+
+static READY: State = State { ready: true, value: 22 }
+
+fn check(state: State, extra: Bool) -> Bool {
+    return state.ready && extra
+}
+
+fn main() -> Int {
+    let state = State { ready: true, value: 7 }
+    let first = match true {
+        true if enabled(extra: true, state: state) => 10,
+        false => 0,
+    }
+    let second = match 22 {
+        current if (INPUT[0], current)[1] == READY.value => 12,
+        _ => 0,
+    }
+    let third = match 3 {
+        current if [INPUT[0], current + 1, INPUT[2]][current - 2] == 4 => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.contains("call i1 @ql_"));
+        assert!(rendered.contains("insertvalue [3 x i64] undef, i64 3, 0"));
+        assert!(rendered.contains("insertvalue { i1, i64 } undef, i1 true, 0"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(rendered.contains("sub i64 %"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn emits_negative_int_const_path_and_guard_lowering() {
         let rendered = emit_with_mode(
             r#"
