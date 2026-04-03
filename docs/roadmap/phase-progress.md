@@ -70,6 +70,7 @@
 - sync/async tuple constant indexing executable surface 现也补上 same-file `const` / `static`、projection、整数算术、same-file `use ... as ...` alias、branch-selected const `if` / 最小 literal `match` item value、direct inline foldable `if` / `match` integer expression，以及 immutable direct local alias 复用驱动的 foldable tuple index 读写
 - sync ordinary executable surface 现也补上 branch-selected `const` / `static` item value materialization：除了 computed/projected item value 之外，同文件 const/static item 里的 foldable `if` 与最小 literal `match` 也可先选中 arm/value，再进入普通表达式与 `if` 条件
 - async ordinary executable surface 现也显式锁住同一条 branch-selected `const` / `static` item value materialization：同文件 const/static item 里的 computed/projected value、foldable `if` 与最小 literal `match` 也可进入 `async fn main` 里的普通表达式与 `if` 条件
+- async dynamic `Task[...]` stable path family 现也补上 direct inline foldable `if` / 最小 literal `match` integer expression 驱动的 consume/reinit 成功路径，不再只限于 local / projection / item-root 稳定源
 
 ## 当前进度与代码核对结果
 

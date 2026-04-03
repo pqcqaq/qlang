@@ -165,6 +165,7 @@
   - projected-root stable dynamic reinit / conditional reinit
   - aliased / const-backed alias-root stable-dynamic reinit
   - composed / alias-sourced composed dynamic reinit
+  - direct inline foldable `if` / 最小 literal `match` integer expression 回收到 concrete literal path consume / reinit
   - direct / projected / aliased guard-refined dynamic reinit
   - same-file static/import-alias-backed projected-root dynamic reinit
   - same-file `const` / `static` / `use ... as ...` alias 回收到 literal/projection path

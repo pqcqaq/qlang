@@ -50,6 +50,22 @@ async fn main() -> Int {
     alias_sourced[more_slots[row]] = worker(alias_sourced_first + 1)
     let alias_sourced_final = await alias_sourced[slot_alias[row]]
 
+    var inline_if_tasks = [worker(2), worker(7)]
+    let inline_if_first = await inline_if_tasks[if true { 0 } else { 1 }]
+    inline_if_tasks[if true { 0 } else { 1 }] = worker(inline_if_first + 4)
+    let inline_if_second = await inline_if_tasks[0]
+
+    var inline_match_tasks = [worker(4), worker(9)]
+    let inline_match_first = await inline_match_tasks[match 1 {
+        1 => 0,
+        _ => 1,
+    }]
+    inline_match_tasks[match 1 {
+        1 => 0,
+        _ => 1,
+    }] = worker(inline_match_first + 5)
+    let inline_match_second = await inline_match_tasks[0]
+
     return first
         + second
         + tail
@@ -60,4 +76,8 @@ async fn main() -> Int {
         + composed_final
         + alias_sourced_first
         + alias_sourced_final
+        + inline_if_first
+        + inline_if_second
+        + inline_match_first
+        + inline_match_second
 }

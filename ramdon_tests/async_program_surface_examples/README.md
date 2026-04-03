@@ -313,7 +313,7 @@ Current status:
 - `195_async_main_task_handle_payload_families.ql` now locks the regular-size task-handle payload family for `async fn main`, where chained awaited `Task[Int]` results, tuple task payloads, fixed-array task payloads, and nested aggregate task-field payloads all survive mixed `await` / `spawn -> await` consume paths on the executable surface and still exit with `61`.
 - `196_async_main_aggregate_param_families.ql` now locks the regular-size aggregate param family for `async fn main`, where plain struct + fixed-array params and nested aggregate params both survive direct `await` and `spawn -> await` paths on the executable surface and still exit with `136`.
 - `197_async_main_aggregate_result_families.ql` now locks the regular-size aggregate result family for `async fn main`, where tuple / fixed-array / struct aggregate results and recursive fixed-shape aggregate results all survive both direct `await` and `spawn -> await` paths on the executable surface and still exit with `62`.
-- `198_async_main_dynamic_task_handle_path_families.ql` now locks the stable-dynamic task-handle success-path family for `async fn main`, where aliased projected-root dynamic reinit, const-backed alias-root dynamic reinit, composed dynamic reinit, and alias-sourced composed dynamic reinit all survive the executable surface and still exit with `55`.
+- `198_async_main_dynamic_task_handle_path_families.ql` now locks the stable-dynamic task-handle success-path family for `async fn main`, where aliased projected-root dynamic reinit, const-backed alias-root dynamic reinit, composed dynamic reinit, alias-sourced composed dynamic reinit, and direct inline foldable `if` / minimal literal `match` index reinit all survive the executable surface and still exit with `76`.
 - `199_async_main_aliased_projected_root_repackage_families.ql` now locks the aliased projected-root repackage family for `async fn main`, where source-root reinit is followed by tuple, struct, and nested aggregate repackaging of the same alias-root task handle before `await`, and the executable surface still exits with `96`.
 - `200_async_main_aliased_projected_root_spawn_families.ql` now locks the aliased projected-root spawn family for `async fn main`, where source-root reinit is followed by nested aggregate, fixed-array aggregate, nested fixed-array aggregate, and helper-forwarded nested fixed-array aggregate repackaging before `spawn -> await`, and the executable surface still exits with `164`.
 - `201_async_unsafe_function_bodies.ql` now locks the minimal async `unsafe fn` body executable surface, where an unsafe-marked async helper and `async unsafe fn main` both lower through the current task-backed program entry path and still exit with `7`.
@@ -537,7 +537,7 @@ Expected exit codes:
 - `195_async_main_task_handle_payload_families.ql` -> `61`
 - `196_async_main_aggregate_param_families.ql` -> `136`
 - `197_async_main_aggregate_result_families.ql` -> `62`
-- `198_async_main_dynamic_task_handle_path_families.ql` -> `55`
+- `198_async_main_dynamic_task_handle_path_families.ql` -> `76`
 - `199_async_main_aliased_projected_root_repackage_families.ql` -> `96`
 - `200_async_main_aliased_projected_root_spawn_families.ql` -> `164`
 - `201_async_unsafe_function_bodies.ql` -> `7`
