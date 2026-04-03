@@ -38,33 +38,57 @@ fn wrap_forward(task: Task[Wrap]) -> Task[Wrap] {
 
 async fn scalar_flows() -> Int {
     let direct = await int_worker(1)
-    let scheduled = await int_schedule(2)
-    let bound = await {
-        let task = int_schedule(3)
+    let direct_bound = await {
+        let task = int_worker(2)
         task
     }
-    let local = await int_schedule_local(4)
+    let scheduled = await int_schedule(3)
+    let bound = await {
+        let task = int_schedule(4)
+        task
+    }
+    let local = await int_schedule_local(5)
     let forwarded = await {
-        let task = int_worker(5)
+        let task = int_worker(6)
         let forwarded = int_forward(task)
         forwarded
     }
-    let spawned_schedule = await spawn int_schedule(6)
+    let spawned_direct = await spawn int_worker(7)
+    let spawned_bound_direct = await {
+        let task = int_worker(8)
+        let running = spawn task
+        running
+    }
+    let spawned_schedule = await spawn int_schedule(9)
     let spawned_bound = await {
-        let task = int_schedule(7)
+        let task = int_schedule(10)
         let running = spawn task
         running
     }
     let spawned_forward = await {
-        let task = int_worker(8)
+        let task = int_worker(11)
         let running = spawn int_forward(task)
         running
     }
-    return direct + scheduled + bound + local + forwarded + spawned_schedule + spawned_bound + spawned_forward
+    return direct
+        + direct_bound
+        + scheduled
+        + bound
+        + local
+        + forwarded
+        + spawned_direct
+        + spawned_bound_direct
+        + spawned_schedule
+        + spawned_bound
+        + spawned_forward
 }
 
 async fn wrap_flows() -> Wrap {
     let direct = await wrap_worker()
+    let direct_bound = await {
+        let task = wrap_worker()
+        task
+    }
     let scheduled = await wrap_schedule()
     let bound = await {
         let task = wrap_schedule()
@@ -76,9 +100,15 @@ async fn wrap_flows() -> Wrap {
         let forwarded = wrap_forward(task)
         forwarded
     }
+    let spawned_direct = await spawn wrap_worker()
     let spawned_schedule = await spawn wrap_schedule()
-    let spawned_bound = await {
+    let spawned_bound_direct = await {
         let task = wrap_worker()
+        let running = spawn task
+        running
+    }
+    let spawned_bound = await {
+        let task = wrap_schedule()
         let running = spawn task
         running
     }
