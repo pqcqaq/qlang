@@ -223,6 +223,7 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `222_async_inline_nested_projected_tuple_assignment_expressions.ql`
 - `223_async_const_backed_tuple_assignment_expressions.ql`
 - `224_async_main_projected_const_item_values.ql`
+- `225_async_main_guarded_arithmetic_forwarded_task_handle_flows.ql`
 
 Current status:
 
@@ -340,6 +341,7 @@ Current status:
 - `222_async_inline_nested_projected_tuple_assignment_expressions.ql` now locks the async inline nested projected tuple assignment-expression surface, where `(Env { ... }).inner.pair[0] = await worker(...)` and `(Env { ... }).inner.pair[1] = ...` both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `22`.
 - `223_async_const_backed_tuple_assignment_expressions.ql` now locks the async tuple constant-index read/write surface where same-file `const` / `static` items, branch-selected const `if` / literal `match` item values, direct inline foldable `if` / `match` integer expressions, struct-field projections, integer arithmetic, same-file `use ... as ...` aliases, and immutable direct local aliases can drive tuple indices inside `async fn main`, and the executable surface still exits with `22`.
 - `224_async_main_projected_const_item_values.ql` now locks the async ordinary-expression const-evaluation surface where same-file projected/computed `const` / `static` item values, plus foldable const `if` / literal `match` branch selection, can feed bool conditions and ordinary scalar arguments inside `async fn main`, and the executable surface still exits with `5`.
+- `225_async_main_guarded_arithmetic_forwarded_task_handle_flows.ql` now locks the async guarded arithmetic forwarded task-handle flow surface, where a same-file `use ... as ...` alias wrapped arithmetic static source drives a guard-refined alias-sourced composed-dynamic path, then survives both direct forwarded-helper `await` consume and direct queued `spawn -> await` consume inside `async fn main`, and the executable surface still exits with `36`.
 
 Expected exit codes:
 
@@ -564,6 +566,7 @@ Expected exit codes:
 - `222_async_inline_nested_projected_tuple_assignment_expressions.ql` -> `22`
 - `223_async_const_backed_tuple_assignment_expressions.ql` -> `22`
 - `224_async_main_projected_const_item_values.ql` -> `5`
+- `225_async_main_guarded_arithmetic_forwarded_task_handle_flows.ql` -> `36`
 
 Try one file directly:
 

@@ -78,15 +78,16 @@
 - async guard-refined dynamic path family 现也补上 arithmetic-backed refined source：`ARITH_INDEX == 0` 与 `slot.value == 0` 这类 guard 可以把 arithmetic-backed dynamic index 回收到 literal path，再进入后续 consume/reinit
 - async guard-refined dynamic path family 现也把 same-file `use ... as ...` alias 包裹的 arithmetic-backed item value 拉进公开 executable 回归矩阵，包括 `if ARITH_INDEX_ALIAS == 0 { ... }` 与 `if ARITH_SLOT_ALIAS.value == 0 { ... }` 这类 direct / alias-root guard refine 路径
 - async aliased projected-root repackage/spawn family 现也把 same-file `use ... as ...` alias 包裹的 arithmetic-backed item value 拉进公开 executable 回归矩阵，包括 direct alias-root / projected-root 形态、`alias[alias_slots[row]]` 这类 alias-sourced composed-dynamic arithmetic path，以及它们在 `if ARITH_INDEX_ALIAS == 0` / `if ARITH_SLOT_ALIAS.value == 0` 下的 guard-refined 变体上的 tuple/fixed-array repackage、nested aggregate / helper-forwarded nested fixed-array repackage，以及 bundle-alias-forwarded / queued-root-forwarded / bundle-chain-forwarded await/spawn 路径
+- async guarded arithmetic forwarded task-handle flow family 现也补上公开 executable 回归矩阵：same-file `use ... as ...` alias 包裹的 arithmetic static source，在 guard-refined alias-sourced composed-dynamic path 上可继续走 direct forwarded-helper `await` consume 与 direct queued `spawn -> await` 流程
 
 ## 当前进度与代码核对结果
 
 本轮已按代码和测试重新核对当前文档入口，结论如下：
 
 - `ramdon_tests/executable_examples/` 当前真实是 `60` 个 sync executable 样例
-- `ramdon_tests/async_program_surface_examples/` 当前真实是 `221` 个 async executable 样例
+- `ramdon_tests/async_program_surface_examples/` 当前真实是 `222` 个 async executable 样例
 - `crates/ql-cli/tests/executable_examples.rs` 与目录数量一致
-- async 目录现在最新文件编号是 `224`，但真实样例数是 `221`；不要再把文件编号误当成文件数
+- async 目录现在最新文件编号是 `225`，但真实样例数是 `222`；不要再把文件编号误当成文件数
 
 ## 当前最值得继续推进的方向
 

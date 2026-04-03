@@ -156,6 +156,7 @@
   - regular-size branch-local `spawn` + reinit
   - regular-size conditional async-call `spawn`
   - regular-size conditional helper-task `spawn`
+  - guard-refined arithmetic static alias-sourced composed-dynamic forwarded helper `await` / direct queued `spawn`
   - zero-sized branch-local `spawn` + reinit
   - zero-sized conditional async-call `spawn`
   - zero-sized conditional helper-task `spawn`
@@ -198,12 +199,12 @@
 截至当前代码：
 
 - sync executable examples：`60`
-- async executable examples：`221`
+- async executable examples：`222`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `224`，但真实 `.ql` 文件数是 `221`，不是 `224`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `221` 个 async executable case 和 `60` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `225`，但真实 `.ql` 文件数是 `222`，不是 `225`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `222` 个 async executable case 和 `60` 个 sync executable case
 
 ## 当前明确未开放
 
