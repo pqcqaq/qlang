@@ -10752,6 +10752,87 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_match_guard_call_backed_combos() {
+        let dir = TestDir::new("ql-driver-llvm-ir-match-guard-call-backed-combos");
+        let source = dir.write(
+            "match_guard_call_backed_combos.ql",
+            r#"
+use values as items
+use offset as slot
+
+struct State {
+    ready: Bool,
+}
+
+fn ready(flag: Bool) -> Bool {
+    return flag
+}
+
+fn enabled(state: State, extra: Bool) -> Bool {
+    return state.ready && extra
+}
+
+fn seed(value: Int) -> Int {
+    return value
+}
+
+fn matches(pair: (Int, Int), expected: Int) -> Bool {
+    return pair[1] == expected
+}
+
+fn values(seed: Int) -> [Int; 3] {
+    return [seed, seed + 1, seed + 2]
+}
+
+fn offset(value: Int) -> Int {
+    return value - 2
+}
+
+fn main() -> Int {
+    let first = match true {
+        true if enabled(extra: ready(true), state: State { ready: ready(true) }) => 10,
+        false => 0,
+    }
+    let second = match 22 {
+        current if matches((seed(0), current), 22) => 12,
+        _ => 0,
+    }
+    let third = match 3 {
+        current if items(current)[slot(current)] == 4 => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/match_guard_call_backed_combos.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with match-guard call-backed combos should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.contains("call i1 @ql_"));
+        assert!(rendered.contains("call i64 @ql_"));
+        assert!(rendered.contains("call [3 x i64] @ql_"));
+        assert!(rendered.contains("insertvalue { i1 } undef, i1 %"));
+        assert!(rendered.contains("insertvalue { i64, i64 }"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(rendered.contains("sub i64 %"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_static_item_values_in_expressions() {
         let dir = TestDir::new("ql-driver-llvm-ir-static-item-values-in-expressions");
         let source = dir.write(

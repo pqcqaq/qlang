@@ -10441,6 +10441,71 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_match_guard_call_backed_combo_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+use values as items
+use offset as slot
+
+struct State {
+    ready: Bool,
+}
+
+fn ready(flag: Bool) -> Bool {
+    return flag
+}
+
+fn enabled(state: State, extra: Bool) -> Bool {
+    return state.ready && extra
+}
+
+fn seed(value: Int) -> Int {
+    return value
+}
+
+fn matches(pair: (Int, Int), expected: Int) -> Bool {
+    return pair[1] == expected
+}
+
+fn values(seed: Int) -> [Int; 3] {
+    return [seed, seed + 1, seed + 2]
+}
+
+fn offset(value: Int) -> Int {
+    return value - 2
+}
+
+fn main() -> Int {
+    let first = match true {
+        true if enabled(extra: ready(true), state: State { ready: ready(true) }) => 10,
+        false => 0,
+    }
+    let second = match 22 {
+        current if matches((seed(0), current), 22) => 12,
+        _ => 0,
+    }
+    let third = match 3 {
+        current if items(current)[slot(current)] == 4 => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.contains("call i1 @ql_"));
+        assert!(rendered.contains("call i64 @ql_"));
+        assert!(rendered.contains("call [3 x i64] @ql_"));
+        assert!(rendered.contains("insertvalue { i1 } undef, i1 %"));
+        assert!(rendered.contains("insertvalue { i64, i64 }"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr"));
+        assert!(rendered.contains("sub i64 %"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn emits_negative_int_const_path_and_guard_lowering() {
         let rendered = emit_with_mode(
             r#"
