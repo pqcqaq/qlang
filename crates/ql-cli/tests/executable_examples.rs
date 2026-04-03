@@ -1218,6 +1218,16 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/198_async_main_dynamic_task_handle_path_families.ql",
             expected_exit: 55,
         },
+        ExecutableExampleCase {
+            name: "async_main_aliased_projected_root_repackage_families",
+            source_relative: "ramdon_tests/async_program_surface_examples/199_async_main_aliased_projected_root_repackage_families.ql",
+            expected_exit: 96,
+        },
+        ExecutableExampleCase {
+            name: "async_main_aliased_projected_root_spawn_families",
+            source_relative: "ramdon_tests/async_program_surface_examples/200_async_main_aliased_projected_root_spawn_families.ql",
+            expected_exit: 164,
+        },
     ];
 
     assert_example_cases_run(
