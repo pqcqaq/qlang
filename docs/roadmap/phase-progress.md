@@ -76,6 +76,7 @@
 - async dynamic `Task[...]` stable path family 现也把 same-file `use ... as ...` alias 包裹的 branch-selected `const` / `static` item value 拉进公开 executable 回归矩阵，不再只由 borrowck / library-side contract 隐式覆盖
 - async dynamic `Task[...]` stable path family 现也把 same-file `use ... as ...` alias 包裹的 arithmetic-backed item value 拉进公开 executable 回归矩阵，包括 `tasks[ARITH_INDEX_ALIAS]` 与 `tasks[ARITH_SLOT_ALIAS.value]` 这类路径
 - async guard-refined dynamic path family 现也补上 arithmetic-backed refined source：`ARITH_INDEX == 0` 与 `slot.value == 0` 这类 guard 可以把 arithmetic-backed dynamic index 回收到 literal path，再进入后续 consume/reinit
+- async guard-refined dynamic path family 现也把 same-file `use ... as ...` alias 包裹的 arithmetic-backed item value 拉进公开 executable 回归矩阵，包括 `if ARITH_INDEX_ALIAS == 0 { ... }` 与 `if ARITH_SLOT_ALIAS.value == 0 { ... }` 这类 direct / alias-root guard refine 路径
 
 ## 当前进度与代码核对结果
 

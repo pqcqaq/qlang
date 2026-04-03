@@ -5729,6 +5729,41 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn reports_use_after_move_for_guard_refined_arithmetic_const_alias_backed_dynamic_task_handle_array_index_and_literal_reuse()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+use INDEX as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+const STEP: Int = 1
+const INDEX: Int = STEP - 1
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let tasks = [worker(), worker()]
+    if INDEX_ALIAS == 0 {
+        let first = await tasks[INDEX_ALIAS]
+        return await tasks[0]
+    }
+    return await tasks[1]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected guard-refined arithmetic const alias-backed dynamic task-handle index reuse through tasks[0] to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_reinitializing_guard_refined_arithmetic_projected_dynamic_task_handle_array_index_before_literal_reuse()
 {
     let diagnostics = diagnostic_messages(
@@ -5760,6 +5795,52 @@ async fn main() -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected guard-refined arithmetic projected dynamic task-handle reinit through tasks[0] to restore availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_guard_refined_arithmetic_static_alias_backed_projected_root_dynamic_task_handle_array_index_before_literal_reuse()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+use SLOT as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+static BASE: Int = 2
+static SLOT: Slot = Slot { value: BASE - 2 }
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let alias = pending.tasks
+    if INDEX_ALIAS.value == 0 {
+        let first = await alias[INDEX_ALIAS.value]
+        pending.tasks[0] = worker()
+    }
+    return await alias[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guard-refined arithmetic static alias-backed projected-root dynamic task-handle reinit through alias[0] to restore availability, got {diagnostics:?}"
     );
 }
 
