@@ -59,6 +59,14 @@ struct Config {
     slot: IndexSlot,
 }
 
+struct InlineReady {
+    ready: Bool,
+}
+
+struct InlineValue {
+    value: Int,
+}
+
 async fn fetch_flag(value: Bool) -> Bool {
     return value
 }
@@ -102,6 +110,14 @@ fn matches(expected: Int, value: Pair) -> Bool {
 
 fn tuple_matches(pair: (Int, Int), expected: Int) -> Bool {
     return pair[1] == expected
+}
+
+fn inline_enabled(state: InlineReady) -> Bool {
+    return state.ready
+}
+
+fn contains(values: [Int; 3], expected: Int) -> Bool {
+    return values[1] == expected
 }
 
 fn bundle(seed: Int) -> Bundle {
@@ -344,6 +360,42 @@ async fn helper() -> Int {
         _ => 0,
     }
 
+    let thirty_second = await fetch_flag(value: true)
+    let from_inline_struct_arg = match thirty_second {
+        true if inline_enabled(InlineReady { ready: true }) => 10,
+        false => 0,
+    }
+
+    let thirty_third = await load_scalar(value: 22)
+    let from_inline_tuple_arg = match thirty_third {
+        current if tuple_matches((0, current), 22) => 12,
+        _ => 0,
+    }
+
+    let thirty_fourth = await load_scalar(value: 3)
+    let from_inline_array_arg = match thirty_fourth {
+        current if contains([current, current + 1, current + 2], 4) => 20,
+        _ => 0,
+    }
+
+    let thirty_fifth = await load_scalar(value: 22)
+    let from_inline_tuple_projection = match thirty_fifth {
+        current if (0, current)[1] == 22 => 10,
+        _ => 0,
+    }
+
+    let thirty_sixth = await load_scalar(value: 22)
+    let from_inline_struct_projection = match thirty_sixth {
+        current if InlineValue { value: current }.value == 22 => 12,
+        _ => 0,
+    }
+
+    let thirty_seventh = await load_scalar(value: 3)
+    let from_inline_array_projection = match thirty_seventh {
+        current if [current, current + 1, current + 2][1] == 4 => 20,
+        _ => 0,
+    }
+
     return from_scalar
         + from_aggregate
         + from_pair_projection
@@ -375,4 +427,10 @@ async fn helper() -> Int {
         + from_call_backed_direct_guard
         + from_call_backed_tuple_inline
         + from_call_backed_direct_root
+        + from_inline_struct_arg
+        + from_inline_tuple_arg
+        + from_inline_array_arg
+        + from_inline_tuple_projection
+        + from_inline_struct_projection
+        + from_inline_array_projection
 }
