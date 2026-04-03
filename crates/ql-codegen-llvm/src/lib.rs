@@ -896,6 +896,7 @@ impl<'a> ModuleEmitter<'a> {
                                     Some(guard) => match supported_bool_guard(
                                         self.input.hir,
                                         self.input.resolution,
+                                        self.input.typeck,
                                         &self.signatures,
                                         body,
                                         &local_types,
@@ -994,6 +995,7 @@ impl<'a> ModuleEmitter<'a> {
                                     Some(guard) => match supported_bool_guard(
                                         self.input.hir,
                                         self.input.resolution,
+                                        self.input.typeck,
                                         &self.signatures,
                                         body,
                                         &local_types,
@@ -1102,6 +1104,7 @@ impl<'a> ModuleEmitter<'a> {
                                     Some(guard) => match supported_bool_guard(
                                         self.input.hir,
                                         self.input.resolution,
+                                        self.input.typeck,
                                         &self.signatures,
                                         body,
                                         &local_types,
@@ -5350,6 +5353,221 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
         guard_binding: Option<&GuardBindingValue>,
     ) -> LoweredValue {
+        match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Tuple(items) => {
+                let tuple_ty = self
+                    .emitter
+                    .input
+                    .typeck
+                    .expr_ty(expr_id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should have a resolved tuple literal type"
+                        )
+                    });
+                let Ty::Tuple(expected_items) = &tuple_ty else {
+                    panic!(
+                        "prepared bool guard lowering at {span:?} should preserve tuple literal types"
+                    );
+                };
+                assert_eq!(
+                    expected_items.len(),
+                    items.len(),
+                    "prepared bool guard lowering at {span:?} should preserve tuple literal arity"
+                );
+                let rendered_items = items
+                    .iter()
+                    .zip(expected_items.iter())
+                    .map(|(item, item_ty)| {
+                        self.render_guard_expr_as_type(output, *item, item_ty, span, guard_binding)
+                    })
+                    .collect::<Vec<_>>();
+                let llvm_ty = self
+                    .emitter
+                    .lower_llvm_type(&tuple_ty, span, "guard tuple value")
+                    .expect("prepared guard tuple values should already have supported LLVM types");
+                if rendered_items.is_empty() {
+                    return LoweredValue {
+                        ty: tuple_ty,
+                        llvm_ty,
+                        repr: "zeroinitializer".to_owned(),
+                    };
+                }
+                let mut aggregate = "undef".to_owned();
+                for (index, item) in rendered_items.iter().enumerate() {
+                    let next = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                        item.llvm_ty, item.repr, index
+                    );
+                    aggregate = next;
+                }
+                return LoweredValue {
+                    ty: tuple_ty,
+                    llvm_ty,
+                    repr: aggregate,
+                };
+            }
+            hir::ExprKind::Array(items) => {
+                let array_ty = self
+                    .emitter
+                    .input
+                    .typeck
+                    .expr_ty(expr_id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should have a resolved array literal type"
+                        )
+                    });
+                let Ty::Array { element, len } = &array_ty else {
+                    panic!(
+                        "prepared bool guard lowering at {span:?} should preserve array literal types"
+                    );
+                };
+                assert_eq!(
+                    *len,
+                    items.len(),
+                    "prepared bool guard lowering at {span:?} should preserve array literal length"
+                );
+                let rendered_items = items
+                    .iter()
+                    .map(|item| {
+                        self.render_guard_expr_as_type(
+                            output,
+                            *item,
+                            element.as_ref(),
+                            span,
+                            guard_binding,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let llvm_ty = self
+                    .emitter
+                    .lower_llvm_type(&array_ty, span, "guard array value")
+                    .expect("prepared guard array values should already have supported LLVM types");
+                if rendered_items.is_empty() {
+                    return LoweredValue {
+                        ty: array_ty,
+                        llvm_ty,
+                        repr: "zeroinitializer".to_owned(),
+                    };
+                }
+                let mut aggregate = "undef".to_owned();
+                for (index, item) in rendered_items.iter().enumerate() {
+                    let next = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                        item.llvm_ty, item.repr, index
+                    );
+                    aggregate = next;
+                }
+                return LoweredValue {
+                    ty: array_ty,
+                    llvm_ty,
+                    repr: aggregate,
+                };
+            }
+            hir::ExprKind::StructLiteral { fields, .. } => {
+                let struct_ty = self
+                    .emitter
+                    .input
+                    .typeck
+                    .expr_ty(expr_id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should have a resolved struct literal type"
+                        )
+                    });
+                let field_layouts = self
+                    .emitter
+                    .struct_field_lowerings(&struct_ty, span, "guard struct value")
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should have a loadable struct literal layout"
+                        )
+                    });
+                let llvm_ty = self
+                    .emitter
+                    .lower_llvm_type(&struct_ty, span, "guard struct value")
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should have a lowered struct literal type"
+                        )
+                    });
+                let mut rendered_fields = HashMap::with_capacity(fields.len());
+                for field in fields {
+                    let field_ty = field_layouts
+                        .iter()
+                        .find(|layout| layout.name == field.name)
+                        .map(|layout| &layout.ty)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "prepared bool guard lowering at {span:?} should provide declared struct literal field `{}`",
+                                field.name
+                            )
+                        });
+                    let rendered = self.render_guard_expr_as_type(
+                        output,
+                        field.value,
+                        field_ty,
+                        span,
+                        guard_binding,
+                    );
+                    rendered_fields.insert(field.name.clone(), rendered);
+                }
+                if field_layouts.is_empty() {
+                    return LoweredValue {
+                        ty: struct_ty,
+                        llvm_ty,
+                        repr: "zeroinitializer".to_owned(),
+                    };
+                }
+                let mut aggregate = "undef".to_owned();
+                for (index, field) in field_layouts.iter().enumerate() {
+                    let rendered = rendered_fields.remove(&field.name).unwrap_or_else(|| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should provide every declared struct literal field"
+                        )
+                    });
+                    let next = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                        rendered.llvm_ty, rendered.repr, index
+                    );
+                    aggregate = next;
+                }
+                return LoweredValue {
+                    ty: struct_ty,
+                    llvm_ty,
+                    repr: aggregate,
+                };
+            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                let tail = self
+                    .emitter
+                    .input
+                    .hir
+                    .block(*block_id)
+                    .tail
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "prepared bool guard lowering at {span:?} should only render block loadable guard expressions with tails"
+                        )
+                    });
+                return self.render_guard_loadable_expr(output, tail, span, guard_binding);
+            }
+            hir::ExprKind::Question(inner) => {
+                return self.render_guard_loadable_expr(output, *inner, span, guard_binding);
+            }
+            _ => {}
+        }
+
         if let Some((place, ty)) = guard_expr_place_with_ty(
             self.emitter.input.hir,
             self.emitter.input.resolution,
@@ -5377,6 +5595,38 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             "prepared bool guard lowering at {span:?} should only render valued loadable guard expressions"
         );
         self.render_loaded_pointer_value(output, ptr, ty, span)
+    }
+
+    fn render_guard_expr_as_type(
+        &mut self,
+        output: &mut String,
+        expr_id: hir::ExprId,
+        expected_ty: &Ty,
+        span: Span,
+        guard_binding: Option<&GuardBindingValue>,
+    ) -> LoweredValue {
+        if expected_ty.is_bool() {
+            let rendered = self.render_bool_guard_expr(output, expr_id, span, guard_binding);
+            assert!(
+                expected_ty.compatible_with(&rendered.ty),
+                "prepared bool guard lowering at {span:?} should only render compatible bool guard literal elements"
+            );
+            rendered
+        } else if expected_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
+            let rendered = self.render_guard_scalar_expr(output, expr_id, span, guard_binding);
+            assert!(
+                expected_ty.compatible_with(&rendered.ty),
+                "prepared bool guard lowering at {span:?} should only render compatible Int guard literal elements"
+            );
+            rendered
+        } else {
+            let rendered = self.render_guard_loadable_expr(output, expr_id, span, guard_binding);
+            assert!(
+                expected_ty.compatible_with(&rendered.ty),
+                "prepared bool guard lowering at {span:?} should only render compatible loadable guard literal elements"
+            );
+            rendered
+        }
     }
 
     fn render_guard_call_value(
@@ -6087,6 +6337,7 @@ enum GuardScalarKind {
 fn supported_bool_guard(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    typeck: &TypeckResult,
     signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
@@ -6113,6 +6364,7 @@ fn supported_bool_guard(
             runtime_bool_guard_supported(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -6300,6 +6552,7 @@ fn bool_guard_relation_to_scrutinee(
 fn runtime_bool_guard_supported(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    typeck: &TypeckResult,
     signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
@@ -6313,6 +6566,7 @@ fn runtime_bool_guard_supported(
         } => runtime_bool_guard_supported(
             module,
             resolution,
+            typeck,
             signatures,
             body,
             local_types,
@@ -6325,6 +6579,7 @@ fn runtime_bool_guard_supported(
             runtime_bool_guard_supported(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -6333,6 +6588,7 @@ fn runtime_bool_guard_supported(
             ) && runtime_bool_guard_supported(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -6344,6 +6600,7 @@ fn runtime_bool_guard_supported(
             let Some(left_kind) = supported_guard_scalar_expr(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -6355,6 +6612,7 @@ fn runtime_bool_guard_supported(
             let Some(right_kind) = supported_guard_scalar_expr(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -6382,6 +6640,7 @@ fn runtime_bool_guard_supported(
             supported_guard_scalar_expr(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -6395,6 +6654,7 @@ fn runtime_bool_guard_supported(
 fn supported_guard_scalar_expr(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    typeck: &TypeckResult,
     signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
@@ -6413,6 +6673,7 @@ fn supported_guard_scalar_expr(
             let left_kind = supported_guard_scalar_expr(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -6422,6 +6683,7 @@ fn supported_guard_scalar_expr(
             let right_kind = supported_guard_scalar_expr(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -6445,6 +6707,7 @@ fn supported_guard_scalar_expr(
         } => runtime_bool_guard_supported(
             module,
             resolution,
+            typeck,
             signatures,
             body,
             local_types,
@@ -6460,6 +6723,7 @@ fn supported_guard_scalar_expr(
                 || runtime_bool_guard_supported(
                     module,
                     resolution,
+                    typeck,
                     signatures,
                     body,
                     local_types,
@@ -6478,6 +6742,7 @@ fn supported_guard_scalar_expr(
         } => supported_guard_scalar_expr(
             module,
             resolution,
+            typeck,
             signatures,
             body,
             local_types,
@@ -6488,6 +6753,7 @@ fn supported_guard_scalar_expr(
         hir::ExprKind::Call { callee, args } => supported_guard_call_expr(
             module,
             resolution,
+            typeck,
             signatures,
             body,
             local_types,
@@ -6519,6 +6785,7 @@ fn supported_guard_scalar_expr(
             | None => guard_expr_ty(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -6536,6 +6803,7 @@ fn supported_guard_scalar_expr(
                 guard_expr_ty(
                     module,
                     resolution,
+                    typeck,
                     signatures,
                     body,
                     local_types,
@@ -6550,6 +6818,7 @@ fn supported_guard_scalar_expr(
                 supported_guard_scalar_expr(
                     module,
                     resolution,
+                    typeck,
                     signatures,
                     body,
                     local_types,
@@ -6561,6 +6830,7 @@ fn supported_guard_scalar_expr(
         hir::ExprKind::Question(inner) => supported_guard_scalar_expr(
             module,
             resolution,
+            typeck,
             signatures,
             body,
             local_types,
@@ -6574,6 +6844,7 @@ fn supported_guard_scalar_expr(
 fn supported_guard_call_expr(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    typeck: &TypeckResult,
     signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
@@ -6584,6 +6855,7 @@ fn supported_guard_call_expr(
     let (_, signature, _) = supported_guard_call(
         module,
         resolution,
+        typeck,
         signatures,
         body,
         local_types,
@@ -6813,6 +7085,7 @@ fn guard_expr_place_with_ty(
 fn guard_expr_ty(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    typeck: &TypeckResult,
     signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
@@ -6829,6 +7102,7 @@ fn guard_expr_ty(
             let current_ty = guard_expr_ty(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -6841,6 +7115,7 @@ fn guard_expr_ty(
             let mut current_ty = guard_expr_ty(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -6851,6 +7126,7 @@ fn guard_expr_ty(
                 current_ty = guard_index_expr_projection_ty(
                     module,
                     resolution,
+                    typeck,
                     signatures,
                     body,
                     local_types,
@@ -6866,6 +7142,7 @@ fn guard_expr_ty(
                 guard_expr_ty(
                     module,
                     resolution,
+                    typeck,
                     signatures,
                     body,
                     local_types,
@@ -6877,15 +7154,20 @@ fn guard_expr_ty(
         hir::ExprKind::Question(inner) => guard_expr_ty(
             module,
             resolution,
+            typeck,
             signatures,
             body,
             local_types,
             arm_pattern,
             *inner,
         ),
+        hir::ExprKind::Tuple(_) | hir::ExprKind::Array(_) | hir::ExprKind::StructLiteral { .. } => {
+            typeck.expr_ty(expr_id).cloned()
+        }
         hir::ExprKind::Call { callee, args } => supported_guard_call(
             module,
             resolution,
+            typeck,
             signatures,
             body,
             local_types,
@@ -6954,6 +7236,7 @@ fn guard_expr_place_root(
 fn guard_index_expr_projection_ty(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    typeck: &TypeckResult,
     signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
@@ -6967,6 +7250,7 @@ fn guard_index_expr_projection_ty(
             (supported_guard_scalar_expr(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -7393,6 +7677,7 @@ fn ordered_guard_call_args<'a>(
 fn supported_guard_call<'a>(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    typeck: &TypeckResult,
     signatures: &'a HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
@@ -7412,6 +7697,7 @@ fn supported_guard_call<'a>(
             let actual_kind = supported_guard_scalar_expr(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -7425,6 +7711,7 @@ fn supported_guard_call<'a>(
             let actual_ty = guard_expr_ty(
                 module,
                 resolution,
+                typeck,
                 signatures,
                 body,
                 local_types,
@@ -10001,6 +10288,54 @@ fn main() -> Int {
         assert!(rendered.contains("call i1 @ql_1_enabled({ i1 }"));
         assert!(rendered.contains("call i1 @ql_3_matches({ i64, i64 }"));
         assert!(rendered.contains("call i1 @ql_5_contains([3 x i64]"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_match_guard_inline_aggregate_call_arg_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+struct State {
+    ready: Bool,
+}
+
+fn enabled(state: State) -> Bool {
+    return state.ready
+}
+
+fn matches(pair: (Int, Int), expected: Int) -> Bool {
+    return pair[1] == expected
+}
+
+fn contains(values: [Int; 3], expected: Int) -> Bool {
+    return values[1] == expected
+}
+
+fn main() -> Int {
+    let first = match true {
+        true if enabled(State { ready: true }) => 10,
+        false => 0,
+    }
+    let second = match 22 {
+        current if matches((0, current), 22) => 12,
+        _ => 0,
+    }
+    let third = match 3 {
+        current if contains([current, current + 1, current + 2], 4) => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.matches("call i1 @ql_").count() >= 3);
+        assert!(rendered.contains("insertvalue { i1 } undef, i1 true, 0"));
+        assert!(rendered.contains("insertvalue { i64, i64 } undef, i64 0, 0"));
+        assert!(rendered.contains("insertvalue [3 x i64] undef"));
+        assert!(rendered.contains("add i64 %"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

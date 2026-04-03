@@ -124,6 +124,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/20_sync_match_guard_aggregate_call_args.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_match_guard_inline_aggregate_call_args",
+            source_relative: "ramdon_tests/executable_examples/21_sync_match_guard_inline_aggregate_call_args.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
