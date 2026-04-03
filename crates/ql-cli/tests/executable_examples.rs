@@ -1153,6 +1153,16 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/185_async_main_zero_sized_nested_call_root_projected_task_handle_consumes.ql",
             expected_exit: 4,
         },
+        ExecutableExampleCase {
+            name: "async_main_recursive_aggregate_params",
+            source_relative: "ramdon_tests/async_program_surface_examples/186_async_main_recursive_aggregate_params.ql",
+            expected_exit: 6,
+        },
+        ExecutableExampleCase {
+            name: "async_main_spawned_recursive_aggregate_params",
+            source_relative: "ramdon_tests/async_program_surface_examples/187_async_main_spawned_recursive_aggregate_params.ql",
+            expected_exit: 6,
+        },
     ];
 
     assert_example_cases_run(
