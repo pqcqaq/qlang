@@ -5248,6 +5248,28 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn materialize_guard_item_root(
+        &mut self,
+        output: &mut String,
+        item_id: ItemId,
+        span: Span,
+    ) -> Option<(String, Ty)> {
+        const_or_static_item_type(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            item_id,
+        )?;
+        let rendered = self.render_item_constant(output, item_id, span);
+        let slot = self.fresh_temp();
+        let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {slot}",
+            rendered.llvm_ty, rendered.repr
+        );
+        Some((slot, rendered.ty))
+    }
+
     fn render_guard_projection_pointer(
         &mut self,
         output: &mut String,
@@ -5275,6 +5297,14 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         let binding_local = mir_local_for_hir_local(self.body, *local)?;
                         let ty = self.prepared.local_types.get(&binding_local)?.clone();
                         Some((llvm_slot_name(self.body, binding_local), ty))
+                    }
+                    Some(ValueResolution::Item(item_id)) => {
+                        self.materialize_guard_item_root(output, *item_id, span)
+                    }
+                    Some(ValueResolution::Import(import_binding)) => {
+                        let item_id =
+                            local_item_for_import_binding(self.emitter.input.hir, import_binding)?;
+                        self.materialize_guard_item_root(output, item_id, span)
                     }
                     _ => None,
                 }
@@ -6477,6 +6507,7 @@ fn guard_expr_ty(
         hir::ExprKind::Name(_) => {
             guard_expr_place_root(module, resolution, body, local_types, arm_pattern, expr_id)
                 .map(|(_, ty)| ty)
+                .or_else(|| guard_expr_item_root_ty(module, resolution, expr_id))
         }
         hir::ExprKind::Member { object, field, .. } => {
             let current_ty =
@@ -6508,6 +6539,24 @@ fn guard_expr_ty(
             guard_expr_ty(module, resolution, body, local_types, arm_pattern, *inner)
         }
         _ => None,
+    }
+}
+
+fn guard_expr_item_root_ty(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    expr_id: hir::ExprId,
+) -> Option<Ty> {
+    match resolution.expr_resolution(expr_id)? {
+        ValueResolution::Item(item_id) => const_or_static_item_type(module, resolution, *item_id),
+        ValueResolution::Import(import_binding) => {
+            local_item_for_import_binding(module, import_binding)
+                .and_then(|item_id| const_or_static_item_type(module, resolution, item_id))
+        }
+        ValueResolution::Local(_)
+        | ValueResolution::Param(_)
+        | ValueResolution::SelfValue
+        | ValueResolution::Function(_) => None,
     }
 }
 
@@ -8981,6 +9030,48 @@ fn main() -> Int {
         assert!(
             rendered.contains("getelementptr inbounds [3 x i64], ptr %l2_values, i64 0, i64 %")
         );
+        assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_match_guard_runtime_index_expr_lowering_for_item_aggregate_roots() {
+        let rendered = emit_with_mode(
+            r#"
+use LIMITS as INPUT
+
+const VALUES: [Int; 3] = [1, 3, 5]
+static LIMITS: [Int; 3] = [2, 4, 6]
+
+struct State {
+    offset: Int,
+}
+
+fn main() -> Int {
+    let index = 0
+    let state = State { offset: 1 }
+    let first = match 0 {
+        0 if VALUES[index + 1] == 3 => 10,
+        _ => 0,
+    }
+    let second = match 0 {
+        0 if INPUT[state.offset] == 4 => 12,
+        _ => 0,
+    }
+    let third = match 0 {
+        0 if LIMITS[index + state.offset + 1] == 6 => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.matches("insertvalue [3 x i64]").count() >= 9);
+        assert!(rendered.matches("getelementptr inbounds [3 x i64]").count() >= 3);
+        assert!(rendered.matches("add i64").count() >= 2);
         assert!(rendered.contains("icmp eq i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }

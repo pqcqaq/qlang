@@ -20,6 +20,7 @@ Files:
 - `14_sync_match_partial_integer_dynamic_guard.ql`: integer `match` partial dynamic-guard lowering in executable mode, where `1 if enabled` no longer needs a later unguarded catch-all arm just to pass backend lowering
 - `15_sync_match_guard_binding_projection_roots.ql`: current-arm binding guard projection roots in executable mode, where `current.slot.ready`, `current[1]`, and `current[0]` can now lower as read-only guard operands
 - `16_sync_match_binding_catch_all_aggregate_scrutinees.ql`: current-loadable aggregate binding catch-all `match` lowering in executable mode, where `match state { current => ... }` and other non-`Bool`/`Int` catch-all-only binding shapes now lower directly
+- `17_sync_match_guard_runtime_index_item_roots.ql`: same-file `const` / `static` / import-alias aggregate-root dynamic-index guard lowering in executable mode, where `VALUES[index + 1]` and `INPUT[state.offset]` can now lower as read-only guard operands
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -42,6 +43,7 @@ Expected exit codes for the sync examples:
 - `14_sync_match_partial_integer_dynamic_guard.ql` -> `42`
 - `15_sync_match_guard_binding_projection_roots.ql` -> `42`
 - `16_sync_match_binding_catch_all_aggregate_scrutinees.ql` -> `42`
+- `17_sync_match_guard_runtime_index_item_roots.ql` -> `42`
 
 Build one verified executable example:
 

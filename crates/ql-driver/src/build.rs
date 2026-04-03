@@ -10304,6 +10304,66 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_match_guard_runtime_index_expr_for_item_aggregate_roots() {
+        let dir =
+            TestDir::new("ql-driver-llvm-ir-match-guard-runtime-index-expr-item-aggregate-roots");
+        let source = dir.write(
+            "match_guard_runtime_index_expr_item_aggregate_roots.ql",
+            r#"
+use LIMITS as INPUT
+
+const VALUES: [Int; 3] = [1, 3, 5]
+static LIMITS: [Int; 3] = [2, 4, 6]
+
+struct State {
+    offset: Int,
+}
+
+fn main() -> Int {
+    let index = 0
+    let state = State { offset: 1 }
+    let first = match 0 {
+        0 if VALUES[index + 1] == 3 => 10,
+        _ => 0,
+    }
+    let second = match 0 {
+        0 if INPUT[state.offset] == 4 => 12,
+        _ => 0,
+    }
+    let third = match 0 {
+        0 if LIMITS[index + state.offset + 1] == 6 => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/match_guard_runtime_index_expr_item_aggregate_roots.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "llvm-ir build with runtime-indexed const/static/import aggregate match guards should succeed",
+        );
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.matches("insertvalue [3 x i64]").count() >= 9);
+        assert!(rendered.matches("getelementptr inbounds [3 x i64]").count() >= 3);
+        assert!(rendered.matches("add i64").count() >= 2);
+        assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_static_item_values_in_expressions() {
         let dir = TestDir::new("ql-driver-llvm-ir-static-item-values-in-expressions");
         let source = dir.write(
