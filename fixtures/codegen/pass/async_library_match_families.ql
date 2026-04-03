@@ -396,6 +396,24 @@ async fn helper() -> Int {
         _ => 0,
     }
 
+    let thirty_eighth = await load_scalar(value: 3)
+    let from_nested_inline_projection = match thirty_eighth {
+        current if [pack(current)[slot(current)], current + 1, 6][0] == 4 => 10,
+        _ => 0,
+    }
+
+    let thirty_ninth = await load_scalar(value: 3)
+    let from_nested_inline_array_arg = match thirty_ninth {
+        current if contains([current, pack(current)[slot(current)], 9], 4) => 12,
+        _ => 0,
+    }
+
+    let fortieth = await load_scalar(value: 3)
+    let from_nested_inline_tuple_arg = match fortieth {
+        current if tuple_matches((8, pack(current)[slot(current)]), 4) => 20,
+        _ => 0,
+    }
+
     return from_scalar
         + from_aggregate
         + from_pair_projection
@@ -433,4 +451,7 @@ async fn helper() -> Int {
         + from_inline_tuple_projection
         + from_inline_struct_projection
         + from_inline_array_projection
+        + from_nested_inline_projection
+        + from_nested_inline_array_arg
+        + from_nested_inline_tuple_arg
 }

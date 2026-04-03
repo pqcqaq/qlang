@@ -1088,6 +1088,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/172_async_main_awaited_match_inline_projection_roots.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "async_main_awaited_match_nested_call_root_inline_combos",
+            source_relative: "ramdon_tests/async_program_surface_examples/173_async_main_awaited_match_nested_call_root_inline_combos.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
