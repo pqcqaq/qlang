@@ -72,6 +72,7 @@
 - async ordinary executable surface 现也显式锁住同一条 branch-selected `const` / `static` item value materialization：同文件 const/static item 里的 computed/projected value、foldable `if` 与最小 literal `match` 也可进入 `async fn main` 里的普通表达式与 `if` 条件
 - async dynamic `Task[...]` stable path family 现也补上 direct inline foldable `if` / 最小 literal `match` integer expression 驱动的 consume/reinit 成功路径，不再只限于 local / projection / item-root 稳定源
 - async dynamic `Task[...]` stable path family 现也补上 branch-selected `const` / `static` item value：同文件 item 里的 foldable `if` / 最小 literal `match` 选出的整数或投影值，也可回收到同一条 literal/projection lifecycle
+- async dynamic `Task[...]` stable path family 现也补上 foldable integer arithmetic expression：同文件 item、局部投影与 direct inline `1 - 1` 这类索引表达式都可直接折回 literal/projection lifecycle
 
 ## 当前进度与代码核对结果
 

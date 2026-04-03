@@ -9,6 +9,8 @@ struct Slot {
 const INDEX: Int = 0
 const NEXT: Int = 1
 const SELECTED_INDEX: Int = if NEXT == 1 { 0 } else { 1 }
+const STEP: Int = 1
+const ARITH_INDEX: Int = STEP - 1
 
 static MATCH_KEY: Int = 1
 static SELECTED_SLOT: Slot = match MATCH_KEY {
@@ -87,6 +89,17 @@ async fn main() -> Int {
     static_match_pending.tasks[0] = worker(static_match_first + 6)
     let static_match_second = await static_match_alias[SELECTED_SLOT.value]
 
+    var arithmetic_const_tasks = [worker(7), worker(12)]
+    let arithmetic_const_first = await arithmetic_const_tasks[ARITH_INDEX]
+    arithmetic_const_tasks[0] = worker(arithmetic_const_first + 2)
+    let arithmetic_const_second = await arithmetic_const_tasks[ARITH_INDEX]
+
+    var arithmetic_projected_tasks = [worker(8), worker(13)]
+    let arithmetic_slot = Slot { value: 3 - 3 }
+    let arithmetic_projected_first = await arithmetic_projected_tasks[arithmetic_slot.value]
+    arithmetic_projected_tasks[0] = worker(arithmetic_projected_first + 4)
+    let arithmetic_projected_second = await arithmetic_projected_tasks[1 - 1]
+
     return first
         + second
         + tail
@@ -105,4 +118,8 @@ async fn main() -> Int {
         + const_if_second
         + static_match_first
         + static_match_second
+        + arithmetic_const_first
+        + arithmetic_const_second
+        + arithmetic_projected_first
+        + arithmetic_projected_second
 }

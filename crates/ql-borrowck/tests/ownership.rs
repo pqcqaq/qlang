@@ -6227,6 +6227,69 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn reports_use_after_move_for_same_arithmetic_const_backed_dynamic_task_handle_array_index_and_literal_reuse()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+const STEP: Int = 1
+const INDEX: Int = STEP - 1
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let tasks = [worker(), worker()]
+    let first = await tasks[INDEX]
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected arithmetic const-backed dynamic task-handle index reuse through tasks[0] to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_same_arithmetic_projected_dynamic_task_handle_array_index_before_literal_reuse()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var tasks = [worker(), worker()]
+    let slot = Slot { value: 3 - 3 }
+    let first = await tasks[slot.value]
+    tasks[0] = worker()
+    return await tasks[1 - 1]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected arithmetic projected dynamic task-handle index reinit to restore tasks[0], got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_dynamic_array_index_assignment_for_non_task_elements() {
     let diagnostics = diagnostic_messages(
         r#"
