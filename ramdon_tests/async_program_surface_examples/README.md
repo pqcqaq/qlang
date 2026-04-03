@@ -162,12 +162,13 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `161_async_main_awaited_match_aggregate_guard_calls.ql`
 - `162_async_main_import_alias_awaited_match_guards.ql`
 - `163_async_main_awaited_match_nested_call_root_guards.ql`
+- `164_async_main_awaited_match_call_backed_nested_call_root_guards.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-sixty-three examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-sixty-four examples with the real local toolchain and locks their exit codes.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -217,6 +218,7 @@ Current status:
 - `161_async_main_awaited_match_aggregate_guard_calls.ql` now locks the awaited aggregate `match` guard-call variant for `async fn main`, where `match first { current if matches(expected: 22, value: current.values) => ... }` and `match second { current if matches(expected: 22, value: pair(value: current.values.left)) => ... }` confirm that awaited aggregate scrutinees can now feed both projected aggregate guard-call arguments and call-backed aggregate guard-call arguments through the current executable async surface and still exit with `42`.
 - `162_async_main_import_alias_awaited_match_guards.ql` now locks the same-file import-alias awaited `match` guard variant for `async fn main`, where `let first = await load_scalar(...); match first { current if shift(...) == 22 => ... }`, `match second { current if check(expected: 22, value: current.values) => ... }`, and `match third { current if check(expected: 22, value: make_pair(value: current.values.left)) => ... }` confirm that both awaited helper calls and guard helpers can flow through same-file `use ... as ...` aliases on the current executable async surface and still exit with `62`.
 - `163_async_main_awaited_match_nested_call_root_guards.ql` now locks the awaited nested call-root `match` guard variant for `async fn main`, where `match first { current if pack(current).values[slot(current)] == 4 => ... }`, `match second { current if ready(pack(current).values[slot(current)]) => ... }`, and `match third { current if check(value: pack(current).values[slot(current)], expected: 4) => ... }` confirm that awaited scalar scrutinees can now feed nested call-root runtime projections into direct scalar comparison guards, direct predicate guards, and scalar guard-call arguments through the current executable async surface and still exit with `42`.
+- `164_async_main_awaited_match_call_backed_nested_call_root_guards.ql` now locks the awaited call-backed nested call-root `match` guard variant for `async fn main`, where `match first { true if enabled(extra: flag(pack(3)[slot(3)] == 4), state: flag_state(flag(pack(3)[slot(3)] == 4))) => ... }`, `match second { current if [pack(current)[slot(current)], seed(8), seed(9)][0] == seed(4) => ... }`, and `match third { current if equal(expected: seed(4), value: [pack(current)[slot(current)], seed(8), 9][0]) => ... }` confirm that awaited scrutinees can now carry call-backed nested call-root projections into direct predicate guards, inline aggregate element guards, and scalar guard-call arguments through the current executable async surface and still exit with `42`.
 
 Expected exit codes:
 
@@ -380,6 +382,7 @@ Expected exit codes:
 - `161_async_main_awaited_match_aggregate_guard_calls.ql` -> `42`
 - `162_async_main_import_alias_awaited_match_guards.ql` -> `62`
 - `163_async_main_awaited_match_nested_call_root_guards.ql` -> `42`
+- `164_async_main_awaited_match_call_backed_nested_call_root_guards.ql` -> `42`
 
 Try one file directly:
 

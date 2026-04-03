@@ -3,6 +3,10 @@ use load_pair_state as load_pairs
 use offset as shift
 use matches as check
 use pair as make_pair
+use pack_values as pack
+use pick_slot as slot
+use truthy as flag
+use scalar_matches as equal
 
 struct Slot {
     ready: Bool,
@@ -24,6 +28,14 @@ struct PairState {
 
 struct Bundle {
     values: [Int; 3],
+}
+
+struct FlagState {
+    ready: Bool,
+}
+
+async fn fetch_flag(value: Bool) -> Bool {
+    return value
 }
 
 async fn fetch_value(value: Int) -> Int {
@@ -79,6 +91,30 @@ fn ready(value: Int) -> Bool {
 
 fn scalar_matches(value: Int, expected: Int) -> Bool {
     return value == expected
+}
+
+fn flag_state(flag: Bool) -> FlagState {
+    return FlagState { ready: flag }
+}
+
+fn pack_values(seed: Int) -> [Int; 3] {
+    return [seed, seed + 1, seed + 2]
+}
+
+fn pick_slot(value: Int) -> Int {
+    return value - 2
+}
+
+fn truthy(flag: Bool) -> Bool {
+    return flag
+}
+
+fn seed(value: Int) -> Int {
+    return value
+}
+
+fn enabled(state: FlagState, extra: Bool) -> Bool {
+    return state.ready && extra
 }
 
 async fn helper() -> Int {
@@ -142,6 +178,24 @@ async fn helper() -> Int {
         _ => 0,
     }
 
+    let eleventh = await fetch_flag(value: true)
+    let from_call_backed_bool = match eleventh {
+        true if enabled(extra: flag(pack(3)[slot(3)] == 4), state: flag_state(flag(pack(3)[slot(3)] == 4))) => 10,
+        false => 0,
+    }
+
+    let twelfth = await load_scalar(value: 3)
+    let from_call_backed_inline = match twelfth {
+        current if [pack(current)[slot(current)], seed(8), seed(9)][0] == seed(4) => 12,
+        _ => 0,
+    }
+
+    let thirteenth = await load_scalar(value: 3)
+    let from_call_backed_guard_call = match thirteenth {
+        current if equal(expected: seed(4), value: [pack(current)[slot(current)], seed(8), 9][0]) => 20,
+        _ => 0,
+    }
+
     return from_scalar
         + from_aggregate
         + from_pair_projection
@@ -152,4 +206,7 @@ async fn helper() -> Int {
         + from_nested_projection
         + from_nested_direct_call
         + from_nested_guard_call
+        + from_call_backed_bool
+        + from_call_backed_inline
+        + from_call_backed_guard_call
 }
