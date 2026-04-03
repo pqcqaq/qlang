@@ -6089,6 +6089,36 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn reports_use_after_move_for_same_branch_selected_const_backed_dynamic_task_handle_array_index_and_literal_reuse()
+{
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+const NEXT: Int = 1
+const INDEX: Int = if NEXT == 1 { 0 } else { 1 }
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    let tasks = [worker(), worker()]
+    let first = await tasks[INDEX]
+    return await tasks[0]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.contains(&"local `tasks` was used after move".to_string()),
+        "expected branch-selected const-backed dynamic task-handle index reuse through tasks[0] to be a definite move, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_reinitializing_same_const_backed_projected_dynamic_task_handle_array_index_before_literal_reuse()
  {
     let diagnostics = diagnostic_messages(
@@ -6155,6 +6185,44 @@ async fn main() -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected static alias-backed projected dynamic task-handle index reinit to restore tasks[0], got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_reinitializing_same_branch_selected_static_backed_projected_dynamic_task_handle_array_index_before_reuse()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Slot {
+    value: Int,
+}
+
+static MATCH_KEY: Int = 1
+static SLOT: Slot = match MATCH_KEY {
+    1 => Slot { value: 0 },
+    _ => Slot { value: 1 },
+}
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+async fn main() -> Wrap {
+    var tasks = [worker(), worker()]
+    let first = await tasks[SLOT.value]
+    tasks[0] = worker()
+    return await tasks[SLOT.value]
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected branch-selected static-backed projected dynamic task-handle index reinit to restore tasks[0], got {diagnostics:?}"
     );
 }
 

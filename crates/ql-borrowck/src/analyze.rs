@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
-use ql_ast::{BinaryOp, ReceiverKind, UnaryOp, parse_usize_literal};
+use ql_ast::{BinaryOp, ReceiverKind, UnaryOp, parse_i64_literal, parse_usize_literal};
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{self as hir, Function, ItemKind, Param};
 use ql_mir::{
@@ -1472,20 +1472,8 @@ impl<'a> BodyAnalyzer<'a> {
         expr_id: hir::ExprId,
         visiting: &mut ImmutableSourceVisit,
     ) -> Option<usize> {
-        let expr_id = self.normalized_immutable_source_expr(expr_id, visiting)?;
-        match &self.hir.expr(expr_id).kind {
-            hir::ExprKind::Integer(raw) => parse_usize_literal(raw),
-            hir::ExprKind::Member { object, field, .. } => {
-                let projected = self.project_member_immutable_expr(*object, field, visiting)?;
-                self.fixed_array_index_value_for_expr_inner(projected, visiting)
-            }
-            hir::ExprKind::Bracket { target, items } if items.len() == 1 => {
-                let index = self.fixed_array_index_value_for_expr_inner(items[0], visiting)?;
-                let projected = self.project_index_immutable_expr(*target, index, visiting)?;
-                self.fixed_array_index_value_for_expr_inner(projected, visiting)
-            }
-            _ => None,
-        }
+        self.int_literal_value_for_expr(expr_id, visiting)
+            .and_then(|value| usize::try_from(value).ok())
     }
 
     fn normalized_immutable_source_expr_for_place(
@@ -1575,7 +1563,227 @@ impl<'a> BodyAnalyzer<'a> {
                     Some(expr_id)
                 }
             }
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let selected = if self.bool_literal_value_for_expr(*condition, visiting)? {
+                    self.hir.block(*then_branch).tail?
+                } else {
+                    (*else_branch)?
+                };
+                self.normalized_immutable_source_expr(selected, visiting)
+            }
+            hir::ExprKind::Match { value, arms } => {
+                self.normalized_match_source_expr(*value, arms, visiting)
+            }
             _ => Some(expr_id),
+        }
+    }
+
+    fn normalized_match_source_expr(
+        &self,
+        value: hir::ExprId,
+        arms: &[hir::MatchArm],
+        visiting: &mut ImmutableSourceVisit,
+    ) -> Option<hir::ExprId> {
+        if let Some(scrutinee) = self.bool_literal_value_for_expr(value, visiting) {
+            for arm in arms {
+                let matches = match &self.hir.pattern(arm.pattern).kind {
+                    hir::PatternKind::Bool(pattern) => *pattern == scrutinee,
+                    hir::PatternKind::Path(_) => {
+                        self.path_pattern_bool_literal(arm.pattern, visiting)? == scrutinee
+                    }
+                    hir::PatternKind::Binding(_) | hir::PatternKind::Wildcard => true,
+                    _ => return None,
+                };
+                if !matches {
+                    continue;
+                }
+                let guard = arm
+                    .guard
+                    .map(|guard| self.bool_literal_value_for_expr(guard, visiting))
+                    .unwrap_or(Some(true))?;
+                if guard {
+                    return self.normalized_immutable_source_expr(arm.body, visiting);
+                }
+            }
+            return None;
+        }
+
+        if let Some(scrutinee) = self.int_literal_value_for_expr(value, visiting) {
+            for arm in arms {
+                let matches = match &self.hir.pattern(arm.pattern).kind {
+                    hir::PatternKind::Integer(pattern) => parse_i64_literal(pattern)? == scrutinee,
+                    hir::PatternKind::Path(_) => {
+                        self.path_pattern_int_literal(arm.pattern, visiting)? == scrutinee
+                    }
+                    hir::PatternKind::Binding(_) | hir::PatternKind::Wildcard => true,
+                    _ => return None,
+                };
+                if !matches {
+                    continue;
+                }
+                let guard = arm
+                    .guard
+                    .map(|guard| self.bool_literal_value_for_expr(guard, visiting))
+                    .unwrap_or(Some(true))?;
+                if guard {
+                    return self.normalized_immutable_source_expr(arm.body, visiting);
+                }
+            }
+            return None;
+        }
+
+        for arm in arms {
+            match &self.hir.pattern(arm.pattern).kind {
+                hir::PatternKind::Binding(_) | hir::PatternKind::Wildcard => {
+                    let guard = arm
+                        .guard
+                        .map(|guard| self.bool_literal_value_for_expr(guard, visiting))
+                        .unwrap_or(Some(true))?;
+                    if guard {
+                        return self.normalized_immutable_source_expr(arm.body, visiting);
+                    }
+                }
+                _ => return None,
+            }
+        }
+
+        None
+    }
+
+    fn path_pattern_bool_literal(
+        &self,
+        pattern_id: hir::PatternId,
+        visiting: &mut ImmutableSourceVisit,
+    ) -> Option<bool> {
+        let item_id =
+            item_id_for_value_resolution(self.hir, self.resolution.pattern_resolution(pattern_id)?)?;
+        if !visiting.items.insert(item_id) {
+            return None;
+        }
+        let value = self
+            .const_item_value_expr(item_id)
+            .and_then(|expr_id| self.bool_literal_value_for_expr(expr_id, visiting));
+        visiting.items.remove(&item_id);
+        value
+    }
+
+    fn path_pattern_int_literal(
+        &self,
+        pattern_id: hir::PatternId,
+        visiting: &mut ImmutableSourceVisit,
+    ) -> Option<i64> {
+        let item_id =
+            item_id_for_value_resolution(self.hir, self.resolution.pattern_resolution(pattern_id)?)?;
+        if !visiting.items.insert(item_id) {
+            return None;
+        }
+        let value = self
+            .const_item_value_expr(item_id)
+            .and_then(|expr_id| self.int_literal_value_for_expr(expr_id, visiting));
+        visiting.items.remove(&item_id);
+        value
+    }
+
+    fn bool_literal_value_for_expr(
+        &self,
+        expr_id: hir::ExprId,
+        visiting: &mut ImmutableSourceVisit,
+    ) -> Option<bool> {
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::Bool(value) => Some(*value),
+            hir::ExprKind::Unary {
+                op: UnaryOp::Not,
+                expr,
+            } => self.bool_literal_value_for_expr(*expr, visiting).map(|value| !value),
+            hir::ExprKind::Binary { left, op, right } => {
+                if let (Some(left), Some(right)) = (
+                    self.bool_literal_value_for_expr(*left, visiting),
+                    self.bool_literal_value_for_expr(*right, visiting),
+                ) {
+                    return match op {
+                        BinaryOp::OrOr => Some(left || right),
+                        BinaryOp::AndAnd => Some(left && right),
+                        BinaryOp::EqEq => Some(left == right),
+                        BinaryOp::BangEq => Some(left != right),
+                        _ => None,
+                    };
+                }
+                let left = self.int_literal_value_for_expr(*left, visiting)?;
+                let right = self.int_literal_value_for_expr(*right, visiting)?;
+                match op {
+                    BinaryOp::EqEq => Some(left == right),
+                    BinaryOp::BangEq => Some(left != right),
+                    BinaryOp::Gt => Some(left > right),
+                    BinaryOp::GtEq => Some(left >= right),
+                    BinaryOp::Lt => Some(left < right),
+                    BinaryOp::LtEq => Some(left <= right),
+                    _ => None,
+                }
+            }
+            hir::ExprKind::Name(_)
+            | hir::ExprKind::Member { .. }
+            | hir::ExprKind::Bracket { .. }
+            | hir::ExprKind::If { .. }
+            | hir::ExprKind::Match { .. }
+            | hir::ExprKind::Block(_)
+            | hir::ExprKind::Unsafe(_)
+            | hir::ExprKind::Question(_) => {
+                let source = self.normalized_immutable_source_expr(expr_id, visiting)?;
+                if source == expr_id {
+                    None
+                } else {
+                    self.bool_literal_value_for_expr(source, visiting)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn int_literal_value_for_expr(
+        &self,
+        expr_id: hir::ExprId,
+        visiting: &mut ImmutableSourceVisit,
+    ) -> Option<i64> {
+        match &self.hir.expr(expr_id).kind {
+            hir::ExprKind::Integer(value) => parse_i64_literal(value),
+            hir::ExprKind::Unary {
+                op: UnaryOp::Neg,
+                expr,
+            } => self
+                .int_literal_value_for_expr(*expr, visiting)
+                .and_then(|value| value.checked_neg()),
+            hir::ExprKind::Binary { left, op, right } => {
+                let left = self.int_literal_value_for_expr(*left, visiting)?;
+                let right = self.int_literal_value_for_expr(*right, visiting)?;
+                match op {
+                    BinaryOp::Add => left.checked_add(right),
+                    BinaryOp::Sub => left.checked_sub(right),
+                    BinaryOp::Mul => left.checked_mul(right),
+                    BinaryOp::Div => left.checked_div(right),
+                    BinaryOp::Rem => left.checked_rem(right),
+                    _ => None,
+                }
+            }
+            hir::ExprKind::Name(_)
+            | hir::ExprKind::Member { .. }
+            | hir::ExprKind::Bracket { .. }
+            | hir::ExprKind::If { .. }
+            | hir::ExprKind::Match { .. }
+            | hir::ExprKind::Block(_)
+            | hir::ExprKind::Unsafe(_)
+            | hir::ExprKind::Question(_) => {
+                let source = self.normalized_immutable_source_expr(expr_id, visiting)?;
+                if source == expr_id {
+                    None
+                } else {
+                    self.int_literal_value_for_expr(source, visiting)
+                }
+            }
+            _ => None,
         }
     }
 

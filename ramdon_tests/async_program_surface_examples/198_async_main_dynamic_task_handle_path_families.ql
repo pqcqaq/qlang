@@ -7,6 +7,14 @@ struct Slot {
 }
 
 const INDEX: Int = 0
+const NEXT: Int = 1
+const SELECTED_INDEX: Int = if NEXT == 1 { 0 } else { 1 }
+
+static MATCH_KEY: Int = 1
+static SELECTED_SLOT: Slot = match MATCH_KEY {
+    1 => Slot { value: 0 },
+    _ => Slot { value: 1 },
+}
 
 async fn worker(value: Int) -> Int {
     return value
@@ -66,6 +74,19 @@ async fn main() -> Int {
     }] = worker(inline_match_first + 5)
     let inline_match_second = await inline_match_tasks[0]
 
+    var const_if_tasks = [worker(6), worker(10)]
+    let const_if_first = await const_if_tasks[SELECTED_INDEX]
+    const_if_tasks[0] = worker(const_if_first + 3)
+    let const_if_second = await const_if_tasks[SELECTED_INDEX]
+
+    var static_match_pending = Pending {
+        tasks: [worker(3), worker(11)],
+    }
+    let static_match_alias = static_match_pending.tasks
+    let static_match_first = await static_match_alias[SELECTED_SLOT.value]
+    static_match_pending.tasks[0] = worker(static_match_first + 6)
+    let static_match_second = await static_match_alias[SELECTED_SLOT.value]
+
     return first
         + second
         + tail
@@ -80,4 +101,8 @@ async fn main() -> Int {
         + inline_if_second
         + inline_match_first
         + inline_match_second
+        + const_if_first
+        + const_if_second
+        + static_match_first
+        + static_match_second
 }
