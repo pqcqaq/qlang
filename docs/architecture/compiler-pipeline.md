@@ -101,7 +101,7 @@ source
 - 新增 struct 与 enum struct-variant literal 的 field / missing-field 检查，并复用 same-file local import alias -> local item 的 canonicalization
 - 新增源码层 fixed array type expr `[T; N]`，并把 lexer-style length literal lowering 成统一的语义长度
 - 新增 homogeneous array literal inference，并在 expected fixed-array context 下复用声明元素类型收紧 literal item checking
-- 新增保守 tuple / array indexing：array element projection、支持 lexer-style integer literal 的 constant tuple indexing、array index type checking、tuple out-of-bounds diagnostics
+- 新增保守 tuple / array indexing：array element projection、支持同文件 foldable integer constant expression 的 constant tuple indexing、array index type checking、tuple out-of-bounds diagnostics
 - 新增 equality operand compatibility checking
 - 新增 comparison operand compatible-numeric checking
 - 新增 bare mutable binding assignment diagnostics：`=` 现在会约束 `var` local / `var self`
@@ -119,7 +119,7 @@ source
 
 当前依然保守的边界：
 
-- 未解析成员调用、通用索引协议、import prelude 细节时，表达式类型会主动退化为 `unknown`；当前只对源码层 fixed array、inferred array 和 constant tuple index 开放一层 typing
+- 未解析成员调用、通用索引协议、import prelude 细节时，表达式类型会主动退化为 `unknown`；当前只对源码层 fixed array、inferred array 和同文件 foldable integer constant expression tuple index 开放一层 typing
 - `=` 已不再只限 bare mutable binding：tuple index / struct-field / fixed-array literal index 写入、非 `Task[...]` 元素的 dynamic array assignment，以及 `Task[...]` 动态数组的保守写入/重初始化子集都已开放；更广义的 arbitrary dynamic overlap / complete place-sensitive assignment 仍保持保守
 - local import alias 的 value/callable typing 当前仍只限 same-file、single-segment、可规范化到本地 function / const / static item 的场景；foreign import 与更深 module graph 仍然延后
 - invalid projection receiver diagnostics 当前也只在“类型已知且明确不支持当前语义”时触发；`unknown` / generic / deeper import-module 相关场景仍保持保守，不提前下结论

@@ -242,7 +242,7 @@
 - struct literal 字段存在性、缺失字段、字段类型检查
 - 源码层 fixed array type expr `[T; N]`：保留长度源码文本用于 formatter，同时 lowering 成统一语义长度供 HIR / typeck / query 使用
 - homogeneous array literal inference，与 expected fixed-array context 下的元素类型约束
-- 保守 tuple / array indexing：array element projection、支持 lexer-style integer literal 的 constant tuple indexing、array index type 检查、tuple out-of-bounds 检查
+- 保守 tuple / array indexing：array element projection、支持同文件 foldable integer constant expression 的 constant tuple indexing、array index type 检查、tuple out-of-bounds 检查
 - equality operand compatibility
 - bare mutable binding assignment diagnostics：对 `var` local / `var self` 做 assignment target 可写性检查
 - 非 binding assignment target diagnostics：`const` / `static` / function / import binding 赋值会显式报错；而 tuple-index / struct-field / fixed-array literal-index 写入、非 `Task[...]` 元素的 dynamic array assignment，以及 `Task[...]` 动态数组的保守 write/reinit 子集已经进入稳定实现

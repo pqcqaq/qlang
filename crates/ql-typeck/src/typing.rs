@@ -687,12 +687,13 @@ impl<'a> Checker<'a> {
                     return Ty::Unknown;
                 }
 
-                let ExprKind::Integer(raw_index) = &self.module.expr(index_expr).kind else {
+                let Some(index) = self
+                    .int_literal_expr(index_expr, &mut HashSet::new())
+                    .filter(|index| *index >= 0)
+                else {
                     return Ty::Unknown;
                 };
-                let Some(index) = ql_ast::parse_usize_literal(raw_index) else {
-                    return Ty::Unknown;
-                };
+                let index = index as usize;
 
                 if let Some(item_ty) = tuple_items.get(index) {
                     item_ty.clone()
@@ -2167,18 +2168,15 @@ impl<'a> Checker<'a> {
 
                 match target_ty {
                     Ty::Tuple(_) if items.len() == 1 => {
-                        let supported_index = matches!(
-                            self.module.expr(items[0]).kind,
-                            ExprKind::Integer(_) | ExprKind::Name(_)
-                        ) && self
+                        let supported_index = self
                             .int_literal_expr(items[0], &mut HashSet::new())
-                            .is_some();
+                            .is_some_and(|index| index >= 0);
                         if supported_index {
                             self.check_assignment_target_with_anchor(*target, anchor_span, true)
                         } else {
                             unsupported_target(
                                 self,
-                                "assignment through tuple indexing currently requires an integer literal index or foldable same-file integer item name"
+                                "assignment through tuple indexing currently requires a non-negative integer literal index or foldable same-file integer constant expression"
                                     .to_string(),
                             )
                         }

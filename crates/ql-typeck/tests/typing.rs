@@ -1874,25 +1874,33 @@ fn main() -> Int {
 }
 
 #[test]
-fn accepts_const_backed_tuple_assignment_targets() {
+fn accepts_foldable_const_backed_tuple_assignment_targets() {
     let diagnostics = diagnostic_messages(
         r#"
-use INDEX as SLOT
-const INDEX: Int = 0
-static NEXT: Int = 1
+use INDEXES as ALIAS
+
+struct Slots {
+    left: Int,
+    right: Int,
+}
+
+const BASE: Int = 0
+const NEXT: Int = BASE + 1
+const INDEXES: Slots = Slots { left: BASE, right: NEXT }
+static EDGE: Int = NEXT
 
 fn main() -> Int {
     var pair = (1, 2)
-    let first = pair[SLOT] = 7
-    let second = pair[NEXT] = 9
-    return first + second
+    let first = pair[ALIAS.left + 0] = 7
+    let second = pair[EDGE - 0] = 9
+    return pair[NEXT - 1] + second
 }
 "#,
     );
 
     assert!(
         diagnostics.is_empty(),
-        "expected const-backed tuple assignment target to type-check, got {diagnostics:?}"
+        "expected foldable const-backed tuple read/write indexing to type-check, got {diagnostics:?}"
     );
 }
 

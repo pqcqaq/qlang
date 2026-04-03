@@ -1,7 +1,14 @@
-use INDEX as SLOT
+use INDEXES as ALIAS
 
-const INDEX: Int = 0
-static NEXT: Int = 1
+struct Slots {
+    left: Int,
+    right: Int,
+}
+
+const BASE: Int = 0
+const NEXT: Int = BASE + 1
+const INDEXES: Slots = Slots { left: BASE, right: NEXT }
+static EDGE: Int = NEXT
 
 async fn worker(value: Int) -> Int {
     return value
@@ -9,7 +16,7 @@ async fn worker(value: Int) -> Int {
 
 async fn main() -> Int {
     var pair = (1, 2)
-    let first = pair[SLOT] = await worker(8)
-    let second = pair[NEXT] = first + 6
-    return first + second
+    let first = pair[ALIAS.left + 0] = await worker(8)
+    let second = pair[EDGE - 0] = first + 6
+    return pair[NEXT - 1] + second
 }
