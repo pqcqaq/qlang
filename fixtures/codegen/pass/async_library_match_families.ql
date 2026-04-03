@@ -7,6 +7,9 @@ use pack_values as pack
 use pick_slot as slot
 use truthy as flag
 use scalar_matches as equal
+use enabled as allow
+use flag_state as make
+use seed as literal
 
 struct Slot {
     ready: Bool,
@@ -196,6 +199,24 @@ async fn helper() -> Int {
         _ => 0,
     }
 
+    let fourteenth = await fetch_flag(value: true)
+    let from_alias_backed_bool = match fourteenth {
+        true if allow(extra: flag(pack(3)[slot(3)] == literal(4)), state: make(flag(pack(3)[slot(3)] == literal(4)))) => 10,
+        false => 0,
+    }
+
+    let fifteenth = await load_scalar(value: 3)
+    let from_alias_backed_inline = match fifteenth {
+        current if [pack(current)[slot(current)], literal(8), literal(9)][0] == literal(4) => 12,
+        _ => 0,
+    }
+
+    let sixteenth = await load_scalar(value: 3)
+    let from_alias_backed_guard_call = match sixteenth {
+        current if equal(expected: literal(4), value: [pack(current)[slot(current)], literal(8), 9][0]) => 20,
+        _ => 0,
+    }
+
     return from_scalar
         + from_aggregate
         + from_pair_projection
@@ -209,4 +230,7 @@ async fn helper() -> Int {
         + from_call_backed_bool
         + from_call_backed_inline
         + from_call_backed_guard_call
+        + from_alias_backed_bool
+        + from_alias_backed_inline
+        + from_alias_backed_guard_call
 }
