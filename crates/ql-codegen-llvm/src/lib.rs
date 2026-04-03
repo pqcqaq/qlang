@@ -5745,6 +5745,29 @@ fn fold_bool_guard_against_scrutinee(
     }
 }
 
+fn invert_bool_guard_scrutinee_relation(
+    relation: BoolGuardScrutineeRelation,
+) -> BoolGuardScrutineeRelation {
+    match relation {
+        BoolGuardScrutineeRelation::Same => BoolGuardScrutineeRelation::Negated,
+        BoolGuardScrutineeRelation::Negated => BoolGuardScrutineeRelation::Same,
+    }
+}
+
+fn bool_guard_relation_from_scrutinee_bool_compare(
+    relation: BoolGuardScrutineeRelation,
+    op: BinaryOp,
+    literal: bool,
+) -> Option<BoolGuardScrutineeRelation> {
+    match (op, literal) {
+        (BinaryOp::EqEq, true) | (BinaryOp::BangEq, false) => Some(relation),
+        (BinaryOp::EqEq, false) | (BinaryOp::BangEq, true) => {
+            Some(invert_bool_guard_scrutinee_relation(relation))
+        }
+        _ => None,
+    }
+}
+
 fn bool_guard_relation_to_scrutinee(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -5756,6 +5779,45 @@ fn bool_guard_relation_to_scrutinee(
     expr_id: hir::ExprId,
 ) -> Option<BoolGuardScrutineeRelation> {
     match &module.expr(expr_id).kind {
+        hir::ExprKind::Binary {
+            left,
+            op: op @ (BinaryOp::EqEq | BinaryOp::BangEq),
+            right,
+        } => {
+            if let Some(relation) = bool_guard_relation_to_scrutinee(
+                module,
+                resolution,
+                body,
+                local_types,
+                immutable_place_aliases,
+                scrutinee,
+                arm_pattern,
+                *left,
+            ) {
+                let literal = guard_literal_bool(module, resolution, *right)?;
+                return bool_guard_relation_from_scrutinee_bool_compare(
+                    relation, *op, literal,
+                );
+            }
+
+            if let Some(relation) = bool_guard_relation_to_scrutinee(
+                module,
+                resolution,
+                body,
+                local_types,
+                immutable_place_aliases,
+                scrutinee,
+                arm_pattern,
+                *right,
+            ) {
+                let literal = guard_literal_bool(module, resolution, *left)?;
+                return bool_guard_relation_from_scrutinee_bool_compare(
+                    relation, *op, literal,
+                );
+            }
+
+            None
+        }
         hir::ExprKind::Unary {
             op: UnaryOp::Not,
             expr,
@@ -8914,6 +8976,33 @@ fn main() -> Int {
         );
 
         assert!(rendered.contains("br i1"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_match_lowering_for_scrutinee_bool_comparison_guard() {
+        let rendered = emit_with_mode(
+            r#"
+use ENABLE as ON
+
+const ENABLE: Bool = true
+
+fn choose(flag: Bool) -> Int {
+    return match flag {
+        true if flag == ON => 1,
+        false => 0,
+    }
+}
+
+fn main() -> Int {
+    return choose(true)
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("br i1"));
+        assert!(!rendered.contains("bb0_match_guard0:"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

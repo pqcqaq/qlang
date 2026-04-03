@@ -79,6 +79,12 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/11_sync_match_scrutinee_self_guard.ql",
             expected_exit: 42,
         },
+        ExecutableExampleCase {
+            name: "sync_match_scrutinee_bool_comparison_guard",
+            source_relative:
+                "ramdon_tests/executable_examples/12_sync_match_scrutinee_bool_comparison_guard.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(
