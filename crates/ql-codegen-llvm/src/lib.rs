@@ -5343,6 +5343,42 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_guard_loadable_expr(
+        &mut self,
+        output: &mut String,
+        expr_id: hir::ExprId,
+        span: Span,
+        guard_binding: Option<&GuardBindingValue>,
+    ) -> LoweredValue {
+        if let Some((place, ty)) = guard_expr_place_with_ty(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            self.body,
+            &self.prepared.local_types,
+            None,
+            expr_id,
+        ) {
+            assert!(
+                !is_void_ty(&ty),
+                "prepared bool guard lowering at {span:?} should only render valued loadable guard expressions"
+            );
+            return self.render_operand(output, &Operand::Place(place), span);
+        }
+
+        let (ptr, ty) = self
+            .render_guard_projection_pointer(output, expr_id, span, guard_binding)
+            .unwrap_or_else(|| {
+                panic!(
+                    "prepared bool guard lowering at {span:?} should only render supported loadable guard expressions"
+                )
+            });
+        assert!(
+            !is_void_ty(&ty),
+            "prepared bool guard lowering at {span:?} should only render valued loadable guard expressions"
+        );
+        self.render_loaded_pointer_value(output, ptr, ty, span)
+    }
+
     fn render_guard_call_value(
         &mut self,
         output: &mut String,
@@ -5381,23 +5417,31 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             .into_iter()
             .zip(signature.params.iter())
             .map(|(arg, param)| {
-                let expected_kind = guard_scalar_kind_for_ty(&param.ty).unwrap_or_else(|| {
-                    panic!(
-                        "prepared bool guard lowering at {span:?} should only render scalar guard-call parameters"
-                    )
-                });
                 let expr_id = guard_call_arg_expr(arg);
-                let rendered = match expected_kind {
-                    GuardScalarKind::Bool => {
-                        self.render_bool_guard_expr(output, expr_id, span, guard_binding)
+                let rendered = match guard_scalar_kind_for_ty(&param.ty) {
+                    Some(GuardScalarKind::Bool) => {
+                        let rendered =
+                            self.render_bool_guard_expr(output, expr_id, span, guard_binding);
+                        assert!(
+                            rendered.ty.is_bool(),
+                            "prepared bool guard lowering at {span:?} should only render compatible bool guard-call arguments"
+                        );
+                        rendered
                     }
-                    GuardScalarKind::Int => {
-                        self.render_guard_scalar_expr(output, expr_id, span, guard_binding)
+                    Some(GuardScalarKind::Int) => {
+                        let rendered =
+                            self.render_guard_scalar_expr(output, expr_id, span, guard_binding);
+                        assert!(
+                            rendered.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                            "prepared bool guard lowering at {span:?} should only render compatible Int guard-call arguments"
+                        );
+                        rendered
                     }
+                    None => self.render_guard_loadable_expr(output, expr_id, span, guard_binding),
                 };
                 assert!(
-                    guard_scalar_kind_for_ty(&rendered.ty) == Some(expected_kind),
-                    "prepared bool guard lowering at {span:?} should only render compatible scalar guard-call arguments"
+                    param.ty.compatible_with(&rendered.ty),
+                    "prepared bool guard lowering at {span:?} should only render compatible guard-call arguments"
                 );
                 format!("{} {}", rendered.llvm_ty, rendered.repr)
             })
@@ -7363,19 +7407,33 @@ fn supported_guard_call<'a>(
     }
     let ordered_args = ordered_guard_call_args(args, signature)?;
     for (arg, param) in ordered_args.iter().copied().zip(signature.params.iter()) {
-        let expected_kind = guard_scalar_kind_for_ty(&param.ty)?;
         let expr_id = guard_call_arg_expr(arg);
-        let actual_kind = supported_guard_scalar_expr(
-            module,
-            resolution,
-            signatures,
-            body,
-            local_types,
-            arm_pattern,
-            expr_id,
-        )?;
-        if actual_kind != expected_kind {
-            return None;
+        if let Some(expected_kind) = guard_scalar_kind_for_ty(&param.ty) {
+            let actual_kind = supported_guard_scalar_expr(
+                module,
+                resolution,
+                signatures,
+                body,
+                local_types,
+                arm_pattern,
+                expr_id,
+            )?;
+            if actual_kind != expected_kind {
+                return None;
+            }
+        } else {
+            let actual_ty = guard_expr_ty(
+                module,
+                resolution,
+                signatures,
+                body,
+                local_types,
+                Some(arm_pattern),
+                expr_id,
+            )?;
+            if !param.ty.compatible_with(&actual_ty) {
+                return None;
+            }
         }
     }
     Some((function, signature, ordered_args))
@@ -9891,8 +9949,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn rejects_guarded_match_lowering_with_non_scalar_function_call_guard_args() {
-        let messages = emit_error(
+    fn emits_match_guard_aggregate_call_arg_lowering() {
+        let rendered = emit_with_mode(
             r#"
 struct State {
     ready: Bool,
@@ -9902,24 +9960,48 @@ fn enabled(state: State) -> Bool {
     return state.ready
 }
 
+fn pair(value: Int) -> (Int, Int) {
+    return (0, value)
+}
+
+fn matches(pair: (Int, Int), expected: Int) -> Bool {
+    return pair[1] == expected
+}
+
+fn values(seed: Int) -> [Int; 3] {
+    return [seed, seed + 1, seed + 2]
+}
+
+fn contains(values: [Int; 3], expected: Int) -> Bool {
+    return values[1] == expected
+}
+
 fn main() -> Int {
-    let flag = true
-    let state = State { ready: false }
-    return match flag {
-        true if enabled(state) => 1,
-        false => 0,
+    let state = State { ready: true }
+    let first = match state {
+        current if enabled(current) => 10,
+        _ => 0,
     }
+    let second = match 22 {
+        current if matches(pair(current), 22) => 12,
+        _ => 0,
+    }
+    let third = match 3 {
+        current if contains(values(current), 4) => 20,
+        _ => 0,
+    }
+    return first + second + third
 }
 "#,
+            CodegenMode::Program,
         );
 
-        assert!(messages.iter().any(|message| {
-            message == "LLVM IR backend foundation does not support `match` lowering yet"
-        }));
-        assert!(messages.iter().all(|message| {
-            !message.contains("could not resolve LLVM type for local")
-                && !message.contains("could not infer LLVM type for MIR local")
-        }));
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.matches("call i1 @ql_").count() >= 3);
+        assert!(rendered.contains("call i1 @ql_1_enabled({ i1 }"));
+        assert!(rendered.contains("call i1 @ql_3_matches({ i64, i64 }"));
+        assert!(rendered.contains("call i1 @ql_5_contains([3 x i64]"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
     #[test]

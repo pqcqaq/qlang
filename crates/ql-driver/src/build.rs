@@ -10497,6 +10497,78 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_match_guard_aggregate_call_args() {
+        let dir = TestDir::new("ql-driver-llvm-ir-match-guard-aggregate-call-args");
+        let source = dir.write(
+            "match_guard_aggregate_call_args.ql",
+            r#"
+struct State {
+    ready: Bool,
+}
+
+fn enabled(state: State) -> Bool {
+    return state.ready
+}
+
+fn pair(value: Int) -> (Int, Int) {
+    return (0, value)
+}
+
+fn matches(pair: (Int, Int), expected: Int) -> Bool {
+    return pair[1] == expected
+}
+
+fn values(seed: Int) -> [Int; 3] {
+    return [seed, seed + 1, seed + 2]
+}
+
+fn contains(values: [Int; 3], expected: Int) -> Bool {
+    return values[1] == expected
+}
+
+fn main() -> Int {
+    let state = State { ready: true }
+    let first = match state {
+        current if enabled(current) => 10,
+        _ => 0,
+    }
+    let second = match 22 {
+        current if matches(pair(current), 22) => 12,
+        _ => 0,
+    }
+    let third = match 3 {
+        current if contains(values(current), 4) => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/match_guard_aggregate_call_args.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with match-guard aggregate call args should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.matches("call i1 @ql_").count() >= 3);
+        assert!(rendered.contains("call i1 @ql_1_enabled({ i1 }"));
+        assert!(rendered.contains("call i1 @ql_3_matches({ i64, i64 }"));
+        assert!(rendered.contains("call i1 @ql_5_contains([3 x i64]"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_static_item_values_in_expressions() {
         let dir = TestDir::new("ql-driver-llvm-ir-static-item-values-in-expressions");
         let source = dir.write(
