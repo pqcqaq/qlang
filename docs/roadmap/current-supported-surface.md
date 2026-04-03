@@ -57,7 +57,7 @@
   - tuple literal index projection
   - struct field
   - fixed-array literal index projection
-  - projected-root / nested projected-root / call-root nested projected-root tuple / struct-field / fixed-array literal-index chains
+  - projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root tuple / struct-field / fixed-array literal-index chains
 - 动态数组索引赋值的当前可运行子集
   - non-`Task[...]` element arrays
   - nested dynamic array projections
@@ -97,7 +97,7 @@
   - tuple literal index projection
   - struct field
   - fixed-array literal index projection
-  - projected-root / nested projected-root / call-root nested projected-root tuple / struct-field / fixed-array literal-index chains
+  - projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root tuple / struct-field / fixed-array literal-index chains
 - 动态 `Task[...]` 数组索引赋值的当前可运行子集
   - generic direct-root write-before-consume success path
   - generic projected-root write-before-consume success path
@@ -188,13 +188,13 @@
 
 截至当前代码：
 
-- sync executable examples：`51`
-- async executable examples：`211`
+- sync executable examples：`53`
+- async executable examples：`213`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `214`，但真实 `.ql` 文件数是 `211`，不是 `214`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `211` 个 async executable case 和 `51` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `216`，但真实 `.ql` 文件数是 `213`，不是 `216`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `213` 个 async executable case 和 `53` 个 sync executable case
 
 ## 当前明确未开放
 

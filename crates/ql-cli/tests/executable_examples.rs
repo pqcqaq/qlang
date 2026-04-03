@@ -279,6 +279,16 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/51_sync_call_root_nested_projected_assignment_expressions.ql",
             expected_exit: 14,
         },
+        ExecutableExampleCase {
+            name: "sync_import_alias_call_root_nested_projected_assignment_expressions",
+            source_relative: "ramdon_tests/executable_examples/52_sync_import_alias_call_root_nested_projected_assignment_expressions.ql",
+            expected_exit: 14,
+        },
+        ExecutableExampleCase {
+            name: "sync_inline_nested_projected_assignment_expressions",
+            source_relative: "ramdon_tests/executable_examples/53_sync_inline_nested_projected_assignment_expressions.ql",
+            expected_exit: 14,
+        },
     ];
 
     assert_example_cases_run(
@@ -1356,6 +1366,16 @@ fn async_program_surface_examples_build_and_run() {
         ExecutableExampleCase {
             name: "async_call_root_nested_projected_assignment_expressions",
             source_relative: "ramdon_tests/async_program_surface_examples/214_async_call_root_nested_projected_assignment_expressions.ql",
+            expected_exit: 14,
+        },
+        ExecutableExampleCase {
+            name: "async_import_alias_call_root_nested_projected_assignment_expressions",
+            source_relative: "ramdon_tests/async_program_surface_examples/215_async_import_alias_call_root_nested_projected_assignment_expressions.ql",
+            expected_exit: 14,
+        },
+        ExecutableExampleCase {
+            name: "async_inline_nested_projected_assignment_expressions",
+            source_relative: "ramdon_tests/async_program_surface_examples/216_async_inline_nested_projected_assignment_expressions.ql",
             expected_exit: 14,
         },
     ];
