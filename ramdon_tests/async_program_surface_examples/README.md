@@ -156,12 +156,13 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `155_async_main_import_alias_inline_projected_fixed_shape_for_await.ql`
 - `156_async_main_awaited_aggregate_projected_fixed_shape_for_await.ql`
 - `157_async_main_import_alias_awaited_aggregate_projected_fixed_shape_for_await.ql`
+- `158_async_main_nested_call_root_projected_task_handle_consumes.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-fifty-seven examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-fifty-eight examples with the real local toolchain and locks their exit codes.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -190,7 +191,7 @@ Current status:
 - `140_async_main_import_alias_projected_static_array_for_await.ql` now locks the same-file import-alias projected static-root array variant, where `DATA.values` is a projected `[Int; 2]` root reached through a same-file `static` item alias, and still exits with `42`.
 - `141_async_main_import_alias_const_tuple_for_await.ql` now locks the same-file import-alias direct const-root tuple variant, where `for await` iterates a `(Int, Int)` root reached directly through a same-file `const` item alias, and still exits with `42`.
 - `142_async_main_import_alias_static_array_for_await.ql` now locks the same-file import-alias direct static-root array variant, where `for await` iterates a `[Int; 2]` root reached directly through a same-file `static` item alias, and still exits with `42`.
-- `143_async_main_call_root_projected_task_handle_consumes.ql` now locks the direct call-root projected task-handle consume variant, where `await tuple_tasks(10)[0]`, `spawn pair_tasks(11).left`, `await bundle_tasks(20).tasks[0]`, and `spawn bundle_tasks(0).tasks[1]` all consume projected task handles directly from call-root and nested call-root expressions, and still exit with `42`.
+- `143_async_main_call_root_projected_task_handle_consumes.ql` now locks the direct call-root projected task-handle consume variant, where `await tuple_tasks(10)[0]`, `spawn pair_tasks(11).left`, `await bundle_tasks(20).tasks[0]`, and `spawn bundle_tasks(0).tasks[1]` all consume projected task handles directly from call-root or projected call-root expressions and still exit with `42`.
 - `144_async_main_call_root_fixed_shape_for_await.ql` now locks the direct call-root fixed-shape `for await` variant, where `for await value in array_values(8)`, `for await value in tuple_values(4)`, `for await value in task_values(2)`, and `for await value in make_pending(5).tasks` all iterate directly from call-root or projected call-root fixed-shape iterable expressions and still exit with `42`.
 - `145_async_main_import_alias_call_root_fixed_shape_for_await.ql` now locks the same-file import-alias call-root fixed-shape `for await` variant, where `for await value in values(8)`, `for await value in pairs(4)`, `for await value in tasks(2)`, and `for await value in pending(5).tasks` all iterate directly from import-aliased call-root or projected import-aliased call-root fixed-shape iterable expressions and still exit with `42`.
 - `146_async_main_nested_call_root_fixed_shape_for_await.ql` now locks the nested call-root fixed-shape `for await` variant, where `for await value in array_env(8).payload.values`, `for await value in tuple_env(4).payload.values`, `for await value in task_tuple_env(2).payload.values`, and `for await value in deep_task_env(5).outer.payload.tasks` all iterate directly from nested projected call-root fixed-shape iterable expressions and still exit with `42`.
@@ -205,6 +206,7 @@ Current status:
 - `155_async_main_import_alias_inline_projected_fixed_shape_for_await.ql` now locks the same-file import-alias inline aggregate projected fixed-shape `for await` variant, where `for await value in (ScalarArrayPayload { values: [make_value(8), make_value(9)] }).values`, `for await value in (ScalarTuplePayload { values: (make_value(4), make_value(5)) }).values`, `for await value in (TaskTuplePayload { values: (run(2), run(3)) }).values`, and `for await value in (DeepPending { outer: PendingEnvelope { payload: Pending { tasks: [run(5), run(6)] } } }).outer.payload.tasks` all iterate directly from import-aliased inline aggregate projected iterable expressions and still exit with `42`.
 - `156_async_main_awaited_aggregate_projected_fixed_shape_for_await.ql` now locks the awaited-aggregate projected fixed-shape `for await` variant, where `for await value in (await array_env(8)).payload.values`, `for await value in (await tuple_env(4)).payload.values`, `for await value in (await task_tuple_env(2)).payload.values`, and `for await value in (await deep_task_env(5)).outer.payload.tasks` all iterate directly from awaited aggregate projected iterable expressions and still exit with `42`.
 - `157_async_main_import_alias_awaited_aggregate_projected_fixed_shape_for_await.ql` now locks the same-file import-alias awaited-aggregate projected fixed-shape `for await` variant, where `for await value in (await arrays(8)).payload.values`, `for await value in (await tuples(4)).payload.values`, `for await value in (await task_tuples(2)).payload.values`, and `for await value in (await deep(5)).outer.payload.tasks` all iterate directly from import-aliased awaited aggregate projected iterable expressions and still exit with `42`.
+- `158_async_main_nested_call_root_projected_task_handle_consumes.ql` now locks the direct nested call-root projected task-handle consume variant, where `await tuple_env(10).payload.values[0]`, `spawn pair_env(11).payload.left`, `await deep_env(20).outer.payload.tasks[0]`, and `spawn deep_env(0).outer.payload.tasks[1]` all consume projected task handles directly from nested call-root expressions and still exit with `42`.
 
 Expected exit codes:
 
@@ -362,6 +364,7 @@ Expected exit codes:
 - `155_async_main_import_alias_inline_projected_fixed_shape_for_await.ql` -> `42`
 - `156_async_main_awaited_aggregate_projected_fixed_shape_for_await.ql` -> `42`
 - `157_async_main_import_alias_awaited_aggregate_projected_fixed_shape_for_await.ql` -> `42`
+- `158_async_main_nested_call_root_projected_task_handle_consumes.ql` -> `42`
 
 Try one file directly:
 
