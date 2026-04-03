@@ -124,6 +124,7 @@ P4/P5 地基已经落地，且当前正在保守扩展 Phase 7 async library/pro
 - 同一条 dynamic fixed-array `Task[...]` 稳定化路径现在也接受 foldable integer arithmetic expression，因此 `tasks[1 - 1]`、`tasks[slot.value + 0]` 与 `tasks[ARITH_INDEX]` 这类 consume/reinit 也会折回 concrete literal/projection lifecycle
 - 同一条 dynamic fixed-array `Task[...]` 稳定化路径现在也接受 direct inline foldable `if` / 最小 literal `match` integer expression，因此 `tasks[if true { 0 } else { 1 }]` 与 `tasks[match 1 { 1 => 0, _ => 1 }]` 这类 consume/reinit 会直接折回 concrete literal lifecycle
 - 同一条 dynamic fixed-array `Task[...]` 稳定化路径现在也接受 branch-selected `const` / `static` item value，因此 item 里经由 foldable `if` / 最小 literal `match` 选出的整数值或聚合投影值，也能在 `tasks[SELECTED]` 与 `tasks[SELECTED_SLOT.value]` 这类 consume/reinit 上折回 concrete literal/projection lifecycle
+- 上述 branch-selected item-value 路径现在也已显式锁进 same-file `use ... as ...` alias public surface，因此 `tasks[SELECTED_INDEX_ALIAS]` 与 `tasks[SELECTED_SLOT_ALIAS.value]` 这类 executable consume/reinit 不再只依赖内部 canonicalization 假设
 - arithmetic / compare / `Bool` unary `!` / short-circuit `&&` / `||` / branch / return
 - `.ll` 文本产物始终可用
 - `.obj` / `.o` / 基础 `.exe` 产物依赖 clang-style compiler

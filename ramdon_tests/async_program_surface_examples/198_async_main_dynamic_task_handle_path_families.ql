@@ -1,3 +1,6 @@
+use SELECTED_INDEX as SELECTED_INDEX_ALIAS
+use SELECTED_SLOT as SELECTED_SLOT_ALIAS
+
 struct Pending {
     tasks: [Task[Int]; 2],
 }
@@ -100,6 +103,19 @@ async fn main() -> Int {
     arithmetic_projected_tasks[0] = worker(arithmetic_projected_first + 4)
     let arithmetic_projected_second = await arithmetic_projected_tasks[1 - 1]
 
+    var aliased_branch_const_tasks = [worker(9), worker(14)]
+    let aliased_branch_const_first = await aliased_branch_const_tasks[SELECTED_INDEX_ALIAS]
+    aliased_branch_const_tasks[0] = worker(aliased_branch_const_first + 1)
+    let aliased_branch_const_second = await aliased_branch_const_tasks[SELECTED_INDEX_ALIAS]
+
+    var aliased_branch_static_pending = Pending {
+        tasks: [worker(4), worker(15)],
+    }
+    let aliased_branch_static_alias = aliased_branch_static_pending.tasks
+    let aliased_branch_static_first = await aliased_branch_static_alias[SELECTED_SLOT_ALIAS.value]
+    aliased_branch_static_pending.tasks[0] = worker(aliased_branch_static_first + 5)
+    let aliased_branch_static_second = await aliased_branch_static_alias[SELECTED_SLOT_ALIAS.value]
+
     return first
         + second
         + tail
@@ -122,4 +138,8 @@ async fn main() -> Int {
         + arithmetic_const_second
         + arithmetic_projected_first
         + arithmetic_projected_second
+        + aliased_branch_const_first
+        + aliased_branch_const_second
+        + aliased_branch_static_first
+        + aliased_branch_static_second
 }
