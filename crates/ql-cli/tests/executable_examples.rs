@@ -1038,6 +1038,11 @@ fn async_program_surface_examples_build_and_run() {
             source_relative: "ramdon_tests/async_program_surface_examples/162_async_main_import_alias_awaited_match_guards.ql",
             expected_exit: 62,
         },
+        ExecutableExampleCase {
+            name: "async_main_awaited_match_nested_call_root_guards",
+            source_relative: "ramdon_tests/async_program_surface_examples/163_async_main_awaited_match_nested_call_root_guards.ql",
+            expected_exit: 42,
+        },
     ];
 
     assert_example_cases_run(

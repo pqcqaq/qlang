@@ -22,6 +22,10 @@ struct PairState {
     values: Pair,
 }
 
+struct Bundle {
+    values: [Int; 3],
+}
+
 async fn fetch_value(value: Int) -> Int {
     return value
 }
@@ -57,6 +61,24 @@ fn pair(value: Int) -> Pair {
 
 fn matches(expected: Int, value: Pair) -> Bool {
     return value.right == expected
+}
+
+fn bundle(seed: Int) -> Bundle {
+    return Bundle {
+        values: [seed, seed + 1, seed + 2],
+    }
+}
+
+fn slot(value: Int) -> Int {
+    return value - 2
+}
+
+fn ready(value: Int) -> Bool {
+    return value == 4
+}
+
+fn scalar_matches(value: Int, expected: Int) -> Bool {
+    return value == expected
 }
 
 async fn helper() -> Int {
@@ -102,6 +124,24 @@ async fn helper() -> Int {
         _ => 0,
     }
 
+    let eighth = await load_scalar(value: 3)
+    let from_nested_projection = match eighth {
+        current if bundle(current).values[slot(current)] == 4 => 10,
+        _ => 0,
+    }
+
+    let ninth = await load_scalar(value: 3)
+    let from_nested_direct_call = match ninth {
+        current if ready(bundle(current).values[slot(current)]) => 12,
+        _ => 0,
+    }
+
+    let tenth = await load_scalar(value: 3)
+    let from_nested_guard_call = match tenth {
+        current if scalar_matches(value: bundle(current).values[slot(current)], expected: 4) => 20,
+        _ => 0,
+    }
+
     return from_scalar
         + from_aggregate
         + from_pair_projection
@@ -109,6 +149,9 @@ async fn helper() -> Int {
         + from_alias_scalar
         + from_alias_projection
         + from_alias_call_root
+        + from_nested_projection
+        + from_nested_direct_call
+        + from_nested_guard_call
 }
 
 extern "c" pub fn q_export() -> Int {
