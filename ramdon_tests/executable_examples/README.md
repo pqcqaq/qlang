@@ -60,6 +60,9 @@ Files:
 - `54_sync_call_root_nested_projected_dynamic_assignment_expressions.ql`: sync call-root nested projected dynamic assignment-expression lowering in executable mode, where `make_env().payload.values[index] = ...` yields a result value that immediately participates in later scalar computation and still exits with `12`
 - `55_sync_import_alias_call_root_nested_projected_dynamic_assignment_expressions.ql`: sync import-alias call-root nested projected dynamic assignment-expression lowering in executable mode, where `env().payload.values[index] = ...` yields a result value that immediately participates in later scalar computation and still exits with `12`
 - `56_sync_inline_nested_projected_dynamic_assignment_expressions.ql`: sync inline nested projected dynamic assignment-expression lowering in executable mode, where `(Env { ... }).payload.values[index] = ...` yields a result value that immediately participates in later scalar computation and still exits with `12`
+- `57_sync_call_root_nested_projected_tuple_assignment_expressions.ql`: sync call-root nested projected tuple assignment-expression lowering in executable mode, where `make_env().inner.pair[0] = ...` and `make_env().inner.pair[1] = ...` both yield a result value that immediately participates in later scalar computation and still exit with `20`
+- `58_sync_import_alias_call_root_nested_projected_tuple_assignment_expressions.ql`: sync import-alias call-root nested projected tuple assignment-expression lowering in executable mode, where `env().inner.pair[0] = ...` and `env().inner.pair[1] = ...` both yield a result value that immediately participates in later scalar computation and still exit with `20`
+- `59_sync_inline_nested_projected_tuple_assignment_expressions.ql`: sync inline nested projected tuple assignment-expression lowering in executable mode, where `(Env { ... }).inner.pair[0] = ...` and `(Env { ... }).inner.pair[1] = ...` both yield a result value that immediately participates in later scalar computation and still exit with `20`
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -122,6 +125,9 @@ Expected exit codes for the sync examples:
 - `54_sync_call_root_nested_projected_dynamic_assignment_expressions.ql` -> `12`
 - `55_sync_import_alias_call_root_nested_projected_dynamic_assignment_expressions.ql` -> `12`
 - `56_sync_inline_nested_projected_dynamic_assignment_expressions.ql` -> `12`
+- `57_sync_call_root_nested_projected_tuple_assignment_expressions.ql` -> `20`
+- `58_sync_import_alias_call_root_nested_projected_tuple_assignment_expressions.ql` -> `20`
+- `59_sync_inline_nested_projected_tuple_assignment_expressions.ql` -> `20`
 
 Build one verified executable example:
 

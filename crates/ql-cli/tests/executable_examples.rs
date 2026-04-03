@@ -304,6 +304,21 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/56_sync_inline_nested_projected_dynamic_assignment_expressions.ql",
             expected_exit: 12,
         },
+        ExecutableExampleCase {
+            name: "sync_call_root_nested_projected_tuple_assignment_expressions",
+            source_relative: "ramdon_tests/executable_examples/57_sync_call_root_nested_projected_tuple_assignment_expressions.ql",
+            expected_exit: 20,
+        },
+        ExecutableExampleCase {
+            name: "sync_import_alias_call_root_nested_projected_tuple_assignment_expressions",
+            source_relative: "ramdon_tests/executable_examples/58_sync_import_alias_call_root_nested_projected_tuple_assignment_expressions.ql",
+            expected_exit: 20,
+        },
+        ExecutableExampleCase {
+            name: "sync_inline_nested_projected_tuple_assignment_expressions",
+            source_relative: "ramdon_tests/executable_examples/59_sync_inline_nested_projected_tuple_assignment_expressions.ql",
+            expected_exit: 20,
+        },
     ];
 
     assert_example_cases_run(
@@ -1407,6 +1422,21 @@ fn async_program_surface_examples_build_and_run() {
             name: "async_inline_nested_projected_dynamic_assignment_expressions",
             source_relative: "ramdon_tests/async_program_surface_examples/219_async_inline_nested_projected_dynamic_assignment_expressions.ql",
             expected_exit: 14,
+        },
+        ExecutableExampleCase {
+            name: "async_call_root_nested_projected_tuple_assignment_expressions",
+            source_relative: "ramdon_tests/async_program_surface_examples/220_async_call_root_nested_projected_tuple_assignment_expressions.ql",
+            expected_exit: 22,
+        },
+        ExecutableExampleCase {
+            name: "async_import_alias_call_root_nested_projected_tuple_assignment_expressions",
+            source_relative: "ramdon_tests/async_program_surface_examples/221_async_import_alias_call_root_nested_projected_tuple_assignment_expressions.ql",
+            expected_exit: 22,
+        },
+        ExecutableExampleCase {
+            name: "async_inline_nested_projected_tuple_assignment_expressions",
+            source_relative: "ramdon_tests/async_program_surface_examples/222_async_inline_nested_projected_tuple_assignment_expressions.ql",
+            expected_exit: 22,
         },
     ];
 
