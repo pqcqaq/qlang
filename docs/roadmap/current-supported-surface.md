@@ -99,6 +99,7 @@
 
 - `Task[T]` 类型面
 - direct async call / helper-returned task handle / `spawn` / `await`
+  - bound local task-handle `spawn`
   - zero-sized helper-returned / forwarded task-handle flow
   - zero-sized aggregate params on direct `await` / `spawn`
   - recursive aggregate params on direct `await` / `spawn`
@@ -117,10 +118,13 @@
   - zero-sized tuple / fixed-array / struct projection reinit
   - direct call-root / awaited-aggregate / import-alias / inline / nested-call-root zero-sized consume
   - direct call-root / nested call-root / awaited-aggregate / inline aggregate
-- zero-sized conditional task-handle control flow
-  - branch-local `spawn` + reinit
-  - conditional async-call `spawn`
-  - conditional helper-task `spawn`
+- conditional task-handle control flow
+  - regular-size branch-local `spawn` + reinit
+  - regular-size conditional async-call `spawn`
+  - regular-size conditional helper-task `spawn`
+  - zero-sized branch-local `spawn` + reinit
+  - zero-sized conditional async-call `spawn`
+  - zero-sized conditional helper-task `spawn`
 - dynamic fixed-array `Task[...]` 的保守子集
   - generic dynamic sibling-safe consume / spawn
   - same immutable stable source path precise consume / reinit
@@ -146,12 +150,12 @@
 截至当前代码：
 
 - sync executable examples：`39`
-- async executable examples：`184`
+- async executable examples：`186`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `187`，但真实 `.ql` 文件数是 `184`，不是 `187`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `184` 个 async executable case 和 `39` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `189`，但真实 `.ql` 文件数是 `186`，不是 `189`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `186` 个 async executable case 和 `39` 个 sync executable case
 
 ## 当前明确未开放
 
