@@ -14,6 +14,7 @@ Files:
 - `08_sync_for_tuple.ql`: homogeneous tuple `for` lowering in executable mode
 - `09_sync_for_projected_fixed_shape.ql`: projected tuple/array fixed-shape `for` lowering in executable mode
 - `10_sync_for_const_static_fixed_shape.ql`: same-file `const` / `static` fixed-shape `for` roots, including a `use ... as ...` const alias
+- `11_sync_match_scrutinee_self_guard.ql`: bool `match` self-guard folding in executable mode, where `true if flag` can lower when the guard is the scrutinee itself
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -30,6 +31,7 @@ Expected exit codes for the sync examples:
 - `08_sync_for_tuple.ql` -> `42`
 - `09_sync_for_projected_fixed_shape.ql` -> `42`
 - `10_sync_for_const_static_fixed_shape.ql` -> `42`
+- `11_sync_match_scrutinee_self_guard.ql` -> `42`
 
 Build one verified executable example:
 

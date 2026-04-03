@@ -1,6 +1,6 @@
-error: tests/codegen/fail/unsupported_match_question_mark_build.ql:3:12: LLVM IR backend foundation does not support `match` lowering yet
+error: tests/codegen/fail/unsupported_match_question_mark_build.ql:4:12: LLVM IR backend foundation does not support `match` lowering yet
       return match flag {
              ^^^^^^^^
-error: tests/codegen/fail/unsupported_match_question_mark_build.ql:10:12: LLVM IR backend foundation does not support `?` lowering yet
+error: tests/codegen/fail/unsupported_match_question_mark_build.ql:11:12: LLVM IR backend foundation does not support `?` lowering yet
       return helper()?
              ^^^^^^^^

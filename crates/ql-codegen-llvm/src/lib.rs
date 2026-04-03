@@ -673,6 +673,7 @@ impl<'a> ModuleEmitter<'a> {
         let mut diagnostics = Vec::new();
         let mut local_types = self.seed_local_types(body, &signature, &mut diagnostics);
         let async_task_handles = self.collect_async_task_handles(body);
+        let immutable_place_aliases = collect_immutable_place_aliases(self.input.hir, body);
         let task_handle_place_aliases =
             self.collect_task_handle_place_aliases(body, &local_types, &mut diagnostics);
         let mut supported_for_loops = HashMap::new();
@@ -804,6 +805,8 @@ impl<'a> ModuleEmitter<'a> {
                                         self.input.resolution,
                                         body,
                                         &local_types,
+                                        &immutable_place_aliases,
+                                        scrutinee,
                                         arm.pattern,
                                         guard,
                                     ) {
@@ -904,6 +907,8 @@ impl<'a> ModuleEmitter<'a> {
                                         self.input.resolution,
                                         body,
                                         &local_types,
+                                        &immutable_place_aliases,
+                                        scrutinee,
                                         arm.pattern,
                                         guard,
                                     ) {
@@ -5658,6 +5663,12 @@ enum SupportedBoolGuardAnalysis {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BoolGuardScrutineeRelation {
+    Same,
+    Negated,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GuardScalarKind {
     Bool,
     Int,
@@ -5668,21 +5679,143 @@ fn supported_bool_guard(
     resolution: &ResolutionMap,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
+    immutable_place_aliases: &HashMap<mir::LocalId, mir::Place>,
+    scrutinee: &Operand,
     arm_pattern: hir::PatternId,
     expr_id: hir::ExprId,
 ) -> Option<SupportedBoolGuardAnalysis> {
     match guard_literal_bool(module, resolution, expr_id) {
         Some(true) => Some(SupportedBoolGuardAnalysis::Always),
         Some(false) => Some(SupportedBoolGuardAnalysis::Skip),
-        None => runtime_bool_guard_supported(
+        None => fold_bool_guard_against_scrutinee(
             module,
             resolution,
             body,
             local_types,
+            immutable_place_aliases,
+            scrutinee,
             arm_pattern,
             expr_id,
         )
-        .then_some(SupportedBoolGuardAnalysis::Dynamic(expr_id)),
+        .or_else(|| {
+            runtime_bool_guard_supported(
+                module,
+                resolution,
+                body,
+                local_types,
+                arm_pattern,
+                expr_id,
+            )
+            .then_some(SupportedBoolGuardAnalysis::Dynamic(expr_id))
+        }),
+    }
+}
+
+fn fold_bool_guard_against_scrutinee(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    immutable_place_aliases: &HashMap<mir::LocalId, mir::Place>,
+    scrutinee: &Operand,
+    arm_pattern: hir::PatternId,
+    expr_id: hir::ExprId,
+) -> Option<SupportedBoolGuardAnalysis> {
+    let pattern = supported_bool_match_pattern(module, resolution, arm_pattern)?;
+    let relation = bool_guard_relation_to_scrutinee(
+        module,
+        resolution,
+        body,
+        local_types,
+        immutable_place_aliases,
+        scrutinee,
+        arm_pattern,
+        expr_id,
+    )?;
+    match (pattern, relation) {
+        (SupportedBoolMatchPattern::True, BoolGuardScrutineeRelation::Same)
+        | (SupportedBoolMatchPattern::False, BoolGuardScrutineeRelation::Negated) => {
+            Some(SupportedBoolGuardAnalysis::Always)
+        }
+        (SupportedBoolMatchPattern::True, BoolGuardScrutineeRelation::Negated)
+        | (SupportedBoolMatchPattern::False, BoolGuardScrutineeRelation::Same) => {
+            Some(SupportedBoolGuardAnalysis::Skip)
+        }
+        (SupportedBoolMatchPattern::CatchAll, _) => None,
+    }
+}
+
+fn bool_guard_relation_to_scrutinee(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    immutable_place_aliases: &HashMap<mir::LocalId, mir::Place>,
+    scrutinee: &Operand,
+    arm_pattern: hir::PatternId,
+    expr_id: hir::ExprId,
+) -> Option<BoolGuardScrutineeRelation> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Unary {
+            op: UnaryOp::Not,
+            expr,
+        } => match bool_guard_relation_to_scrutinee(
+            module,
+            resolution,
+            body,
+            local_types,
+            immutable_place_aliases,
+            scrutinee,
+            arm_pattern,
+            *expr,
+        )? {
+            BoolGuardScrutineeRelation::Same => Some(BoolGuardScrutineeRelation::Negated),
+            BoolGuardScrutineeRelation::Negated => Some(BoolGuardScrutineeRelation::Same),
+        },
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => module
+            .block(*block_id)
+            .tail
+            .and_then(|tail| {
+                bool_guard_relation_to_scrutinee(
+                    module,
+                    resolution,
+                    body,
+                    local_types,
+                    immutable_place_aliases,
+                    scrutinee,
+                    arm_pattern,
+                    tail,
+                )
+            }),
+        hir::ExprKind::Question(inner) => bool_guard_relation_to_scrutinee(
+            module,
+            resolution,
+            body,
+            local_types,
+            immutable_place_aliases,
+            scrutinee,
+            arm_pattern,
+            *inner,
+        ),
+        _ => {
+            let Operand::Place(scrutinee_place) = scrutinee else {
+                return None;
+            };
+            let (guard_place, guard_ty) = guard_expr_place_with_ty(
+                module,
+                resolution,
+                body,
+                local_types,
+                Some(arm_pattern),
+                expr_id,
+            )?;
+            let canonical_scrutinee =
+                canonicalize_immutable_place_alias(scrutinee_place, immutable_place_aliases);
+            let canonical_guard =
+                canonicalize_immutable_place_alias(&guard_place, immutable_place_aliases);
+            (guard_ty.is_bool() && canonical_guard == canonical_scrutinee)
+                .then_some(BoolGuardScrutineeRelation::Same)
+        }
     }
 }
 
@@ -5816,8 +5949,22 @@ fn supported_guard_scalar_expr(
         hir::ExprKind::Unary {
             op: UnaryOp::Not,
             expr,
-        } => supported_bool_guard(module, resolution, body, local_types, arm_pattern, *expr)
-            .map(|_| GuardScalarKind::Bool),
+        } => {
+            if guard_literal_bool(module, resolution, *expr).is_some()
+                || runtime_bool_guard_supported(
+                    module,
+                    resolution,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    *expr,
+                )
+            {
+                Some(GuardScalarKind::Bool)
+            } else {
+                None
+            }
+        }
         hir::ExprKind::Unary {
             op: UnaryOp::Neg,
             expr,
@@ -5976,6 +6123,64 @@ fn mir_param_local(body: &mir::MirBody, index: usize) -> Option<mir::LocalId> {
 fn mir_receiver_local(body: &mir::MirBody) -> Option<mir::LocalId> {
     body.local_ids()
         .find(|candidate| matches!(body.local(*candidate).origin, LocalOrigin::Receiver))
+}
+
+fn collect_immutable_place_aliases(
+    module: &hir::Module,
+    body: &mir::MirBody,
+) -> HashMap<mir::LocalId, mir::Place> {
+    let mut aliases = HashMap::new();
+
+    for block in body.blocks() {
+        for statement_id in &block.statements {
+            let statement = body.statement(*statement_id);
+            match &statement.kind {
+                StatementKind::BindPattern {
+                    pattern,
+                    source: Operand::Place(source_place),
+                    mutable,
+                } => {
+                    if *mutable {
+                        continue;
+                    }
+                    let PatternKind::Binding(local) = pattern_kind(module, *pattern) else {
+                        continue;
+                    };
+                    let Some(binding_local) = mir_local_for_hir_local(body, *local) else {
+                        continue;
+                    };
+                    aliases.insert(binding_local, source_place.clone());
+                }
+                StatementKind::Assign {
+                    place,
+                    value: Rvalue::Use(Operand::Place(source_place)),
+                } if place.projections.is_empty()
+                    && matches!(body.local(place.base).origin, LocalOrigin::Temp { .. }) =>
+                {
+                    aliases.insert(place.base, source_place.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    aliases
+}
+
+fn canonicalize_immutable_place_alias(
+    place: &mir::Place,
+    immutable_place_aliases: &HashMap<mir::LocalId, mir::Place>,
+) -> mir::Place {
+    let mut canonical = place.clone();
+    while let Some(source_place) = immutable_place_aliases.get(&canonical.base) {
+        let mut projections = source_place.projections.clone();
+        projections.extend(canonical.projections);
+        canonical = mir::Place {
+            base: source_place.base,
+            projections,
+        };
+    }
+    canonical
 }
 
 fn guard_expr_place_with_ty(
@@ -8691,13 +8896,36 @@ fn main() -> Int {
     }
 
     #[test]
-    fn rejects_guarded_match_lowering() {
+    fn emits_match_lowering_for_scrutinee_self_guard() {
+        let rendered = emit_with_mode(
+            r#"
+fn choose(flag: Bool) -> Int {
+    return match flag {
+        true if flag => 1,
+        false => 0,
+    }
+}
+
+fn main() -> Int {
+    return choose(true)
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.contains("br i1"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn rejects_guarded_match_lowering_without_true_fallback() {
         let messages = emit_error(
             r#"
 fn main() -> Int {
     let flag = true
+    let enabled = false
     return match flag {
-        true if flag => 1,
+        true if enabled => 1,
         false => 0,
     }
 }
@@ -10544,9 +10772,10 @@ extern "c" fn first()
 
 fn main() -> Int {
     let flag = true
+    let enabled = false
     defer first()
     return match flag {
-        true if flag => 1,
+        true if enabled => 1,
         false => 0,
     }
 }
@@ -10585,8 +10814,9 @@ fn main() -> Int {
             r#"
 fn helper() -> Int {
     let flag = true
+    let enabled = false
     return match flag {
-        true if flag => 1,
+        true if enabled => 1,
         false => 0,
     }
 }

@@ -1,6 +1,6 @@
-error: tests/codegen/fail/unsupported_cleanup_match_build.ql:5:5: LLVM IR backend foundation does not support cleanup lowering yet
+error: tests/codegen/fail/unsupported_cleanup_match_build.ql:6:5: LLVM IR backend foundation does not support cleanup lowering yet
       defer first()
       ^^^^^^^^
-error: tests/codegen/fail/unsupported_cleanup_match_build.ql:6:12: LLVM IR backend foundation does not support `match` lowering yet
+error: tests/codegen/fail/unsupported_cleanup_match_build.ql:7:12: LLVM IR backend foundation does not support `match` lowering yet
       return match flag {
              ^^^^^^^^
