@@ -2167,12 +2167,18 @@ impl<'a> Checker<'a> {
 
                 match target_ty {
                     Ty::Tuple(_) if items.len() == 1 => {
-                        if matches!(self.module.expr(items[0]).kind, ExprKind::Integer(_)) {
+                        let supported_index = matches!(
+                            self.module.expr(items[0]).kind,
+                            ExprKind::Integer(_) | ExprKind::Name(_)
+                        ) && self
+                            .int_literal_expr(items[0], &mut HashSet::new())
+                            .is_some();
+                        if supported_index {
                             self.check_assignment_target_with_anchor(*target, anchor_span, true)
                         } else {
                             unsupported_target(
                                 self,
-                                "assignment through tuple indexing currently requires an integer literal index"
+                                "assignment through tuple indexing currently requires an integer literal index or foldable same-file integer item name"
                                     .to_string(),
                             )
                         }

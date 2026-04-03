@@ -1,6 +1,6 @@
 # 当前支持基线
 
-> 最后同步：2026-04-03
+> 最后同步：2026-04-04
 
 这页只保留“今天真实可依赖的能力边界”。  
 详细切片过程、逐轮回归记录与旧版长文已归档到 [路线图归档](/roadmap/archive/index)。
@@ -54,7 +54,7 @@
   - same-file `const` / `static` root 及其 same-file alias
 - 赋值表达式的当前可运行子集
   - mutable local
-  - tuple literal index projection
+  - tuple literal index projection，以及 same-file `const` / `static` / `use ... as ...` alias 驱动的 foldable item-backed tuple index
   - struct field
   - fixed-array literal index projection
   - projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root tuple / struct-field / fixed-array literal-index chains
@@ -94,7 +94,7 @@
   - projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
 - 普通标量赋值表达式的当前可运行子集
   - mutable local
-  - tuple literal index projection
+  - tuple literal index projection，以及 same-file `const` / `static` / `use ... as ...` alias 驱动的 foldable item-backed tuple index
   - struct field
   - fixed-array literal index projection
   - projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root tuple / struct-field / fixed-array literal-index chains
@@ -188,13 +188,13 @@
 
 截至当前代码：
 
-- sync executable examples：`59`
-- async executable examples：`219`
+- sync executable examples：`60`
+- async executable examples：`220`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `222`，但真实 `.ql` 文件数是 `219`，不是 `222`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `219` 个 async executable case 和 `59` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `223`，但真实 `.ql` 文件数是 `220`，不是 `223`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `220` 个 async executable case 和 `60` 个 sync executable case
 
 ## 当前明确未开放
 

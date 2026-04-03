@@ -2540,13 +2540,68 @@ impl<'a> ModuleEmitter<'a> {
         current_ty: &Ty,
         span: Span,
     ) -> Result<usize, Diagnostic> {
-        let Operand::Constant(Constant::Integer(raw)) = index else {
-            return Err(unsupported(
-                span,
-                format!(
-                    "LLVM IR backend foundation currently requires tuple projection on `{current_ty}` to use an integer literal index"
-                ),
-            ));
+        let raw = match index {
+            Operand::Constant(Constant::Integer(raw)) => raw.as_str(),
+            Operand::Constant(Constant::Item { item, .. }) => {
+                let Some(value) = const_or_static_item_integer_literal(
+                    self.input.hir,
+                    self.input.resolution,
+                    *item,
+                ) else {
+                    return Err(unsupported(
+                        span,
+                        format!(
+                            "LLVM IR backend foundation currently requires tuple projection on `{current_ty}` to use an integer literal index"
+                        ),
+                    ));
+                };
+                return ql_ast::parse_usize_literal(&value.to_string()).ok_or_else(|| {
+                    unsupported(
+                        span,
+                        format!(
+                            "LLVM IR backend foundation currently requires tuple projection on `{current_ty}` to use a non-negative integer literal index"
+                        ),
+                    )
+                });
+            }
+            Operand::Constant(Constant::Import(path)) => {
+                let Some(item_id) = local_item_for_import_path(self.input.hir, path) else {
+                    return Err(unsupported(
+                        span,
+                        format!(
+                            "LLVM IR backend foundation currently requires tuple projection on `{current_ty}` to use an integer literal index"
+                        ),
+                    ));
+                };
+                let Some(value) = const_or_static_item_integer_literal(
+                    self.input.hir,
+                    self.input.resolution,
+                    item_id,
+                ) else {
+                    return Err(unsupported(
+                        span,
+                        format!(
+                            "LLVM IR backend foundation currently requires tuple projection on `{current_ty}` to use an integer literal index"
+                        ),
+                    ));
+                };
+                return ql_ast::parse_usize_literal(&value.to_string()).ok_or_else(|| {
+                    unsupported(
+                        span,
+                        format!(
+                            "LLVM IR backend foundation currently requires tuple projection on `{current_ty}` to use a non-negative integer literal index"
+                        ),
+                    )
+                });
+            }
+            _ => {
+                return Err(unsupported(
+                    span,
+                    format!(
+                        "LLVM IR backend foundation currently requires tuple projection on `{current_ty}` to use an integer literal index"
+                    ),
+                ));
+            }
         };
 
         ql_ast::parse_usize_literal(raw).ok_or_else(|| {
@@ -7906,6 +7961,19 @@ fn const_or_static_item_type(
         }
         _ => None,
     }
+}
+
+fn const_or_static_item_integer_literal(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    item_id: ItemId,
+) -> Option<i64> {
+    let global = match &module.item(item_id).kind {
+        ItemKind::Const(global) | ItemKind::Static(global) => global,
+        _ => return None,
+    };
+    let mut visited = HashSet::new();
+    guard_literal_int_expr(module, resolution, global.value, &mut visited)
 }
 
 fn for_await_index_slot_name(block_id: mir::BasicBlockId) -> String {

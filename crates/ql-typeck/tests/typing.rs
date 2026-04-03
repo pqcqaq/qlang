@@ -1874,6 +1874,29 @@ fn main() -> Int {
 }
 
 #[test]
+fn accepts_const_backed_tuple_assignment_targets() {
+    let diagnostics = diagnostic_messages(
+        r#"
+use INDEX as SLOT
+const INDEX: Int = 0
+static NEXT: Int = 1
+
+fn main() -> Int {
+    var pair = (1, 2)
+    let first = pair[SLOT] = 7
+    let second = pair[NEXT] = 9
+    return first + second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected const-backed tuple assignment target to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_dynamic_array_index_assignment_targets_on_non_task_arrays() {
     let diagnostics = diagnostic_messages(
         r#"

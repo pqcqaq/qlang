@@ -319,6 +319,11 @@ fn executable_examples_build_and_run() {
             source_relative: "ramdon_tests/executable_examples/59_sync_inline_nested_projected_tuple_assignment_expressions.ql",
             expected_exit: 20,
         },
+        ExecutableExampleCase {
+            name: "sync_const_backed_tuple_assignment_expressions",
+            source_relative: "ramdon_tests/executable_examples/60_sync_const_backed_tuple_assignment_expressions.ql",
+            expected_exit: 20,
+        },
     ];
 
     assert_example_cases_run(
@@ -1436,6 +1441,11 @@ fn async_program_surface_examples_build_and_run() {
         ExecutableExampleCase {
             name: "async_inline_nested_projected_tuple_assignment_expressions",
             source_relative: "ramdon_tests/async_program_surface_examples/222_async_inline_nested_projected_tuple_assignment_expressions.ql",
+            expected_exit: 22,
+        },
+        ExecutableExampleCase {
+            name: "async_const_backed_tuple_assignment_expressions",
+            source_relative: "ramdon_tests/async_program_surface_examples/223_async_const_backed_tuple_assignment_expressions.ql",
             expected_exit: 22,
         },
     ];

@@ -221,13 +221,14 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `220_async_call_root_nested_projected_tuple_assignment_expressions.ql`
 - `221_async_import_alias_call_root_nested_projected_tuple_assignment_expressions.ql`
 - `222_async_inline_nested_projected_tuple_assignment_expressions.ql`
+- `223_async_const_backed_tuple_assignment_expressions.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these two-hundred-nineteen examples with the real local toolchain and locks their exit codes.
-- The filenames run from `04` through `222`, but the real async executable example count is `219`.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these two-hundred-twenty examples with the real local toolchain and locks their exit codes.
+- The filenames run from `04` through `223`, but the real async executable example count is `220`.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -336,6 +337,7 @@ Current status:
 - `220_async_call_root_nested_projected_tuple_assignment_expressions.ql` now locks the async call-root nested projected tuple assignment-expression surface, where `make_env().inner.pair[0] = await worker(...)` and `make_env().inner.pair[1] = ...` both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `22`.
 - `221_async_import_alias_call_root_nested_projected_tuple_assignment_expressions.ql` now locks the async import-alias call-root nested projected tuple assignment-expression surface, where `env().inner.pair[0] = await worker(...)` and `env().inner.pair[1] = ...` both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `22`.
 - `222_async_inline_nested_projected_tuple_assignment_expressions.ql` now locks the async inline nested projected tuple assignment-expression surface, where `(Env { ... }).inner.pair[0] = await worker(...)` and `(Env { ... }).inner.pair[1] = ...` both yield a result value that immediately participates in later scalar computation inside `async fn main`, and the executable surface still exits with `22`.
+- `223_async_const_backed_tuple_assignment_expressions.ql` now locks the async tuple assignment-expression surface where same-file `const` / `static` item names and same-file `use ... as ...` aliases can drive tuple assignment indices inside `async fn main`, and the executable surface still exits with `22`.
 
 Expected exit codes:
 
@@ -558,6 +560,7 @@ Expected exit codes:
 - `220_async_call_root_nested_projected_tuple_assignment_expressions.ql` -> `22`
 - `221_async_import_alias_call_root_nested_projected_tuple_assignment_expressions.ql` -> `22`
 - `222_async_inline_nested_projected_tuple_assignment_expressions.ql` -> `22`
+- `223_async_const_backed_tuple_assignment_expressions.ql` -> `22`
 
 Try one file directly:
 
