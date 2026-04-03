@@ -7,6 +7,15 @@ struct State {
     slot: Slot,
 }
 
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+struct PairState {
+    values: Pair,
+}
+
 async fn fetch_value(value: Int) -> Int {
     return value
 }
@@ -20,8 +29,28 @@ async fn load_state(value: Int) -> State {
     }
 }
 
+async fn load_pair_state(value: Int) -> PairState {
+    return PairState {
+        values: Pair {
+            left: value,
+            right: value + 2,
+        },
+    }
+}
+
 fn offset(delta: Int, value: Int) -> Int {
     return value + delta
+}
+
+fn pair(value: Int) -> Pair {
+    return Pair {
+        left: value,
+        right: value + 2,
+    }
+}
+
+fn matches(expected: Int, value: Pair) -> Bool {
+    return value.right == expected
 }
 
 async fn helper() -> Int {
@@ -37,7 +66,19 @@ async fn helper() -> Int {
         _ => 0,
     }
 
-    return from_scalar + from_aggregate
+    let third = await load_pair_state(value: 20)
+    let from_pair_projection = match third {
+        current if matches(expected: 22, value: current.values) => 20,
+        _ => 0,
+    }
+
+    let fourth = await load_pair_state(value: 20)
+    let from_pair_call_root = match fourth {
+        current if matches(expected: 22, value: pair(value: current.values.left)) => 22,
+        _ => 0,
+    }
+
+    return from_scalar + from_aggregate + from_pair_projection + from_pair_call_root
 }
 
 extern "c" pub fn q_export() -> Int {

@@ -159,12 +159,13 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `158_async_main_nested_call_root_projected_task_handle_consumes.ql`
 - `159_async_main_inline_projected_fixed_shape_for_await_without_parens.ql`
 - `160_async_main_awaited_match_guards.ql`
+- `161_async_main_awaited_match_aggregate_guard_calls.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-sixty examples with the real local toolchain and locks their exit codes.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-sixty-one examples with the real local toolchain and locks their exit codes.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -211,6 +212,7 @@ Current status:
 - `158_async_main_nested_call_root_projected_task_handle_consumes.ql` now locks the direct nested call-root projected task-handle consume variant, where `await tuple_env(10).payload.values[0]`, `spawn pair_env(11).payload.left`, `await deep_env(20).outer.payload.tasks[0]`, and `spawn deep_env(0).outer.payload.tasks[1]` all consume projected task handles directly from nested call-root expressions and still exit with `42`.
 - `159_async_main_inline_projected_fixed_shape_for_await_without_parens.ql` now locks the unparenthesized inline aggregate projected fixed-shape `for await` variant, where `for await value in ScalarArrayPayload { values: [8, 9] }.values`, `for await value in ScalarTuplePayload { values: (4, 5) }.values`, `for await value in TaskTuplePayload { values: (worker(2), worker(3)) }.values`, and `for await value in DeepPending { outer: PendingEnvelope { payload: Pending { tasks: [worker(5), worker(6)] } } }.outer.payload.tasks` all iterate directly from inline aggregate projected iterable expressions without requiring an extra outer pair of parentheses and still exit with `42`.
 - `160_async_main_awaited_match_guards.ql` now locks the awaited `match` guard variant for `async fn main`, where `let first = await fetch_value(...); match first { current if offset(...) == 22 => ... }` and `let second = await load_state(...); match second { current if current.slot.ready => ... }` confirm that awaited scalar scrutinees plus direct-call guards, and awaited aggregate scrutinees plus projection guards, both lower through the current executable async surface and still exit with `42`.
+- `161_async_main_awaited_match_aggregate_guard_calls.ql` now locks the awaited aggregate `match` guard-call variant for `async fn main`, where `match first { current if matches(expected: 22, value: current.values) => ... }` and `match second { current if matches(expected: 22, value: pair(value: current.values.left)) => ... }` confirm that awaited aggregate scrutinees can now feed both projected aggregate guard-call arguments and call-backed aggregate guard-call arguments through the current executable async surface and still exit with `42`.
 
 Expected exit codes:
 
@@ -371,6 +373,7 @@ Expected exit codes:
 - `158_async_main_nested_call_root_projected_task_handle_consumes.ql` -> `42`
 - `159_async_main_inline_projected_fixed_shape_for_await_without_parens.ql` -> `42`
 - `160_async_main_awaited_match_guards.ql` -> `42`
+- `161_async_main_awaited_match_aggregate_guard_calls.ql` -> `42`
 
 Try one file directly:
 
