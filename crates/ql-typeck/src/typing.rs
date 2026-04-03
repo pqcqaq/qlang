@@ -2070,13 +2070,14 @@ impl<'a> Checker<'a> {
 
     fn check_assignment_target(&mut self, expr_id: ExprId) -> AssignmentTargetPolicy {
         let anchor_span = self.module.expr(expr_id).span;
-        self.check_assignment_target_with_anchor(expr_id, anchor_span)
+        self.check_assignment_target_with_anchor(expr_id, anchor_span, false)
     }
 
     fn check_assignment_target_with_anchor(
         &mut self,
         expr_id: ExprId,
         anchor_span: Span,
+        allow_materialized_root: bool,
     ) -> AssignmentTargetPolicy {
         let expr = self.module.expr(expr_id);
         let unsupported_target = |checker: &mut Self, message: String| {
@@ -2153,7 +2154,7 @@ impl<'a> Checker<'a> {
                 {
                     AssignmentTargetPolicy::SkipValueType
                 } else {
-                    self.check_assignment_target_with_anchor(*object, anchor_span)
+                    self.check_assignment_target_with_anchor(*object, anchor_span, true)
                 }
             }
             ExprKind::Bracket { target, items } => {
@@ -2167,7 +2168,7 @@ impl<'a> Checker<'a> {
                 match target_ty {
                     Ty::Tuple(_) if items.len() == 1 => {
                         if matches!(self.module.expr(items[0]).kind, ExprKind::Integer(_)) {
-                            self.check_assignment_target_with_anchor(*target, anchor_span)
+                            self.check_assignment_target_with_anchor(*target, anchor_span, true)
                         } else {
                             unsupported_target(
                                 self,
@@ -2177,7 +2178,7 @@ impl<'a> Checker<'a> {
                         }
                     }
                     Ty::Array { .. } if items.len() == 1 => {
-                        self.check_assignment_target_with_anchor(*target, anchor_span)
+                        self.check_assignment_target_with_anchor(*target, anchor_span, true)
                     }
                     _ => unsupported_target(
                         self,
@@ -2186,6 +2187,7 @@ impl<'a> Checker<'a> {
                     ),
                 }
             }
+            _ if allow_materialized_root => AssignmentTargetPolicy::EnforceValueType,
             _ => unsupported_target(
                 self,
                 "this assignment target is not supported yet; only bare mutable bindings, member projections, tuple literal-index projections, and array projections can be assigned"

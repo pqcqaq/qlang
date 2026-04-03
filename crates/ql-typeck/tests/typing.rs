@@ -1839,6 +1839,41 @@ fn main() -> Int {
 }
 
 #[test]
+fn accepts_nested_call_root_projected_assignment_targets() {
+    let diagnostics = diagnostic_messages(
+        r#"
+struct Pair {
+    value: Int,
+    values: [Int; 2],
+}
+
+struct Holder {
+    pair: Pair,
+}
+
+struct Env {
+    holder: Holder,
+}
+
+fn make_env() -> Env {
+    return Env { holder: Holder { pair: Pair { value: 1, values: [2, 3] } } }
+}
+
+fn main() -> Int {
+    let first = make_env().holder.pair.value = 4
+    let second = make_env().holder.pair.values[1] = 9
+    return first + second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected nested call-root projected assignment to type-check, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn accepts_dynamic_array_index_assignment_targets_on_non_task_arrays() {
     let diagnostics = diagnostic_messages(
         r#"
