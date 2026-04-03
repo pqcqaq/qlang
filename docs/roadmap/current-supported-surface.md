@@ -54,7 +54,7 @@
   - same-file `const` / `static` root 及其 same-file alias
 - 赋值表达式的当前可运行子集
   - mutable local
-  - tuple literal index projection，以及 same-file `const` / `static` / `use ... as ...` alias、branch-selected const `if` / 最小 literal `match` item value，和 immutable direct local alias 复用驱动的 foldable integer constant expression tuple index
+  - tuple literal index projection，以及 same-file `const` / `static` / `use ... as ...` alias、branch-selected const `if` / 最小 literal `match` item value、direct inline foldable `if` / `match` integer expression，和 immutable direct local alias 复用驱动的 foldable integer constant expression tuple index
   - struct field
   - fixed-array literal index projection
   - projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root tuple / struct-field / fixed-array literal-index chains
@@ -94,7 +94,7 @@
   - projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
 - 普通标量赋值表达式的当前可运行子集
   - mutable local
-  - tuple literal index projection，以及 same-file `const` / `static` / `use ... as ...` alias、branch-selected const `if` / 最小 literal `match` item value，和 immutable direct local alias 复用驱动的 foldable integer constant expression tuple index
+  - tuple literal index projection，以及 same-file `const` / `static` / `use ... as ...` alias、branch-selected const `if` / 最小 literal `match` item value、direct inline foldable `if` / `match` integer expression，和 immutable direct local alias 复用驱动的 foldable integer constant expression tuple index
   - struct field
   - fixed-array literal index projection
   - projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root tuple / struct-field / fixed-array literal-index chains

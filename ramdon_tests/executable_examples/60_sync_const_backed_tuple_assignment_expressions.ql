@@ -25,5 +25,13 @@ fn main() -> Int {
     let right = SELECTED_RIGHT - 0
     let first = pair[left] = 7
     let second = pair[right] = first + 6
-    return pair[SELECTED_RIGHT - 1] + second
+    let third = pair[if true { 0 } else { 1 }] = first
+    let fourth = pair[match 1 {
+        1 => 1,
+        _ => 0,
+    }] = second
+    return pair[if true { 0 } else { 1 }] + pair[match 1 {
+        1 => 1,
+        _ => 0,
+    }]
 }
