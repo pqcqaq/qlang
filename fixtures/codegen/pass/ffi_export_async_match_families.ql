@@ -3,8 +3,10 @@ use load_pair_state as load_pairs
 use LIMITS as INPUT
 use offset as shift
 use matches as check
+use binding_enabled as item_enabled
 use pair as make_pair
 use pack_values as pack
+use pack_values as items
 use pick_slot as slot
 use truthy as flag
 use scalar_matches as equal
@@ -13,6 +15,10 @@ use flag_state as make
 use seed as literal
 
 static LIMITS: [Int; 3] = [4, 8, 9]
+static READY: BindingState = BindingState {
+    ready: true,
+    value: 22,
+}
 
 struct Slot {
     ready: Bool,
@@ -92,6 +98,10 @@ fn pair(value: Int) -> Pair {
 
 fn matches(expected: Int, value: Pair) -> Bool {
     return value.right == expected
+}
+
+fn tuple_matches(pair: (Int, Int), expected: Int) -> Bool {
+    return pair[1] == expected
 }
 
 fn bundle(seed: Int) -> Bundle {
@@ -298,6 +308,42 @@ async fn helper() -> Int {
         _ => 0,
     }
 
+    let twenty_sixth = await fetch_flag(value: true)
+    let from_item_backed_alias_guard = match twenty_sixth {
+        true if item_enabled(extra: true, state: BindingState { ready: true, value: 7 }) => 10,
+        false => 0,
+    }
+
+    let twenty_seventh = await load_scalar(value: 22)
+    let from_item_backed_tuple_inline = match twenty_seventh {
+        current if (INPUT[0], current)[1] == READY.value => 12,
+        _ => 0,
+    }
+
+    let twenty_eighth = await load_scalar(value: 3)
+    let from_item_backed_array_inline = match twenty_eighth {
+        current if [INPUT[0], current + 1, INPUT[2]][current - 2] == 4 => 20,
+        _ => 0,
+    }
+
+    let twenty_ninth = await fetch_flag(value: true)
+    let from_call_backed_direct_guard = match twenty_ninth {
+        true if enabled(extra: flag(true), state: FlagState { ready: flag(true) }) => 10,
+        false => 0,
+    }
+
+    let thirtieth = await load_scalar(value: 22)
+    let from_call_backed_tuple_inline = match thirtieth {
+        current if tuple_matches((seed(0), current), 22) => 12,
+        _ => 0,
+    }
+
+    let thirty_first = await load_scalar(value: 3)
+    let from_call_backed_direct_root = match thirty_first {
+        current if items(current)[slot(current)] == 4 => 20,
+        _ => 0,
+    }
+
     return from_scalar
         + from_aggregate
         + from_pair_projection
@@ -323,6 +369,12 @@ async fn helper() -> Int {
         + from_item_backed_bool
         + from_item_backed_inline
         + from_item_backed_guard_call
+        + from_item_backed_alias_guard
+        + from_item_backed_tuple_inline
+        + from_item_backed_array_inline
+        + from_call_backed_direct_guard
+        + from_call_backed_tuple_inline
+        + from_call_backed_direct_root
 }
 
 extern "c" pub fn q_export() -> Int {
