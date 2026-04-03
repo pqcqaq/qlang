@@ -100,12 +100,14 @@
 - `Task[T]` 类型面
 - direct async call / helper-returned task handle / `spawn` / `await`
   - zero-sized helper-returned / forwarded task-handle flow
+  - zero-sized aggregate params on direct `await` / `spawn`
 - scalar 与 fixed-shape aggregate payload
   - tuple / fixed-array / non-generic struct
   - zero-sized aggregate
   - direct / spawn recursive fixed-shape aggregate result
   - aggregate 内继续携带 `Task[T]`
   - nested task-handle payload
+  - zero-sized returned / nested / struct-carried task-handle shapes
 - projected task-handle consume
   - tuple index
   - fixed-array literal index
@@ -142,12 +144,12 @@
 截至当前代码：
 
 - sync executable examples：`39`
-- async executable examples：`176`
+- async executable examples：`178`
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `179`，但真实 `.ql` 文件数是 `176`，不是 `179`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `176` 个 async executable case 和 `39` 个 sync executable case
+- async 目录文件编号从 `04` 编到 `181`，但真实 `.ql` 文件数是 `178`，不是 `181`
+- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `178` 个 async executable case 和 `39` 个 sync executable case
 
 ## 当前明确未开放
 

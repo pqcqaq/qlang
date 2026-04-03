@@ -178,13 +178,15 @@ These files cover the current async `BuildEmit::Executable` surface that exists 
 - `177_async_main_zero_sized_projected_task_handle_consumes.ql`
 - `178_async_main_zero_sized_projected_task_handle_reinits.ql`
 - `179_async_main_zero_sized_conditional_task_handle_flows.ql`
+- `180_async_main_zero_sized_returned_task_handle_shapes.ql`
+- `181_async_main_zero_sized_aggregate_params.ql`
 
 Current status:
 
 - They are useful examples of the implemented async executable surface.
 - In this workspace, real local `ql build --emit exe` now succeeds for these files because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
-- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-seventy-six examples with the real local toolchain and locks their exit codes.
-- The filenames run from `04` through `179`, but the real async executable example count is `176`.
+- `crates/ql-cli/tests/executable_examples.rs` now builds and runs these one-hundred-seventy-eight examples with the real local toolchain and locks their exit codes.
+- The filenames run from `04` through `181`, but the real async executable example count is `178`.
 - `115_async_main_import_alias_task_array_for_await.ql` now locks the current task-array `for await` semantics where each aliased `Task[Int]` element is auto-awaited before the loop variable is bound, so the body can directly sum `value` and still exits with `42`.
 - `116_async_main_import_alias_helper_task_array_for_await.ql` now extends that same auto-awaited task-array `for await` surface to helper-returned fixed arrays reached through a same-file import alias, and still exits with `42`.
 - `117_async_main_projected_task_array_for_await.ql` now locks the projected-root variant where the iterable is a struct field carrying `[Task[Int]; 2]`, and still exits with `42`.
@@ -250,6 +252,8 @@ Current status:
 - `177_async_main_zero_sized_projected_task_handle_consumes.ql` now locks the zero-sized projected task-handle consume family for `async fn main`, where tuple / fixed-array / struct-field projections can mix `await` and `spawn -> await` on `Task[Wrap]` payloads through the executable surface and still exit with `6`.
 - `178_async_main_zero_sized_projected_task_handle_reinits.ql` now locks the zero-sized projected task-handle reinit family for `async fn main`, where tuple / fixed-array / struct-field projections can be awaited, reinitialized, and awaited again, while the same literal-index array path also survives a dominated conditional reinit, and the executable surface still exits with `7`.
 - `179_async_main_zero_sized_conditional_task_handle_flows.ql` now locks the zero-sized conditional task-handle flow family for `async fn main`, where branch-local `spawn task; task = fresh_worker()`, the reverse-branch shape, conditional async-call `spawn`, and conditional helper-task `spawn` all survive the executable surface and still exit with `6`.
+- `180_async_main_zero_sized_returned_task_handle_shapes.ql` now locks the zero-sized returned task-handle shape family for `async fn main`, where local-returned `Task[Wrap]`, awaited aggregate-returned `Task[Wrap]`, and awaited struct-carried `Task[Wrap]` payloads all survive the executable surface and still exit with `5`.
+- `181_async_main_zero_sized_aggregate_params.ql` now locks the zero-sized aggregate parameter family for `async fn main`, where `[Int; 0]`, `Wrap`, and `[[Int; 0]; 1]` parameters all survive both direct `await worker(...)` and `spawn worker(...) -> await task` paths on the executable surface and still exit with `14`.
 
 Expected exit codes:
 
@@ -429,6 +433,8 @@ Expected exit codes:
 - `177_async_main_zero_sized_projected_task_handle_consumes.ql` -> `6`
 - `178_async_main_zero_sized_projected_task_handle_reinits.ql` -> `7`
 - `179_async_main_zero_sized_conditional_task_handle_flows.ql` -> `6`
+- `180_async_main_zero_sized_returned_task_handle_shapes.ql` -> `5`
+- `181_async_main_zero_sized_aggregate_params.ql` -> `14`
 
 Try one file directly:
 
