@@ -5763,6 +5763,20 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 );
                 Some((slot, rendered.ty))
             }
+            hir::ExprKind::Tuple(_)
+            | hir::ExprKind::Array(_)
+            | hir::ExprKind::StructLiteral { .. } => {
+                let rendered =
+                    self.render_guard_loadable_expr(output, expr_id, span, guard_binding);
+                let slot = self.fresh_temp();
+                let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {slot}",
+                    rendered.llvm_ty, rendered.repr
+                );
+                Some((slot, rendered.ty))
+            }
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
                     Some(ValueResolution::Local(local))
@@ -10336,6 +10350,44 @@ fn main() -> Int {
         assert!(rendered.contains("insertvalue { i64, i64 } undef, i64 0, 0"));
         assert!(rendered.contains("insertvalue [3 x i64] undef"));
         assert!(rendered.contains("add i64 %"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_match_guard_inline_projection_root_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+struct State {
+    value: Int,
+}
+
+fn main() -> Int {
+    let value = 22
+    let first = match value {
+        current if (0, current)[1] == 22 => 10,
+        _ => 0,
+    }
+    let second = match value {
+        current if State { value: current }.value == 22 => 12,
+        _ => 0,
+    }
+    let third = match 3 {
+        current if [current, current + 1, current + 2][1] == 4 => 20,
+        _ => 0,
+    }
+    return first + second + third
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("_match_guard0").count() >= 3);
+        assert!(rendered.contains("alloca { i64, i64 }"));
+        assert!(rendered.contains("alloca { i64 }"));
+        assert!(rendered.contains("alloca [3 x i64]"));
+        assert!(rendered.contains("getelementptr inbounds { i64, i64 }"));
+        assert!(rendered.contains("getelementptr inbounds { i64 }"));
+        assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 

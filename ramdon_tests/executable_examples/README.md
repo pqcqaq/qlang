@@ -25,6 +25,7 @@ Files:
 - `19_sync_match_guard_call_projection_roots.ql`: direct resolved sync aggregate guard-call projection-root lowering in executable mode, where tuple / struct / fixed-array results like `pair(current)[1]`, `state(current).value`, and `values(current)[1]` can now lower inside `match` guards
 - `20_sync_match_guard_aggregate_call_args.ql`: direct resolved sync aggregate guard-call argument lowering in executable mode, where loadable struct / tuple / fixed-array values like `enabled(current)`, `matches(pair(current), 22)`, and `contains(values(current), 4)` can now flow into `match` guards
 - `21_sync_match_guard_inline_aggregate_call_args.ql`: direct resolved sync inline aggregate-literal guard-call argument lowering in executable mode, where `enabled(State { ready: true })`, `matches((0, current), 22)`, and `contains([current, current + 1, current + 2], 4)` can now flow into `match` guards
+- `22_sync_match_guard_inline_projection_roots.ql`: inline aggregate-literal projection-root guard lowering in executable mode, where `(0, current)[1]`, `State { value: current }.value`, and `[current, current + 1, current + 2][1]` can now lower inside `match` guards
 
 Additional async program-surface examples live in `ramdon_tests/async_program_surface_examples/`.
 They now also build and run successfully with the real local toolchain because program-mode codegen synthesizes the current minimal `qlrt_*` runtime support in-module.
@@ -52,6 +53,7 @@ Expected exit codes for the sync examples:
 - `19_sync_match_guard_call_projection_roots.ql` -> `42`
 - `20_sync_match_guard_aggregate_call_args.ql` -> `42`
 - `21_sync_match_guard_inline_aggregate_call_args.ql` -> `42`
+- `22_sync_match_guard_inline_projection_roots.ql` -> `42`
 
 Build one verified executable example:
 
