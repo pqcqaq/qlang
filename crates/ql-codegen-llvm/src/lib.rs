@@ -9706,7 +9706,19 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             };
         }
 
-        let callee = self.render_guard_loadable_expr(output, callee_expr, span, guard_binding);
+        let callee_ty = self
+            .emitter
+            .input
+            .typeck
+            .expr_ty(callee_expr)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "prepared bool guard lowering at {span:?} should type-check callable guard callees"
+                )
+            });
+        let callee =
+            self.render_guard_expr_as_type(output, callee_expr, &callee_ty, span, guard_binding);
         let Ty::Callable { params, ret } = &callee.ty else {
             panic!(
                 "prepared bool guard lowering at {span:?} should only render direct resolved guard calls or callable guard values"
@@ -11238,7 +11250,7 @@ fn guard_expr_ty(
         hir::ExprKind::Name(_) => {
             guard_expr_place_root(module, resolution, body, local_types, arm_pattern, expr_id)
                 .map(|(_, ty)| ty)
-                .or_else(|| guard_expr_item_root_ty(module, resolution, expr_id))
+                .or_else(|| guard_expr_item_root_ty(module, resolution, signatures, expr_id))
         }
         hir::ExprKind::Binary {
             left,
@@ -11350,18 +11362,29 @@ fn guard_expr_ty(
 fn guard_expr_item_root_ty(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    signatures: &HashMap<FunctionRef, FunctionSignature>,
     expr_id: hir::ExprId,
 ) -> Option<Ty> {
     match resolution.expr_resolution(expr_id)? {
-        ValueResolution::Item(item_id) => const_or_static_item_type(module, resolution, *item_id),
-        ValueResolution::Import(import_binding) => {
-            local_item_for_import_binding(module, import_binding)
-                .and_then(|item_id| const_or_static_item_type(module, resolution, item_id))
+        ValueResolution::Function(function) => {
+            signatures.get(function).map(callable_ty_from_signature)
         }
-        ValueResolution::Local(_)
-        | ValueResolution::Param(_)
-        | ValueResolution::SelfValue
-        | ValueResolution::Function(_) => None,
+        ValueResolution::Item(item_id) => match &module.item(*item_id).kind {
+            ItemKind::Function(_) => signatures
+                .get(&FunctionRef::Item(*item_id))
+                .map(callable_ty_from_signature),
+            _ => const_or_static_item_type(module, resolution, *item_id),
+        },
+        ValueResolution::Import(import_binding) => {
+            let item_id = local_item_for_import_binding(module, import_binding)?;
+            match &module.item(item_id).kind {
+                ItemKind::Function(_) => signatures
+                    .get(&FunctionRef::Item(item_id))
+                    .map(callable_ty_from_signature),
+                _ => const_or_static_item_type(module, resolution, item_id),
+            }
+        }
+        ValueResolution::Local(_) | ValueResolution::Param(_) | ValueResolution::SelfValue => None,
     }
 }
 
@@ -12283,16 +12306,20 @@ fn supported_guard_call<'a>(
         ));
     }
 
-    let callee_ty = guard_expr_ty(
+    let callee_ty = typeck.expr_ty(callee_expr).cloned()?;
+    if !supported_guard_value_expr_as_type(
         module,
         resolution,
         typeck,
         signatures,
         body,
         local_types,
-        Some(arm_pattern),
+        arm_pattern,
         callee_expr,
-    )?;
+        &callee_ty,
+    ) {
+        return None;
+    }
     let Ty::Callable { params, ret } = callee_ty else {
         return None;
     };
@@ -18252,6 +18279,39 @@ fn main() -> Int {
         assert!(rendered.contains("guard_match_arm"));
         assert!(rendered.contains("guard_match_end"));
         assert!(rendered.contains("call i1 @ql_"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_guard_if_callable_callee_lowering() {
+        let rendered = emit(
+            r#"
+struct State {
+    value: Int,
+}
+
+fn allow_one(state: State) -> Bool {
+    return state.value == 1
+}
+
+fn allow_two(state: State) -> Bool {
+    return state.value == 2
+}
+
+fn main() -> Int {
+    let ready = true
+    return match 1 {
+        1 if (if ready { allow_one } else { allow_two })(State { value: 1 }) => 10,
+        _ => 0,
+    }
+}
+"#,
+        );
+
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("guard_if_then"));
+        assert!(rendered.contains("guard_if_else"));
+        assert!(rendered.contains("call i1 %t"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
