@@ -15539,6 +15539,79 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_awaited_scrutinee_families() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use load_state as async_alias
+use LOAD as async_const_alias
+use matches as helper_alias
+
+struct Slot {
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+}
+
+extern "c" fn sink(value: Int)
+
+async fn load_state(value: Int) -> State {
+    return State { slot: Slot { value: value } }
+}
+
+fn matches(expected: Int, value: Int) -> Bool {
+    return expected == value
+}
+
+fn wrap(state: State) -> State {
+    return state
+}
+
+fn offset(value: Int) -> Int {
+    return value - 11
+}
+
+const LOAD: (Int) -> Task[State] = load_state
+
+async fn main() -> Int {
+    let branch = true
+    match helper_alias(13, (await (if branch { async_alias } else { async_const_alias })(13)).slot.value) {
+        true => sink(1),
+        false => sink(0),
+    }
+    match State { slot: Slot { value: (await (match branch { true => async_const_alias, false => async_alias })(14)).slot.value } }.slot.value {
+        14 => sink(2),
+        _ => sink(3),
+    }
+    match wrap(await (if branch { async_alias } else { async_const_alias })(15)).slot.value {
+        15 => sink(4),
+        _ => sink(5),
+    }
+    match [wrap(await (match branch { true => async_const_alias, false => async_alias })(17)).slot.value, 0][offset(11)] {
+        17 => sink(6),
+        _ => sink(7),
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 4);
+        assert!(rendered.matches("call ptr %t").count() >= 4);
+        assert!(rendered.contains("call i1 @ql_4_matches"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(!rendered.contains("does not support field projection lowering yet"));
+    }
+
+    #[test]
     fn emits_non_capturing_closure_value_local_calls() {
         let rendered = emit(
             r#"
