@@ -10618,6 +10618,60 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_match_guard_callable_alias_calls() {
+        let dir = TestDir::new("ql-driver-llvm-ir-match-guard-callable-alias-calls");
+        let source = dir.write(
+            "match_guard_callable_alias_calls.ql",
+            r#"
+use READY as ready
+use SHIFT as offset
+
+fn enabled() -> Bool {
+    return true
+}
+
+fn shift(value: Int, delta: Int) -> Int {
+    return value + delta
+}
+
+const READY: () -> Bool = enabled
+const SHIFT: (Int, Int) -> Int = shift
+
+fn main() -> Int {
+    let first = match true {
+        true if ready() => 10,
+        false => 0,
+    }
+    let second = match 20 {
+        current if offset(current, 2) == 22 => 32,
+        _ => 0,
+    }
+    return first + second
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/match_guard_callable_alias_calls.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with callable alias scalar guard calls should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.matches("_match_guard0").count() >= 2);
+        assert!(rendered.contains("call i1 %t"));
+        assert!(rendered.contains("call i64 %t"));
+        assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_match_guard_call_projection_roots() {
         let dir = TestDir::new("ql-driver-llvm-ir-match-guard-call-projection-roots");
         let source = dir.write(

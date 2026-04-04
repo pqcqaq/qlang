@@ -54,7 +54,7 @@
   - same-file `use ... as ...` function alias
   - transparently resolve 到 same-file sync function item 的 callable `const` / `static`，以及它们的 same-file `use ... as ...` alias
   - ordinary call 可 direct call，或先绑定到 local 后再做 positional indirect call
-  - ordinary call 之外，当前 shipped cleanup call / guard-call 子路径也可通过同一批 callable local / callable `const` / `static` / same-file alias 进入 positional indirect call
+  - ordinary `match` guard，以及当前 shipped cleanup call / guard-call 子路径，也可通过同一批 callable local / callable `const` / `static` / same-file alias 进入 positional indirect call
 - fixed-shape `for`
   - fixed-array
   - homogeneous tuple
@@ -80,6 +80,7 @@
   - 其他 current-loadable scrutinee 的 catch-all-only 子集
   - 当前 bool/scalar-comparison guard 子集
   - direct resolved sync guard call 子集
+  - callable-value positional indirect guard call 子集：当前已覆盖 callable local / callable `const` / `static` / same-file alias
   - inline aggregate guard-call arg / inline projection-root 子集
   - call-root / nested call-root guard 子集
 
@@ -241,7 +242,7 @@
 - 更广义的 async `dylib` surface，尤其是公开 async ABI
 - generalized `for await`，超出 fixed-array / homogeneous tuple 之外的 iterable
 - broader cleanup lowering / cleanup codegen，超出当前 direct / call-backed `defer` + `if` / `match` + 透明 `?` wrapper cleanup 子集之外
-- broader callable value lowering，超出当前 same-file sync function item / same-file alias / callable `const` / `static` 子集，以及 ordinary call / call-backed cleanup `defer` 的 positional indirect call 之外
+- broader callable value lowering，超出当前 same-file sync function item / same-file alias / callable `const` / `static` 子集，以及 ordinary call / ordinary `match` guard / call-backed cleanup `defer` / cleanup guard-call 的 positional indirect call 之外
 - cancellation / polling / drop semantics
 - generic async ABI / layout substitution
 - arbitrary dynamic overlap precision

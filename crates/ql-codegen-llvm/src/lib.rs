@@ -8156,7 +8156,7 @@ fn supported_guard_call_expr(
     callee_expr: hir::ExprId,
     args: &[hir::CallArg],
 ) -> Option<GuardScalarKind> {
-    let (_, signature, _) = supported_guard_call(
+    let (_, return_ty) = supported_guard_call(
         module,
         resolution,
         typeck,
@@ -8167,7 +8167,7 @@ fn supported_guard_call_expr(
         callee_expr,
         args,
     )?;
-    let return_kind = guard_scalar_kind_for_ty(&signature.return_ty)?;
+    let return_kind = guard_scalar_kind_for_ty(&return_ty)?;
     Some(return_kind)
 }
 
@@ -8513,7 +8513,7 @@ fn guard_expr_ty(
             *callee,
             args,
         )
-        .map(|(_, signature, _)| signature.return_ty.clone()),
+        .map(|(_, return_ty)| return_ty),
         _ => None,
     }
 }
@@ -9184,22 +9184,80 @@ fn supported_guard_call<'a>(
     module: &hir::Module,
     resolution: &ResolutionMap,
     typeck: &TypeckResult,
-    signatures: &'a HashMap<FunctionRef, FunctionSignature>,
+    signatures: &HashMap<FunctionRef, FunctionSignature>,
     body: &mir::MirBody,
     local_types: &HashMap<mir::LocalId, Ty>,
     arm_pattern: hir::PatternId,
     callee_expr: hir::ExprId,
     args: &'a [hir::CallArg],
-) -> Option<(FunctionRef, &'a FunctionSignature, Vec<&'a hir::CallArg>)> {
-    let function = guard_direct_callee_function(module, resolution, callee_expr)?;
-    let signature = signatures.get(&function)?;
-    if signature.is_async {
+) -> Option<(Vec<Ty>, Ty)> {
+    if let Some(function) = guard_direct_callee_function(module, resolution, callee_expr) {
+        let signature = signatures.get(&function)?;
+        if signature.is_async {
+            return None;
+        }
+        let ordered_args = ordered_guard_call_args(args, signature)?;
+        for (arg, param) in ordered_args.iter().copied().zip(signature.params.iter()) {
+            let expr_id = guard_call_arg_expr(arg);
+            if let Some(expected_kind) = guard_scalar_kind_for_ty(&param.ty) {
+                let actual_kind = supported_guard_scalar_expr(
+                    module,
+                    resolution,
+                    typeck,
+                    signatures,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    expr_id,
+                )?;
+                if actual_kind != expected_kind {
+                    return None;
+                }
+            } else {
+                let actual_ty = guard_expr_ty(
+                    module,
+                    resolution,
+                    typeck,
+                    signatures,
+                    body,
+                    local_types,
+                    Some(arm_pattern),
+                    expr_id,
+                )?;
+                if !param.ty.compatible_with(&actual_ty) {
+                    return None;
+                }
+            }
+        }
+        return Some((
+            signature.params.iter().map(|param| param.ty.clone()).collect(),
+            signature.return_ty.clone(),
+        ));
+    }
+
+    let callee_ty = guard_expr_ty(
+        module,
+        resolution,
+        typeck,
+        signatures,
+        body,
+        local_types,
+        Some(arm_pattern),
+        callee_expr,
+    )?;
+    let Ty::Callable { params, ret } = callee_ty else {
+        return None;
+    };
+    if args.len() != params.len()
+        || args
+            .iter()
+            .any(|arg| matches!(arg, hir::CallArg::Named { .. }))
+    {
         return None;
     }
-    let ordered_args = ordered_guard_call_args(args, signature)?;
-    for (arg, param) in ordered_args.iter().copied().zip(signature.params.iter()) {
+    for (arg, param_ty) in args.iter().zip(params.iter()) {
         let expr_id = guard_call_arg_expr(arg);
-        if let Some(expected_kind) = guard_scalar_kind_for_ty(&param.ty) {
+        if let Some(expected_kind) = guard_scalar_kind_for_ty(param_ty) {
             let actual_kind = supported_guard_scalar_expr(
                 module,
                 resolution,
@@ -9224,12 +9282,12 @@ fn supported_guard_call<'a>(
                 Some(arm_pattern),
                 expr_id,
             )?;
-            if !param.ty.compatible_with(&actual_ty) {
+            if !param_ty.compatible_with(&actual_ty) {
                 return None;
             }
         }
     }
-    Some((function, signature, ordered_args))
+    Some((params, ret.as_ref().clone()))
 }
 
 fn guard_call_arg_expr(arg: &hir::CallArg) -> hir::ExprId {
@@ -11756,6 +11814,46 @@ fn main() -> Int {
         assert!(rendered.matches("_match_guard0").count() >= 2);
         assert!(rendered.matches("call i1 @ql_").count() >= 1);
         assert!(rendered.matches("call i64 @ql_").count() >= 1);
+        assert!(rendered.contains("icmp eq i64"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_match_guard_callable_alias_lowering() {
+        let rendered = emit_with_mode(
+            r#"
+use READY as ready
+use SHIFT as offset
+
+fn enabled() -> Bool {
+    return true
+}
+
+fn shift(value: Int, delta: Int) -> Int {
+    return value + delta
+}
+
+const READY: () -> Bool = enabled
+const SHIFT: (Int, Int) -> Int = shift
+
+fn main() -> Int {
+    let first = match true {
+        true if ready() => 10,
+        false => 0,
+    }
+    let second = match 20 {
+        current if offset(current, 2) == 22 => 32,
+        _ => 0,
+    }
+    return first + second
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("_match_guard0").count() >= 2);
+        assert!(rendered.contains("call i1 %t"));
+        assert!(rendered.contains("call i64 %t"));
         assert!(rendered.contains("icmp eq i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
