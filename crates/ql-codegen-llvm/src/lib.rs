@@ -2668,6 +2668,12 @@ impl<'a> ModuleEmitter<'a> {
         }
     }
 
+    fn literal_source_expr(&self, expr_id: hir::ExprId) -> Option<hir::ExprId> {
+        let mut visited = HashSet::new();
+        let source = guard_literal_source_expr(self.input.hir, self.input.resolution, expr_id, &mut visited)?;
+        (source != expr_id).then_some(source)
+    }
+
     fn supports_cleanup_for_iterable(&self, expr_id: hir::ExprId) -> bool {
         let Some(iterable_ty) = self.input.typeck.expr_ty(expr_id) else {
             return false;
@@ -2801,11 +2807,16 @@ impl<'a> ModuleEmitter<'a> {
             _ => {}
         }
 
+        if let Some(source_expr) = self.literal_source_expr(expr_id) {
+            return self.supports_cleanup_value_expr(source_expr, expected_ty);
+        }
+
         let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
             return false;
         };
         if !expected_ty.compatible_with(actual_ty)
-            || lower_llvm_type(
+            || self
+                .lower_llvm_type(
                 actual_ty,
                 self.input.hir.expr(expr_id).span,
                 "cleanup value",
@@ -2838,6 +2849,10 @@ impl<'a> ModuleEmitter<'a> {
         };
         if !actual_ty.is_bool() {
             return false;
+        }
+
+        if let Some(source_expr) = self.literal_source_expr(expr_id) {
+            return self.supports_cleanup_bool_expr(source_expr);
         }
 
         match &self.input.hir.expr(expr_id).kind {
@@ -2888,6 +2903,10 @@ impl<'a> ModuleEmitter<'a> {
         };
         if !actual_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
             return false;
+        }
+
+        if let Some(source_expr) = self.literal_source_expr(expr_id) {
+            return self.supports_cleanup_scalar_expr(source_expr);
         }
 
         match &self.input.hir.expr(expr_id).kind {
@@ -6150,6 +6169,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         expected_ty: &Ty,
         span: Span,
     ) -> LoweredValue {
+        if let Some(source_expr) = self.emitter.literal_source_expr(expr_id) {
+            return self.render_cleanup_value_expr(output, source_expr, expected_ty, span);
+        }
+
         match &self.emitter.input.hir.expr(expr_id).kind {
             hir::ExprKind::Call { callee, args } => {
                 let rendered = self
@@ -7651,6 +7674,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
         guard_binding: Option<&GuardBindingValue>,
     ) -> LoweredValue {
+        if let Some(source_expr) = self.emitter.literal_source_expr(expr_id) {
+            return self.render_bool_guard_expr(output, source_expr, span, guard_binding);
+        }
+
         match &self.emitter.input.hir.expr(expr_id).kind {
             hir::ExprKind::Binary { left, op, right } => match op {
                 BinaryOp::AndAnd | BinaryOp::OrOr => {
@@ -7737,6 +7764,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
         guard_binding: Option<&GuardBindingValue>,
     ) -> LoweredValue {
+        if let Some(source_expr) = self.emitter.literal_source_expr(expr_id) {
+            return self.render_guard_scalar_expr(output, source_expr, span, guard_binding);
+        }
+
         match &self.emitter.input.hir.expr(expr_id).kind {
             hir::ExprKind::Binary { left, op, right }
                 if matches!(
@@ -8034,6 +8065,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
         guard_binding: Option<&GuardBindingValue>,
     ) -> LoweredValue {
+        if let Some(source_expr) = self.emitter.literal_source_expr(expr_id) {
+            return self.render_guard_loadable_expr(output, source_expr, span, guard_binding);
+        }
+
         match &self.emitter.input.hir.expr(expr_id).kind {
             hir::ExprKind::Tuple(items) => {
                 let tuple_ty = self
@@ -16732,6 +16767,61 @@ fn main() -> Int {
         assert!(rendered.contains("call void @second()"));
         assert!(rendered.contains("call void @sink(i64 1)"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_lowering_for_foldable_control_flow_values() {
+        let rendered = emit(
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+extern "c" fn first()
+extern "c" fn second()
+extern "c" fn sink(value: Int)
+
+const PICK_LEFT: Bool = true
+const PICK_VALUES: Int = 0
+
+fn main() -> Int {
+    defer {
+        let Pair { left, right } = if PICK_LEFT {
+            Pair { left: 4, right: 6 }
+        } else {
+            Pair { left: 8, right: 10 }
+        };
+        sink(left);
+        sink(right);
+        for value in match PICK_VALUES {
+            0 => [12, 14],
+            _ => [16, 18],
+        } {
+            sink(value);
+        }
+        if match PICK_VALUES {
+            0 => true,
+            _ => false,
+        } {
+            first();
+        } else {
+            second();
+        };
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.matches("extractvalue { i64, i64 }").count() >= 2);
+        assert!(rendered.contains("insertvalue [2 x i64]"));
+        assert!(rendered.contains("call void @first()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
+        assert!(!rendered.contains("does not support `if` lowering yet"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
