@@ -8481,12 +8481,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         item_id: ItemId,
         span: Span,
     ) -> Option<(String, Ty)> {
-        const_or_static_item_type(
-            self.emitter.input.hir,
-            self.emitter.input.resolution,
-            item_id,
-        )?;
-        let rendered = self.render_item_constant(output, item_id, span);
+        let rendered = match &self.emitter.input.hir.item(item_id).kind {
+            ItemKind::Function(_) => self.render_function_constant(FunctionRef::Item(item_id), span),
+            ItemKind::Const(_) | ItemKind::Static(_) => {
+                self.render_item_constant(output, item_id, span)
+            }
+            _ => return None,
+        };
         let slot = self.fresh_temp();
         let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
         let _ = writeln!(
@@ -8544,6 +8545,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
+                    Some(ValueResolution::Function(function)) => {
+                        let rendered = self.render_function_constant(*function, span);
+                        let slot = self.fresh_temp();
+                        let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                        let _ = writeln!(
+                            output,
+                            "  store {} {}, ptr {slot}",
+                            rendered.llvm_ty, rendered.repr
+                        );
+                        Some((slot, rendered.ty))
+                    }
                     Some(ValueResolution::Local(local))
                         if guard_binding.is_some_and(|binding| binding.local == *local) =>
                     {
@@ -12820,6 +12832,60 @@ fn main() -> Int {
         assert!(rendered.contains("call i64 %t"));
         assert!(rendered.contains("(i64 41)"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_foldable_function_item_cleanup_and_guard_calls() {
+        let rendered = emit(
+            r#"
+use first as first_alias
+use second as second_alias
+use ready as ready_alias
+use idle as idle_alias
+
+extern "c" fn first()
+extern "c" fn second()
+
+fn ready() -> Bool {
+    return true
+}
+
+fn idle() -> Bool {
+    return false
+}
+
+const PICK_BOOL: Bool = true
+const PICK_INT: Int = 0
+
+fn main() -> Int {
+    defer (if PICK_BOOL {
+        first
+    } else {
+        second
+    })()
+    defer (match PICK_INT {
+        0 => first_alias,
+        _ => second_alias,
+    })()
+    defer if (if PICK_BOOL {
+        ready_alias
+    } else {
+        idle_alias
+    })() {
+        first()
+    } else {
+        second()
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.matches("call void %t").count() >= 2);
+        assert!(rendered.contains("call i1 %t"));
+        assert!(rendered.contains("store ptr @first"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support imported value lowering yet"));
     }
 
     #[test]

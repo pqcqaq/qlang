@@ -219,12 +219,12 @@
 当前 cleanup lowering 只开放首个受控子集：
 
 - direct / call-backed `defer`
-- 其中 call-backed `defer` 当前已覆盖 direct resolved callee，以及 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect callee
+- 其中 call-backed `defer` 当前已覆盖 direct resolved callee，以及 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect callee；可折叠 `if` / 最小 literal `match` 当前也可选出 same-file function item / same-file import alias 作为 callable cleanup callee root
 - statement-sequenced block wrapper：当前接受 binding / `_`、tuple destructuring、struct destructuring（叶子仍限 binding / `_`）的最小 `let` statement、已支持 cleanup expr statement、statement-level `while` / `loop` / `for`，外加可选 tail；当前已覆盖 direct cleanup body、cleanup `let` binding / destructuring block、cleanup guard / scrutinee block，以及 cleanup call-arg value block
 - statement-level cleanup `while`：当前开放 bool 条件 + 已支持 cleanup block body 的最小 lowering 子集，可在 cleanup block 内重复执行 direct / callable-backed call 路径，并支持 body-local `break` / `continue`（包括经由当前已开放 cleanup `if` branch 进入的 loop-exit path）
 - statement-level cleanup `loop`：当前开放已支持 cleanup block body 的最小 lowering 子集，并支持 body-local `break` / `continue`（包括经由当前已开放 cleanup `if` branch 进入的 loop-exit path）
 - statement-level cleanup `for`：当前开放 fixed array / homogeneous tuple iterable + binding / `_` / tuple destructuring / struct destructuring（叶子仍限 binding / `_`）pattern 的最小 lowering 子集，iterable 当前已覆盖 direct root、same-file `const` / `static` root 及其 same-file alias、item-backed read-only projected root、direct call-root、same-file import-alias call-root，以及 nested call-root projected root 形态；body 内可读取当前 item，并支持 body-local `break` / `continue`（包括经由当前已开放 cleanup `if` branch 进入的 loop-exit path）
-- bool-guard 驱动的 call-backed `if` cleanup branch；当前 bool/int guard call 子路径也已覆盖 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect call
+- bool-guard 驱动的 call-backed `if` cleanup branch；当前 bool/int guard call 子路径也已覆盖 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect call，并接受可折叠 `if` 选出的 same-file function item / same-file import alias callee root
 - bool / int scrutinee + literal-or-path / wildcard-or-single-binding catch-all arms + optional bool guard 的 cleanup `match` branch；当前 arm guard、binding arm body，以及 cleanup scalar call-arg value 里的 call 子路径也已覆盖同一批 callable-value 间接调用
 - 透明 `?` wrapper，可包裹当前 shipped cleanup expr / guard / scrutinee 子路径
 - cleanup value path 现也会复用既有 literal-source folding：cleanup `let` value、cleanup `for` iterable、cleanup `if` bool condition，以及 cleanup call-arg scalar/value path 当前都接受可折叠回既有 literal / aggregate root 的 `if` / 最小 literal `match` 根表达式

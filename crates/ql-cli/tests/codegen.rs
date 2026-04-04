@@ -4249,6 +4249,26 @@ fn cleanup_callable_const_alias_codegen_case_matches() {
 }
 
 #[test]
+fn cleanup_foldable_function_item_calls_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "cleanup_foldable_function_item_calls_build",
+        source_relative: "fixtures/codegen/pass/cleanup_foldable_function_item_calls.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("cleanup foldable function-item call build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn closure_backed_callable_cleanup_guard_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {
