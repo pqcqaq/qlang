@@ -2864,6 +2864,30 @@ impl<'a> ModuleEmitter<'a> {
         Some(target_ty)
     }
 
+    fn supports_cleanup_assignment_expr_as_scalar_kind(
+        &self,
+        target_expr: hir::ExprId,
+        value_expr: hir::ExprId,
+        expected_kind: GuardScalarKind,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+    ) -> bool {
+        let Some(target_ty) = self.cleanup_assignment_target_ty(target_expr, body, local_types)
+        else {
+            return false;
+        };
+        if guard_scalar_kind_for_ty(&target_ty) != Some(expected_kind) {
+            return false;
+        }
+
+        match expected_kind {
+            GuardScalarKind::Bool => self.supports_cleanup_bool_expr(value_expr, body, local_types),
+            GuardScalarKind::Int => {
+                self.supports_cleanup_scalar_expr(value_expr, body, local_types)
+            }
+        }
+    }
+
     fn supports_cleanup_assignment_expr(
         &self,
         target_expr: hir::ExprId,
@@ -3034,6 +3058,21 @@ impl<'a> ModuleEmitter<'a> {
         body: &mir::MirBody,
         local_types: &HashMap<mir::LocalId, Ty>,
     ) -> bool {
+        if let hir::ExprKind::Binary {
+            left,
+            op: BinaryOp::Assign,
+            right,
+        } = &self.input.hir.expr(expr_id).kind
+        {
+            return self.supports_cleanup_assignment_expr_as_scalar_kind(
+                *left,
+                *right,
+                GuardScalarKind::Bool,
+                body,
+                local_types,
+            );
+        }
+
         let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
             return false;
         };
@@ -3050,6 +3089,17 @@ impl<'a> ModuleEmitter<'a> {
             | hir::ExprKind::Name(_)
             | hir::ExprKind::Member { .. }
             | hir::ExprKind::Bracket { .. } => true,
+            hir::ExprKind::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => self.supports_cleanup_assignment_expr_as_scalar_kind(
+                *left,
+                *right,
+                GuardScalarKind::Bool,
+                body,
+                local_types,
+            ),
             hir::ExprKind::Call { callee, args } => {
                 self.supports_cleanup_call_expr(*callee, args, Some(actual_ty), body, local_types)
             }
@@ -3102,6 +3152,21 @@ impl<'a> ModuleEmitter<'a> {
         body: &mir::MirBody,
         local_types: &HashMap<mir::LocalId, Ty>,
     ) -> bool {
+        if let hir::ExprKind::Binary {
+            left,
+            op: BinaryOp::Assign,
+            right,
+        } = &self.input.hir.expr(expr_id).kind
+        {
+            return self.supports_cleanup_assignment_expr_as_scalar_kind(
+                *left,
+                *right,
+                GuardScalarKind::Int,
+                body,
+                local_types,
+            );
+        }
+
         let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
             return false;
         };
@@ -3118,6 +3183,17 @@ impl<'a> ModuleEmitter<'a> {
             | hir::ExprKind::Name(_)
             | hir::ExprKind::Member { .. }
             | hir::ExprKind::Bracket { .. } => true,
+            hir::ExprKind::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => self.supports_cleanup_assignment_expr_as_scalar_kind(
+                *left,
+                *right,
+                GuardScalarKind::Int,
+                body,
+                local_types,
+            ),
             hir::ExprKind::Call { callee, args } => {
                 self.supports_cleanup_call_expr(*callee, args, Some(actual_ty), body, local_types)
             }
@@ -8014,6 +8090,19 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
 
         match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => {
+                let rendered =
+                    self.render_guard_assignment_expr(output, *left, *right, span, guard_binding);
+                assert!(
+                    rendered.ty.is_bool(),
+                    "prepared bool guard lowering at {span:?} should only render bool-valued guard assignments"
+                );
+                rendered
+            }
             hir::ExprKind::Binary { left, op, right } => match op {
                 BinaryOp::AndAnd | BinaryOp::OrOr => {
                     let left = self.render_bool_guard_expr(output, *left, span, guard_binding);
@@ -8092,6 +8181,42 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_guard_assignment_expr(
+        &mut self,
+        output: &mut String,
+        target_expr: hir::ExprId,
+        value_expr: hir::ExprId,
+        span: Span,
+        guard_binding: Option<&GuardBindingValue>,
+    ) -> LoweredValue {
+        let (place, target_ty) = guard_expr_place_with_ty(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            self.body,
+            &self.prepared.local_types,
+            None,
+            target_expr,
+        )
+        .unwrap_or_else(|| {
+            panic!(
+                "prepared bool guard lowering at {span:?} should only assign through supported guard places"
+            )
+        });
+        let rendered =
+            self.render_guard_expr_as_type(output, value_expr, &target_ty, span, guard_binding);
+        assert!(
+            target_ty.compatible_with(&rendered.ty),
+            "prepared bool guard lowering at {span:?} should only store compatible guard assignment values"
+        );
+        let target_ptr = self.render_place_pointer(output, &place, span).0;
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {}",
+            rendered.llvm_ty, rendered.repr, target_ptr
+        );
+        rendered
+    }
+
     fn render_guard_scalar_expr(
         &mut self,
         output: &mut String,
@@ -8104,6 +8229,19 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
 
         match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => {
+                return self.render_guard_assignment_expr(
+                    output,
+                    *left,
+                    *right,
+                    span,
+                    guard_binding,
+                );
+            }
             hir::ExprKind::Binary { left, op, right }
                 if matches!(
                     op,
@@ -9803,6 +9941,32 @@ fn supported_guard_scalar_expr(
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(_) => Some(GuardScalarKind::Bool),
         hir::ExprKind::Integer(_) => Some(GuardScalarKind::Int),
+        hir::ExprKind::Binary {
+            left,
+            op: BinaryOp::Assign,
+            right,
+        } => {
+            let (_, target_ty) = guard_expr_place_with_ty(
+                module,
+                resolution,
+                body,
+                local_types,
+                Some(arm_pattern),
+                *left,
+            )?;
+            let target_kind = guard_scalar_kind_for_ty(&target_ty)?;
+            let value_kind = supported_guard_scalar_expr(
+                module,
+                resolution,
+                typeck,
+                signatures,
+                body,
+                local_types,
+                arm_pattern,
+                *right,
+            )?;
+            (target_kind == value_kind).then_some(target_kind)
+        }
         hir::ExprKind::Binary { left, op, right }
             if matches!(
                 op,
@@ -16941,6 +17105,29 @@ fn main() -> Int {
         assert!(rendered.matches("store i64").count() >= 2);
         assert!(rendered.matches("call i64 @ql_").count() >= 1);
         assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
+        assert!(!rendered.contains("does not support assignment expressions yet"));
+    }
+
+    #[test]
+    fn emits_guard_assignment_expr_lowering() {
+        let rendered = emit(
+            r#"
+fn forward(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    var cleanup_enabled = false
+    defer if cleanup_enabled = true { forward(1) } else { forward(0) }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.matches("store i1").count() >= 1);
+        assert!(rendered.contains("cleanup_then"));
+        assert!(rendered.contains("cleanup_else"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support assignment expressions yet"));
     }
 

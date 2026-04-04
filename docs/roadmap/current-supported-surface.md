@@ -89,8 +89,9 @@
 - 最小 literal `match` lowering
   - `Bool` / `Int` literal-path 子集
   - 其他 current-loadable scrutinee 的 catch-all-only 子集
-  - 当前 bool/scalar-comparison guard 子集
-  - direct resolved sync guard call 子集
+- 当前 bool/scalar-comparison guard 子集
+- bool guard path 现也接受同一批 ordinary local / param / `self` root 的 bool assignment expr value；当前已锁定 shipped cleanup `if` condition 公开回归
+- direct resolved sync guard call 子集
   - callable-value positional indirect guard call 子集：当前已覆盖 callable local / callable `const` / `static` / same-file alias
   - inline aggregate guard-call arg / inline projection-root 子集
   - call-root / nested call-root guard 子集
