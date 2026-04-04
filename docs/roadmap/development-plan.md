@@ -56,8 +56,8 @@
 ### 4. 编译器开发必须测试驱动
 
 - 回归测试属于功能本身，不是收尾工作
-- 新能力至少覆盖正例、负例、边界和回归路径
-- 发现 bug 时，先补会失败的测试，再修实现
+- 新能力先补“最小必要回归”：至少锁住一个 blocker 和一个用户可见路径
+- coverage-only 的相邻变体补洞不再作为主线，除非它们直接保护新功能或刚修掉的回归
 
 ### 5. C ABI 是当前稳定互操作边界
 
@@ -69,6 +69,13 @@
 
 - 路线图、阶段总览、README、示例和测试结果必须同步
 - 不允许 README 说一套、roadmap 说一套、代码里又是另一套
+- 主入口页保持短版；逐轮细节与旧状态转入 archive，避免 roadmap 再次膨胀
+
+### 7. 功能交付优先于 coverage-only 收口
+
+- 当前主线优先解决“用户已经能写、前端已经能分析、但 backend 仍明确拒绝”的能力缺口
+- 语言真实功能优先于测试矩阵扩写、文档润色和外围 UX 微调
+- 每轮只同步必要文档：当前支持基线、当前开发计划，以及与该能力直接相关的设计页
 
 ## 已完成阶段（P0-P6）
 
@@ -263,36 +270,33 @@
 | 扩大 async `dylib` 或开放更多 async program build surface | 至少一条 Rust host 双向互操作路径（P7.3）已被 CI 锁定，且 hook ABI 文档已成立；当前已开放 `BuildEmit::LlvmIr` / `BuildEmit::Object` / `BuildEmit::Executable` 下的 `async fn main` 最小程序入口生命周期 |
 | 开放更广义的 async callable / effect surface | Phase 8 或更晚；需要独立 RFC，不在 Phase 7 范围内 |
 
-##### P7.4 下一步执行顺序（2026-03-30 起，Task 1/2 已完成）
+##### P7.4 当前执行顺序（2026-04-04 复核）
 
-> 目标：继续沿着“保守可验证切片”推进，但优先级从纯 toolchain 体验回到**语言可用子集本身**：先扩用户可写、可编、可测试的语言能力，再补外围 UX。
+> 当前主线不再以 coverage-only matrix 扩写为目标，而是优先消掉已经进入前端/MIR/borrowck 事实面、但 backend 仍明确拦截的用户可见缺口。
 
-1. **Task 3：放宽更多 `await` / `spawn` payload 路径**
-   - 状态：进行中。当前受控子集已经覆盖 executable / library 两侧共享的主要 `await` / `spawn` payload family、projected task-handle consume/reinit、stable-dynamic 与 guard-refined dynamic path、fixed-shape `for await`、awaited `match` guard，以及 sync/async assignment-expression executable surface。详细 family inventory 以 [当前支持基线](/roadmap/current-supported-surface) 为准，逐轮切片记录已归档到 [路线图归档](/roadmap/archive/index)。
-   - Why：当前前端语法与类型面已经明显快于 backend executable subset，最大的语言可用性缺口不在 lexer/parser，而在“用户已经能写出的 async 程序里，哪些 payload/aggregate/path 还不能稳定编译”。
+1. **Task 3：cleanup lowering / codegen 最小可交付子集**
+   - 状态：当前最高优先级。
+   - Why：MIR 已经产生 `RegisterCleanup` / `RunCleanup`，borrowck 也已经能分析 guarded dynamic task-handle cleanup，但 `ql-codegen-llvm` 仍统一报 `LLVM IR backend foundation does not support cleanup lowering yet`。这是当前最清晰、最直接的真实语言功能阻塞点。
+   - 当前范围：
+     - 先做不引入新 runtime ABI 的 `defer` lowering 子集。
+     - 优先 direct call / call-backed cleanup expr；更复杂 cleanup control flow 继续保守拒绝。
+     - 先打通一条最短 build 路径，再按共享 lowering 成本决定是否扩到更多 emit。
    - Deliverables：
-     - 扩大 `await` / `spawn` 在 executable / library 两种 build mode 下共享支持的 payload 子集。
-     - 优先考虑已在 HIR/typeck/borrowck 层进入事实面的 fixed-shape aggregate / projection-sensitive 路径，而不是新开 ABI surface。
-     - 同步补 `ql-codegen-llvm` / `ql-driver` / `ql-cli` 三层回归。
+     - `ql-codegen-llvm` 对当前 shipped cleanup 子集不再统一拒绝。
+     - `ql-driver` / `ql-cli` 至少有一条 cleanup build case 从 fail 变 pass，并保留更宽 cleanup surface 的稳定失败合同。
+     - 文档同步更新“已开放 cleanup 子集”和“仍未开放的 broader cleanup surface”。
 
-2. **Task 4：`for await` iterable surface 扩展评估（slice/span / dynamic array）**
-   - 状态：已完成评估（2026-03-30）
-   - Why：当前 `for await` 语法、MIR 与 fixed-array lowering 都已成立，但 backend 现状是直接对 concrete fixed-array layout 做 `getelementptr + load`，这不是 generic iterator protocol 的薄包装。先把 ABI 与 lowering 边界写清楚，比盲目再开一条 runtime-driven 路径更低风险。
-   - 结论：
-     - 保持 fixed-array 作为当前唯一 shipped iterable surface。
-     - `qlrt_async_iter_next` 继续视为 capability/ABI placeholder，不在本轮冻结通用 iterator/item release 协议。
-     - dynamic array `for await` 继续 deferred；它依赖更广的动态数组布局与生命周期事实面。
-     - 如果后续要扩面，优先单独设计 `Slice[T]` / span-like fixed-shape view，并要求继续由 compiler 侧 index/load lowering 驱动，不新增 runtime hook。
+2. **Task 4：继续扩 async payload / projection surface**
+   - 状态：降为次优先级。
+   - Why：当前 `await` / `spawn` payload family、stable-dynamic path、guard-refined path、fixed-shape `for await` 与 awaited `match` guard 已形成较大的可用子集；继续堆相邻 matrix 的边际收益，低于 cleanup lowering 这类明确 blocker。
    - Deliverables：
-     - `/plans/2026-03-29-phase-7-p7.2-runtime-and-interop` 的“延后评估区”已补充对比矩阵与结论。
-     - `/plans/phase-7-concurrency-and-rust-interop` 与本节已同步当前建议：Task 4 评估完成后保持 deferred，当前唯一立即实现项仍是 Task 3。
+     - 只在新 lowering 需要时补最小必要回归。
+     - 不再把“同一路径的相邻变体补齐”作为独立里程碑。
 
-3. **Task 5：toolchain UX：Windows 下 clang 自动发现/提示收口**
-   - 状态：已完成（2026-03-30）
-   - Why：这是用户体验问题，重要但不应压过当前语言功能主线；放在语言子集继续扩展之后处理更合适。
-   - Deliverables：
-     - `ql-driver`：已在 Windows 上补充常见 LLVM 安装路径探测（Scoop、`%LOCALAPPDATA%\\Programs\\LLVM\\bin`、`%ProgramFiles%\\LLVM\\bin`、`%ProgramFiles(x86)%\\LLVM\\bin`），并把缺失时的 diagnostics hint 改成带候选路径的具体提示。
-     - `crates/ql-cli/tests/ffi.rs`：已改为复用 `ql-driver` 的 toolchain discover 结果，避免集成测试与真实 build pipeline 使用两套不同的 clang / archiver 判定规则。
+3. **Task 5：保持 deferred 的方向**
+   - `for await` 泛化继续按既有 docs-first 结论 deferred：当前仍只开放 fixed-array / homogeneous tuple。
+   - 更广义的 async `dylib`、program bootstrap、generic async ABI / layout substitution 继续 deferred。
+   - Windows toolchain discover 已完成，不再占用当前主线。
 
 ### Phase 7 出口标准
 
