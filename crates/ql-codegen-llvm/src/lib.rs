@@ -5641,6 +5641,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             } else {
                 self.fresh_label("cleanup_match_next")
             };
+            let binding_local = match pattern_kind(self.emitter.input.hir, arm.pattern) {
+                PatternKind::Binding(local) => Some(*local),
+                _ => None,
+            };
+
+            if let Some(local) = binding_local {
+                self.cleanup_bindings.push(GuardBindingValue {
+                    local,
+                    value: scrutinee.clone(),
+                });
+            }
 
             match pattern {
                 SupportedBoolMatchPattern::True | SupportedBoolMatchPattern::False => {
@@ -5699,6 +5710,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 let _ = writeln!(output, "  br label %{end_label}");
             }
 
+            if binding_local.is_some() {
+                self.cleanup_bindings.pop();
+            }
+
             if next_label != end_label {
                 let _ = writeln!(output, "{next_label}:");
             }
@@ -5736,6 +5751,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             } else {
                 self.fresh_label("cleanup_match_next")
             };
+            let binding_local = match pattern_kind(self.emitter.input.hir, arm.pattern) {
+                PatternKind::Binding(local) => Some(*local),
+                _ => None,
+            };
+
+            if let Some(local) = binding_local {
+                self.cleanup_bindings.push(GuardBindingValue {
+                    local,
+                    value: scrutinee.clone(),
+                });
+            }
 
             match &pattern {
                 SupportedIntegerMatchPattern::Literal(value) => {
@@ -5783,6 +5809,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             self.render_cleanup_expr(output, arm.body, span);
             if self.cleanup_path_open {
                 let _ = writeln!(output, "  br label %{end_label}");
+            }
+
+            if binding_local.is_some() {
+                self.cleanup_bindings.pop();
             }
 
             if next_label != end_label {
@@ -9459,6 +9489,7 @@ fn supported_cleanup_bool_match_pattern(
                 SupportedBoolMatchPattern::False
             }
         }),
+        PatternKind::Binding(_) => Some(SupportedBoolMatchPattern::CatchAll),
         PatternKind::Wildcard => Some(SupportedBoolMatchPattern::CatchAll),
         _ => None,
     }
@@ -9473,6 +9504,7 @@ fn supported_cleanup_integer_match_pattern(
         PatternKind::Integer(value) => Some(SupportedIntegerMatchPattern::Literal(value.clone())),
         PatternKind::Path(_) => pattern_literal_int(module, resolution, pattern)
             .map(|value| SupportedIntegerMatchPattern::Literal(value.to_string())),
+        PatternKind::Binding(_) => Some(SupportedIntegerMatchPattern::CatchAll),
         PatternKind::Wildcard => Some(SupportedIntegerMatchPattern::CatchAll),
         _ => None,
     }
@@ -16028,6 +16060,31 @@ fn main() -> Int {
         assert!(rendered.contains("call i64 %t"));
         assert!(rendered.contains("call void @sink(i64"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_match_binding_arm_lowering() {
+        let rendered = emit(
+            r#"
+extern "c" fn sink(value: Int)
+extern "c" fn fallback()
+
+fn main() -> Int {
+    let value = 42
+    defer match value {
+        current if current == 42 => sink(current),
+        _ => fallback(),
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("icmp eq i64"));
+        assert!(rendered.contains("call void @sink(i64"));
+        assert!(rendered.contains("call void @fallback()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
     #[test]
