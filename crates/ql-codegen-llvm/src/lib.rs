@@ -15423,6 +15423,68 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_awaited_nested_call_root_runtime_projection_guards() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use load_state as async_alias
+use LOAD as async_const_alias
+
+struct Slot {
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+}
+
+async fn load_state(value: Int) -> State {
+    return State {
+        slot: Slot { value: value },
+    }
+}
+
+fn wrap(state: State) -> State {
+    return state
+}
+
+fn offset(value: Int) -> Int {
+    return value - 11
+}
+
+fn matches(value: Int, expected: Int) -> Bool {
+    return value == expected
+}
+
+const LOAD: (Int) -> Task[State] = load_state
+
+async fn main() -> Int {
+    let branch = true
+    return match 1 {
+        1 if wrap(await (if branch { async_alias } else { async_const_alias })(13)).slot.value == 13 => 10,
+        1 if wrap(await (match branch { true => async_const_alias, false => async_alias })(14)).slot.value == 14 => 20,
+        1 if matches(value: [wrap(await (if branch { async_alias } else { async_const_alias })(15)).slot.value, 0][offset(11)], expected: 15) => 30,
+        _ => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 3);
+        assert!(rendered.matches("call ptr %t").count() >= 3);
+        assert!(rendered.matches("call i1 @ql_").count() >= 1);
+        assert!(rendered.contains("guard_match_arm"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(!rendered.contains("does not support field projection lowering yet"));
+    }
+
+    #[test]
     fn emits_non_capturing_closure_value_local_calls() {
         let rendered = emit(
             r#"

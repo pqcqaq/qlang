@@ -227,8 +227,8 @@
   - aggregate guard-call arg / call-backed aggregate arg；当前也已锁定 ordinary `match` guard 里的 awaited aggregate guard-call arg 与 awaited call-backed aggregate guard arg 形态，其中 aggregate-producing `await` operand 可来自 runtime `if` / `match` 选出的 same-file async function item / alias 与 async callable `const` / `static` / alias direct callee root
   - import-alias helper family；当前也已锁定 ordinary `match` guard 里的 awaited import-alias helper 形态，其中 helper arg 可直接承接 runtime `if` / `match` 选出的 same-file async function item / alias 与 async callable `const` / `static` / alias direct callee root 的 awaited aggregate value
   - inline aggregate arg / inline projection-root
-  - nested call-root runtime projection family
-  - nested call-root deeper inline-combo family
+  - nested call-root runtime projection family；当前也已锁定 ordinary `match` guard 里的 awaited nested call-root runtime projection 形态，其中 nested projected scalar 可来自 `wrap(await ...)` 这类 call-backed aggregate root，且 inner `await` operand 继续接受 runtime `if` / `match` 选出的 same-file async function item / alias 与 async callable `const` / `static` / alias direct callee root
+  - nested call-root deeper inline-combo family；当前也已锁定最小 awaited inline-combo 形态，例如 `[wrap(await ...).slot.value, 0][offset(...)]`
 
 ### cleanup lowering 子集
 
