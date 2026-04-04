@@ -7098,6 +7098,124 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_cleanup_tuple_expr(
+        &mut self,
+        output: &mut String,
+        items: &[hir::ExprId],
+        expected_ty: &Ty,
+        span: Span,
+    ) -> LoweredValue {
+        let tuple_ty = match expected_ty {
+            Ty::Tuple(items) => Ty::Tuple(items.clone()),
+            other => panic!(
+                "supported cleanup lowering at {span:?} should only render tuple literals with tuple expected types, found `{other}`"
+            ),
+        };
+        let Ty::Tuple(expected_items) = &tuple_ty else {
+            unreachable!();
+        };
+        assert_eq!(
+            expected_items.len(),
+            items.len(),
+            "supported cleanup lowering at {span:?} should preserve cleanup tuple literal arity"
+        );
+        let rendered_items = items
+            .iter()
+            .zip(expected_items.iter())
+            .map(|(item, item_ty)| self.render_cleanup_value_expr(output, *item, item_ty, span))
+            .collect::<Vec<_>>();
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&tuple_ty, span, "cleanup tuple value")
+            .expect("supported cleanup lowering should lower cleanup tuple values");
+
+        if rendered_items.is_empty() {
+            return LoweredValue {
+                ty: tuple_ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            };
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for (index, item) in rendered_items.iter().enumerate() {
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                item.llvm_ty, item.repr, index
+            );
+            aggregate = next;
+        }
+
+        LoweredValue {
+            ty: tuple_ty,
+            llvm_ty,
+            repr: aggregate,
+        }
+    }
+
+    fn render_cleanup_array_expr(
+        &mut self,
+        output: &mut String,
+        items: &[hir::ExprId],
+        expected_ty: &Ty,
+        span: Span,
+    ) -> LoweredValue {
+        let array_ty = match expected_ty {
+            Ty::Array { element, len } => {
+                assert_eq!(
+                    *len,
+                    items.len(),
+                    "supported cleanup lowering at {span:?} should preserve cleanup array literal length"
+                );
+                Ty::Array {
+                    element: element.clone(),
+                    len: *len,
+                }
+            }
+            other => panic!(
+                "supported cleanup lowering at {span:?} should only render array literals with array expected types, found `{other}`"
+            ),
+        };
+        let Ty::Array { element, .. } = &array_ty else {
+            unreachable!();
+        };
+        let rendered_items = items
+            .iter()
+            .map(|item| self.render_cleanup_value_expr(output, *item, element.as_ref(), span))
+            .collect::<Vec<_>>();
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&array_ty, span, "cleanup array value")
+            .expect("supported cleanup lowering should lower cleanup array values");
+
+        if rendered_items.is_empty() {
+            return LoweredValue {
+                ty: array_ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            };
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for (index, item) in rendered_items.iter().enumerate() {
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                item.llvm_ty, item.repr, index
+            );
+            aggregate = next;
+        }
+
+        LoweredValue {
+            ty: array_ty,
+            llvm_ty,
+            repr: aggregate,
+        }
+    }
+
     fn render_cleanup_value_expr(
         &mut self,
         output: &mut String,
@@ -7172,6 +7290,22 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             ),
             hir::ExprKind::Match { value, arms } => {
                 self.render_cleanup_value_match_expr(output, *value, arms, expected_ty, span)
+            }
+            hir::ExprKind::Tuple(items) => {
+                let rendered = self.render_cleanup_tuple_expr(output, items, expected_ty, span);
+                assert!(
+                    expected_ty.compatible_with(&rendered.ty),
+                    "supported cleanup lowering at {span:?} should only render compatible cleanup tuple values"
+                );
+                rendered
+            }
+            hir::ExprKind::Array(items) => {
+                let rendered = self.render_cleanup_array_expr(output, items, expected_ty, span);
+                assert!(
+                    expected_ty.compatible_with(&rendered.ty),
+                    "supported cleanup lowering at {span:?} should only render compatible cleanup array values"
+                );
+                rendered
             }
             hir::ExprKind::Binary {
                 left,
@@ -18775,6 +18909,52 @@ async fn main() -> Int {
                 .matches("call void @qlrt_task_result_release")
                 .count()
                 >= 3
+        );
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_for_await_lowering_for_inline_task_roots() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+extern "c" fn step(value: Int)
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    defer {
+        for await value in [worker(1), worker(2)] {
+            step(value);
+        }
+        for await item in (worker(3), worker(4)) {
+            step(item);
+        }
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.contains("cleanup_for_tuple_item"));
+        assert!(rendered.matches("call ptr @ql_").count() >= 4);
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 4);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 4
         );
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `for await` lowering yet"));
