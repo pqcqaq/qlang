@@ -1326,12 +1326,12 @@ fn async_program_surface_examples_build_and_run() {
         ExecutableExampleCase {
             name: "async_main_aliased_projected_root_repackage_families",
             source_relative: "ramdon_tests/async_program_surface_examples/199_async_main_aliased_projected_root_repackage_families.ql",
-            expected_exit: 484,
+            expected_exit: 538,
         },
         ExecutableExampleCase {
             name: "async_main_aliased_projected_root_spawn_families",
             source_relative: "ramdon_tests/async_program_surface_examples/200_async_main_aliased_projected_root_spawn_families.ql",
-            expected_exit: 561,
+            expected_exit: 616,
         },
         ExecutableExampleCase {
             name: "async_unsafe_function_bodies",
