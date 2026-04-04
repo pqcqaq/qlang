@@ -2643,10 +2643,16 @@ impl<'a> ModuleEmitter<'a> {
     }
 
     fn supports_cleanup_for_pattern(&self, pattern: hir::PatternId) -> bool {
-        matches!(
-            pattern_kind(self.input.hir, pattern),
-            PatternKind::Binding(_) | PatternKind::Wildcard
-        )
+        match pattern_kind(self.input.hir, pattern) {
+            PatternKind::Binding(_) | PatternKind::Wildcard => true,
+            PatternKind::Tuple(items) => items
+                .iter()
+                .all(|item| self.supports_cleanup_for_pattern(*item)),
+            PatternKind::Struct { fields, .. } => fields
+                .iter()
+                .all(|field| self.supports_cleanup_for_pattern(field.pattern)),
+            _ => false,
+        }
     }
 
     fn supports_cleanup_for_iterable(&self, expr_id: hir::ExprId) -> bool {
@@ -5243,7 +5249,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             .cloned()
             .unwrap_or_else(|| {
                 panic!(
-                    "supported cleanup lowering at {span:?} should only render binding, wildcard, tuple, or struct cleanup `let` patterns"
+                    "supported cleanup lowering at {span:?} should only render binding, wildcard, tuple, or struct cleanup patterns"
                 )
             });
         let rendered = self.render_cleanup_value_expr(output, value, &expected_ty, span);
@@ -5267,13 +5273,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             PatternKind::Tuple(items) => {
                 let Ty::Tuple(item_tys) = &value.ty else {
                     panic!(
-                        "supported cleanup lowering at {span:?} should only destructure tuple cleanup `let` values with tuple patterns"
+                        "supported cleanup lowering at {span:?} should only destructure tuple cleanup values with tuple patterns"
                     );
                 };
                 assert_eq!(
                     items.len(),
                     item_tys.len(),
-                    "supported cleanup lowering at {span:?} should only destructure tuple cleanup `let` values with matching arity"
+                    "supported cleanup lowering at {span:?} should only destructure tuple cleanup values with matching arity"
                 );
                 for (index, (item, item_ty)) in items.iter().zip(item_tys.iter()).enumerate() {
                     let item_llvm_ty = self
@@ -5298,7 +5304,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     .struct_field_lowerings(&value.ty, span, "cleanup struct pattern")
                     .unwrap_or_else(|_| {
                         panic!(
-                            "supported cleanup lowering at {span:?} should only destructure struct cleanup `let` values with struct patterns"
+                            "supported cleanup lowering at {span:?} should only destructure struct cleanup values with struct patterns"
                         )
                     });
                 for field in fields {
@@ -5323,7 +5329,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             PatternKind::Wildcard => {}
             _ => panic!(
-                "supported cleanup lowering at {span:?} should only destructure binding, wildcard, tuple, or struct cleanup `let` patterns"
+                "supported cleanup lowering at {span:?} should only destructure binding, wildcard, tuple, or struct cleanup patterns"
             ),
         }
     }
@@ -5431,13 +5437,6 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     "supported cleanup lowering at {span:?} should only render fixed-shape cleanup `for` iterables"
                 )
             });
-        let binding_local = match pattern_kind(self.emitter.input.hir, pattern) {
-            PatternKind::Binding(local) => Some(*local),
-            PatternKind::Wildcard => None,
-            _ => panic!(
-                "supported cleanup lowering at {span:?} should only render binding or wildcard cleanup `for` patterns"
-            ),
-        };
         let rendered_iterable =
             self.render_cleanup_value_expr(output, iterable, &iterable_ty, span);
         let iterable_slot = self.fresh_temp();
@@ -5460,7 +5459,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     &iterable_ty,
                     &element_ty,
                     iterable_len,
-                    binding_local,
+                    pattern,
                     body,
                     span,
                 );
@@ -5472,7 +5471,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     &iterable_ty,
                     &element_ty,
                     iterable_len,
-                    binding_local,
+                    pattern,
                     body,
                     span,
                 );
@@ -5487,7 +5486,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         iterable_ty: &Ty,
         element_ty: &Ty,
         iterable_len: usize,
-        binding_local: Option<hir::LocalId>,
+        pattern: hir::PatternId,
         body: hir::BlockId,
         span: Span,
     ) {
@@ -5521,25 +5520,26 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         );
         let _ = writeln!(output, "{body_label}:");
         let item_ptr = self.fresh_temp();
-        let item_value = self.fresh_temp();
+        let item_repr = self.fresh_temp();
         let _ = writeln!(
             output,
             "  {item_ptr} = getelementptr inbounds {iterable_llvm_ty}, ptr {iterable_slot}, i64 0, i64 {index}"
         );
         let _ = writeln!(
             output,
-            "  {item_value} = load {element_llvm_ty}, ptr {item_ptr}"
+            "  {item_repr} = load {element_llvm_ty}, ptr {item_ptr}"
         );
-        if let Some(local) = binding_local {
-            self.cleanup_bindings.push(GuardBindingValue {
-                local,
-                value: LoweredValue {
-                    ty: element_ty.clone(),
-                    llvm_ty: element_llvm_ty.clone(),
-                    repr: item_value,
-                },
-            });
-        }
+        let binding_depth = self.cleanup_bindings.len();
+        self.bind_cleanup_pattern(
+            output,
+            pattern,
+            LoweredValue {
+                ty: element_ty.clone(),
+                llvm_ty: element_llvm_ty.clone(),
+                repr: item_repr,
+            },
+            span,
+        );
         self.cleanup_loop_labels.push(CleanupLoopLabels {
             continue_label: step_label.clone(),
             break_label: end_label.clone(),
@@ -5548,9 +5548,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         self.render_cleanup_block(output, body, span);
         let body_falls_through = self.cleanup_path_open;
         self.cleanup_loop_labels.pop();
-        if binding_local.is_some() {
-            self.cleanup_bindings.pop();
-        }
+        self.cleanup_bindings.truncate(binding_depth);
         if body_falls_through {
             let _ = writeln!(output, "  br label %{step_label}");
         }
@@ -5570,7 +5568,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         iterable_ty: &Ty,
         element_ty: &Ty,
         iterable_len: usize,
-        binding_local: Option<hir::LocalId>,
+        pattern: hir::PatternId,
         body: hir::BlockId,
         span: Span,
     ) {
@@ -5589,7 +5587,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         for index in 0..iterable_len {
             let _ = writeln!(output, "{item_label}:");
             let item_ptr = self.fresh_temp();
-            let item_value = self.fresh_temp();
+            let item_repr = self.fresh_temp();
             let next_label = if index + 1 < iterable_len {
                 self.fresh_label("cleanup_for_tuple_item")
             } else {
@@ -5601,18 +5599,19 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             );
             let _ = writeln!(
                 output,
-                "  {item_value} = load {element_llvm_ty}, ptr {item_ptr}"
+                "  {item_repr} = load {element_llvm_ty}, ptr {item_ptr}"
             );
-            if let Some(local) = binding_local {
-                self.cleanup_bindings.push(GuardBindingValue {
-                    local,
-                    value: LoweredValue {
-                        ty: element_ty.clone(),
-                        llvm_ty: element_llvm_ty.clone(),
-                        repr: item_value,
-                    },
-                });
-            }
+            let binding_depth = self.cleanup_bindings.len();
+            self.bind_cleanup_pattern(
+                output,
+                pattern,
+                LoweredValue {
+                    ty: element_ty.clone(),
+                    llvm_ty: element_llvm_ty.clone(),
+                    repr: item_repr,
+                },
+                span,
+            );
             self.cleanup_loop_labels.push(CleanupLoopLabels {
                 continue_label: next_label.clone(),
                 break_label: end_label.clone(),
@@ -5621,9 +5620,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             self.render_cleanup_block(output, body, span);
             let body_falls_through = self.cleanup_path_open;
             self.cleanup_loop_labels.pop();
-            if binding_local.is_some() {
-                self.cleanup_bindings.pop();
-            }
+            self.cleanup_bindings.truncate(binding_depth);
             if body_falls_through {
                 let _ = writeln!(output, "  br label %{next_label}");
             }
@@ -16404,6 +16401,44 @@ fn main() -> Int {
         assert!(rendered.contains("call i1 @stop()"));
         assert!(rendered.contains("call void @step(i64"));
         assert!(!rendered.contains("call void @finish(i64"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_for_destructuring() {
+        let rendered = emit(
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+extern "c" fn sink(value: Int)
+
+fn pair_values() -> [Pair; 2] {
+    return [Pair { left: 20, right: 22 }, Pair { left: 24, right: 26 }]
+}
+
+fn main() -> Int {
+    defer {
+        for (first, _) in ((4, 6), (8, 10)) {
+            sink(first);
+        }
+        for Pair { left, right: current } in pair_values() {
+            sink(left);
+            sink(current);
+        }
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.contains("cleanup_for_tuple_item"));
+        assert!(rendered.matches("extractvalue { i64, i64 }").count() >= 6);
+        assert_eq!(rendered.matches("call void @sink(i64").count(), 4);
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `for` lowering yet"));
     }
