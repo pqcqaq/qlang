@@ -9227,6 +9227,65 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         self.render_loaded_pointer_value(output, ptr, ty, span)
     }
 
+    fn render_guard_value_if_expr(
+        &mut self,
+        output: &mut String,
+        condition_expr: hir::ExprId,
+        then_branch: hir::BlockId,
+        else_expr: hir::ExprId,
+        expected_ty: &Ty,
+        span: Span,
+        guard_binding: Option<&GuardBindingValue>,
+    ) -> LoweredValue {
+        let condition = self.render_bool_guard_expr(output, condition_expr, span, guard_binding);
+        let result_llvm_ty = self
+            .emitter
+            .lower_llvm_type(expected_ty, span, "guard if value")
+            .expect("prepared bool guard lowering should lower guard if values");
+        let result_slot = self.fresh_temp();
+        let then_label = self.fresh_label("guard_if_then");
+        let else_label = self.fresh_label("guard_if_else");
+        let end_label = self.fresh_label("guard_if_end");
+        let _ = writeln!(output, "  {result_slot} = alloca {result_llvm_ty}");
+        let _ = writeln!(
+            output,
+            "  br i1 {}, label %{then_label}, label %{else_label}",
+            condition.repr
+        );
+
+        let _ = writeln!(output, "{then_label}:");
+        let binding_depth = self.cleanup_bindings.len();
+        let then_tail = self
+            .render_cleanup_block_prefix(output, then_branch, span)
+            .unwrap_or_else(|| {
+                panic!(
+                    "prepared bool guard lowering at {span:?} should only render valued guard `if` branches with tails"
+                )
+            });
+        let then_value =
+            self.render_guard_expr_as_type(output, then_tail, expected_ty, span, guard_binding);
+        self.cleanup_bindings.truncate(binding_depth);
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {result_slot}",
+            then_value.llvm_ty, then_value.repr
+        );
+        let _ = writeln!(output, "  br label %{end_label}");
+
+        let _ = writeln!(output, "{else_label}:");
+        let else_value =
+            self.render_guard_expr_as_type(output, else_expr, expected_ty, span, guard_binding);
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {result_slot}",
+            else_value.llvm_ty, else_value.repr
+        );
+        let _ = writeln!(output, "  br label %{end_label}");
+
+        let _ = writeln!(output, "{end_label}:");
+        self.render_loaded_pointer_value(output, result_slot, expected_ty.clone(), span)
+    }
+
     fn render_guard_expr_as_type(
         &mut self,
         output: &mut String,
@@ -9235,6 +9294,23 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
         guard_binding: Option<&GuardBindingValue>,
     ) -> LoweredValue {
+        if let hir::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch: Some(other),
+        } = &self.emitter.input.hir.expr(expr_id).kind
+        {
+            return self.render_guard_value_if_expr(
+                output,
+                *condition,
+                *then_branch,
+                *other,
+                expected_ty,
+                span,
+                guard_binding,
+            );
+        }
+
         if expected_ty.is_bool() {
             let rendered = self.render_bool_guard_expr(output, expr_id, span, guard_binding);
             assert!(
@@ -9285,7 +9361,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 );
                 rendered
             }
-            None => self.render_guard_loadable_expr(output, expr_id, span, guard_binding),
+            None => self.render_guard_expr_as_type(output, expr_id, param_ty, span, guard_binding),
         };
         assert!(
             param_ty.compatible_with(&rendered.ty),
@@ -11707,6 +11783,78 @@ fn ordered_guard_call_args<'a>(
     ordered.into_iter().collect()
 }
 
+fn supported_guard_value_expr_as_type(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    typeck: &TypeckResult,
+    signatures: &HashMap<FunctionRef, FunctionSignature>,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+    arm_pattern: hir::PatternId,
+    expr_id: hir::ExprId,
+    expected_ty: &Ty,
+) -> bool {
+    if is_void_ty(expected_ty) {
+        return false;
+    }
+
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            return runtime_bool_guard_supported(
+                module,
+                resolution,
+                typeck,
+                signatures,
+                body,
+                local_types,
+                arm_pattern,
+                *condition,
+            ) && module.block(*then_branch).tail.is_some_and(|tail| {
+                supported_guard_value_expr_as_type(
+                    module,
+                    resolution,
+                    typeck,
+                    signatures,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    tail,
+                    expected_ty,
+                )
+            }) && else_branch.is_some_and(|other| {
+                supported_guard_value_expr_as_type(
+                    module,
+                    resolution,
+                    typeck,
+                    signatures,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    other,
+                    expected_ty,
+                )
+            });
+        }
+        _ => {}
+    }
+
+    guard_expr_ty(
+        module,
+        resolution,
+        typeck,
+        signatures,
+        body,
+        local_types,
+        Some(arm_pattern),
+        expr_id,
+    )
+    .is_some_and(|actual_ty| expected_ty.compatible_with(&actual_ty))
+}
+
 fn supported_guard_call<'a>(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -11741,17 +11889,17 @@ fn supported_guard_call<'a>(
                     return None;
                 }
             } else {
-                let actual_ty = guard_expr_ty(
+                if !supported_guard_value_expr_as_type(
                     module,
                     resolution,
                     typeck,
                     signatures,
                     body,
                     local_types,
-                    Some(arm_pattern),
+                    arm_pattern,
                     expr_id,
-                )?;
-                if !param.ty.compatible_with(&actual_ty) {
+                    &param.ty,
+                ) {
                     return None;
                 }
             }
@@ -11803,17 +11951,17 @@ fn supported_guard_call<'a>(
                 return None;
             }
         } else {
-            let actual_ty = guard_expr_ty(
+            if !supported_guard_value_expr_as_type(
                 module,
                 resolution,
                 typeck,
                 signatures,
                 body,
                 local_types,
-                Some(arm_pattern),
+                arm_pattern,
                 expr_id,
-            )?;
-            if !param_ty.compatible_with(&actual_ty) {
+                param_ty,
+            ) {
                 return None;
             }
         }
@@ -17678,6 +17826,35 @@ fn main() -> Int {
         assert!(rendered.matches("store { i64 }").count() >= 1);
         assert!(!rendered.contains("does not support `match` lowering yet"));
         assert!(!rendered.contains("does not support assignment expressions yet"));
+    }
+
+    #[test]
+    fn emits_guard_if_value_call_arg_lowering() {
+        let rendered = emit(
+            r#"
+struct State {
+    value: Int,
+}
+
+fn allow(state: State) -> Bool {
+    return state.value == 1
+}
+
+fn main() -> Int {
+    let ready = true
+    return match 1 {
+        1 if allow(if ready { State { value: 1 } } else { State { value: 2 } }) => 10,
+        _ => 0,
+    }
+}
+"#,
+        );
+
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("guard_if_then"));
+        assert!(rendered.contains("guard_if_else"));
+        assert!(rendered.contains("call i1 @ql_"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
     #[test]

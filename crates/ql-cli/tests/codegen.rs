@@ -4329,6 +4329,26 @@ fn guard_assignment_call_arg_codegen_case_matches() {
 }
 
 #[test]
+fn guard_if_value_call_arg_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "guard_if_value_call_arg_build",
+        source_relative: "fixtures/codegen/pass/guard_if_value_call_arg.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("guard if-value call-arg build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn function_value_local_call_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {
