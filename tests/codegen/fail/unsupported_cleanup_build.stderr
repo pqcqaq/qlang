@@ -1,3 +1,0 @@
-error: tests/codegen/fail/unsupported_cleanup_build.ql:4:5: LLVM IR backend foundation does not support cleanup lowering yet
-      defer first()
-      ^^^^^^^^

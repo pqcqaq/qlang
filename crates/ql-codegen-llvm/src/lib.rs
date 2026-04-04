@@ -57,6 +57,14 @@ struct FunctionSignature {
     async_result_layout: Option<AsyncTaskResultLayout>,
 }
 
+fn cleanup_call_result_ty(signature: &FunctionSignature) -> Ty {
+    if signature.is_async {
+        Ty::TaskHandle(Box::new(signature.body_return_ty.clone()))
+    } else {
+        signature.return_ty.clone()
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ParamSignature {
     name: String,
@@ -409,10 +417,22 @@ impl<'a> ModuleEmitter<'a> {
 
             for block in body.blocks() {
                 for statement_id in &block.statements {
-                    if let StatementKind::Assign { value, .. } | StatementKind::Eval { value } =
-                        &body.statement(*statement_id).kind
-                    {
-                        self.collect_rvalue_callees(value, &mut queue);
+                    match &body.statement(*statement_id).kind {
+                        StatementKind::Assign { value, .. } | StatementKind::Eval { value } => {
+                            self.collect_rvalue_callees(value, &mut queue);
+                        }
+                        StatementKind::RegisterCleanup { cleanup } => {
+                            let cleanup = body.cleanup(*cleanup);
+                            match &cleanup.kind {
+                                mir::CleanupKind::Defer { expr } => {
+                                    self.collect_guard_expr_callees(*expr, &mut queue);
+                                }
+                            }
+                        }
+                        StatementKind::BindPattern { .. }
+                        | StatementKind::StorageLive { .. }
+                        | StatementKind::StorageDead { .. }
+                        | StatementKind::RunCleanup { .. } => {}
                     }
                 }
                 if let TerminatorKind::Match { arms, .. } = &block.terminator.kind {
@@ -830,12 +850,15 @@ impl<'a> ModuleEmitter<'a> {
                         let _ = self.infer_rvalue_type(value, None, &mut infer, statement.span);
                     }
                     StatementKind::StorageLive { .. } | StatementKind::StorageDead { .. } => {}
-                    StatementKind::RegisterCleanup { .. } | StatementKind::RunCleanup { .. } => {
-                        diagnostics.push(unsupported(
-                            statement.span,
-                            "LLVM IR backend foundation does not support cleanup lowering yet",
-                        ));
+                    StatementKind::RegisterCleanup { cleanup } => {
+                        if !self.supports_cleanup_action(body.cleanup(*cleanup)) {
+                            diagnostics.push(unsupported(
+                                statement.span,
+                                "LLVM IR backend foundation does not support cleanup lowering yet",
+                            ));
+                        }
                     }
+                    StatementKind::RunCleanup { .. } => {}
                 }
             }
 
@@ -1623,6 +1646,261 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         ordered.into_iter().collect()
+    }
+
+    fn supports_cleanup_action(&self, cleanup: &mir::CleanupAction) -> bool {
+        match &cleanup.kind {
+            mir::CleanupKind::Defer { expr } => self.supports_cleanup_expr(*expr),
+        }
+    }
+
+    fn supports_cleanup_expr(&self, expr_id: hir::ExprId) -> bool {
+        match &self.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Call { callee, args } => {
+                self.supports_cleanup_call_expr(*callee, args, None)
+            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                self.supports_cleanup_block_expr(*block_id)
+            }
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.supports_cleanup_bool_expr(*condition)
+                    && self.supports_cleanup_block_expr(*then_branch)
+                    && else_branch.is_none_or(|expr| self.supports_cleanup_expr(expr))
+            }
+            hir::ExprKind::Match { value, arms } => self.supports_cleanup_match_expr(*value, arms),
+            _ => false,
+        }
+    }
+
+    fn supports_cleanup_block_expr(&self, block_id: hir::BlockId) -> bool {
+        let block = self.input.hir.block(block_id);
+        block.statements.is_empty()
+            && block
+                .tail
+                .is_none_or(|tail| self.supports_cleanup_expr(tail))
+    }
+
+    fn supports_cleanup_match_expr(&self, value_expr: hir::ExprId, arms: &[hir::MatchArm]) -> bool {
+        let Some(scrutinee_ty) = self.input.typeck.expr_ty(value_expr) else {
+            return false;
+        };
+
+        if scrutinee_ty.is_bool() {
+            return self.supports_cleanup_bool_expr(value_expr)
+                && arms.iter().all(|arm| {
+                    supported_cleanup_bool_match_pattern(
+                        self.input.hir,
+                        self.input.resolution,
+                        arm.pattern,
+                    )
+                    .is_some()
+                        && arm
+                            .guard
+                            .is_none_or(|guard| self.supports_cleanup_bool_expr(guard))
+                        && self.supports_cleanup_expr(arm.body)
+                });
+        }
+
+        if scrutinee_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
+            return self.supports_cleanup_scalar_expr(value_expr)
+                && arms.iter().all(|arm| {
+                    supported_cleanup_integer_match_pattern(
+                        self.input.hir,
+                        self.input.resolution,
+                        arm.pattern,
+                    )
+                    .is_some()
+                        && arm
+                            .guard
+                            .is_none_or(|guard| self.supports_cleanup_bool_expr(guard))
+                        && self.supports_cleanup_expr(arm.body)
+                });
+        }
+
+        false
+    }
+
+    fn supports_cleanup_call_expr(
+        &self,
+        callee_expr: hir::ExprId,
+        args: &[hir::CallArg],
+        expected_ty: Option<&Ty>,
+    ) -> bool {
+        let Some(function) =
+            guard_direct_callee_function(self.input.hir, self.input.resolution, callee_expr)
+        else {
+            return false;
+        };
+        let Some(signature) = self.signatures.get(&function) else {
+            return false;
+        };
+        let actual_ty = cleanup_call_result_ty(signature);
+        if let Some(expected_ty) = expected_ty
+            && (is_void_ty(&actual_ty) || !expected_ty.compatible_with(&actual_ty))
+        {
+            return false;
+        }
+        let Some(ordered_args) = ordered_guard_call_args(args, signature) else {
+            return false;
+        };
+        ordered_args
+            .into_iter()
+            .zip(signature.params.iter())
+            .all(|(arg, param)| {
+                self.supports_cleanup_value_expr(guard_call_arg_expr(arg), &param.ty)
+            })
+    }
+
+    fn supports_cleanup_value_expr(&self, expr_id: hir::ExprId, expected_ty: &Ty) -> bool {
+        if is_void_ty(expected_ty) {
+            return false;
+        }
+
+        match &self.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Call { callee, args } => {
+                return self.supports_cleanup_call_expr(*callee, args, Some(expected_ty));
+            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                let block = self.input.hir.block(*block_id);
+                return block.statements.is_empty()
+                    && block
+                        .tail
+                        .is_some_and(|tail| self.supports_cleanup_value_expr(tail, expected_ty));
+            }
+            _ => {}
+        }
+
+        let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
+            return false;
+        };
+        if !expected_ty.compatible_with(actual_ty)
+            || lower_llvm_type(
+                actual_ty,
+                self.input.hir.expr(expr_id).span,
+                "cleanup value",
+            )
+            .is_err()
+        {
+            return false;
+        }
+
+        if expected_ty.is_bool() {
+            self.supports_cleanup_bool_expr(expr_id)
+        } else if expected_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
+            self.supports_cleanup_scalar_expr(expr_id)
+        } else {
+            matches!(
+                &self.input.hir.expr(expr_id).kind,
+                hir::ExprKind::Name(_)
+                    | hir::ExprKind::Member { .. }
+                    | hir::ExprKind::Bracket { .. }
+                    | hir::ExprKind::Tuple(_)
+                    | hir::ExprKind::Array(_)
+                    | hir::ExprKind::StructLiteral { .. }
+            )
+        }
+    }
+
+    fn supports_cleanup_bool_expr(&self, expr_id: hir::ExprId) -> bool {
+        let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
+            return false;
+        };
+        if !actual_ty.is_bool() {
+            return false;
+        }
+
+        match &self.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Bool(_)
+            | hir::ExprKind::Name(_)
+            | hir::ExprKind::Member { .. }
+            | hir::ExprKind::Bracket { .. } => true,
+            hir::ExprKind::Call { callee, args } => {
+                self.supports_cleanup_call_expr(*callee, args, Some(actual_ty))
+            }
+            hir::ExprKind::Binary { left, op, right } => match op {
+                BinaryOp::AndAnd | BinaryOp::OrOr => {
+                    self.supports_cleanup_bool_expr(*left)
+                        && self.supports_cleanup_bool_expr(*right)
+                }
+                BinaryOp::EqEq
+                | BinaryOp::BangEq
+                | BinaryOp::Lt
+                | BinaryOp::LtEq
+                | BinaryOp::Gt
+                | BinaryOp::GtEq => {
+                    self.supports_cleanup_scalar_expr(*left)
+                        && self.supports_cleanup_scalar_expr(*right)
+                }
+                BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::Div
+                | BinaryOp::Rem
+                | BinaryOp::Assign => false,
+            },
+            hir::ExprKind::Unary {
+                op: UnaryOp::Not,
+                expr,
+            } => self.supports_cleanup_bool_expr(*expr),
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                let block = self.input.hir.block(*block_id);
+                block.statements.is_empty()
+                    && block
+                        .tail
+                        .is_some_and(|tail| self.supports_cleanup_bool_expr(tail))
+            }
+            _ => false,
+        }
+    }
+
+    fn supports_cleanup_scalar_expr(&self, expr_id: hir::ExprId) -> bool {
+        let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
+            return false;
+        };
+        if !actual_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
+            return false;
+        }
+
+        match &self.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Integer(_)
+            | hir::ExprKind::Name(_)
+            | hir::ExprKind::Member { .. }
+            | hir::ExprKind::Bracket { .. } => true,
+            hir::ExprKind::Call { callee, args } => {
+                self.supports_cleanup_call_expr(*callee, args, Some(actual_ty))
+            }
+            hir::ExprKind::Binary { left, op, right } => match op {
+                BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
+                    self.supports_cleanup_scalar_expr(*left)
+                        && self.supports_cleanup_scalar_expr(*right)
+                }
+                BinaryOp::AndAnd
+                | BinaryOp::OrOr
+                | BinaryOp::EqEq
+                | BinaryOp::BangEq
+                | BinaryOp::Lt
+                | BinaryOp::LtEq
+                | BinaryOp::Gt
+                | BinaryOp::GtEq
+                | BinaryOp::Assign => false,
+            },
+            hir::ExprKind::Unary {
+                op: UnaryOp::Neg,
+                expr,
+            } => self.supports_cleanup_scalar_expr(*expr),
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                let block = self.input.hir.block(*block_id);
+                block.statements.is_empty()
+                    && block
+                        .tail
+                        .is_some_and(|tail| self.supports_cleanup_scalar_expr(tail))
+            }
+            _ => false,
+        }
     }
 
     fn seed_expected_temp_from_operand(
@@ -3773,8 +4051,383 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 let _ = self.render_rvalue(output, value, None, statement.span);
             }
             StatementKind::StorageLive { .. } | StatementKind::StorageDead { .. } => {}
-            StatementKind::RegisterCleanup { .. } | StatementKind::RunCleanup { .. } => {
-                panic!("prepared functions should not contain cleanup statements")
+            StatementKind::RegisterCleanup { .. } => {}
+            StatementKind::RunCleanup { cleanup } => {
+                self.render_cleanup_action(output, *cleanup, statement.span);
+            }
+        }
+    }
+
+    fn render_cleanup_action(&mut self, output: &mut String, cleanup: mir::CleanupId, span: Span) {
+        match &self.body.cleanup(cleanup).kind {
+            mir::CleanupKind::Defer { expr } => self.render_cleanup_expr(output, *expr, span),
+        }
+    }
+
+    fn render_cleanup_expr(&mut self, output: &mut String, expr_id: hir::ExprId, span: Span) {
+        match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Call { callee, args } => {
+                let _ = self.render_cleanup_call(output, *callee, args, span);
+            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                let block = self.emitter.input.hir.block(*block_id);
+                assert!(
+                    block.statements.is_empty(),
+                    "supported cleanup lowering at {span:?} should only render empty-tail blocks"
+                );
+                if let Some(tail) = block.tail {
+                    self.render_cleanup_expr(output, tail, span);
+                }
+            }
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let condition = self.render_bool_guard_expr(output, *condition, span, None);
+                let then_label = self.fresh_label("cleanup_then");
+                let else_label = self.fresh_label("cleanup_else");
+                let end_label = self.fresh_label("cleanup_end");
+                let _ = writeln!(
+                    output,
+                    "  br i1 {}, label %{then_label}, label %{else_label}",
+                    condition.repr
+                );
+                let _ = writeln!(output, "{then_label}:");
+                let then_block = self.emitter.input.hir.block(*then_branch);
+                assert!(
+                    then_block.statements.is_empty(),
+                    "supported cleanup lowering at {span:?} should only render empty-tail if branches"
+                );
+                if let Some(tail) = then_block.tail {
+                    self.render_cleanup_expr(output, tail, span);
+                }
+                let _ = writeln!(output, "  br label %{end_label}");
+                let _ = writeln!(output, "{else_label}:");
+                if let Some(other) = else_branch {
+                    self.render_cleanup_expr(output, *other, span);
+                }
+                let _ = writeln!(output, "  br label %{end_label}");
+                let _ = writeln!(output, "{end_label}:");
+            }
+            hir::ExprKind::Match { value, arms } => {
+                self.render_cleanup_match_expr(output, *value, arms, span);
+            }
+            _ => panic!("prepared functions should not contain unsupported cleanup expressions"),
+        }
+    }
+
+    fn render_cleanup_match_expr(
+        &mut self,
+        output: &mut String,
+        value_expr: hir::ExprId,
+        arms: &[hir::MatchArm],
+        span: Span,
+    ) {
+        let Some(scrutinee_ty) = self.emitter.input.typeck.expr_ty(value_expr) else {
+            panic!("supported cleanup lowering at {span:?} should type-check cleanup matches")
+        };
+
+        if scrutinee_ty.is_bool() {
+            let scrutinee = self.render_cleanup_value_expr(
+                output,
+                value_expr,
+                &Ty::Builtin(BuiltinType::Bool),
+                span,
+            );
+            self.render_cleanup_bool_match_expr(output, scrutinee, arms, span);
+            return;
+        }
+
+        if scrutinee_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
+            let scrutinee = self.render_cleanup_value_expr(
+                output,
+                value_expr,
+                &Ty::Builtin(BuiltinType::Int),
+                span,
+            );
+            self.render_cleanup_integer_match_expr(output, scrutinee, arms, span);
+            return;
+        }
+
+        panic!("prepared functions should not contain unsupported cleanup matches");
+    }
+
+    fn render_cleanup_bool_match_expr(
+        &mut self,
+        output: &mut String,
+        scrutinee: LoweredValue,
+        arms: &[hir::MatchArm],
+        span: Span,
+    ) {
+        let end_label = self.fresh_label("cleanup_match_end");
+
+        for (index, arm) in arms.iter().enumerate() {
+            let pattern = supported_cleanup_bool_match_pattern(
+                self.emitter.input.hir,
+                self.emitter.input.resolution,
+                arm.pattern,
+            )
+            .unwrap_or_else(|| {
+                panic!("supported cleanup lowering at {span:?} should only render supported bool cleanup-match patterns")
+            });
+            let body_label = self.fresh_label("cleanup_match_arm");
+            let next_label = if index + 1 == arms.len() {
+                end_label.clone()
+            } else {
+                self.fresh_label("cleanup_match_next")
+            };
+
+            match pattern {
+                SupportedBoolMatchPattern::True | SupportedBoolMatchPattern::False => {
+                    let matched_label = if arm.guard.is_some() {
+                        self.fresh_label("cleanup_match_guard")
+                    } else {
+                        body_label.clone()
+                    };
+                    let condition = match pattern {
+                        SupportedBoolMatchPattern::True => scrutinee.repr.clone(),
+                        SupportedBoolMatchPattern::False => {
+                            let temp = self.fresh_temp();
+                            let _ = writeln!(
+                                output,
+                                "  {temp} = icmp eq {} {}, false",
+                                scrutinee.llvm_ty, scrutinee.repr
+                            );
+                            temp
+                        }
+                        SupportedBoolMatchPattern::CatchAll => unreachable!(
+                            "bool cleanup-match rendering should have handled catch-all separately"
+                        ),
+                    };
+                    let _ = writeln!(
+                        output,
+                        "  br i1 {condition}, label %{matched_label}, label %{next_label}"
+                    );
+                    if let Some(guard) = arm.guard {
+                        let _ = writeln!(output, "{matched_label}:");
+                        let guard = self.render_bool_guard_expr(output, guard, span, None);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    }
+                }
+                SupportedBoolMatchPattern::CatchAll => {
+                    if let Some(guard) = arm.guard {
+                        let guard = self.render_bool_guard_expr(output, guard, span, None);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    } else {
+                        let _ = writeln!(output, "  br label %{body_label}");
+                    }
+                }
+            }
+
+            let _ = writeln!(output, "{body_label}:");
+            self.render_cleanup_expr(output, arm.body, span);
+            let _ = writeln!(output, "  br label %{end_label}");
+
+            if next_label != end_label {
+                let _ = writeln!(output, "{next_label}:");
+            }
+
+            if matches!(pattern, SupportedBoolMatchPattern::CatchAll) && arm.guard.is_none() {
+                break;
+            }
+        }
+
+        let _ = writeln!(output, "{end_label}:");
+    }
+
+    fn render_cleanup_integer_match_expr(
+        &mut self,
+        output: &mut String,
+        scrutinee: LoweredValue,
+        arms: &[hir::MatchArm],
+        span: Span,
+    ) {
+        let end_label = self.fresh_label("cleanup_match_end");
+
+        for (index, arm) in arms.iter().enumerate() {
+            let pattern = supported_cleanup_integer_match_pattern(
+                self.emitter.input.hir,
+                self.emitter.input.resolution,
+                arm.pattern,
+            )
+            .unwrap_or_else(|| {
+                panic!("supported cleanup lowering at {span:?} should only render supported integer cleanup-match patterns")
+            });
+            let body_label = self.fresh_label("cleanup_match_arm");
+            let next_label = if index + 1 == arms.len() {
+                end_label.clone()
+            } else {
+                self.fresh_label("cleanup_match_next")
+            };
+
+            match &pattern {
+                SupportedIntegerMatchPattern::Literal(value) => {
+                    let matched_label = if arm.guard.is_some() {
+                        self.fresh_label("cleanup_match_guard")
+                    } else {
+                        body_label.clone()
+                    };
+                    let condition = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {condition} = icmp eq {} {}, {}",
+                        scrutinee.llvm_ty, scrutinee.repr, value
+                    );
+                    let _ = writeln!(
+                        output,
+                        "  br i1 {condition}, label %{matched_label}, label %{next_label}"
+                    );
+                    if let Some(guard) = arm.guard {
+                        let _ = writeln!(output, "{matched_label}:");
+                        let guard = self.render_bool_guard_expr(output, guard, span, None);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    }
+                }
+                SupportedIntegerMatchPattern::CatchAll => {
+                    if let Some(guard) = arm.guard {
+                        let guard = self.render_bool_guard_expr(output, guard, span, None);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    } else {
+                        let _ = writeln!(output, "  br label %{body_label}");
+                    }
+                }
+            }
+
+            let _ = writeln!(output, "{body_label}:");
+            self.render_cleanup_expr(output, arm.body, span);
+            let _ = writeln!(output, "  br label %{end_label}");
+
+            if next_label != end_label {
+                let _ = writeln!(output, "{next_label}:");
+            }
+
+            if matches!(pattern, SupportedIntegerMatchPattern::CatchAll) && arm.guard.is_none() {
+                break;
+            }
+        }
+
+        let _ = writeln!(output, "{end_label}:");
+    }
+
+    fn render_cleanup_call(
+        &mut self,
+        output: &mut String,
+        callee_expr: hir::ExprId,
+        args: &[hir::CallArg],
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let function = guard_direct_callee_function(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            callee_expr,
+        )
+        .unwrap_or_else(|| {
+            panic!(
+                "supported cleanup lowering at {span:?} should only render direct resolved calls"
+            )
+        });
+        let signature = self.emitter.signatures.get(&function).unwrap_or_else(|| {
+            panic!("supported cleanup lowering at {span:?} should resolve cleanup-call signatures")
+        });
+        let ordered_args = ordered_guard_call_args(args, signature).unwrap_or_else(|| {
+            panic!(
+                "supported cleanup lowering at {span:?} should preserve direct cleanup-call argument mapping"
+            )
+        });
+        let rendered_args = ordered_args
+            .into_iter()
+            .zip(signature.params.iter())
+            .map(|(arg, param)| {
+                let expr_id = guard_call_arg_expr(arg);
+                let rendered = self.render_cleanup_value_expr(output, expr_id, &param.ty, span);
+                format!("{} {}", rendered.llvm_ty, rendered.repr)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        if is_void_ty(&signature.return_ty) {
+            let _ = writeln!(
+                output,
+                "  call {} @{}({rendered_args})",
+                signature.return_llvm_ty, signature.llvm_name
+            );
+            None
+        } else {
+            let temp = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {temp} = call {} @{}({rendered_args})",
+                signature.return_llvm_ty, signature.llvm_name
+            );
+            Some(LoweredValue {
+                ty: cleanup_call_result_ty(signature),
+                llvm_ty: signature.return_llvm_ty.clone(),
+                repr: temp,
+            })
+        }
+    }
+
+    fn render_cleanup_value_expr(
+        &mut self,
+        output: &mut String,
+        expr_id: hir::ExprId,
+        expected_ty: &Ty,
+        span: Span,
+    ) -> LoweredValue {
+        match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Call { callee, args } => {
+                let rendered = self
+                    .render_cleanup_call(output, *callee, args, span)
+                    .expect("cleanup call arguments should produce a value");
+                assert!(
+                    expected_ty.compatible_with(&rendered.ty),
+                    "supported cleanup lowering at {span:?} should only render compatible cleanup-call values"
+                );
+                rendered
+            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                let block = self.emitter.input.hir.block(*block_id);
+                assert!(
+                    block.statements.is_empty(),
+                    "supported cleanup lowering at {span:?} should only render empty-tail value blocks"
+                );
+                let tail = block.tail.unwrap_or_else(|| {
+                    panic!(
+                        "supported cleanup lowering at {span:?} should only render valued cleanup blocks with tails"
+                    )
+                });
+                self.render_cleanup_value_expr(output, tail, expected_ty, span)
+            }
+            _ => {
+                let rendered = if expected_ty.is_bool() {
+                    self.render_bool_guard_expr(output, expr_id, span, None)
+                } else if expected_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
+                    self.render_guard_scalar_expr(output, expr_id, span, None)
+                } else {
+                    self.render_guard_loadable_expr(output, expr_id, span, None)
+                };
+                assert!(
+                    expected_ty.compatible_with(&rendered.ty),
+                    "supported cleanup lowering at {span:?} should only render compatible cleanup values"
+                );
+                rendered
             }
         }
     }
@@ -6156,6 +6809,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         format!("%t{index}")
     }
 
+    fn fresh_label(&mut self, prefix: &str) -> String {
+        let index = self.next_temp;
+        self.next_temp += 1;
+        format!("{prefix}_{index}")
+    }
+
     fn render_for_loop_iterable_initialization(
         &mut self,
         output: &mut String,
@@ -7037,6 +7696,40 @@ fn supported_integer_match_pattern(
     }
 }
 
+fn supported_cleanup_bool_match_pattern(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    pattern: hir::PatternId,
+) -> Option<SupportedBoolMatchPattern> {
+    match pattern_kind(module, pattern) {
+        PatternKind::Bool(true) => Some(SupportedBoolMatchPattern::True),
+        PatternKind::Bool(false) => Some(SupportedBoolMatchPattern::False),
+        PatternKind::Path(_) => pattern_literal_bool(module, resolution, pattern).map(|value| {
+            if value {
+                SupportedBoolMatchPattern::True
+            } else {
+                SupportedBoolMatchPattern::False
+            }
+        }),
+        PatternKind::Wildcard => Some(SupportedBoolMatchPattern::CatchAll),
+        _ => None,
+    }
+}
+
+fn supported_cleanup_integer_match_pattern(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    pattern: hir::PatternId,
+) -> Option<SupportedIntegerMatchPattern> {
+    match pattern_kind(module, pattern) {
+        PatternKind::Integer(value) => Some(SupportedIntegerMatchPattern::Literal(value.clone())),
+        PatternKind::Path(_) => pattern_literal_int(module, resolution, pattern)
+            .map(|value| SupportedIntegerMatchPattern::Literal(value.to_string())),
+        PatternKind::Wildcard => Some(SupportedIntegerMatchPattern::CatchAll),
+        _ => None,
+    }
+}
+
 fn pattern_binds_local(
     module: &hir::Module,
     pattern: hir::PatternId,
@@ -7859,15 +8552,16 @@ fn guard_direct_callee_function(
 ) -> Option<FunctionRef> {
     match resolution.expr_resolution(callee_expr)? {
         ValueResolution::Function(function_ref) => Some(*function_ref),
+        ValueResolution::Item(item_id) => {
+            matches!(&module.item(*item_id).kind, ItemKind::Function(_))
+                .then_some(FunctionRef::Item(*item_id))
+        }
         ValueResolution::Import(import_binding) => {
             let item_id = local_item_for_import_binding(module, import_binding)?;
             matches!(&module.item(item_id).kind, ItemKind::Function(_))
                 .then_some(FunctionRef::Item(item_id))
         }
-        ValueResolution::Local(_)
-        | ValueResolution::Param(_)
-        | ValueResolution::SelfValue
-        | ValueResolution::Item(_) => None,
+        ValueResolution::Local(_) | ValueResolution::Param(_) | ValueResolution::SelfValue => None,
     }
 }
 
@@ -13000,7 +13694,7 @@ fn main() -> Int {
                         == "LLVM IR backend foundation does not support cleanup lowering yet"
                 })
                 .count(),
-            1
+            0
         );
         assert_eq!(
             messages
@@ -13019,47 +13713,31 @@ fn main() -> Int {
     }
 
     #[test]
-    fn dedupes_cleanup_and_match_lowering_diagnostics() {
-        let messages = emit_error(
+    fn emits_cleanup_match_lowering() {
+        let rendered = emit(
             r#"
 extern "c" fn first()
+extern "c" fn second()
+
+fn enabled() -> Bool {
+    return true
+}
 
 fn main() -> Int {
     let flag = true
-    let enabled = false
-    defer first()
-    return match flag {
-        true if enabled => 1,
-        false => 0,
+    defer match flag {
+        true if enabled() => first(),
+        _ => second(),
     }
+    return 0
 }
 "#,
         );
 
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    message.as_str()
-                        == "LLVM IR backend foundation does not support cleanup lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    message.as_str()
-                        == "LLVM IR backend foundation does not support `match` lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert!(messages.iter().all(|message| {
-            !message.contains("could not resolve LLVM type for local")
-                && !message.contains("could not infer LLVM type for MIR local")
-        }));
+        assert!(rendered.contains("call void @first()"));
+        assert!(rendered.contains("call void @second()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
     #[test]
@@ -13132,7 +13810,7 @@ fn main() -> Int {
                         == "LLVM IR backend foundation does not support cleanup lowering yet"
                 })
                 .count(),
-            1
+            0
         );
         assert_eq!(
             messages
@@ -13172,7 +13850,7 @@ fn main() -> Int {
                         == "LLVM IR backend foundation does not support cleanup lowering yet"
                 })
                 .count(),
-            1
+            0
         );
         assert_eq!(
             messages
@@ -13220,7 +13898,7 @@ async fn helper() -> Int {
                         == "LLVM IR backend foundation does not support cleanup lowering yet"
                 })
                 .count(),
-            1
+            0
         );
         assert_eq!(
             messages

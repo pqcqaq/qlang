@@ -23,6 +23,7 @@
 - 当前活跃主线是保守推进的 Phase 7：async/runtime/task-handle lowering、library/program build surface、Rust interop。
 - 外部稳定互操作边界仍是 C ABI；Rust 继续走 `build.rs + staticlib + header` 路线。
 - async 已经不是“只有语法”，而是有真实 build、真实样例和真实回归的受控子集；但 broader async ABI、broader runtime semantics 仍然刻意关闭。
+- cleanup lowering 已不再是“全量关闭”：首个 `defer` + cleanup branch/match lowering 子集已进入真实 build 回归，但 broader cleanup control flow 仍保持保守拒绝。
 
 ## 当前已开放的构建表面
 
@@ -195,6 +196,16 @@
   - nested call-root runtime projection family
   - nested call-root deeper inline-combo family
 
+### cleanup lowering 子集
+
+当前 cleanup lowering 只开放首个受控子集：
+
+- direct / call-backed `defer`
+- empty-tail block wrapper
+- bool-guard 驱动的 call-backed `if` cleanup branch
+- bool / int scrutinee + literal-or-path / wildcard arms + optional bool guard 的 cleanup `match` branch
+- 当前已锁定的用户面包括 direct cleanup `obj` build、guarded dynamic task-handle cleanup `staticlib` build，以及 cleanup `match` `obj` build
+
 ## 当前回归规模
 
 截至当前代码：
@@ -212,7 +223,7 @@
 - 更广义的 async executable / program bootstrap，除最小 `async fn main` 以外
 - 更广义的 async `dylib` surface，尤其是公开 async ABI
 - generalized `for await`，超出 fixed-array / homogeneous tuple 之外的 iterable
-- cleanup lowering / cleanup codegen
+- broader cleanup lowering / cleanup codegen，超出当前 direct / call-backed `defer` + `if` / `match` cleanup 子集之外
 - cancellation / polling / drop semantics
 - generic async ABI / layout substitution
 - arbitrary dynamic overlap precision

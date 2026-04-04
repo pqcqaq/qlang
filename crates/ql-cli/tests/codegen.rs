@@ -3869,13 +3869,6 @@ fn codegen_snapshots_match() {
             extra_args: &[],
         },
         FailCase {
-            name: "unsupported_cleanup_match_build",
-            source_relative: "tests/codegen/fail/unsupported_cleanup_match_build.ql",
-            emit: "llvm-ir",
-            expected_stderr_relative: "tests/codegen/fail/unsupported_cleanup_match_build.stderr",
-            extra_args: &[],
-        },
-        FailCase {
             name: "unsupported_cleanup_question_mark_build",
             source_relative: "tests/codegen/fail/unsupported_cleanup_question_mark_build.ql",
             emit: "llvm-ir",
@@ -3901,13 +3894,6 @@ fn codegen_snapshots_match() {
             source_relative: "tests/codegen/fail/unsupported_cleanup_for_build.ql",
             emit: "llvm-ir",
             expected_stderr_relative: "tests/codegen/fail/unsupported_cleanup_for_build.stderr",
-            extra_args: &[],
-        },
-        FailCase {
-            name: "unsupported_cleanup_build",
-            source_relative: "tests/codegen/fail/unsupported_cleanup_build.ql",
-            emit: "llvm-ir",
-            expected_stderr_relative: "tests/codegen/fail/unsupported_cleanup_build.stderr",
             extra_args: &[],
         },
         FailCase {
@@ -4109,16 +4095,60 @@ fn guard_refined_static_alias_backed_projected_root_dynamic_task_handle_llvm_ir_
 #[test]
 fn guarded_cleanup_dynamic_task_handle_codegen_case_matches() {
     let workspace_root = workspace_root();
-    let case = FailCase {
+    let case = PassCase {
         name: "guarded_cleanup_dynamic_task_handle_build",
-        source_relative: "tests/codegen/fail/guarded_cleanup_dynamic_task_handle_build.ql",
+        source_relative: "fixtures/codegen/pass/guarded_cleanup_dynamic_task_handle_build.ql",
         emit: "staticlib",
-        expected_stderr_relative: "tests/codegen/fail/guarded_cleanup_dynamic_task_handle_build.stderr",
-        extra_args: &[],
+        expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+        mock_compiler: true,
+        mock_archiver: true,
+        archiver_style: Some(current_archiver_style()),
+        header_surface: None,
+        expected_header_relative: None,
     };
 
-    if let Err(message) = run_fail_case(&workspace_root, &case) {
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
         panic!("guarded cleanup dynamic task-handle build regression:\n\n{message}");
+    }
+}
+
+#[test]
+fn direct_cleanup_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "direct_cleanup_build",
+        source_relative: "fixtures/codegen/pass/cleanup_direct_call.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("direct cleanup build regression:\n\n{message}");
+    }
+}
+
+#[test]
+fn cleanup_match_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "cleanup_match_build",
+        source_relative: "fixtures/codegen/pass/cleanup_match_call.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("cleanup match build regression:\n\n{message}");
     }
 }
 

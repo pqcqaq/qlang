@@ -6670,7 +6670,7 @@ async fn helper(index: Int) -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_cleanup_lowering_after_guarded_dynamic_task_handle_cleanup_analysis() {
+    fn build_file_writes_staticlib_after_guarded_dynamic_task_handle_cleanup_analysis() {
         let dir = TestDir::new("ql-driver-task-array-guarded-cleanup-literal-reinit");
         let source = dir.write(
             "task_array_guarded_cleanup_literal_reinit.ql",
@@ -6704,7 +6704,7 @@ async fn helper(index: Int) -> Wrap {
             "artifacts/libtask_array_guarded_cleanup_literal_reinit.a"
         });
 
-        let error = build_file(
+        let artifact = build_file(
             &source,
             &BuildOptions {
                 emit: BuildEmit::StaticLibrary,
@@ -6717,19 +6717,12 @@ async fn helper(index: Int) -> Wrap {
                 },
             },
         )
-        .expect_err("cleanup lowering should still block codegen");
-        let diagnostics = error
-            .diagnostics()
-            .expect("cleanup lowering rejection should return diagnostics");
+        .expect("guarded cleanup lowering should pass after cleanup codegen support");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated static library placeholder");
 
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support cleanup lowering yet"
-        }));
-        assert!(diagnostics.iter().all(|diagnostic| {
-            diagnostic.message != "local `tasks` was used after move"
-                && diagnostic.message
-                    != "local `tasks` may have been moved on another control-flow path"
-        }));
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-staticlib");
     }
 
     #[test]
@@ -8391,7 +8384,7 @@ fn main() -> Int {
                         == "LLVM IR backend foundation does not support cleanup lowering yet"
                 })
                 .count(),
-            1
+            0
         );
         assert_eq!(
             diagnostics
@@ -8414,66 +8407,47 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_cleanup_and_match_codegen_diagnostics_once_each() {
+    fn build_file_writes_llvm_ir_with_cleanup_match_lowering() {
         let dir = TestDir::new("ql-driver-cleanup-match-unsupported");
         let source = dir.write(
             "cleanup_match.ql",
             r#"
 extern "c" fn first()
+extern "c" fn second()
 
-struct State {
-    ready: Bool,
-}
-
-fn enabled(state: State) -> Bool {
-    return state.ready
+fn enabled() -> Bool {
+    return true
 }
 
 fn main() -> Int {
     let flag = true
-    let state = State { ready: false }
-    defer first()
-    return match flag {
-        true if enabled(state) => 1,
-        false => 0,
+    defer match flag {
+        true if enabled() => first(),
+        _ => second(),
     }
+    return 0
 }
 "#,
         );
+        let output = dir.path().join("artifacts/cleanup_match.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup match lowering should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("cleanup and match codegen rejection should return diagnostics");
-
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support cleanup lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support `match` lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert!(diagnostics.iter().all(|diagnostic| {
-            !diagnostic
-                .message
-                .contains("could not resolve LLVM type for local")
-                && !diagnostic
-                    .message
-                    .contains("could not infer LLVM type for MIR local")
-        }));
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call void @first()"));
+        assert!(rendered.contains("call void @second()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
     #[test]
@@ -8572,7 +8546,7 @@ fn main() -> Int {
                         == "LLVM IR backend foundation does not support cleanup lowering yet"
                 })
                 .count(),
-            1
+            0
         );
         assert_eq!(
             diagnostics
@@ -8623,7 +8597,7 @@ fn main() -> Int {
                         == "LLVM IR backend foundation does not support cleanup lowering yet"
                 })
                 .count(),
-            1
+            0
         );
         assert_eq!(
             diagnostics
@@ -12685,7 +12659,7 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_cleanup_lowering_diagnostics_once() {
+    fn build_file_writes_llvm_ir_with_direct_cleanup_call() {
         let dir = TestDir::new("ql-driver-cleanup-unsupported");
         let source = dir.write(
             "cleanup_main.ql",
@@ -12698,26 +12672,27 @@ fn main() -> Int {
 }
 "#,
         );
+        let output = dir.path().join("artifacts/cleanup_main.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("direct cleanup lowering should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("cleanup codegen rejection should return diagnostics");
-
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support cleanup lowering yet"
-                })
-                .count(),
-            1
-        );
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call void @first()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
     }
 
     #[test]
-    fn build_file_surfaces_cleanup_and_async_codegen_diagnostics_once_each() {
+    fn build_file_writes_llvm_ir_with_direct_cleanup_and_async_helper_definition() {
         let dir = TestDir::new("ql-driver-cleanup-async-unsupported");
         let source = dir.write(
             "cleanup_async.ql",
@@ -12734,40 +12709,24 @@ fn main() -> Int {
 }
 "#,
         );
+        let output = dir.path().join("artifacts/cleanup_async.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("direct cleanup should coexist with async helper definitions");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("cleanup and async codegen rejection should return diagnostics");
-
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support cleanup lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support `async fn` yet"
-                })
-                .count(),
-            1
-        );
-        assert!(diagnostics.iter().all(|diagnostic| {
-            !diagnostic
-                .message
-                .contains("could not resolve LLVM type for local")
-                && !diagnostic
-                    .message
-                    .contains("could not infer LLVM type for MIR local")
-        }));
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call void @first()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `async fn` yet"));
     }
 
     #[test]
@@ -12816,7 +12775,7 @@ async fn helper() -> Int {
                         == "LLVM IR backend foundation does not support cleanup lowering yet"
                 })
                 .count(),
-            1
+            0
         );
         assert_eq!(
             diagnostics
