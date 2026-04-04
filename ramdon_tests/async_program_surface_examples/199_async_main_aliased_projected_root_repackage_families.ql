@@ -261,6 +261,40 @@ async fn main() -> Int {
     let guarded_arithmetic_queued_extra = await guarded_arithmetic_queued_env.bundle.tasks[1]
     let guarded_arithmetic_queued_tail = await guarded_arithmetic_queued_env.tail
 
+    let guarded_arithmetic_queued_local_row = ARITH_SLOT_ALIAS.value
+    let guarded_arithmetic_queued_local_slots = [guarded_arithmetic_queued_local_row, guarded_arithmetic_queued_local_row]
+    let guarded_arithmetic_queued_local_slot_alias = guarded_arithmetic_queued_local_slots
+    var guarded_arithmetic_queued_local_pending = Pending {
+        tasks: [worker(2), worker(8)],
+    }
+    let guarded_arithmetic_queued_local_alias = guarded_arithmetic_queued_local_pending.tasks
+    if ARITH_SLOT_ALIAS.value == 0 {
+        let guarded_arithmetic_queued_local_first =
+            await guarded_arithmetic_queued_local_alias[guarded_arithmetic_queued_local_slot_alias[guarded_arithmetic_queued_local_row]]
+        guarded_arithmetic_queued_local_pending.tasks[guarded_arithmetic_queued_local_slots[guarded_arithmetic_queued_local_row]] =
+            worker(guarded_arithmetic_queued_local_first + 7)
+    }
+    let guarded_arithmetic_queued_local_tail_tasks = guarded_arithmetic_queued_local_pending.tasks
+    let guarded_arithmetic_queued_local_forwarded =
+        forward(guarded_arithmetic_queued_local_alias[guarded_arithmetic_queued_local_slot_alias[guarded_arithmetic_queued_local_row]])
+    let guarded_arithmetic_queued_local_running_task = guarded_arithmetic_queued_local_forwarded
+    let guarded_arithmetic_queued_local_env = ArrayEnvelope {
+        bundle: ArrayBundle {
+            tasks: [guarded_arithmetic_queued_local_running_task, worker(12)],
+        },
+        tail: guarded_arithmetic_queued_local_tail_tasks[1],
+    }
+    let guarded_arithmetic_queued_local_root = guarded_arithmetic_queued_local_env.bundle.tasks
+    let guarded_arithmetic_queued_local_alias_root = guarded_arithmetic_queued_local_root
+    let guarded_arithmetic_queued_local_tasks = guarded_arithmetic_queued_local_alias_root
+    let guarded_arithmetic_queued_local = guarded_arithmetic_queued_local_tasks[0]
+    let guarded_arithmetic_queued_local_alias_task = guarded_arithmetic_queued_local
+    let guarded_arithmetic_queued_local_final = guarded_arithmetic_queued_local_alias_task
+    let guarded_arithmetic_queued_local_ready = forward(guarded_arithmetic_queued_local_final)
+    let guarded_arithmetic_queued_local_second = await guarded_arithmetic_queued_local_ready
+    let guarded_arithmetic_queued_local_extra = await guarded_arithmetic_queued_local_env.bundle.tasks[1]
+    let guarded_arithmetic_queued_local_tail = await guarded_arithmetic_queued_local_env.tail
+
     let guarded_arithmetic_chain_row = ARITH_SLOT_ALIAS.value
     let guarded_arithmetic_chain_slots = [guarded_arithmetic_chain_row, guarded_arithmetic_chain_row]
     let guarded_arithmetic_chain_slot_alias = guarded_arithmetic_chain_slots
@@ -326,6 +360,9 @@ async fn main() -> Int {
         + guarded_arithmetic_queued_second
         + guarded_arithmetic_queued_extra
         + guarded_arithmetic_queued_tail
+        + guarded_arithmetic_queued_local_second
+        + guarded_arithmetic_queued_local_extra
+        + guarded_arithmetic_queued_local_tail
         + guarded_arithmetic_chain_second
         + guarded_arithmetic_chain_extra
         + guarded_arithmetic_chain_tail
