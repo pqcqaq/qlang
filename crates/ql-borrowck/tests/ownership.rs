@@ -4394,6 +4394,83 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn allows_spawning_guarded_arithmetic_static_alias_sourced_composed_dynamic_queued_root_alias_forwarded_task_handle_after_forwarded_alias()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+use SLOT as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Bundle {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Envelope {
+    bundle: Bundle,
+    tail: Task[Wrap],
+}
+
+static BASE: Int = 2
+static SLOT: Slot = Slot { value: BASE - 2 }
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row = INDEX_ALIAS.value
+    let slots = [row, row]
+    let alias_slots = slots
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let alias = pending.tasks
+    if INDEX_ALIAS.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let tail_tasks = pending.tasks
+    let forwarded = forward(alias[alias_slots[row]])
+    let running_task = forwarded
+    let env = Envelope {
+        bundle: Bundle {
+            tasks: [running_task, worker()],
+        },
+        tail: tail_tasks[1],
+    }
+    let queue_root = env.bundle.tasks
+    let queued_tasks = queue_root
+    let queued = queued_tasks[0]
+    let queued_ready = forward(queued)
+    let second = await env.tail
+    let running = spawn queued_ready
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded arithmetic static alias-sourced composed dynamic queued-root-alias-forwarded spawn after forwarded alias to preserve sibling array element availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_spawning_guarded_arithmetic_static_alias_sourced_composed_dynamic_queued_root_forwarded_task_handle_after_forwarded_alias()
  {
     let diagnostics = diagnostic_messages(
@@ -5988,6 +6065,84 @@ async fn main() -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected guarded arithmetic static alias-sourced composed dynamic queued-root-inline-forwarded await after forwarded alias to preserve sibling task availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_awaiting_guarded_arithmetic_static_alias_sourced_composed_dynamic_queued_root_alias_forwarded_task_handle_after_forwarded_alias()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+use SLOT as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Bundle {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Envelope {
+    bundle: Bundle,
+    tail: Task[Wrap],
+}
+
+static BASE: Int = 2
+static SLOT: Slot = Slot { value: BASE - 2 }
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row = INDEX_ALIAS.value
+    let slots = [row, row]
+    let alias_slots = slots
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let alias = pending.tasks
+    if INDEX_ALIAS.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let tail_tasks = pending.tasks
+    let forwarded = forward(alias[alias_slots[row]])
+    let running_task = forwarded
+    let env = Envelope {
+        bundle: Bundle {
+            tasks: [running_task, worker()],
+        },
+        tail: tail_tasks[1],
+    }
+    let queue_root = env.bundle.tasks
+    let queued_tasks = queue_root
+    let queued = queued_tasks[0]
+    let queued_ready = forward(queued)
+    let second = await queued_ready
+    let extra = await env.bundle.tasks[1]
+    let tail = await env.tail
+    return second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded arithmetic static alias-sourced composed dynamic queued-root-alias-forwarded await after forwarded alias to preserve sibling task availability, got {diagnostics:?}"
     );
 }
 
