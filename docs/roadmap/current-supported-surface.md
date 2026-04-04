@@ -163,7 +163,7 @@
 - aliased projected-root aggregate repackage / submit
   - tuple / struct / nested aggregate repackage before `await`
   - fixed-array / nested fixed-array / helper-forwarded nested fixed-array repackage before `spawn`
-  - source-root reinit 后的 same-file arithmetic item / same-file `use ... as ...` alias 驱动 direct alias-root、projected-root、alias-sourced composed-dynamic 与 guard-refined alias-sourced composed-dynamic 形态，包括 bundle-alias-forwarded、queued-root-forwarded、queued-root-inline-forwarded、queued-root-alias-forwarded、queued-local-forwarded、queued-local-inline-forwarded 与 bundle-chain-forwarded await/spawn
+  - source-root reinit 后的 same-file arithmetic item / same-file `use ... as ...` alias 驱动 direct alias-root、projected-root、alias-sourced composed-dynamic 与 guard-refined alias-sourced composed-dynamic 形态，包括 bundle-alias-forwarded、queued-root-forwarded、queued-root-inline-forwarded、queued-root-alias-forwarded、queued-root-chain-forwarded、queued-local-forwarded、queued-local-inline-forwarded 与 bundle-chain-forwarded await/spawn
 - dynamic fixed-array `Task[...]` 的保守子集
   - generic dynamic sibling-safe consume / spawn
   - same immutable stable source path precise consume / reinit
