@@ -1664,6 +1664,7 @@ impl<'a> ModuleEmitter<'a> {
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
                 self.supports_cleanup_block_expr(*block_id)
             }
+            hir::ExprKind::Question(inner) => self.supports_cleanup_expr(*inner),
             hir::ExprKind::If {
                 condition,
                 then_branch,
@@ -1773,6 +1774,9 @@ impl<'a> ModuleEmitter<'a> {
                         .tail
                         .is_some_and(|tail| self.supports_cleanup_value_expr(tail, expected_ty));
             }
+            hir::ExprKind::Question(inner) => {
+                return self.supports_cleanup_value_expr(*inner, expected_ty);
+            }
             _ => {}
         }
 
@@ -1855,6 +1859,7 @@ impl<'a> ModuleEmitter<'a> {
                         .tail
                         .is_some_and(|tail| self.supports_cleanup_bool_expr(tail))
             }
+            hir::ExprKind::Question(inner) => self.supports_cleanup_bool_expr(*inner),
             _ => false,
         }
     }
@@ -1901,6 +1906,7 @@ impl<'a> ModuleEmitter<'a> {
                         .tail
                         .is_some_and(|tail| self.supports_cleanup_scalar_expr(tail))
             }
+            hir::ExprKind::Question(inner) => self.supports_cleanup_scalar_expr(*inner),
             _ => false,
         }
     }
@@ -4082,6 +4088,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     self.render_cleanup_expr(output, tail, span);
                 }
             }
+            hir::ExprKind::Question(inner) => {
+                self.render_cleanup_expr(output, *inner, span);
+            }
             hir::ExprKind::If {
                 condition,
                 then_branch,
@@ -4417,6 +4426,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     )
                 });
                 self.render_cleanup_value_expr(output, tail, expected_ty, span)
+            }
+            hir::ExprKind::Question(inner) => {
+                self.render_cleanup_value_expr(output, *inner, expected_ty, span)
             }
             _ => {
                 let rendered = if expected_ty.is_bool() {
@@ -13790,6 +13802,28 @@ fn main() -> Int {
         );
 
         assert!(rendered.contains("call void @first()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `?` lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_internal_question_mark_lowering() {
+        let rendered = emit(
+            r#"
+extern "c" fn first() -> Int
+
+fn helper() -> Int {
+    return first()
+}
+
+fn main() -> Int {
+    defer helper()?
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("call i64 @ql_1_helper()"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `?` lowering yet"));
     }

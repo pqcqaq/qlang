@@ -8532,6 +8532,44 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_cleanup_internal_question_mark_lowering() {
+        let dir = TestDir::new("ql-driver-cleanup-internal-question-mark-unsupported");
+        let source = dir.write(
+            "cleanup_internal_question_mark.ql",
+            r#"
+extern "c" fn first() -> Int
+
+fn helper() -> Int {
+    return first()
+}
+
+fn main() -> Int {
+    defer helper()?
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/cleanup_internal_question_mark.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup-internal question-mark lowering should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call i64 @ql_1_helper()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `?` lowering yet"));
+    }
+
+    #[test]
     fn build_file_surfaces_cleanup_and_closure_value_codegen_diagnostics_once_each() {
         let dir = TestDir::new("ql-driver-cleanup-closure-value-unsupported");
         let source = dir.write(
