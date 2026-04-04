@@ -94,6 +94,7 @@
 - direct resolved sync guard call 子集
   - guard-call arg value path 现也接受同一批 ordinary local / param / `self` root 的 assignment expr value，包括当前 loadable guard-call arg 子集
   - guard-call arg value path 现也接受最小 runtime `if` value 子集：当前已锁定 loadable guard-call arg 的 `if cond { ... } else { ... }` 形态
+  - guard-call arg value path 现也接受最小 runtime `match` value 子集：当前已锁定 bool/int scrutinee + 既有 guard-match arm 子集上的 loadable guard-call arg 形态
   - callable-value positional indirect guard call 子集：当前已覆盖 callable local / callable `const` / `static` / same-file alias
   - inline aggregate guard-call arg / inline projection-root 子集
   - call-root / nested call-root guard 子集

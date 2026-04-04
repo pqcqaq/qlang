@@ -9286,6 +9286,279 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         self.render_loaded_pointer_value(output, result_slot, expected_ty.clone(), span)
     }
 
+    fn render_guard_value_match_expr(
+        &mut self,
+        output: &mut String,
+        value_expr: hir::ExprId,
+        arms: &[hir::MatchArm],
+        expected_ty: &Ty,
+        span: Span,
+        guard_binding: Option<&GuardBindingValue>,
+    ) -> LoweredValue {
+        let Some(scrutinee_ty) = self.emitter.input.typeck.expr_ty(value_expr) else {
+            panic!("prepared bool guard lowering at {span:?} should type-check guard value matches")
+        };
+
+        if scrutinee_ty.is_bool() {
+            let scrutinee = self.render_bool_guard_expr(output, value_expr, span, guard_binding);
+            return self.render_guard_value_bool_match_expr(
+                output,
+                scrutinee,
+                arms,
+                expected_ty,
+                span,
+                guard_binding,
+            );
+        }
+
+        if scrutinee_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
+            let scrutinee = self.render_guard_scalar_expr(output, value_expr, span, guard_binding);
+            return self.render_guard_value_integer_match_expr(
+                output,
+                scrutinee,
+                arms,
+                expected_ty,
+                span,
+                guard_binding,
+            );
+        }
+
+        panic!("prepared functions should not contain unsupported guard value matches");
+    }
+
+    fn render_guard_value_bool_match_expr(
+        &mut self,
+        output: &mut String,
+        scrutinee: LoweredValue,
+        arms: &[hir::MatchArm],
+        expected_ty: &Ty,
+        span: Span,
+        guard_binding: Option<&GuardBindingValue>,
+    ) -> LoweredValue {
+        let result_llvm_ty = self
+            .emitter
+            .lower_llvm_type(expected_ty, span, "guard match value")
+            .expect("prepared bool guard lowering should lower guard match values");
+        let result_slot = self.fresh_temp();
+        let end_label = self.fresh_label("guard_match_end");
+        let _ = writeln!(output, "  {result_slot} = alloca {result_llvm_ty}");
+
+        for (index, arm) in arms.iter().enumerate() {
+            let pattern = supported_bool_match_pattern(
+                self.emitter.input.hir,
+                self.emitter.input.resolution,
+                arm.pattern,
+            )
+            .unwrap_or_else(|| {
+                panic!("prepared bool guard lowering at {span:?} should only render supported bool guard-match patterns")
+            });
+            let body_label = self.fresh_label("guard_match_arm");
+            let next_label = if index + 1 == arms.len() {
+                end_label.clone()
+            } else {
+                self.fresh_label("guard_match_next")
+            };
+            let binding_local = match pattern_kind(self.emitter.input.hir, arm.pattern) {
+                PatternKind::Binding(local) => Some(*local),
+                _ => None,
+            };
+
+            if let Some(local) = binding_local {
+                self.cleanup_bindings.push(GuardBindingValue {
+                    local,
+                    value: scrutinee.clone(),
+                });
+            }
+
+            match pattern {
+                SupportedBoolMatchPattern::True | SupportedBoolMatchPattern::False => {
+                    let matched_label = if arm.guard.is_some() {
+                        self.fresh_label("guard_match_guard")
+                    } else {
+                        body_label.clone()
+                    };
+                    let condition = match pattern {
+                        SupportedBoolMatchPattern::True => scrutinee.repr.clone(),
+                        SupportedBoolMatchPattern::False => {
+                            let temp = self.fresh_temp();
+                            let _ = writeln!(
+                                output,
+                                "  {temp} = icmp eq {} {}, false",
+                                scrutinee.llvm_ty, scrutinee.repr
+                            );
+                            temp
+                        }
+                        SupportedBoolMatchPattern::CatchAll => unreachable!(
+                            "guard match-value lowering should handle bool catch-all separately"
+                        ),
+                    };
+                    let _ = writeln!(
+                        output,
+                        "  br i1 {condition}, label %{matched_label}, label %{next_label}"
+                    );
+                    if let Some(guard) = arm.guard {
+                        let _ = writeln!(output, "{matched_label}:");
+                        let guard = self.render_bool_guard_expr(output, guard, span, guard_binding);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    }
+                }
+                SupportedBoolMatchPattern::CatchAll => {
+                    if let Some(guard) = arm.guard {
+                        let guard = self.render_bool_guard_expr(output, guard, span, guard_binding);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    } else {
+                        let _ = writeln!(output, "  br label %{body_label}");
+                    }
+                }
+            }
+
+            let _ = writeln!(output, "{body_label}:");
+            let arm_value =
+                self.render_guard_expr_as_type(output, arm.body, expected_ty, span, guard_binding);
+            let _ = writeln!(
+                output,
+                "  store {} {}, ptr {result_slot}",
+                arm_value.llvm_ty, arm_value.repr
+            );
+            let _ = writeln!(output, "  br label %{end_label}");
+
+            if binding_local.is_some() {
+                self.cleanup_bindings.pop();
+            }
+
+            if next_label != end_label {
+                let _ = writeln!(output, "{next_label}:");
+            }
+
+            if matches!(pattern, SupportedBoolMatchPattern::CatchAll) && arm.guard.is_none() {
+                break;
+            }
+        }
+
+        let _ = writeln!(output, "{end_label}:");
+        self.render_loaded_pointer_value(output, result_slot, expected_ty.clone(), span)
+    }
+
+    fn render_guard_value_integer_match_expr(
+        &mut self,
+        output: &mut String,
+        scrutinee: LoweredValue,
+        arms: &[hir::MatchArm],
+        expected_ty: &Ty,
+        span: Span,
+        guard_binding: Option<&GuardBindingValue>,
+    ) -> LoweredValue {
+        let result_llvm_ty = self
+            .emitter
+            .lower_llvm_type(expected_ty, span, "guard match value")
+            .expect("prepared bool guard lowering should lower guard match values");
+        let result_slot = self.fresh_temp();
+        let end_label = self.fresh_label("guard_match_end");
+        let _ = writeln!(output, "  {result_slot} = alloca {result_llvm_ty}");
+
+        for (index, arm) in arms.iter().enumerate() {
+            let pattern = supported_cleanup_integer_match_pattern(
+                self.emitter.input.hir,
+                self.emitter.input.resolution,
+                arm.pattern,
+            )
+            .unwrap_or_else(|| {
+                panic!("prepared bool guard lowering at {span:?} should only render supported integer guard-match patterns")
+            });
+            let body_label = self.fresh_label("guard_match_arm");
+            let next_label = if index + 1 == arms.len() {
+                end_label.clone()
+            } else {
+                self.fresh_label("guard_match_next")
+            };
+            let binding_local = match pattern_kind(self.emitter.input.hir, arm.pattern) {
+                PatternKind::Binding(local) => Some(*local),
+                _ => None,
+            };
+
+            if let Some(local) = binding_local {
+                self.cleanup_bindings.push(GuardBindingValue {
+                    local,
+                    value: scrutinee.clone(),
+                });
+            }
+
+            match &pattern {
+                SupportedIntegerMatchPattern::Literal(value) => {
+                    let matched_label = if arm.guard.is_some() {
+                        self.fresh_label("guard_match_guard")
+                    } else {
+                        body_label.clone()
+                    };
+                    let condition = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {condition} = icmp eq {} {}, {}",
+                        scrutinee.llvm_ty, scrutinee.repr, value
+                    );
+                    let _ = writeln!(
+                        output,
+                        "  br i1 {condition}, label %{matched_label}, label %{next_label}"
+                    );
+                    if let Some(guard) = arm.guard {
+                        let _ = writeln!(output, "{matched_label}:");
+                        let guard = self.render_bool_guard_expr(output, guard, span, guard_binding);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    }
+                }
+                SupportedIntegerMatchPattern::CatchAll => {
+                    if let Some(guard) = arm.guard {
+                        let guard = self.render_bool_guard_expr(output, guard, span, guard_binding);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    } else {
+                        let _ = writeln!(output, "  br label %{body_label}");
+                    }
+                }
+            }
+
+            let _ = writeln!(output, "{body_label}:");
+            let arm_value =
+                self.render_guard_expr_as_type(output, arm.body, expected_ty, span, guard_binding);
+            let _ = writeln!(
+                output,
+                "  store {} {}, ptr {result_slot}",
+                arm_value.llvm_ty, arm_value.repr
+            );
+            let _ = writeln!(output, "  br label %{end_label}");
+
+            if binding_local.is_some() {
+                self.cleanup_bindings.pop();
+            }
+
+            if next_label != end_label {
+                let _ = writeln!(output, "{next_label}:");
+            }
+
+            if matches!(pattern, SupportedIntegerMatchPattern::CatchAll) && arm.guard.is_none() {
+                break;
+            }
+        }
+
+        let _ = writeln!(output, "{end_label}:");
+        self.render_loaded_pointer_value(output, result_slot, expected_ty.clone(), span)
+    }
+
     fn render_guard_expr_as_type(
         &mut self,
         output: &mut String,
@@ -9305,6 +9578,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 *condition,
                 *then_branch,
                 *other,
+                expected_ty,
+                span,
+                guard_binding,
+            );
+        }
+
+        if let hir::ExprKind::Match { value, arms } = &self.emitter.input.hir.expr(expr_id).kind {
+            return self.render_guard_value_match_expr(
+                output,
+                *value,
+                arms,
                 expected_ty,
                 span,
                 guard_binding,
@@ -11838,6 +12122,91 @@ fn supported_guard_value_expr_as_type(
                     expected_ty,
                 )
             });
+        }
+        hir::ExprKind::Match { value, arms } => {
+            let Some(scrutinee_ty) = typeck.expr_ty(*value) else {
+                return false;
+            };
+
+            if scrutinee_ty.is_bool() {
+                return runtime_bool_guard_supported(
+                    module,
+                    resolution,
+                    typeck,
+                    signatures,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    *value,
+                ) && arms.iter().all(|arm| {
+                    supported_bool_match_pattern(module, resolution, arm.pattern).is_some()
+                        && arm.guard.is_none_or(|guard| {
+                            runtime_bool_guard_supported(
+                                module,
+                                resolution,
+                                typeck,
+                                signatures,
+                                body,
+                                local_types,
+                                arm_pattern,
+                                guard,
+                            )
+                        })
+                        && supported_guard_value_expr_as_type(
+                            module,
+                            resolution,
+                            typeck,
+                            signatures,
+                            body,
+                            local_types,
+                            arm_pattern,
+                            arm.body,
+                            expected_ty,
+                        )
+                });
+            }
+
+            if scrutinee_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
+                return supported_guard_scalar_expr(
+                    module,
+                    resolution,
+                    typeck,
+                    signatures,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    *value,
+                ) == Some(GuardScalarKind::Int)
+                    && arms.iter().all(|arm| {
+                        supported_cleanup_integer_match_pattern(module, resolution, arm.pattern)
+                            .is_some()
+                            && arm.guard.is_none_or(|guard| {
+                                runtime_bool_guard_supported(
+                                    module,
+                                    resolution,
+                                    typeck,
+                                    signatures,
+                                    body,
+                                    local_types,
+                                    arm_pattern,
+                                    guard,
+                                )
+                            })
+                            && supported_guard_value_expr_as_type(
+                                module,
+                                resolution,
+                                typeck,
+                                signatures,
+                                body,
+                                local_types,
+                                arm_pattern,
+                                arm.body,
+                                expected_ty,
+                            )
+                    });
+            }
+
+            return false;
         }
         _ => {}
     }
@@ -17853,6 +18222,35 @@ fn main() -> Int {
         assert!(rendered.contains("bb0_match_guard0:"));
         assert!(rendered.contains("guard_if_then"));
         assert!(rendered.contains("guard_if_else"));
+        assert!(rendered.contains("call i1 @ql_"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_guard_match_value_call_arg_lowering() {
+        let rendered = emit(
+            r#"
+struct State {
+    value: Int,
+}
+
+fn allow(state: State) -> Bool {
+    return state.value == 1
+}
+
+fn main() -> Int {
+    let ready = true
+    return match 1 {
+        1 if allow(match ready { true => State { value: 1 }, false => State { value: 2 } }) => 10,
+        _ => 0,
+    }
+}
+"#,
+        );
+
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("guard_match_arm"));
+        assert!(rendered.contains("guard_match_end"));
         assert!(rendered.contains("call i1 @ql_"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
