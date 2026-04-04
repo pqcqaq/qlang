@@ -3294,6 +3294,81 @@ async fn main() -> Wrap {
 }
 
 #[test]
+fn allows_spawning_guarded_arithmetic_static_alias_sourced_composed_dynamic_bundle_alias_inline_forwarded_task_handle_after_forwarded_alias()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+use SLOT as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Bundle {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Envelope {
+    bundle: Bundle,
+    tail: Task[Wrap],
+}
+
+static BASE: Int = 2
+static SLOT: Slot = Slot { value: BASE - 2 }
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row = INDEX_ALIAS.value
+    let slots = [row, row]
+    let alias_slots = slots
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let alias = pending.tasks
+    if INDEX_ALIAS.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let tail_tasks = pending.tasks
+    let forwarded = forward(alias[alias_slots[row]])
+    let running_task = forwarded
+    let env = Envelope {
+        bundle: Bundle {
+            tasks: [running_task, worker()],
+        },
+        tail: tail_tasks[1],
+    }
+    let bundle_root = env.bundle.tasks
+    let bundle_tasks = bundle_root
+    let second = await env.tail
+    let running = spawn forward(bundle_tasks[0])
+    return await running
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded arithmetic static alias-sourced composed dynamic bundle-alias-inline-forwarded spawn after forwarded alias to preserve sibling array element availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn allows_spawning_guarded_const_backed_triple_root_triple_source_row_slot_tail_alias_sourced_composed_dynamic_queued_task_handle_after_forwarded_alias()
  {
     let diagnostics = diagnostic_messages(
@@ -5644,6 +5719,82 @@ async fn main() -> Wrap {
     assert!(
         diagnostics.is_empty(),
         "expected guarded arithmetic static alias-sourced composed dynamic bundle-alias-forwarded await after forwarded alias to preserve sibling task availability, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn allows_awaiting_guarded_arithmetic_static_alias_sourced_composed_dynamic_bundle_alias_inline_forwarded_task_handle_after_forwarded_alias()
+ {
+    let diagnostics = diagnostic_messages(
+        r#"
+use SLOT as INDEX_ALIAS
+
+struct Wrap {
+    values: [Int; 0],
+}
+
+struct Pending {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Slot {
+    value: Int,
+}
+
+struct Bundle {
+    tasks: [Task[Wrap]; 2],
+}
+
+struct Envelope {
+    bundle: Bundle,
+    tail: Task[Wrap],
+}
+
+static BASE: Int = 2
+static SLOT: Slot = Slot { value: BASE - 2 }
+
+async fn worker() -> Wrap {
+    return Wrap { values: [] }
+}
+
+fn forward(task: Task[Wrap]) -> Task[Wrap] {
+    return task
+}
+
+async fn main() -> Wrap {
+    let row = INDEX_ALIAS.value
+    let slots = [row, row]
+    let alias_slots = slots
+    var pending = Pending {
+        tasks: [worker(), worker()],
+    }
+    let alias = pending.tasks
+    if INDEX_ALIAS.value == 0 {
+        let first = await alias[alias_slots[row]]
+        pending.tasks[slots[row]] = worker()
+    }
+    let tail_tasks = pending.tasks
+    let forwarded = forward(alias[alias_slots[row]])
+    let running_task = forwarded
+    let env = Envelope {
+        bundle: Bundle {
+            tasks: [running_task, worker()],
+        },
+        tail: tail_tasks[1],
+    }
+    let bundle_root = env.bundle.tasks
+    let bundle_tasks = bundle_root
+    let second = await forward(bundle_tasks[0])
+    let extra = await env.bundle.tasks[1]
+    let tail = await env.tail
+    return second
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected guarded arithmetic static alias-sourced composed dynamic bundle-alias-inline-forwarded await after forwarded alias to preserve sibling task availability, got {diagnostics:?}"
     );
 }
 
