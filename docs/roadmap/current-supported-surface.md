@@ -224,7 +224,7 @@
   - awaited scalar + direct-call guard
   - guard scalar/value path 现也接受最小 runtime `await` value 子集：当前已锁定 ordinary `match` guard 里的 awaited scalar comparison 形态，其中 `await` operand 可来自 runtime `if` / `match` 选出的 same-file async function item / alias 与 async callable `const` / `static` / alias direct callee root
   - awaited aggregate + projection guard；当前也已锁定 ordinary `match` guard 里的 awaited projected scalar comparison 形态，其中 aggregate-producing `await` operand 同样可来自 runtime `if` / `match` 选出的 same-file async function item / alias 与 async callable `const` / `static` / alias direct callee root
-  - aggregate guard-call arg / call-backed aggregate arg；当前也已锁定 ordinary `match` guard 里的 awaited aggregate guard-call arg 形态，其中 aggregate-producing `await` operand 可来自 runtime `if` / `match` 选出的 same-file async function item / alias 与 async callable `const` / `static` / alias direct callee root
+  - aggregate guard-call arg / call-backed aggregate arg；当前也已锁定 ordinary `match` guard 里的 awaited aggregate guard-call arg 与 awaited call-backed aggregate guard arg 形态，其中 aggregate-producing `await` operand 可来自 runtime `if` / `match` 选出的 same-file async function item / alias 与 async callable `const` / `static` / alias direct callee root
   - import-alias helper family
   - inline aggregate arg / inline projection-root
   - nested call-root runtime projection family
