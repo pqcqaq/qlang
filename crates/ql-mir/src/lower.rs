@@ -85,6 +85,18 @@ pub fn lower_module(hir: &hir::Module, resolution: &ResolutionMap) -> MirModule 
     mir
 }
 
+pub fn lower_standalone_non_capturing_closure_body(
+    hir: &hir::Module,
+    resolution: &ResolutionMap,
+    owner: BodyOwner,
+    name: String,
+    span: ql_span::Span,
+    params: Vec<hir::LocalId>,
+    body_expr: ExprId,
+) -> MirBody {
+    BodyBuilder::new_closure(hir, resolution, owner, name, span, params, body_expr).lower()
+}
+
 fn lower_function_body(
     mir: &mut MirModule,
     hir: &hir::Module,
@@ -823,21 +835,19 @@ impl<'a> BodyBuilder<'a> {
         params: Vec<hir::LocalId>,
         body_expr: ExprId,
     ) -> MirBody {
-        let name = format!(
-            "{}::closure{}",
-            self.callable_name,
-            self.body.closure_ids().count()
-        );
-        BodyBuilder::new_closure(
+        lower_standalone_non_capturing_closure_body(
             self.hir,
             self.resolution,
             self.body.owner,
-            name,
+            format!(
+                "{}::closure{}",
+                self.callable_name,
+                self.body.closure_ids().count()
+            ),
             span,
             params,
             body_expr,
         )
-        .lower()
     }
 
     fn lower_scoped_block(

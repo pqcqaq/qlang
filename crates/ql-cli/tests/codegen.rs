@@ -159,6 +159,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "closure_backed_callable_const_static_build_llvm_ir",
+            source_relative: "fixtures/codegen/pass/closure_backed_callable_const_static_build.ql",
+            emit: "llvm-ir",
+            expected_relative: "tests/codegen/pass/closure_backed_callable_const_static_build.ll",
+            mock_compiler: false,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "bool_match_llvm_ir",
             source_relative: "fixtures/codegen/pass/bool_match.ql",
             emit: "llvm-ir",

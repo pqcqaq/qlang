@@ -330,6 +330,7 @@ struct TypeInferenceContext<'a> {
 struct ModuleEmitter<'a> {
     input: CodegenInput<'a>,
     signatures: HashMap<FunctionRef, FunctionSignature>,
+    const_closure_llvm_names: HashMap<hir::ExprId, String>,
 }
 
 impl<'a> ModuleEmitter<'a> {
@@ -337,6 +338,7 @@ impl<'a> ModuleEmitter<'a> {
         Self {
             input,
             signatures: HashMap::new(),
+            const_closure_llvm_names: HashMap::new(),
         }
     }
 
@@ -391,6 +393,57 @@ impl<'a> ModuleEmitter<'a> {
                 &mut prepared_closures,
                 &mut diagnostics,
             );
+        }
+
+        let mut const_closure_targets = VecDeque::new();
+        let mut seen_const_closures = HashSet::new();
+        for function in &prepared {
+            self.collect_const_closure_targets_in_body(
+                &function.body,
+                &mut const_closure_targets,
+                &mut seen_const_closures,
+            );
+        }
+        for closure in &prepared_closures {
+            self.collect_const_closure_targets_in_body(
+                &closure.body,
+                &mut const_closure_targets,
+                &mut seen_const_closures,
+            );
+        }
+
+        while let Some((item_id, closure_expr)) = const_closure_targets.pop_front() {
+            match self.prepare_const_closure(item_id, closure_expr) {
+                Ok(prepared_const_closure) => {
+                    self.const_closure_llvm_names.insert(
+                        closure_expr,
+                        prepared_const_closure.signature.llvm_name.clone(),
+                    );
+
+                    let previous_len = prepared_closures.len();
+                    self.collect_prepared_closures(
+                        FunctionRef::Item(item_id),
+                        &prepared_const_closure.signature.llvm_name,
+                        &prepared_const_closure.body,
+                        &mut prepared_closures,
+                        &mut diagnostics,
+                    );
+                    self.collect_const_closure_targets_in_body(
+                        &prepared_const_closure.body,
+                        &mut const_closure_targets,
+                        &mut seen_const_closures,
+                    );
+                    for closure in &prepared_closures[previous_len..] {
+                        self.collect_const_closure_targets_in_body(
+                            &closure.body,
+                            &mut const_closure_targets,
+                            &mut seen_const_closures,
+                        );
+                    }
+                    prepared_closures.push(prepared_const_closure);
+                }
+                Err(mut errors) => diagnostics.append(&mut errors),
+            }
         }
 
         if !diagnostics.is_empty() {
@@ -1043,6 +1096,110 @@ impl<'a> ModuleEmitter<'a> {
         Ok(prepared)
     }
 
+    fn prepare_const_closure(
+        &self,
+        item_id: ItemId,
+        closure_expr: hir::ExprId,
+    ) -> Result<PreparedFunction, Vec<Diagnostic>> {
+        let (ItemKind::Const(global) | ItemKind::Static(global)) =
+            &self.input.hir.item(item_id).kind
+        else {
+            return Err(vec![unsupported(
+                self.input.hir.item(item_id).span,
+                "LLVM IR backend foundation expected closure-backed callable const/static items",
+            )]);
+        };
+        let hir::ExprKind::Closure { params, body, .. } = &self.input.hir.expr(closure_expr).kind
+        else {
+            return Err(vec![unsupported(
+                global.span,
+                "LLVM IR backend foundation expected closure-backed callable const/static items",
+            )]);
+        };
+        let closure_ty = self
+            .input
+            .typeck
+            .expr_ty(closure_expr)
+            .cloned()
+            .ok_or_else(|| {
+                vec![unsupported(
+                    global.span,
+                    "LLVM IR backend foundation could not resolve the callable type for this const/static closure value",
+                )]
+            })?;
+        let Ty::Callable {
+            params: param_tys,
+            ret,
+        } = closure_ty
+        else {
+            return Err(vec![unsupported(
+                global.span,
+                "LLVM IR backend foundation expected callable const/static closure values to lower as callable values",
+            )]);
+        };
+        if param_tys.len() != params.len() {
+            return Err(vec![unsupported(
+                global.span,
+                "LLVM IR backend foundation encountered a const/static closure whose lowered parameter list no longer matches the inferred callable arity",
+            )]);
+        }
+
+        let return_ty = ret.as_ref().clone();
+        let return_llvm_ty =
+            match self.lower_llvm_type(&return_ty, global.span, "closure return type") {
+                Ok(llvm_ty) => llvm_ty,
+                Err(error) => return Err(vec![error]),
+            };
+        let mut param_signatures = Vec::with_capacity(params.len());
+        for (&local_id, ty) in params.iter().zip(param_tys.iter()) {
+            let local = self.input.hir.local(local_id);
+            let llvm_ty = match self.lower_llvm_type(ty, local.span, "closure parameter type") {
+                Ok(llvm_ty) => llvm_ty,
+                Err(error) => return Err(vec![error]),
+            };
+            param_signatures.push(ParamSignature {
+                name: local.name.clone(),
+                ty: ty.clone(),
+                llvm_ty,
+            });
+        }
+
+        let llvm_name = format!("{}__closure0", llvm_symbol_name(item_id, &global.name));
+        let body = ql_mir::lower_standalone_non_capturing_closure_body(
+            self.input.hir,
+            self.input.resolution,
+            BodyOwner::Item(item_id),
+            format!("{}::closure0", global.name),
+            self.input.hir.expr(closure_expr).span,
+            params.clone(),
+            *body,
+        );
+        let mut prepared = self.prepare_body(
+            FunctionSignature {
+                function_ref: FunctionRef::Item(item_id),
+                name: format!("{}::closure0", global.name),
+                llvm_name,
+                span: self.input.hir.expr(closure_expr).span,
+                body_return_ty: return_ty.clone(),
+                body_return_llvm_ty: return_llvm_ty.clone(),
+                return_ty,
+                return_llvm_ty,
+                params: param_signatures,
+                body_style: FunctionBodyStyle::Definition,
+                is_async: false,
+                async_body_llvm_name: None,
+                async_frame_layout: None,
+                async_result_layout: None,
+            },
+            &body,
+        )?;
+        prepared.param_binding_locals = params
+            .iter()
+            .filter_map(|local_id| mir_local_for_hir_local(&prepared.body, *local_id))
+            .collect();
+        Ok(prepared)
+    }
+
     fn collect_prepared_closures(
         &self,
         root_function_ref: FunctionRef,
@@ -1069,6 +1226,320 @@ impl<'a> ModuleEmitter<'a> {
                 }
                 Err(mut errors) => diagnostics.append(&mut errors),
             }
+        }
+    }
+
+    fn collect_const_closure_targets_in_body(
+        &self,
+        body: &mir::MirBody,
+        queue: &mut VecDeque<(ItemId, hir::ExprId)>,
+        seen: &mut HashSet<hir::ExprId>,
+    ) {
+        for block in body.blocks() {
+            for statement_id in &block.statements {
+                match &body.statement(*statement_id).kind {
+                    StatementKind::Assign { value, .. } | StatementKind::Eval { value } => {
+                        self.collect_const_closure_targets_in_rvalue(value, queue, seen);
+                    }
+                    StatementKind::BindPattern { source, .. } => {
+                        self.collect_const_closure_targets_in_operand(source, queue, seen);
+                    }
+                    StatementKind::RegisterCleanup { cleanup } => {
+                        let mir::CleanupKind::Defer { expr } = &body.cleanup(*cleanup).kind;
+                        let mut visited_items = HashSet::new();
+                        self.collect_const_closure_targets_in_expr(
+                            *expr,
+                            queue,
+                            seen,
+                            &mut visited_items,
+                        );
+                    }
+                    StatementKind::StorageLive { .. }
+                    | StatementKind::StorageDead { .. }
+                    | StatementKind::RunCleanup { .. } => {}
+                }
+            }
+            if let TerminatorKind::Match { arms, .. } = &block.terminator.kind {
+                for arm in arms {
+                    if let Some(guard) = arm.guard {
+                        let mut visited_items = HashSet::new();
+                        self.collect_const_closure_targets_in_expr(
+                            guard,
+                            queue,
+                            seen,
+                            &mut visited_items,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn collect_const_closure_targets_in_rvalue(
+        &self,
+        value: &Rvalue,
+        queue: &mut VecDeque<(ItemId, hir::ExprId)>,
+        seen: &mut HashSet<hir::ExprId>,
+    ) {
+        match value {
+            Rvalue::Use(operand) | Rvalue::Question(operand) => {
+                self.collect_const_closure_targets_in_operand(operand, queue, seen);
+            }
+            Rvalue::Tuple(items) | Rvalue::Array(items) => {
+                for item in items {
+                    self.collect_const_closure_targets_in_operand(item, queue, seen);
+                }
+            }
+            Rvalue::Call { callee, args } => {
+                self.collect_const_closure_targets_in_operand(callee, queue, seen);
+                for arg in args {
+                    self.collect_const_closure_targets_in_operand(&arg.value, queue, seen);
+                }
+            }
+            Rvalue::Binary { left, right, .. } => {
+                self.collect_const_closure_targets_in_operand(left, queue, seen);
+                self.collect_const_closure_targets_in_operand(right, queue, seen);
+            }
+            Rvalue::Unary { operand, .. } => {
+                self.collect_const_closure_targets_in_operand(operand, queue, seen);
+            }
+            Rvalue::AggregateStruct { fields, .. } => {
+                for field in fields {
+                    self.collect_const_closure_targets_in_operand(&field.value, queue, seen);
+                }
+            }
+            Rvalue::Closure { .. } | Rvalue::OpaqueExpr(_) => {}
+        }
+    }
+
+    fn collect_const_closure_targets_in_operand(
+        &self,
+        operand: &Operand,
+        queue: &mut VecDeque<(ItemId, hir::ExprId)>,
+        seen: &mut HashSet<hir::ExprId>,
+    ) {
+        match operand {
+            Operand::Constant(Constant::Item { item, .. }) => {
+                let mut visited_items = HashSet::new();
+                if let Some((item_id, closure_expr)) = const_or_static_callable_closure_target(
+                    self.input.hir,
+                    self.input.resolution,
+                    *item,
+                    &mut visited_items,
+                ) && seen.insert(closure_expr)
+                {
+                    queue.push_back((item_id, closure_expr));
+                }
+            }
+            Operand::Constant(Constant::Import(path)) => {
+                let Some(item_id) = local_item_for_import_path(self.input.hir, path) else {
+                    return;
+                };
+                let mut visited_items = HashSet::new();
+                if let Some((item_id, closure_expr)) = const_or_static_callable_closure_target(
+                    self.input.hir,
+                    self.input.resolution,
+                    item_id,
+                    &mut visited_items,
+                ) && seen.insert(closure_expr)
+                {
+                    queue.push_back((item_id, closure_expr));
+                }
+            }
+            Operand::Place(_)
+            | Operand::Constant(
+                Constant::Integer(_)
+                | Constant::String { .. }
+                | Constant::Bool(_)
+                | Constant::None
+                | Constant::Void
+                | Constant::Function { .. }
+                | Constant::UnresolvedName(_),
+            ) => {}
+        }
+    }
+
+    fn collect_const_closure_targets_in_expr(
+        &self,
+        expr_id: hir::ExprId,
+        queue: &mut VecDeque<(ItemId, hir::ExprId)>,
+        seen: &mut HashSet<hir::ExprId>,
+        visited_items: &mut HashSet<ItemId>,
+    ) {
+        let expr = self.input.hir.expr(expr_id);
+        match &expr.kind {
+            hir::ExprKind::Name(_) => {
+                let item_id = match self.input.resolution.expr_resolution(expr_id) {
+                    Some(ValueResolution::Item(item_id)) => Some(*item_id),
+                    Some(ValueResolution::Import(import_binding)) => {
+                        local_item_for_import_binding(self.input.hir, import_binding)
+                    }
+                    _ => None,
+                };
+                if let Some(item_id) = item_id {
+                    if let Some((item_id, closure_expr)) = const_or_static_callable_closure_target(
+                        self.input.hir,
+                        self.input.resolution,
+                        item_id,
+                        visited_items,
+                    ) && seen.insert(closure_expr)
+                    {
+                        queue.push_back((item_id, closure_expr));
+                    }
+                }
+            }
+            hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => {
+                for &item in items {
+                    self.collect_const_closure_targets_in_expr(item, queue, seen, visited_items);
+                }
+            }
+            hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+                self.collect_const_closure_targets_in_block(*block, queue, seen, visited_items)
+            }
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_const_closure_targets_in_expr(*condition, queue, seen, visited_items);
+                self.collect_const_closure_targets_in_block(
+                    *then_branch,
+                    queue,
+                    seen,
+                    visited_items,
+                );
+                if let Some(other) = else_branch {
+                    self.collect_const_closure_targets_in_expr(*other, queue, seen, visited_items);
+                }
+            }
+            hir::ExprKind::Match { value, arms } => {
+                self.collect_const_closure_targets_in_expr(*value, queue, seen, visited_items);
+                for arm in arms {
+                    if let Some(guard) = arm.guard {
+                        self.collect_const_closure_targets_in_expr(
+                            guard,
+                            queue,
+                            seen,
+                            visited_items,
+                        );
+                    }
+                    self.collect_const_closure_targets_in_expr(
+                        arm.body,
+                        queue,
+                        seen,
+                        visited_items,
+                    );
+                }
+            }
+            hir::ExprKind::Closure { body, .. } | hir::ExprKind::Question(body) => {
+                self.collect_const_closure_targets_in_expr(*body, queue, seen, visited_items);
+            }
+            hir::ExprKind::Call { callee, args } => {
+                self.collect_const_closure_targets_in_expr(*callee, queue, seen, visited_items);
+                for arg in args {
+                    match arg {
+                        hir::CallArg::Positional(value) => self
+                            .collect_const_closure_targets_in_expr(
+                                *value,
+                                queue,
+                                seen,
+                                visited_items,
+                            ),
+                        hir::CallArg::Named { value, .. } => self
+                            .collect_const_closure_targets_in_expr(
+                                *value,
+                                queue,
+                                seen,
+                                visited_items,
+                            ),
+                    }
+                }
+            }
+            hir::ExprKind::Member { object, .. } => {
+                self.collect_const_closure_targets_in_expr(*object, queue, seen, visited_items);
+            }
+            hir::ExprKind::Bracket { target, items } => {
+                self.collect_const_closure_targets_in_expr(*target, queue, seen, visited_items);
+                for &item in items {
+                    self.collect_const_closure_targets_in_expr(item, queue, seen, visited_items);
+                }
+            }
+            hir::ExprKind::StructLiteral { fields, .. } => {
+                for field in fields {
+                    self.collect_const_closure_targets_in_expr(
+                        field.value,
+                        queue,
+                        seen,
+                        visited_items,
+                    );
+                }
+            }
+            hir::ExprKind::Binary { left, right, .. } => {
+                self.collect_const_closure_targets_in_expr(*left, queue, seen, visited_items);
+                self.collect_const_closure_targets_in_expr(*right, queue, seen, visited_items);
+            }
+            hir::ExprKind::Unary { expr, .. } => {
+                self.collect_const_closure_targets_in_expr(*expr, queue, seen, visited_items);
+            }
+            hir::ExprKind::Integer(_)
+            | hir::ExprKind::String { .. }
+            | hir::ExprKind::Bool(_)
+            | hir::ExprKind::NoneLiteral => {}
+        }
+    }
+
+    fn collect_const_closure_targets_in_block(
+        &self,
+        block_id: hir::BlockId,
+        queue: &mut VecDeque<(ItemId, hir::ExprId)>,
+        seen: &mut HashSet<hir::ExprId>,
+        visited_items: &mut HashSet<ItemId>,
+    ) {
+        let block = self.input.hir.block(block_id);
+        for &stmt_id in &block.statements {
+            match &self.input.hir.stmt(stmt_id).kind {
+                hir::StmtKind::Let { value, .. } | hir::StmtKind::Defer(value) => {
+                    self.collect_const_closure_targets_in_expr(*value, queue, seen, visited_items);
+                }
+                hir::StmtKind::Return(expr) => {
+                    if let Some(expr) = expr {
+                        self.collect_const_closure_targets_in_expr(
+                            *expr,
+                            queue,
+                            seen,
+                            visited_items,
+                        );
+                    }
+                }
+                hir::StmtKind::While { condition, body } => {
+                    self.collect_const_closure_targets_in_expr(
+                        *condition,
+                        queue,
+                        seen,
+                        visited_items,
+                    );
+                    self.collect_const_closure_targets_in_block(*body, queue, seen, visited_items);
+                }
+                hir::StmtKind::Loop { body } => {
+                    self.collect_const_closure_targets_in_block(*body, queue, seen, visited_items);
+                }
+                hir::StmtKind::For { iterable, body, .. } => {
+                    self.collect_const_closure_targets_in_expr(
+                        *iterable,
+                        queue,
+                        seen,
+                        visited_items,
+                    );
+                    self.collect_const_closure_targets_in_block(*body, queue, seen, visited_items);
+                }
+                hir::StmtKind::Expr { expr, .. } => {
+                    self.collect_const_closure_targets_in_expr(*expr, queue, seen, visited_items);
+                }
+                hir::StmtKind::Break | hir::StmtKind::Continue => {}
+            }
+        }
+        if let Some(tail) = block.tail {
+            self.collect_const_closure_targets_in_expr(tail, queue, seen, visited_items);
         }
     }
 
@@ -1983,6 +2454,16 @@ impl<'a> ModuleEmitter<'a> {
             item_id,
             &mut visited,
         ) else {
+            if const_or_static_callable_closure_target(
+                self.input.hir,
+                self.input.resolution,
+                item_id,
+                &mut visited,
+            )
+            .is_some()
+            {
+                return Some(ty);
+            }
             diagnostics.push(unsupported(
                 span,
                 "LLVM IR backend foundation does not support callable const/static values yet",
@@ -6579,6 +7060,34 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             hir::ExprKind::Question(inner) => {
                 self.render_const_expr(output, *inner, expected_ty, span)
             }
+            hir::ExprKind::Closure { .. } => {
+                let ty = self
+                    .emitter
+                    .input
+                    .typeck
+                    .expr_ty(expr_id)
+                    .cloned()
+                    .or_else(|| expected_ty.cloned())
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "prepared const item lowering at {span:?} should preserve callable types for closure-backed const/static values"
+                        )
+                    });
+                let llvm_name = self
+                    .emitter
+                    .const_closure_llvm_names
+                    .get(&expr_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "prepared const item lowering at {span:?} should prepare closure-backed const/static values before rendering"
+                        )
+                    });
+                LoweredValue {
+                    ty,
+                    llvm_ty: "ptr".to_owned(),
+                    repr: format!("@{llvm_name}"),
+                }
+            }
             hir::ExprKind::Tuple(items) => {
                 self.render_const_tuple_expr(output, items, expected_ty, expr.span)
             }
@@ -9751,6 +10260,27 @@ fn const_or_static_callable_function_ref(
     result
 }
 
+fn const_or_static_callable_closure_target(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    item_id: ItemId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<(ItemId, hir::ExprId)> {
+    if !visited.insert(item_id) {
+        return None;
+    }
+
+    let result = match &module.item(item_id).kind {
+        ItemKind::Const(global) | ItemKind::Static(global) => {
+            const_expr_sync_closure_target(module, resolution, item_id, global.value, visited)
+        }
+        _ => None,
+    };
+
+    visited.remove(&item_id);
+    result
+}
+
 fn const_expr_sync_function_ref(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -9780,6 +10310,43 @@ fn const_expr_sync_function_ref(
         }
         hir::ExprKind::Question(inner) => {
             const_expr_sync_function_ref(module, resolution, *inner, visited)
+        }
+        _ => None,
+    }
+}
+
+fn const_expr_sync_closure_target(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    owner_item_id: ItemId,
+    expr_id: hir::ExprId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<(ItemId, hir::ExprId)> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Closure { .. } => Some((owner_item_id, expr_id)),
+        hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id)? {
+            ValueResolution::Function(_)
+            | ValueResolution::Local(_)
+            | ValueResolution::Param(_)
+            | ValueResolution::SelfValue => None,
+            value_resolution => {
+                let item_id = local_item_for_value_resolution(module, value_resolution)?;
+                match &module.item(item_id).kind {
+                    ItemKind::Const(_) | ItemKind::Static(_) => {
+                        const_or_static_callable_closure_target(
+                            module, resolution, item_id, visited,
+                        )
+                    }
+                    _ => None,
+                }
+            }
+        },
+        hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+            let tail = module.block(*block).tail?;
+            const_expr_sync_closure_target(module, resolution, owner_item_id, tail, visited)
+        }
+        hir::ExprKind::Question(inner) => {
+            const_expr_sync_closure_target(module, resolution, owner_item_id, *inner, visited)
         }
         _ => None,
     }
@@ -11936,6 +12503,33 @@ fn main() -> Int {
         assert!(rendered.contains("call i64 %t"));
         assert!(rendered.contains("(i64 41)"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_closure_backed_callable_const_and_static_item_calls() {
+        let rendered = emit(
+            r#"
+use APPLY_CONST as run_const
+use APPLY_STATIC as run_static
+
+const APPLY_CONST: (Int) -> Int = (value: Int) => value + 1
+static APPLY_STATIC: (Int) -> Int = (value: Int) => value + 2
+
+fn main() -> Int {
+    let f = run_const
+    let g = run_static
+    return APPLY_CONST(10) + APPLY_STATIC(20) + f(30) + g(40)
+}
+"#,
+        );
+
+        assert!(rendered.contains("store ptr @ql_0_APPLY_CONST__closure0"));
+        assert!(rendered.contains("store ptr @ql_1_APPLY_STATIC__closure0"));
+        assert!(rendered.contains("call i64 @ql_0_APPLY_CONST__closure0(i64 10)"));
+        assert!(rendered.contains("call i64 @ql_1_APPLY_STATIC__closure0(i64 20)"));
+        assert!(rendered.contains("load ptr, ptr %l1_f"));
+        assert!(rendered.contains("load ptr, ptr %l2_g"));
+        assert!(!rendered.contains("does not support callable const/static values yet"));
     }
 
     #[test]

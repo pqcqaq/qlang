@@ -9,7 +9,7 @@ use ql_hir::{ExprId, FunctionRef, ItemId, LocalId as HirLocalId, PatternId};
 use ql_span::Span;
 
 pub use ids::{BasicBlockId, BodyId, CleanupId, ClosureId, LocalId, ScopeId, StatementId};
-pub use lower::lower_module;
+pub use lower::{lower_module, lower_standalone_non_capturing_closure_body};
 pub use render::render_module;
 
 #[derive(Clone, Debug, Default, PartialEq)]
