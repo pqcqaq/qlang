@@ -2557,6 +2557,16 @@ impl<'a> ModuleEmitter<'a> {
             hir::ExprKind::Question(inner) => {
                 self.supports_cleanup_expr_with_loop(*inner, in_cleanup_loop, body, local_types)
             }
+            hir::ExprKind::Unary {
+                op: UnaryOp::Await,
+                expr,
+            } => {
+                let Some(task_ty) = self.input.typeck.expr_ty(*expr) else {
+                    return false;
+                };
+                matches!(task_ty, Ty::TaskHandle(_))
+                    && self.supports_cleanup_value_expr(*expr, task_ty, body, local_types)
+            }
             hir::ExprKind::Binary {
                 left,
                 op: BinaryOp::Assign,
@@ -3012,6 +3022,19 @@ impl<'a> ModuleEmitter<'a> {
             }
             hir::ExprKind::Question(inner) => {
                 return self.supports_cleanup_value_expr(*inner, expected_ty, body, local_types);
+            }
+            hir::ExprKind::Unary {
+                op: UnaryOp::Await,
+                expr,
+            } => {
+                let Some(task_ty) = self.input.typeck.expr_ty(*expr) else {
+                    return false;
+                };
+                let Ty::TaskHandle(result_ty) = task_ty else {
+                    return false;
+                };
+                return expected_ty.compatible_with(result_ty.as_ref())
+                    && self.supports_cleanup_value_expr(*expr, task_ty, body, local_types);
             }
             hir::ExprKind::If {
                 condition,
@@ -6156,6 +6179,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             hir::ExprKind::Question(inner) => {
                 self.render_cleanup_expr(output, *inner, span);
             }
+            hir::ExprKind::Unary {
+                op: UnaryOp::Await,
+                expr,
+            } => {
+                let _ = self.render_cleanup_await_expr(output, *expr, span);
+            }
             hir::ExprKind::Binary {
                 left,
                 op: BinaryOp::Assign,
@@ -6821,6 +6850,29 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         self.cleanup_path_open = true;
     }
 
+    fn render_cleanup_await_expr(
+        &mut self,
+        output: &mut String,
+        task_expr: hir::ExprId,
+        span: Span,
+    ) -> LoweredValue {
+        let task_ty = self
+            .emitter
+            .input
+            .typeck
+            .expr_ty(task_expr)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "supported cleanup lowering at {span:?} should type-check awaited cleanup task values"
+                )
+            });
+        let handle_info = self.task_handle_info_for_ty(&task_ty, span);
+        let rendered = self.render_cleanup_value_expr(output, task_expr, &task_ty, span);
+        self.render_await_handle(output, rendered, handle_info, span)
+            .expect("prepared cleanup await lowering should produce a value")
+    }
+
     fn render_cleanup_call(
         &mut self,
         output: &mut String,
@@ -6979,6 +7031,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             hir::ExprKind::Question(inner) => {
                 self.render_cleanup_value_expr(output, *inner, expected_ty, span)
+            }
+            hir::ExprKind::Unary {
+                op: UnaryOp::Await,
+                expr,
+            } => {
+                let rendered = self.render_cleanup_await_expr(output, *expr, span);
+                assert!(
+                    expected_ty.compatible_with(&rendered.ty),
+                    "supported cleanup lowering at {span:?} should only render compatible cleanup await values"
+                );
+                rendered
             }
             hir::ExprKind::If {
                 condition,
@@ -7884,11 +7947,31 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
-    fn render_await(
+    fn task_handle_info_for_ty(&self, ty: &Ty, span: Span) -> AsyncTaskHandleInfo {
+        match ty {
+            Ty::TaskHandle(result_ty) => AsyncTaskHandleInfo {
+                result_ty: result_ty.as_ref().clone(),
+                result_layout: self
+                    .emitter
+                    .build_async_task_result_layout(result_ty, span)
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "prepared task-handle value at {span:?} should have a loadable async result layout"
+                        )
+                    }),
+            },
+            other => panic!(
+                "prepared task-handle value at {span:?} should resolve to a task handle, found `{other}`"
+            ),
+        }
+    }
+
+    fn render_await_handle(
         &mut self,
         output: &mut String,
-        operand: &Operand,
-        span: Span,
+        handle: LoweredValue,
+        handle_info: AsyncTaskHandleInfo,
+        _span: Span,
     ) -> Option<LoweredValue> {
         let await_hook = self
             .emitter
@@ -7898,11 +7981,6 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             .emitter
             .runtime_hook_signature(RuntimeHook::TaskResultRelease)
             .expect("prepared await lowering should require the task-result-release runtime hook");
-        let Operand::Place(place) = operand else {
-            panic!("prepared await operands should lower through task-handle places");
-        };
-        let handle_info = self.task_handle_info_for_place(place, span);
-        let handle = self.render_operand(output, operand, span);
         let result_ptr = self.fresh_temp();
         let _ = writeln!(
             output,
@@ -7949,6 +8027,20 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 })
             }
         }
+    }
+
+    fn render_await(
+        &mut self,
+        output: &mut String,
+        operand: &Operand,
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let Operand::Place(place) = operand else {
+            panic!("prepared await operands should lower through task-handle places");
+        };
+        let handle_info = self.task_handle_info_for_place(place, span);
+        let handle = self.render_operand(output, operand, span);
+        self.render_await_handle(output, handle, handle_info, span)
     }
 
     fn render_spawn(
@@ -18133,6 +18225,38 @@ fn main() -> Int {
         assert!(rendered.contains("cleanup_match_arm"));
         assert!(rendered.contains("cleanup_match_end"));
         assert!(rendered.contains("alloca i64"));
+        assert!(rendered.contains("call i64 @ql_"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_await_value_lowering() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+async fn worker(value: Int) -> Int {
+    return value + 1
+}
+
+fn forward(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    defer forward(await worker(1))
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_task_await"));
+        assert!(rendered.contains("call void @qlrt_task_result_release"));
         assert!(rendered.contains("call i64 @ql_"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
     }

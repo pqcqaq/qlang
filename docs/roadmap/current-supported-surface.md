@@ -230,6 +230,7 @@
 - cleanup value path 现也接受同一批 ordinary local / param / `self` place family root 的 assignment expr value，包括 direct cleanup call arg 与 valued cleanup block tail；当前仍限 local/field/tuple-index/fixed-array-index target path
 - cleanup value path 现也接受最小 runtime `if` value 子集：当前已锁定 direct cleanup call arg 的 `if cond { ... } else { ... }` 形态
 - cleanup value path 现也接受最小 runtime `match` value 子集：当前已锁定 direct cleanup call arg 的 bool/int scrutinee + 既有 cleanup-match arm 子集
+- cleanup value path 现也接受最小 runtime `await` value 子集：当前已锁定 async body 内 direct cleanup call arg 的 `await task` 形态
 - statement-level cleanup `while`：当前开放 bool 条件 + 已支持 cleanup block body 的最小 lowering 子集，可在 cleanup block 内重复执行 direct / callable-backed call 路径，并支持 body-local `break` / `continue`（包括经由当前已开放 cleanup `if` branch 进入的 loop-exit path）
 - statement-level cleanup `loop`：当前开放已支持 cleanup block body 的最小 lowering 子集，并支持 body-local `break` / `continue`（包括经由当前已开放 cleanup `if` branch 进入的 loop-exit path）
 - statement-level cleanup `for`：当前开放 fixed array / homogeneous tuple iterable + binding / `_` / tuple destructuring / struct destructuring（叶子仍限 binding / `_`）pattern 的最小 lowering 子集，iterable 当前已覆盖 direct root、same-file `const` / `static` root 及其 same-file alias、item-backed read-only projected root、direct call-root、same-file import-alias call-root，以及 nested call-root projected root 形态；body 内可读取当前 item，并支持 body-local `break` / `continue`（包括经由当前已开放 cleanup `if` branch 进入的 loop-exit path）
@@ -265,7 +266,7 @@
 - 更广义的 async `dylib` surface，尤其是公开 async ABI
 - generalized `for await`，超出 fixed-array / homogeneous tuple 之外的 iterable
 - broader cleanup lowering / cleanup codegen，超出当前 direct / call-backed `defer` + `if` / `match` + 透明 `?` wrapper cleanup 子集之外
-- broader callable value lowering，超出当前 same-file sync function item / same-file alias / function-item-backed callable `const` / `static` 子集、closure-backed callable `const` / `static` 的 ordinary positional indirect-call 最小子集与 direct cleanup/guard item 子集、non-capturing sync closure value 的 ordinary positional indirect-call 最小子集与 direct local cleanup/guard 子集（zero-arg + explicit typed-parameter shape + statement-level local callable type-annotation shape + call-site positional-arg-inferred parameterized local/immutable-alias shape），以及 same-file async function item / alias 的 ordinary local indirect-call + `await` 子集之外；capturing closure value、async callable `const` / `static` 与 async cleanup / guard-call path 仍未开放
+- broader callable value lowering，超出当前 same-file sync function item / same-file alias / function-item-backed callable `const` / `static` 子集、closure-backed callable `const` / `static` 的 ordinary positional indirect-call 最小子集与 direct cleanup/guard item 子集、non-capturing sync closure value 的 ordinary positional indirect-call 最小子集与 direct local cleanup/guard 子集（zero-arg + explicit typed-parameter shape + statement-level local callable type-annotation shape + call-site positional-arg-inferred parameterized local/immutable-alias shape），以及 same-file async function item / alias / callable `const` / `static` / same-file alias 的 ordinary local indirect-call + `await` 子集之外；capturing closure value与 cleanup 内更广义的 async control-flow 仍未开放
 - cancellation / polling / drop semantics
 - generic async ABI / layout substitution
 - arbitrary dynamic overlap precision
