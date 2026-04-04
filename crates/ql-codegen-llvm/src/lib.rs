@@ -1622,7 +1622,8 @@ impl<'a> ModuleEmitter<'a> {
                     }
                     StatementKind::StorageLive { .. } | StatementKind::StorageDead { .. } => {}
                     StatementKind::RegisterCleanup { cleanup } => {
-                        if !self.supports_cleanup_action(body.cleanup(*cleanup)) {
+                        if !self.supports_cleanup_action(body.cleanup(*cleanup), body, &local_types)
+                        {
                             diagnostics.push(unsupported(
                                 statement.span,
                                 "LLVM IR backend foundation does not support cleanup lowering yet",
@@ -2513,41 +2514,82 @@ impl<'a> ModuleEmitter<'a> {
         ordered.into_iter().collect()
     }
 
-    fn supports_cleanup_action(&self, cleanup: &mir::CleanupAction) -> bool {
+    fn supports_cleanup_action(
+        &self,
+        cleanup: &mir::CleanupAction,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+    ) -> bool {
         match &cleanup.kind {
-            mir::CleanupKind::Defer { expr } => self.supports_cleanup_expr(*expr),
+            mir::CleanupKind::Defer { expr } => {
+                self.supports_cleanup_expr(*expr, body, local_types)
+            }
         }
     }
 
-    fn supports_cleanup_expr(&self, expr_id: hir::ExprId) -> bool {
-        self.supports_cleanup_expr_with_loop(expr_id, false)
+    fn supports_cleanup_expr(
+        &self,
+        expr_id: hir::ExprId,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+    ) -> bool {
+        self.supports_cleanup_expr_with_loop(expr_id, false, body, local_types)
     }
 
-    fn supports_cleanup_expr_with_loop(&self, expr_id: hir::ExprId, in_cleanup_loop: bool) -> bool {
+    fn supports_cleanup_expr_with_loop(
+        &self,
+        expr_id: hir::ExprId,
+        in_cleanup_loop: bool,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+    ) -> bool {
         match &self.input.hir.expr(expr_id).kind {
             hir::ExprKind::Call { callee, args } => {
-                self.supports_cleanup_call_expr(*callee, args, None)
+                self.supports_cleanup_call_expr(*callee, args, None, body, local_types)
             }
-            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-                self.supports_cleanup_block_expr_with_loop(*block_id, in_cleanup_loop)
-            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => self
+                .supports_cleanup_block_expr_with_loop(
+                    *block_id,
+                    in_cleanup_loop,
+                    body,
+                    local_types,
+                ),
             hir::ExprKind::Question(inner) => {
-                self.supports_cleanup_expr_with_loop(*inner, in_cleanup_loop)
+                self.supports_cleanup_expr_with_loop(*inner, in_cleanup_loop, body, local_types)
             }
+            hir::ExprKind::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => self.supports_cleanup_assignment_expr(*left, *right, body, local_types),
             hir::ExprKind::If {
                 condition,
                 then_branch,
                 else_branch,
             } => {
-                self.supports_cleanup_bool_expr(*condition)
-                    && self.supports_cleanup_block_expr_with_loop(*then_branch, in_cleanup_loop)
+                self.supports_cleanup_bool_expr(*condition, body, local_types)
+                    && self.supports_cleanup_block_expr_with_loop(
+                        *then_branch,
+                        in_cleanup_loop,
+                        body,
+                        local_types,
+                    )
                     && else_branch.is_none_or(|expr| {
-                        self.supports_cleanup_expr_with_loop(expr, in_cleanup_loop)
+                        self.supports_cleanup_expr_with_loop(
+                            expr,
+                            in_cleanup_loop,
+                            body,
+                            local_types,
+                        )
                     })
             }
-            hir::ExprKind::Match { value, arms } => {
-                self.supports_cleanup_match_expr_with_loop(*value, arms, in_cleanup_loop)
-            }
+            hir::ExprKind::Match { value, arms } => self.supports_cleanup_match_expr_with_loop(
+                *value,
+                arms,
+                in_cleanup_loop,
+                body,
+                local_types,
+            ),
             _ => false,
         }
     }
@@ -2556,12 +2598,23 @@ impl<'a> ModuleEmitter<'a> {
         &self,
         block_id: hir::BlockId,
         in_cleanup_loop: bool,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
     ) -> bool {
         self.supports_cleanup_block_with_tail(
             block_id,
             false,
             in_cleanup_loop,
-            |this, tail, loop_scope| this.supports_cleanup_expr_with_loop(tail, loop_scope),
+            body,
+            local_types,
+            |this, tail, loop_scope, cleanup_body, cleanup_local_types| {
+                this.supports_cleanup_expr_with_loop(
+                    tail,
+                    loop_scope,
+                    cleanup_body,
+                    cleanup_local_types,
+                )
+            },
         )
     }
 
@@ -2570,13 +2623,26 @@ impl<'a> ModuleEmitter<'a> {
         block_id: hir::BlockId,
         require_tail: bool,
         in_cleanup_loop: bool,
-        tail_support: impl Fn(&Self, hir::ExprId, bool) -> bool,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+        tail_support: impl Fn(
+            &Self,
+            hir::ExprId,
+            bool,
+            &mir::MirBody,
+            &HashMap<mir::LocalId, Ty>,
+        ) -> bool,
     ) -> bool {
         let block = self.input.hir.block(block_id);
         block.statements.iter().all(|statement_id| {
-            self.supports_cleanup_statement_with_loop(*statement_id, in_cleanup_loop)
+            self.supports_cleanup_statement_with_loop(
+                *statement_id,
+                in_cleanup_loop,
+                body,
+                local_types,
+            )
         }) && match block.tail {
-            Some(tail) => tail_support(self, tail, in_cleanup_loop),
+            Some(tail) => tail_support(self, tail, in_cleanup_loop, body, local_types),
             None => !require_tail,
         }
     }
@@ -2585,6 +2651,8 @@ impl<'a> ModuleEmitter<'a> {
         &self,
         statement_id: hir::StmtId,
         in_cleanup_loop: bool,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
     ) -> bool {
         match &self.input.hir.stmt(statement_id).kind {
             hir::StmtKind::Let { pattern, value, .. } => {
@@ -2592,27 +2660,42 @@ impl<'a> ModuleEmitter<'a> {
                     && self
                         .cleanup_let_expected_ty(*pattern, *value)
                         .is_some_and(|expected_ty| {
-                            self.supports_cleanup_value_expr(*value, expected_ty)
+                            self.supports_cleanup_value_expr(*value, expected_ty, body, local_types)
                         })
             }
             hir::StmtKind::Expr { expr, .. } => {
-                self.supports_cleanup_expr_with_loop(*expr, in_cleanup_loop)
+                self.supports_cleanup_expr_with_loop(*expr, in_cleanup_loop, body, local_types)
             }
-            hir::StmtKind::While { condition, body } => {
-                self.supports_cleanup_bool_expr(*condition)
-                    && self.supports_cleanup_block_expr_with_loop(*body, true)
+            hir::StmtKind::While {
+                condition,
+                body: while_body,
+            } => {
+                self.supports_cleanup_bool_expr(*condition, body, local_types)
+                    && self.supports_cleanup_block_expr_with_loop(
+                        *while_body,
+                        true,
+                        body,
+                        local_types,
+                    )
             }
-            hir::StmtKind::Loop { body } => self.supports_cleanup_block_expr_with_loop(*body, true),
+            hir::StmtKind::Loop { body: loop_body } => {
+                self.supports_cleanup_block_expr_with_loop(*loop_body, true, body, local_types)
+            }
             hir::StmtKind::For {
                 is_await,
                 pattern,
                 iterable,
-                body,
+                body: for_body,
             } => {
                 !is_await
                     && self.supports_cleanup_for_pattern(*pattern)
-                    && self.supports_cleanup_for_iterable(*iterable)
-                    && self.supports_cleanup_block_expr_with_loop(*body, true)
+                    && self.supports_cleanup_for_iterable(*iterable, body, local_types)
+                    && self.supports_cleanup_block_expr_with_loop(
+                        *for_body,
+                        true,
+                        body,
+                        local_types,
+                    )
             }
             hir::StmtKind::Break | hir::StmtKind::Continue => in_cleanup_loop,
             hir::StmtKind::Return(_) | hir::StmtKind::Defer(_) => false,
@@ -2670,18 +2753,28 @@ impl<'a> ModuleEmitter<'a> {
 
     fn literal_source_expr(&self, expr_id: hir::ExprId) -> Option<hir::ExprId> {
         let mut visited = HashSet::new();
-        let source = guard_literal_source_expr(self.input.hir, self.input.resolution, expr_id, &mut visited)?;
+        let source = guard_literal_source_expr(
+            self.input.hir,
+            self.input.resolution,
+            expr_id,
+            &mut visited,
+        )?;
         (source != expr_id).then_some(source)
     }
 
-    fn supports_cleanup_for_iterable(&self, expr_id: hir::ExprId) -> bool {
+    fn supports_cleanup_for_iterable(
+        &self,
+        expr_id: hir::ExprId,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+    ) -> bool {
         let Some(iterable_ty) = self.input.typeck.expr_ty(expr_id) else {
             return false;
         };
         let Some(_) = cleanup_for_iterable_shape(iterable_ty) else {
             return false;
         };
-        self.supports_cleanup_value_expr(expr_id, iterable_ty)
+        self.supports_cleanup_value_expr(expr_id, iterable_ty, body, local_types)
     }
 
     fn supports_cleanup_match_expr_with_loop(
@@ -2689,13 +2782,15 @@ impl<'a> ModuleEmitter<'a> {
         value_expr: hir::ExprId,
         arms: &[hir::MatchArm],
         in_cleanup_loop: bool,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
     ) -> bool {
         let Some(scrutinee_ty) = self.input.typeck.expr_ty(value_expr) else {
             return false;
         };
 
         if scrutinee_ty.is_bool() {
-            return self.supports_cleanup_bool_expr(value_expr)
+            return self.supports_cleanup_bool_expr(value_expr, body, local_types)
                 && arms.iter().all(|arm| {
                     supported_cleanup_bool_match_pattern(
                         self.input.hir,
@@ -2703,15 +2798,20 @@ impl<'a> ModuleEmitter<'a> {
                         arm.pattern,
                     )
                     .is_some()
-                        && arm
-                            .guard
-                            .is_none_or(|guard| self.supports_cleanup_bool_expr(guard))
-                        && self.supports_cleanup_expr_with_loop(arm.body, in_cleanup_loop)
+                        && arm.guard.is_none_or(|guard| {
+                            self.supports_cleanup_bool_expr(guard, body, local_types)
+                        })
+                        && self.supports_cleanup_expr_with_loop(
+                            arm.body,
+                            in_cleanup_loop,
+                            body,
+                            local_types,
+                        )
                 });
         }
 
         if scrutinee_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
-            return self.supports_cleanup_scalar_expr(value_expr)
+            return self.supports_cleanup_scalar_expr(value_expr, body, local_types)
                 && arms.iter().all(|arm| {
                     supported_cleanup_integer_match_pattern(
                         self.input.hir,
@@ -2719,14 +2819,48 @@ impl<'a> ModuleEmitter<'a> {
                         arm.pattern,
                     )
                     .is_some()
-                        && arm
-                            .guard
-                            .is_none_or(|guard| self.supports_cleanup_bool_expr(guard))
-                        && self.supports_cleanup_expr_with_loop(arm.body, in_cleanup_loop)
+                        && arm.guard.is_none_or(|guard| {
+                            self.supports_cleanup_bool_expr(guard, body, local_types)
+                        })
+                        && self.supports_cleanup_expr_with_loop(
+                            arm.body,
+                            in_cleanup_loop,
+                            body,
+                            local_types,
+                        )
                 });
         }
 
         false
+    }
+
+    fn supports_cleanup_assignment_expr(
+        &self,
+        target_expr: hir::ExprId,
+        value_expr: hir::ExprId,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+    ) -> bool {
+        let Some((_, target_ty)) = guard_expr_place_with_ty(
+            self.input.hir,
+            self.input.resolution,
+            body,
+            local_types,
+            None,
+            target_expr,
+        ) else {
+            return false;
+        };
+
+        !is_void_ty(&target_ty)
+            && self
+                .lower_llvm_type(
+                    &target_ty,
+                    self.input.hir.expr(target_expr).span,
+                    "cleanup assignment target",
+                )
+                .is_ok()
+            && self.supports_cleanup_value_expr(value_expr, &target_ty, body, local_types)
     }
 
     fn supports_cleanup_call_expr(
@@ -2734,6 +2868,8 @@ impl<'a> ModuleEmitter<'a> {
         callee_expr: hir::ExprId,
         args: &[hir::CallArg],
         expected_ty: Option<&Ty>,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
     ) -> bool {
         if let Some(function) =
             guard_direct_callee_function(self.input.hir, self.input.resolution, callee_expr)
@@ -2754,7 +2890,12 @@ impl<'a> ModuleEmitter<'a> {
                 .into_iter()
                 .zip(signature.params.iter())
                 .all(|(arg, param)| {
-                    self.supports_cleanup_value_expr(guard_call_arg_expr(arg), &param.ty)
+                    self.supports_cleanup_value_expr(
+                        guard_call_arg_expr(arg),
+                        &param.ty,
+                        body,
+                        local_types,
+                    )
                 });
         }
 
@@ -2764,7 +2905,7 @@ impl<'a> ModuleEmitter<'a> {
         let Ty::Callable { params, ret } = callee_ty else {
             return false;
         };
-        if !self.supports_cleanup_value_expr(callee_expr, callee_ty) {
+        if !self.supports_cleanup_value_expr(callee_expr, callee_ty, body, local_types) {
             return false;
         }
         if let Some(expected_ty) = expected_ty
@@ -2780,35 +2921,51 @@ impl<'a> ModuleEmitter<'a> {
             return false;
         }
         args.iter().zip(params.iter()).all(|(arg, param_ty)| {
-            self.supports_cleanup_value_expr(guard_call_arg_expr(arg), param_ty)
+            self.supports_cleanup_value_expr(guard_call_arg_expr(arg), param_ty, body, local_types)
         })
     }
 
-    fn supports_cleanup_value_expr(&self, expr_id: hir::ExprId, expected_ty: &Ty) -> bool {
+    fn supports_cleanup_value_expr(
+        &self,
+        expr_id: hir::ExprId,
+        expected_ty: &Ty,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+    ) -> bool {
         if is_void_ty(expected_ty) {
             return false;
         }
 
         match &self.input.hir.expr(expr_id).kind {
             hir::ExprKind::Call { callee, args } => {
-                return self.supports_cleanup_call_expr(*callee, args, Some(expected_ty));
+                return self.supports_cleanup_call_expr(
+                    *callee,
+                    args,
+                    Some(expected_ty),
+                    body,
+                    local_types,
+                );
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
                 return self.supports_cleanup_block_with_tail(
                     *block_id,
                     true,
                     false,
-                    |this, tail, _| this.supports_cleanup_value_expr(tail, expected_ty),
+                    body,
+                    local_types,
+                    |this: &Self, tail, _, _, _| {
+                        this.supports_cleanup_value_expr(tail, expected_ty, body, local_types)
+                    },
                 );
             }
             hir::ExprKind::Question(inner) => {
-                return self.supports_cleanup_value_expr(*inner, expected_ty);
+                return self.supports_cleanup_value_expr(*inner, expected_ty, body, local_types);
             }
             _ => {}
         }
 
         if let Some(source_expr) = self.literal_source_expr(expr_id) {
-            return self.supports_cleanup_value_expr(source_expr, expected_ty);
+            return self.supports_cleanup_value_expr(source_expr, expected_ty, body, local_types);
         }
 
         let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
@@ -2817,19 +2974,19 @@ impl<'a> ModuleEmitter<'a> {
         if !expected_ty.compatible_with(actual_ty)
             || self
                 .lower_llvm_type(
-                actual_ty,
-                self.input.hir.expr(expr_id).span,
-                "cleanup value",
-            )
-            .is_err()
+                    actual_ty,
+                    self.input.hir.expr(expr_id).span,
+                    "cleanup value",
+                )
+                .is_err()
         {
             return false;
         }
 
         if expected_ty.is_bool() {
-            self.supports_cleanup_bool_expr(expr_id)
+            self.supports_cleanup_bool_expr(expr_id, body, local_types)
         } else if expected_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
-            self.supports_cleanup_scalar_expr(expr_id)
+            self.supports_cleanup_scalar_expr(expr_id, body, local_types)
         } else {
             matches!(
                 &self.input.hir.expr(expr_id).kind,
@@ -2843,7 +3000,12 @@ impl<'a> ModuleEmitter<'a> {
         }
     }
 
-    fn supports_cleanup_bool_expr(&self, expr_id: hir::ExprId) -> bool {
+    fn supports_cleanup_bool_expr(
+        &self,
+        expr_id: hir::ExprId,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+    ) -> bool {
         let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
             return false;
         };
@@ -2852,7 +3014,7 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         if let Some(source_expr) = self.literal_source_expr(expr_id) {
-            return self.supports_cleanup_bool_expr(source_expr);
+            return self.supports_cleanup_bool_expr(source_expr, body, local_types);
         }
 
         match &self.input.hir.expr(expr_id).kind {
@@ -2861,12 +3023,12 @@ impl<'a> ModuleEmitter<'a> {
             | hir::ExprKind::Member { .. }
             | hir::ExprKind::Bracket { .. } => true,
             hir::ExprKind::Call { callee, args } => {
-                self.supports_cleanup_call_expr(*callee, args, Some(actual_ty))
+                self.supports_cleanup_call_expr(*callee, args, Some(actual_ty), body, local_types)
             }
             hir::ExprKind::Binary { left, op, right } => match op {
                 BinaryOp::AndAnd | BinaryOp::OrOr => {
-                    self.supports_cleanup_bool_expr(*left)
-                        && self.supports_cleanup_bool_expr(*right)
+                    self.supports_cleanup_bool_expr(*left, body, local_types)
+                        && self.supports_cleanup_bool_expr(*right, body, local_types)
                 }
                 BinaryOp::EqEq
                 | BinaryOp::BangEq
@@ -2874,8 +3036,8 @@ impl<'a> ModuleEmitter<'a> {
                 | BinaryOp::LtEq
                 | BinaryOp::Gt
                 | BinaryOp::GtEq => {
-                    self.supports_cleanup_scalar_expr(*left)
-                        && self.supports_cleanup_scalar_expr(*right)
+                    self.supports_cleanup_scalar_expr(*left, body, local_types)
+                        && self.supports_cleanup_scalar_expr(*right, body, local_types)
                 }
                 BinaryOp::Add
                 | BinaryOp::Sub
@@ -2887,17 +3049,31 @@ impl<'a> ModuleEmitter<'a> {
             hir::ExprKind::Unary {
                 op: UnaryOp::Not,
                 expr,
-            } => self.supports_cleanup_bool_expr(*expr),
+            } => self.supports_cleanup_bool_expr(*expr, body, local_types),
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => self
-                .supports_cleanup_block_with_tail(*block_id, true, false, |this, tail, _| {
-                    this.supports_cleanup_bool_expr(tail)
-                }),
-            hir::ExprKind::Question(inner) => self.supports_cleanup_bool_expr(*inner),
+                .supports_cleanup_block_with_tail(
+                    *block_id,
+                    true,
+                    false,
+                    body,
+                    local_types,
+                    |this: &Self, tail, _, _, _| {
+                        this.supports_cleanup_bool_expr(tail, body, local_types)
+                    },
+                ),
+            hir::ExprKind::Question(inner) => {
+                self.supports_cleanup_bool_expr(*inner, body, local_types)
+            }
             _ => false,
         }
     }
 
-    fn supports_cleanup_scalar_expr(&self, expr_id: hir::ExprId) -> bool {
+    fn supports_cleanup_scalar_expr(
+        &self,
+        expr_id: hir::ExprId,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+    ) -> bool {
         let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
             return false;
         };
@@ -2906,7 +3082,7 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         if let Some(source_expr) = self.literal_source_expr(expr_id) {
-            return self.supports_cleanup_scalar_expr(source_expr);
+            return self.supports_cleanup_scalar_expr(source_expr, body, local_types);
         }
 
         match &self.input.hir.expr(expr_id).kind {
@@ -2915,12 +3091,12 @@ impl<'a> ModuleEmitter<'a> {
             | hir::ExprKind::Member { .. }
             | hir::ExprKind::Bracket { .. } => true,
             hir::ExprKind::Call { callee, args } => {
-                self.supports_cleanup_call_expr(*callee, args, Some(actual_ty))
+                self.supports_cleanup_call_expr(*callee, args, Some(actual_ty), body, local_types)
             }
             hir::ExprKind::Binary { left, op, right } => match op {
                 BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
-                    self.supports_cleanup_scalar_expr(*left)
-                        && self.supports_cleanup_scalar_expr(*right)
+                    self.supports_cleanup_scalar_expr(*left, body, local_types)
+                        && self.supports_cleanup_scalar_expr(*right, body, local_types)
                 }
                 BinaryOp::AndAnd
                 | BinaryOp::OrOr
@@ -2935,12 +3111,21 @@ impl<'a> ModuleEmitter<'a> {
             hir::ExprKind::Unary {
                 op: UnaryOp::Neg,
                 expr,
-            } => self.supports_cleanup_scalar_expr(*expr),
+            } => self.supports_cleanup_scalar_expr(*expr, body, local_types),
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => self
-                .supports_cleanup_block_with_tail(*block_id, true, false, |this, tail, _| {
-                    this.supports_cleanup_scalar_expr(tail)
-                }),
-            hir::ExprKind::Question(inner) => self.supports_cleanup_scalar_expr(*inner),
+                .supports_cleanup_block_with_tail(
+                    *block_id,
+                    true,
+                    false,
+                    body,
+                    local_types,
+                    |this: &Self, tail, _, _, _| {
+                        this.supports_cleanup_scalar_expr(tail, body, local_types)
+                    },
+                ),
+            hir::ExprKind::Question(inner) => {
+                self.supports_cleanup_scalar_expr(*inner, body, local_types)
+            }
             _ => false,
         }
     }
@@ -5756,6 +5941,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             hir::ExprKind::Question(inner) => {
                 self.render_cleanup_expr(output, *inner, span);
             }
+            hir::ExprKind::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => {
+                self.render_cleanup_assignment_expr(output, *left, *right, span);
+            }
             hir::ExprKind::If {
                 condition,
                 then_branch,
@@ -5792,6 +5984,39 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             _ => panic!("prepared functions should not contain unsupported cleanup expressions"),
         }
+    }
+
+    fn render_cleanup_assignment_expr(
+        &mut self,
+        output: &mut String,
+        target_expr: hir::ExprId,
+        value_expr: hir::ExprId,
+        span: Span,
+    ) {
+        let (place, target_ty) = guard_expr_place_with_ty(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            self.body,
+            &self.prepared.local_types,
+            None,
+            target_expr,
+        )
+        .unwrap_or_else(|| {
+            panic!(
+                "supported cleanup lowering at {span:?} should only assign through supported cleanup local/projection places"
+            )
+        });
+        let rendered = self.render_cleanup_value_expr(output, value_expr, &target_ty, span);
+        assert!(
+            target_ty.compatible_with(&rendered.ty),
+            "supported cleanup lowering at {span:?} should only store compatible cleanup assignment values"
+        );
+        let target_ptr = self.render_place_pointer(output, &place, span).0;
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {}",
+            rendered.llvm_ty, rendered.repr, target_ptr
+        );
     }
 
     fn render_cleanup_match_expr(
@@ -8482,7 +8707,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
     ) -> Option<(String, Ty)> {
         let rendered = match &self.emitter.input.hir.item(item_id).kind {
-            ItemKind::Function(_) => self.render_function_constant(FunctionRef::Item(item_id), span),
+            ItemKind::Function(_) => {
+                self.render_function_constant(FunctionRef::Item(item_id), span)
+            }
             ItemKind::Const(_) | ItemKind::Static(_) => {
                 self.render_item_constant(output, item_id, span)
             }
@@ -16499,6 +16726,41 @@ fn main() -> Int {
         assert!(rendered.matches("extractvalue { i64, i64 }").count() >= 2);
         assert_eq!(rendered.matches("call void @sink(i64").count(), 3);
         assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_assignment_expr_lowering() {
+        let rendered = emit(
+            r#"
+struct State {
+    current: Int,
+    pair: (Int, Int),
+    values: [Int; 3],
+}
+
+fn main() -> Int {
+    var total = 1
+    var index = 1
+    var state = State {
+        current: 2,
+        pair: (3, 4),
+        values: [5, 6, 7],
+    }
+    defer {
+        total = 8;
+        state.current = total + 1;
+        state.pair[0] = state.current + 1;
+        state.values[index] = state.pair[0] + 1;
+    }
+    return total + state.current + state.pair[0] + state.values[1]
+}
+"#,
+        );
+
+        assert!(rendered.matches("store i64").count() >= 4);
+        assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support assignment expressions yet"));
     }
 
     #[test]
