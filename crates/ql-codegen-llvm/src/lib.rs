@@ -15253,6 +15253,53 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_awaited_projection_async_callable_control_flow_scrutinees() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use load_state as async_alias
+use LOAD as async_const_alias
+
+struct State {
+    value: Int,
+}
+
+extern "c" fn sink(value: Int)
+
+async fn load_state(value: Int) -> State {
+    return State { value: value }
+}
+
+const LOAD: (Int) -> Task[State] = load_state
+
+async fn main() -> Int {
+    let branch = true
+    match (await (if branch { async_alias } else { async_const_alias })(13)).value {
+        13 => sink(1),
+        _ => sink(0),
+    }
+    match (await (match branch { true => async_const_alias, false => async_alias })(14)).value {
+        14 => sink(2),
+        _ => sink(3),
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(rendered.matches("call ptr %t").count() >= 2);
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(!rendered.contains("does not support field projection lowering yet"));
+    }
+
+    #[test]
     fn emits_awaited_projection_async_callable_control_flow_guards() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
@@ -19885,6 +19932,53 @@ async fn main() -> Int {
         assert!(rendered.matches("call ptr %t").count() >= 2);
         assert!(rendered.contains("cleanup_match_end"));
         assert!(rendered.contains("cleanup_then"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_awaited_projection_async_callable_control_flow_scrutinees() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use load_state as async_alias
+use LOAD as async_const_alias
+
+struct State {
+    value: Int,
+}
+
+extern "c" fn sink(value: Int)
+
+async fn load_state(value: Int) -> State {
+    return State { value: value }
+}
+
+const LOAD: (Int) -> Task[State] = load_state
+
+async fn main() -> Int {
+    let branch = true
+    defer match (await (if branch { async_alias } else { async_const_alias })(15)).value {
+        15 => sink(1),
+        _ => sink(0),
+    }
+    defer match (await (match branch { true => async_const_alias, false => async_alias })(16)).value {
+        16 => sink(2),
+        _ => sink(3),
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(rendered.matches("call ptr %t").count() >= 2);
+        assert!(rendered.contains("cleanup_match_end"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
     }
 
