@@ -7216,6 +7216,135 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_cleanup_projection_pointer(
+        &mut self,
+        output: &mut String,
+        expr_id: hir::ExprId,
+        span: Span,
+    ) -> Option<(String, Ty)> {
+        if let Some(projected) = self.render_guard_projection_pointer(output, expr_id, span, None) {
+            return Some(projected);
+        }
+
+        match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Unary {
+                op: UnaryOp::Await,
+                expr,
+            } => {
+                let rendered = self.render_cleanup_await_expr(output, *expr, span);
+                if is_void_ty(&rendered.ty) {
+                    return None;
+                }
+                let slot = self.fresh_temp();
+                let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {slot}",
+                    rendered.llvm_ty, rendered.repr
+                );
+                Some((slot, rendered.ty))
+            }
+            hir::ExprKind::Member { object, field, .. } => {
+                let (current_ptr, current_ty) =
+                    self.render_cleanup_projection_pointer(output, *object, span)?;
+                let aggregate_llvm_ty = self
+                    .emitter
+                    .lower_llvm_type(&current_ty, span, "projection base type")
+                    .ok()?;
+                let step = self
+                    .emitter
+                    .resolve_projection_step(
+                        &current_ty,
+                        &mir::ProjectionElem::Field(field.clone()),
+                        span,
+                    )
+                    .ok()?;
+                let ResolvedProjectionStep::Field { index, ty } = step else {
+                    return None;
+                };
+                let next = self.fresh_temp();
+                let _ = writeln!(
+                    output,
+                    "  {next} = getelementptr inbounds {aggregate_llvm_ty}, ptr {current_ptr}, i32 0, i32 {index}"
+                );
+                Some((next, ty))
+            }
+            hir::ExprKind::Bracket { target, items } => {
+                let (mut current_ptr, mut current_ty) =
+                    self.render_cleanup_projection_pointer(output, *target, span)?;
+                for item in items {
+                    let aggregate_llvm_ty = self
+                        .emitter
+                        .lower_llvm_type(&current_ty, span, "projection base type")
+                        .ok()?;
+                    match &current_ty {
+                        Ty::Array { element, .. } => {
+                            let rendered_index =
+                                self.render_guard_scalar_expr(output, *item, span, None);
+                            assert!(
+                                rendered_index
+                                    .ty
+                                    .compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                                "prepared array index at {span:?} should have type Int"
+                            );
+                            let next = self.fresh_temp();
+                            let _ = writeln!(
+                                output,
+                                "  {next} = getelementptr inbounds {aggregate_llvm_ty}, ptr {current_ptr}, i64 0, {} {}",
+                                rendered_index.llvm_ty, rendered_index.repr
+                            );
+                            current_ptr = next;
+                            current_ty = element.as_ref().clone();
+                        }
+                        Ty::Tuple(_) => {
+                            let index = guard_literal_int(
+                                self.emitter.input.hir,
+                                self.emitter.input.resolution,
+                                *item,
+                            )?;
+                            if index < 0 {
+                                return None;
+                            }
+                            let step = self
+                                .emitter
+                                .resolve_projection_step(
+                                    &current_ty,
+                                    &mir::ProjectionElem::Index(Box::new(Operand::Constant(
+                                        Constant::Integer(index.to_string()),
+                                    ))),
+                                    span,
+                                )
+                                .ok()?;
+                            let ResolvedProjectionStep::TupleIndex { index, ty } = step else {
+                                return None;
+                            };
+                            let next = self.fresh_temp();
+                            let _ = writeln!(
+                                output,
+                                "  {next} = getelementptr inbounds {aggregate_llvm_ty}, ptr {current_ptr}, i32 0, i32 {index}"
+                            );
+                            current_ptr = next;
+                            current_ty = ty;
+                        }
+                        _ => return None,
+                    }
+                }
+                Some((current_ptr, current_ty))
+            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => self
+                .emitter
+                .input
+                .hir
+                .block(*block_id)
+                .tail
+                .and_then(|tail| self.render_cleanup_projection_pointer(output, tail, span)),
+            hir::ExprKind::Question(inner) => {
+                self.render_cleanup_projection_pointer(output, *inner, span)
+            }
+            _ => None,
+        }
+    }
+
     fn render_cleanup_value_expr(
         &mut self,
         output: &mut String,
@@ -7325,7 +7454,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 } else if expected_ty.compatible_with(&Ty::Builtin(BuiltinType::Int)) {
                     self.render_guard_scalar_expr(output, expr_id, span, None)
                 } else {
-                    self.render_guard_loadable_expr(output, expr_id, span, None)
+                    match self.render_cleanup_projection_pointer(output, expr_id, span) {
+                        Some((ptr, ty)) => self.render_loaded_pointer_value(output, ptr, ty, span),
+                        None => self.render_guard_loadable_expr(output, expr_id, span, None),
+                    }
                 };
                 assert!(
                     expected_ty.compatible_with(&rendered.ty),
@@ -18955,6 +19087,63 @@ async fn main() -> Int {
                 .matches("call void @qlrt_task_result_release")
                 .count()
                 >= 4
+        );
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_for_await_lowering_for_awaited_projected_root() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct TaskArrayPayload {
+    tasks: [Task[Int]; 2],
+}
+
+struct TaskEnvelope {
+    payload: TaskArrayPayload,
+}
+
+extern "c" fn step(value: Int)
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn task_env(base: Int) -> TaskEnvelope {
+    return TaskEnvelope {
+        payload: TaskArrayPayload {
+            tasks: [worker(base), worker(base + 1)],
+        },
+    }
+}
+
+async fn main() -> Int {
+    defer {
+        for await value in (await task_env(1)).payload.tasks {
+            step(value);
+        }
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 3);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 3
         );
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `for await` lowering yet"));
