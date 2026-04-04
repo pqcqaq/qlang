@@ -3366,6 +3366,19 @@ impl<'a> ModuleEmitter<'a> {
                 op: UnaryOp::Not,
                 expr,
             } => self.supports_cleanup_bool_expr(*expr, body, local_types),
+            hir::ExprKind::Unary {
+                op: UnaryOp::Await,
+                expr,
+            } => {
+                let Some(task_ty) = self.input.typeck.expr_ty(*expr) else {
+                    return false;
+                };
+                let Ty::TaskHandle(result_ty) = task_ty else {
+                    return false;
+                };
+                actual_ty.compatible_with(result_ty.as_ref())
+                    && self.supports_cleanup_value_expr(*expr, task_ty, body, local_types)
+            }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => self
                 .supports_cleanup_block_with_tail(
                     *block_id,
@@ -3454,6 +3467,19 @@ impl<'a> ModuleEmitter<'a> {
                 op: UnaryOp::Neg,
                 expr,
             } => self.supports_cleanup_scalar_expr(*expr, body, local_types),
+            hir::ExprKind::Unary {
+                op: UnaryOp::Await,
+                expr,
+            } => {
+                let Some(task_ty) = self.input.typeck.expr_ty(*expr) else {
+                    return false;
+                };
+                let Ty::TaskHandle(result_ty) = task_ty else {
+                    return false;
+                };
+                actual_ty.compatible_with(result_ty.as_ref())
+                    && self.supports_cleanup_value_expr(*expr, task_ty, body, local_types)
+            }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => self
                 .supports_cleanup_block_with_tail(
                     *block_id,
@@ -10483,10 +10509,6 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 )
             });
             assert!(
-                !signature.is_async,
-                "prepared bool guard lowering at {span:?} should only render sync guard calls"
-            );
-            assert!(
                 !is_void_ty(&signature.return_ty),
                 "prepared bool guard lowering at {span:?} should only render valued guard calls"
             );
@@ -10509,8 +10531,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 "  {temp} = call {} @{}({rendered_args})",
                 signature.return_llvm_ty, signature.llvm_name
             );
+            let ty = if signature.is_async {
+                Ty::TaskHandle(Box::new(signature.body_return_ty.clone()))
+            } else {
+                signature.return_ty.clone()
+            };
             return LoweredValue {
-                ty: signature.return_ty.clone(),
+                ty,
                 llvm_ty: signature.return_llvm_ty.clone(),
                 repr: temp,
             };
@@ -13190,9 +13217,6 @@ fn supported_guard_call<'a>(
 ) -> Option<(Vec<Ty>, Ty)> {
     if let Some(function) = guard_direct_callee_function(module, resolution, callee_expr) {
         let signature = signatures.get(&function)?;
-        if signature.is_async {
-            return None;
-        }
         let ordered_args = ordered_guard_call_args(args, signature)?;
         for (arg, param) in ordered_args.iter().copied().zip(signature.params.iter()) {
             let expr_id = guard_call_arg_expr(arg);
@@ -19333,6 +19357,46 @@ async fn main() -> Int {
 
         assert!(rendered.matches("call ptr @qlrt_executor_spawn").count() >= 2);
         assert!(rendered.contains("call i64 @ql_"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_await_guard_lowering() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+extern "c" fn sink(value: Int)
+
+async fn ready() -> Bool {
+    return true
+}
+
+async fn check(value: Int) -> Bool {
+    return value == 1
+}
+
+async fn main() -> Int {
+    defer if await ready() {
+        sink(1);
+    }
+    defer match true {
+        true if await check(1) => sink(2),
+        _ => sink(3),
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(rendered.contains("cleanup_match_guard"));
+        assert!(rendered.contains("cleanup_then"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
     }
 
