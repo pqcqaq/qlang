@@ -7254,6 +7254,61 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_async_callable_const_and_static_values() {
+        let dir = TestDir::new("ql-driver-async-callable-const-static-values");
+        let source = dir.write(
+            "async_callable_const_static_values.ql",
+            r#"
+use APPLY_CONST as run_const
+use APPLY_STATIC as run_static
+
+async fn worker(value: Int) -> Int {
+    return value + 1
+}
+
+const APPLY_CONST: (Int) -> Task[Int] = worker
+static APPLY_STATIC: (Int) -> Task[Int] = worker
+
+async fn main() -> Int {
+    let f = run_const
+    let g = run_static
+    let first = await APPLY_CONST(10)
+    let second = await APPLY_STATIC(20)
+    let third = await f(30)
+    let fourth = await g(40)
+    return first + second + third + fourth
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/async_callable_const_static_values.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("async callable const/static values should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("store ptr @ql_0_worker, ptr %l1_f"));
+        assert!(rendered.contains("store ptr @ql_0_worker, ptr %l2_g"));
+        assert!(rendered.contains("call ptr @ql_0_worker(i64 10)"));
+        assert!(rendered.contains("call ptr @ql_0_worker(i64 20)"));
+        assert!(rendered.contains("load ptr, ptr %l1_f"));
+        assert!(rendered.contains("load ptr, ptr %l2_g"));
+        assert!(rendered.contains("i64 30)"));
+        assert!(rendered.contains("i64 40)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_non_capturing_closure_values() {
         let dir = TestDir::new("ql-driver-non-capturing-closure-values");
         let source = dir.write(

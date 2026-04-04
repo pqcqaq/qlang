@@ -59,8 +59,9 @@
 - 最小 first-class async function value 子集
   - same-file async function item
   - same-file `use ... as ...` async function alias
-  - 当前 public regression 已锁定 `async fn` 内 ordinary local positional indirect call + `await` 子集
-  - async callable `const` / `static`、capturing closure value，以及 cleanup / guard-call 上的 async callable path 仍保持关闭
+  - transparently resolve 到 same-file async function item 的 callable `const` / `static`，以及它们的 same-file `use ... as ...` alias
+  - 当前 public regression 已锁定 `async fn` 内 ordinary direct call 或 ordinary local positional indirect call + `await` 子集
+  - capturing closure value，以及 cleanup / guard-call 上的 async callable path 仍保持关闭
 - fixed-shape `for`
   - fixed-array
   - homogeneous tuple

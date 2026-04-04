@@ -72,7 +72,7 @@ fn callable_ty_from_signature(signature: &FunctionSignature) -> Ty {
             .iter()
             .map(|param| param.ty.clone())
             .collect(),
-        ret: Box::new(signature.return_ty.clone()),
+        ret: Box::new(cleanup_call_result_ty(signature)),
     }
 }
 
@@ -11761,6 +11761,50 @@ async fn main() -> Int {
         assert!(rendered.contains("store ptr @ql_0_worker, ptr %l2_aliased"));
         assert!(rendered.contains("call ptr %t0(i64 10)"));
         assert!(rendered.contains("call ptr %t6(i64 20)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await"));
+    }
+
+    #[test]
+    fn emits_async_callable_const_and_static_item_calls() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use APPLY_CONST as run_const
+use APPLY_STATIC as run_static
+
+async fn worker(value: Int) -> Int {
+    return value + 1
+}
+
+const APPLY_CONST: (Int) -> Task[Int] = worker
+static APPLY_STATIC: (Int) -> Task[Int] = worker
+
+async fn main() -> Int {
+    let f = run_const
+    let g = run_static
+    let first = await APPLY_CONST(10)
+    let second = await APPLY_STATIC(20)
+    let third = await f(30)
+    let fourth = await g(40)
+    return first + second + third + fourth
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("store ptr @ql_0_worker, ptr %l1_f"));
+        assert!(rendered.contains("store ptr @ql_0_worker, ptr %l2_g"));
+        assert!(rendered.contains("call ptr @ql_0_worker(i64 10)"));
+        assert!(rendered.contains("call ptr @ql_0_worker(i64 20)"));
+        assert!(rendered.contains("load ptr, ptr %l1_f"));
+        assert!(rendered.contains("load ptr, ptr %l2_g"));
+        assert!(rendered.contains("i64 30)"));
+        assert!(rendered.contains("i64 40)"));
         assert!(rendered.contains("call ptr @qlrt_task_await"));
     }
 
