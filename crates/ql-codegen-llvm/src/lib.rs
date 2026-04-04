@@ -546,6 +546,24 @@ impl<'a> ModuleEmitter<'a> {
                         | StatementKind::RunCleanup { .. } => {}
                     }
                 }
+                if let TerminatorKind::ForLoop { iterable, .. } = &block.terminator.kind {
+                    let item_id = match iterable {
+                        Operand::Constant(Constant::Item { item, .. }) => Some(*item),
+                        Operand::Constant(Constant::Import(path)) => {
+                            local_item_for_import_path(self.input.hir, path)
+                        }
+                        _ => None,
+                    };
+                    if let Some(item_id) = item_id
+                        && let Some((value_expr, _)) = runtime_task_iterable_item_value(
+                            self.input.hir,
+                            self.input.resolution,
+                            item_id,
+                        )
+                    {
+                        self.collect_guard_expr_callees(value_expr, &mut queue);
+                    }
+                }
                 if let TerminatorKind::Match { arms, .. } = &block.terminator.kind {
                     for arm in arms {
                         if let Some(guard) = arm.guard {
@@ -716,8 +734,19 @@ impl<'a> ModuleEmitter<'a> {
             hir::ExprKind::Closure { body, .. } | hir::ExprKind::Question(body) => {
                 self.collect_guard_expr_callees(*body, queue);
             }
-            hir::ExprKind::Name(_)
-            | hir::ExprKind::Integer(_)
+            hir::ExprKind::Name(_) => {
+                if let Some(item_id) =
+                    task_iterable_item_root_expr(self.input.hir, self.input.resolution, expr_id)
+                    && let Some((value_expr, _)) = runtime_task_iterable_item_value(
+                        self.input.hir,
+                        self.input.resolution,
+                        item_id,
+                    )
+                {
+                    self.collect_guard_expr_callees(value_expr, queue);
+                }
+            }
+            hir::ExprKind::Integer(_)
             | hir::ExprKind::String { .. }
             | hir::ExprKind::Bool(_)
             | hir::ExprKind::NoneLiteral => {}
@@ -2807,6 +2836,15 @@ impl<'a> ModuleEmitter<'a> {
         let Some(_) = cleanup_for_iterable_shape(iterable_ty) else {
             return false;
         };
+        if task_iterable_item_root_expr(self.input.hir, self.input.resolution, expr_id).is_some() {
+            return self
+                .lower_llvm_type(
+                    iterable_ty,
+                    self.input.hir.expr(expr_id).span,
+                    "cleanup for iterable",
+                )
+                .is_ok();
+        }
         self.supports_cleanup_value_expr(expr_id, iterable_ty, body, local_types)
     }
 
@@ -10831,7 +10869,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             return;
         };
         let span = self.body.block(block_id).terminator.span;
-        let rendered = self.render_item_constant(output, *item_id, span);
+        let rendered = self.render_for_loop_item_root_value(output, *item_id, span);
         let _ = writeln!(
             output,
             "  store {} {}, ptr {}",
@@ -10839,6 +10877,22 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             rendered.repr,
             for_iterable_slot_name(block_id)
         );
+    }
+
+    fn render_for_loop_item_root_value(
+        &mut self,
+        output: &mut String,
+        item_id: ItemId,
+        span: Span,
+    ) -> LoweredValue {
+        let Some((value_expr, ty)) = runtime_task_iterable_item_value(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            item_id,
+        ) else {
+            return self.render_item_constant(output, item_id, span);
+        };
+        self.render_cleanup_value_expr(output, value_expr, &ty, span)
     }
 
     fn render_for_loop_iterable_pointer(
@@ -12559,6 +12613,36 @@ fn guard_literal_source_item(
 
     visited.remove(&item_id);
     result
+}
+
+fn runtime_task_iterable_item_value(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    item_id: ItemId,
+) -> Option<(hir::ExprId, Ty)> {
+    let ty = const_or_static_item_type(module, resolution, item_id)?;
+    match cleanup_for_iterable_shape(&ty) {
+        Some((_, Ty::TaskHandle(_), _)) => {}
+        _ => return None,
+    }
+    let value = match &module.item(item_id).kind {
+        ItemKind::Const(global) | ItemKind::Static(global) => global.value,
+        _ => return None,
+    };
+    Some((value, ty))
+}
+
+fn task_iterable_item_root_expr(
+    module: &hir::Module,
+    resolution_map: &ResolutionMap,
+    expr_id: hir::ExprId,
+) -> Option<ItemId> {
+    let hir::ExprKind::Name(_) = &module.expr(expr_id).kind else {
+        return None;
+    };
+    let resolution = resolution_map.expr_resolution(expr_id)?;
+    let item_id = local_item_for_value_resolution(module, resolution)?;
+    runtime_task_iterable_item_value(module, resolution_map, item_id).map(|_| item_id)
 }
 
 fn local_item_for_value_resolution(
@@ -19557,6 +19641,72 @@ async fn main() -> Int {
 
         assert!(rendered.contains("cleanup_for_cond"));
         assert!(rendered.matches("call void @step(i64").count() >= 1);
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_for_await_lowering_for_task_item_roots() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use MORE as ITEMS
+use TASK_PAIR as PAIRS
+
+extern "c" fn step(value: Int)
+
+const TASKS: [Task[Int]; 2] = [worker(1), worker(2)]
+static MORE: [Task[Int]; 2] = [worker(3), worker(4)]
+const TASK_PAIR: (Task[Int], Task[Int]) = (worker(5), worker(6))
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var total = 0
+    for await value in TASKS {
+        total = total + value
+    }
+    for await item in ITEMS {
+        total = total + item
+    }
+    for await pair in PAIRS {
+        total = total + pair
+    }
+    defer {
+        for await value in TASKS {
+            step(value);
+        }
+        for await item in ITEMS {
+            step(item);
+        }
+        for await pair in PAIRS {
+            step(pair);
+        }
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.contains("cleanup_for_tuple_item"));
+        assert!(rendered.matches("call ptr @ql_").count() >= 6);
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 6);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 6
+        );
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `for await` lowering yet"));
     }
