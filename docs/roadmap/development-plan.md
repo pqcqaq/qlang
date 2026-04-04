@@ -130,6 +130,7 @@
 - cleanup value path 现也开始接受 runtime `match` value：当前 direct cleanup call arg 已可通过 bool/int scrutinee + 既有 cleanup-match arm 子集进入 shared cleanup value lowering，不再只限 literal-source folded `match`
 - cleanup value path 现也开始接受最小 runtime `await` value：当前 async body 内 direct cleanup call arg 已可通过 `await task` 进入 shared cleanup value lowering，不再只限 task-handle call result 被直接忽略的 expr-statement 形态
 - cleanup value path 现也开始接受最小 runtime `spawn` value：当前 async body 内 direct cleanup call arg 已可通过 `spawn worker(...)` / `spawn task` 进入 shared cleanup value lowering，不再只限先脱离 cleanup 再绑定局部的 task-handle 提交路径
+- cleanup control-flow 现也开始接受首个 `for await` lowering 子集：当前 async body 内的 cleanup block 已开放 fixed array / homogeneous tuple iterable；普通元素会直接逐项绑定，`Task[...]` 元素会复用既有 `task-await` / `task-result-release` 路径做逐项 auto-await，并继续支持 body-local `break` / `continue`
 - 普通 `?` lowering 现已走通最小后端路径：`match`-wrapped `helper()?`、cleanup-adjacent `return helper()?`、cleanup-internal `defer helper()?` 与普通 return path 都不再因为 `Rvalue::Question` 本身被 `ql-codegen-llvm` 拦截；当前 remaining blocker 已前移到更宽 cleanup control flow，而不是 transparent question-mark path
 - 普通 assignment expr 的最小后端 value path 现也已接通：沿现有 `StatementKind::Assign` 的 place/type/store 规则，ordinary build surface 现在已接受同一批 mutable local / tuple-index / struct-field / fixed-array literal-index target path 的 assignment expr value，并已锁定 direct call arg 与 valued block tail 两条公开回归；更宽 target family 与 broader expression elaboration 仍继续保守推进
 - 同一批 guard assignment expr value 现也已继续接进 guard 路径：除 shipped cleanup `if` condition 的 bool assignment expr 外，ordinary `match` guard / cleanup guard-call 现也接受同一批 ordinary local / param / `self` root 的 loadable assignment expr call arg；更宽 guard-folding 精化仍继续保持保守
@@ -299,7 +300,7 @@
    - 当前范围：
      - 继续沿现有 shared lowering 扩 cleanup control-flow，但不引入新 runtime ABI。
      - 已开放 direct call / call-backed cleanup expr、callable-value 驱动的 positional indirect cleanup callee / guard-call、带 binding / `_` / tuple destructuring / struct destructuring（叶子仍限 binding / `_`）最小 `let` statement 的 statement-sequenced cleanup block、statement-sequenced cleanup guard / scrutinee / call-arg value block、带 body-local `break` / `continue` 的 statement-level `while` / `loop` cleanup block、fixed array / homogeneous tuple + binding / `_` / tuple destructuring / struct destructuring（叶子仍限 binding / `_`）pattern 的 statement-level `for` cleanup block（当前 iterable 已覆盖 direct root、same-file `const` / `static` root 及其 same-file alias、item-backed read-only projected root、direct call-root、same-file import-alias call-root，以及 nested call-root projected root）、bool-guard `if` cleanup branch、支持 single-binding catch-all arm 的 bool/int cleanup `match` branch，以及这些已开放 cleanup 子路径上的透明 `?` wrapper。
-     - closure / `for await` cleanup 继续保守拒绝，直到 shared lowering 成本明显可控。
+     - closure cleanup 继续保守拒绝；cleanup `for await` 现只开放 fixed-shape iterable，broader iterable/runtime protocol 仍继续保守拒绝。
    - Deliverables：
      - `ql-codegen-llvm` 对当前 shipped cleanup 子集不再统一拒绝。
      - `ql-driver` / `ql-cli` 至少有一条 cleanup build case 从 fail 变 pass，并保留更宽 cleanup surface 的稳定失败合同。

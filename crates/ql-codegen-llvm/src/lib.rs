@@ -2707,7 +2707,20 @@ impl<'a> ModuleEmitter<'a> {
                 iterable,
                 body: for_body,
             } => {
-                !is_await
+                let supports_cleanup_for_await = if *is_await {
+                    let Some(iterable_ty) = self.input.typeck.expr_ty(*iterable) else {
+                        return false;
+                    };
+                    let Some((_, element_ty, _)) = cleanup_for_iterable_shape(iterable_ty) else {
+                        return false;
+                    };
+                    !matches!(element_ty, Ty::TaskHandle(_))
+                        || (self.has_runtime_hook(RuntimeHook::TaskAwait)
+                            && self.has_runtime_hook(RuntimeHook::TaskResultRelease))
+                } else {
+                    true
+                };
+                supports_cleanup_for_await
                     && self.supports_cleanup_for_pattern(*pattern)
                     && self.supports_cleanup_for_iterable(*iterable, body, local_types)
                     && self.supports_cleanup_block_expr_with_loop(
@@ -5978,10 +5991,6 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         body: hir::BlockId,
         span: Span,
     ) {
-        assert!(
-            !is_await,
-            "supported cleanup lowering at {span:?} should not render `for await` inside cleanup blocks"
-        );
         let iterable_ty = self
             .emitter
             .input
@@ -5997,6 +6006,14 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     "supported cleanup lowering at {span:?} should only render fixed-shape cleanup `for` iterables"
                 )
             });
+        let (item_ty, auto_await_task_elements) = if is_await {
+            match &element_ty {
+                Ty::TaskHandle(result_ty) => ((**result_ty).clone(), true),
+                _ => (element_ty.clone(), false),
+            }
+        } else {
+            (element_ty.clone(), false)
+        };
         let rendered_iterable =
             self.render_cleanup_value_expr(output, iterable, &iterable_ty, span);
         let iterable_slot = self.fresh_temp();
@@ -6018,6 +6035,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     iterable_slot,
                     &iterable_ty,
                     &element_ty,
+                    &item_ty,
+                    auto_await_task_elements,
                     iterable_len,
                     pattern,
                     body,
@@ -6030,6 +6049,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     iterable_slot,
                     &iterable_ty,
                     &element_ty,
+                    &item_ty,
+                    auto_await_task_elements,
                     iterable_len,
                     pattern,
                     body,
@@ -6045,6 +6066,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         iterable_slot: String,
         iterable_ty: &Ty,
         element_ty: &Ty,
+        item_ty: &Ty,
+        auto_await_task_elements: bool,
         iterable_len: usize,
         pattern: hir::PatternId,
         body: hir::BlockId,
@@ -6089,8 +6112,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             output,
             "  {item_repr} = load {element_llvm_ty}, ptr {item_ptr}"
         );
-        let binding_depth = self.cleanup_bindings.len();
-        self.bind_cleanup_pattern(
+        self.render_cleanup_for_item(
             output,
             pattern,
             LoweredValue {
@@ -6098,17 +6120,14 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 llvm_ty: element_llvm_ty.clone(),
                 repr: item_repr,
             },
+            item_ty,
+            auto_await_task_elements,
+            step_label.clone(),
+            end_label.clone(),
+            body,
             span,
         );
-        self.cleanup_loop_labels.push(CleanupLoopLabels {
-            continue_label: step_label.clone(),
-            break_label: end_label.clone(),
-        });
-        self.cleanup_path_open = true;
-        self.render_cleanup_block(output, body, span);
         let body_falls_through = self.cleanup_path_open;
-        self.cleanup_loop_labels.pop();
-        self.cleanup_bindings.truncate(binding_depth);
         if body_falls_through {
             let _ = writeln!(output, "  br label %{step_label}");
         }
@@ -6127,6 +6146,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         iterable_slot: String,
         iterable_ty: &Ty,
         element_ty: &Ty,
+        item_ty: &Ty,
+        auto_await_task_elements: bool,
         iterable_len: usize,
         pattern: hir::PatternId,
         body: hir::BlockId,
@@ -6161,8 +6182,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 output,
                 "  {item_repr} = load {element_llvm_ty}, ptr {item_ptr}"
             );
-            let binding_depth = self.cleanup_bindings.len();
-            self.bind_cleanup_pattern(
+            self.render_cleanup_for_item(
                 output,
                 pattern,
                 LoweredValue {
@@ -6170,17 +6190,14 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     llvm_ty: element_llvm_ty.clone(),
                     repr: item_repr,
                 },
+                item_ty,
+                auto_await_task_elements,
+                next_label.clone(),
+                end_label.clone(),
+                body,
                 span,
             );
-            self.cleanup_loop_labels.push(CleanupLoopLabels {
-                continue_label: next_label.clone(),
-                break_label: end_label.clone(),
-            });
-            self.cleanup_path_open = true;
-            self.render_cleanup_block(output, body, span);
             let body_falls_through = self.cleanup_path_open;
-            self.cleanup_loop_labels.pop();
-            self.cleanup_bindings.truncate(binding_depth);
             if body_falls_through {
                 let _ = writeln!(output, "  br label %{next_label}");
             }
@@ -6189,6 +6206,41 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
 
         let _ = writeln!(output, "{end_label}:");
         self.cleanup_path_open = true;
+    }
+
+    fn render_cleanup_for_item(
+        &mut self,
+        output: &mut String,
+        pattern: hir::PatternId,
+        element: LoweredValue,
+        item_ty: &Ty,
+        auto_await_task_elements: bool,
+        continue_label: String,
+        break_label: String,
+        body: hir::BlockId,
+        span: Span,
+    ) {
+        let item = if auto_await_task_elements {
+            let handle_info = self.task_handle_info_for_ty(&element.ty, span);
+            self.render_await_handle(output, element, handle_info, span)
+                .expect("prepared cleanup `for await` lowering should produce an item value")
+        } else {
+            element
+        };
+        assert!(
+            item_ty.compatible_with(&item.ty),
+            "supported cleanup lowering at {span:?} should only bind compatible cleanup `for` items"
+        );
+        let binding_depth = self.cleanup_bindings.len();
+        self.bind_cleanup_pattern(output, pattern, item, span);
+        self.cleanup_loop_labels.push(CleanupLoopLabels {
+            continue_label,
+            break_label,
+        });
+        self.cleanup_path_open = true;
+        self.render_cleanup_block(output, body, span);
+        self.cleanup_loop_labels.pop();
+        self.cleanup_bindings.truncate(binding_depth);
     }
 
     fn render_cleanup_expr(&mut self, output: &mut String, expr_id: hir::ExprId, span: Span) {
@@ -18673,6 +18725,59 @@ fn main() -> Int {
         assert!(!rendered.contains("call void @finish(i64"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `for` lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_for_await_lowering_for_fixed_shapes() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+extern "c" fn step(value: Int)
+extern "c" fn finish(value: Int)
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let tasks = (worker(3), worker(4))
+    defer {
+        for await value in [1, 2] {
+            step(value);
+            continue;
+            finish(value);
+        }
+        for await item in tasks {
+            step(item);
+            break;
+            finish(item);
+        }
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.contains("cleanup_for_tuple_item"));
+        assert!(rendered.contains("call void @step(i64"));
+        assert!(!rendered.contains("call void @finish(i64"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 3);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 3
+        );
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
     }
 
     #[test]
