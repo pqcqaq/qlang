@@ -8451,24 +8451,19 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_match_and_question_mark_codegen_diagnostics_once_each() {
+    fn build_file_writes_llvm_ir_with_match_question_mark_lowering() {
         let dir = TestDir::new("ql-driver-match-question-unsupported");
         let source = dir.write(
             "match_question.ql",
             r#"
-struct State {
-    ready: Bool,
-}
-
-fn enabled(state: State) -> Bool {
-    return state.ready
+fn enabled() -> Bool {
+    return false
 }
 
 fn helper() -> Int {
     let flag = true
-    let state = State { ready: false }
     return match flag {
-        true if enabled(state) => 1,
+        true if enabled() => 1,
         false => 0,
     }
 }
@@ -8478,44 +8473,28 @@ fn main() -> Int {
 }
 "#,
         );
+        let output = dir.path().join("artifacts/match_question.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("match + question-mark lowering should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("match and question mark codegen rejection should return diagnostics");
-
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support `match` lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support `?` lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert!(diagnostics.iter().all(|diagnostic| {
-            !diagnostic
-                .message
-                .contains("could not resolve LLVM type for local")
-                && !diagnostic
-                    .message
-                    .contains("could not infer LLVM type for MIR local")
-        }));
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("define i64 @ql_2_main()"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(!rendered.contains("does not support `?` lowering yet"));
     }
 
     #[test]
-    fn build_file_surfaces_cleanup_and_question_mark_codegen_diagnostics_once_each() {
+    fn build_file_writes_llvm_ir_with_cleanup_and_question_mark_lowering() {
         let dir = TestDir::new("ql-driver-cleanup-question-mark-unsupported");
         let source = dir.write(
             "cleanup_question_mark.ql",
@@ -8532,40 +8511,24 @@ fn main() -> Int {
 }
 "#,
         );
+        let output = dir.path().join("artifacts/cleanup_question_mark.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup + question-mark lowering should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("cleanup and question-mark codegen rejection should return diagnostics");
-
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support cleanup lowering yet"
-                })
-                .count(),
-            0
-        );
-        assert_eq!(
-            diagnostics
-                .iter()
-                .filter(|diagnostic| {
-                    diagnostic.message
-                        == "LLVM IR backend foundation does not support `?` lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert!(diagnostics.iter().all(|diagnostic| {
-            !diagnostic
-                .message
-                .contains("could not resolve LLVM type for local")
-                && !diagnostic
-                    .message
-                    .contains("could not infer LLVM type for MIR local")
-        }));
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call void @first()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `?` lowering yet"));
     }
 
     #[test]
@@ -11445,7 +11408,9 @@ fn main() -> Int {
 }
 "#,
         );
-        let output = dir.path().join("artifacts/import_alias_call_root_fixed_shapes.ll");
+        let output = dir
+            .path()
+            .join("artifacts/import_alias_call_root_fixed_shapes.ll");
         let options = BuildOptions {
             emit: BuildEmit::LlvmIr,
             profile: BuildProfile::Debug,
@@ -11535,7 +11500,9 @@ fn main() -> Int {
 }
 "#,
         );
-        let output = dir.path().join("artifacts/nested_call_root_fixed_shapes.ll");
+        let output = dir
+            .path()
+            .join("artifacts/nested_call_root_fixed_shapes.ll");
         let options = BuildOptions {
             emit: BuildEmit::LlvmIr,
             profile: BuildProfile::Debug,

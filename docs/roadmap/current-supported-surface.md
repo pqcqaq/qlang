@@ -24,6 +24,7 @@
 - 外部稳定互操作边界仍是 C ABI；Rust 继续走 `build.rs + staticlib + header` 路线。
 - async 已经不是“只有语法”，而是有真实 build、真实样例和真实回归的受控子集；但 broader async ABI、broader runtime semantics 仍然刻意关闭。
 - cleanup lowering 已不再是“全量关闭”：首个 `defer` + cleanup branch/match lowering 子集已进入真实 build 回归，但 broader cleanup control flow 仍保持保守拒绝。
+- 普通 `?` lowering 已接入当前 codegen 路径；当前 user-facing build blocker 不再包含 `return helper()?` 这类透明 question-mark 表达式。
 
 ## 当前已开放的构建表面
 
@@ -205,6 +206,13 @@
 - bool-guard 驱动的 call-backed `if` cleanup branch
 - bool / int scrutinee + literal-or-path / wildcard arms + optional bool guard 的 cleanup `match` branch
 - 当前已锁定的用户面包括 direct cleanup `obj` build、guarded dynamic task-handle cleanup `staticlib` build，以及 cleanup `match` `obj` build
+
+### 透明 `?` lowering
+
+当前普通 `?` 表达式会沿 inner operand 直接进入既有 codegen 路径：
+
+- `match` + `?` 不再因为 question-mark 本身被 backend 拦截
+- cleanup-adjacent 的 `return helper()?` / 普通 return path 也不再单独报 `?` lowering unsupported
 
 ## 当前回归规模
 

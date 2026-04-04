@@ -1552,6 +1552,9 @@ impl<'a> ModuleEmitter<'a> {
             Rvalue::Use(operand) => {
                 self.seed_expected_temp_from_operand(body, operand, expected_ty, local_types);
             }
+            Rvalue::Question(operand) => {
+                self.seed_expected_temp_from_operand(body, operand, expected_ty, local_types);
+            }
             Rvalue::Tuple(items) => {
                 self.seed_expected_temp_from_tuple_items(body, items, expected_ty, local_types);
             }
@@ -1565,7 +1568,6 @@ impl<'a> ModuleEmitter<'a> {
             | Rvalue::Binary { .. }
             | Rvalue::Unary { .. }
             | Rvalue::Closure { .. }
-            | Rvalue::Question(_)
             | Rvalue::OpaqueExpr(_) => {}
         }
     }
@@ -2192,6 +2194,14 @@ impl<'a> ModuleEmitter<'a> {
                 ctx.diagnostics,
                 span,
             ),
+            Rvalue::Question(operand) => self.infer_operand_type(
+                ctx.body,
+                operand,
+                ctx.local_types,
+                ctx.async_task_handles,
+                ctx.diagnostics,
+                span,
+            ),
             Rvalue::Call { callee, args } => {
                 let Some(function) = self.resolve_direct_callee_function(callee) else {
                     ctx.diagnostics.push(unsupported(
@@ -2412,13 +2422,6 @@ impl<'a> ModuleEmitter<'a> {
                 ctx.diagnostics.push(unsupported(
                     span,
                     "LLVM IR backend foundation does not support closure values yet",
-                ));
-                None
-            }
-            Rvalue::Question(_) => {
-                ctx.diagnostics.push(unsupported(
-                    span,
-                    "LLVM IR backend foundation does not support `?` lowering yet",
                 ));
                 None
             }
@@ -4855,6 +4858,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
     ) -> Option<LoweredValue> {
         match value {
             Rvalue::Use(operand) => Some(self.render_operand(output, operand, span)),
+            Rvalue::Question(operand) => Some(self.render_operand(output, operand, span)),
             Rvalue::Call { callee, args } => {
                 let Some(function) = self.emitter.resolve_direct_callee_function(callee) else {
                     panic!("prepared calls should only contain direct resolved callees");
@@ -4948,7 +4952,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             Rvalue::AggregateStruct { path, fields } => {
                 self.render_struct_rvalue(output, path, fields, expected_ty, span)
             }
-            Rvalue::Closure { .. } | Rvalue::Question(_) | Rvalue::OpaqueExpr(_) => {
+            Rvalue::Closure { .. } | Rvalue::OpaqueExpr(_) => {
                 panic!("prepared functions should not contain unsupported rvalues")
             }
         }
@@ -13741,14 +13745,17 @@ fn main() -> Int {
     }
 
     #[test]
-    fn dedupes_match_and_question_mark_lowering_diagnostics() {
-        let messages = emit_error(
+    fn emits_match_question_mark_lowering() {
+        let rendered = emit(
             r#"
+fn enabled() -> Bool {
+    return false
+}
+
 fn helper() -> Int {
     let flag = true
-    let enabled = false
     return match flag {
-        true if enabled => 1,
+        true if enabled() => 1,
         false => 0,
     }
 }
@@ -13759,35 +13766,15 @@ fn main() -> Int {
 "#,
         );
 
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    message.as_str()
-                        == "LLVM IR backend foundation does not support `match` lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    message.as_str()
-                        == "LLVM IR backend foundation does not support `?` lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert!(messages.iter().all(|message| {
-            !message.contains("could not resolve LLVM type for local")
-                && !message.contains("could not infer LLVM type for MIR local")
-        }));
+        assert!(rendered.contains("define i64 @ql_1_helper()"));
+        assert!(rendered.contains("define i64 @ql_2_main()"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(!rendered.contains("does not support `?` lowering yet"));
     }
 
     #[test]
-    fn dedupes_cleanup_and_question_mark_lowering_diagnostics() {
-        let messages = emit_error(
+    fn emits_cleanup_and_question_mark_lowering() {
+        let rendered = emit(
             r#"
 extern "c" fn first()
 
@@ -13802,30 +13789,9 @@ fn main() -> Int {
 "#,
         );
 
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    message.as_str()
-                        == "LLVM IR backend foundation does not support cleanup lowering yet"
-                })
-                .count(),
-            0
-        );
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| {
-                    message.as_str()
-                        == "LLVM IR backend foundation does not support `?` lowering yet"
-                })
-                .count(),
-            1
-        );
-        assert!(messages.iter().all(|message| {
-            !message.contains("could not resolve LLVM type for local")
-                && !message.contains("could not infer LLVM type for MIR local")
-        }));
+        assert!(rendered.contains("call void @first()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `?` lowering yet"));
     }
 
     #[test]

@@ -1,3 +1,0 @@
-error: tests/codegen/fail/unsupported_cleanup_question_mark_build.ql:9:12: LLVM IR backend foundation does not support `?` lowering yet
-      return helper()?
-             ^^^^^^^^
