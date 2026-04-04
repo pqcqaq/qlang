@@ -15485,6 +15485,60 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_awaited_inline_guard_families() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use load_state as async_alias
+use LOAD as async_const_alias
+
+struct State {
+    value: Int,
+}
+
+async fn load_state(value: Int) -> State {
+    return State {
+        value: value,
+    }
+}
+
+fn matches(pair: (Int, Int), expected: Int) -> Bool {
+    return pair[1] == expected
+}
+
+fn contains(values: [Int; 3], expected: Int) -> Bool {
+    return values[1] == expected
+}
+
+const LOAD: (Int) -> Task[State] = load_state
+
+async fn main() -> Int {
+    let branch = true
+    return match 1 {
+        1 if State { value: (await (if branch { async_alias } else { async_const_alias })(22)).value }.value == 22 => 10,
+        1 if matches((0, (await (match branch { true => async_const_alias, false => async_alias })(23)).value), 23) => 20,
+        1 if contains([0, (await (if branch { async_alias } else { async_const_alias })(24)).value, 2], 24) => 30,
+        _ => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 3);
+        assert!(rendered.matches("call ptr %t").count() >= 3);
+        assert!(rendered.matches("call i1 @ql_").count() >= 2);
+        assert!(rendered.contains("guard_match_arm"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(!rendered.contains("does not support field projection lowering yet"));
+    }
+
+    #[test]
     fn emits_non_capturing_closure_value_local_calls() {
         let rendered = emit(
             r#"
