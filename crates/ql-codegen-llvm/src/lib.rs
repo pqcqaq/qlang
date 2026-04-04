@@ -2834,6 +2834,36 @@ impl<'a> ModuleEmitter<'a> {
         false
     }
 
+    fn cleanup_assignment_target_ty(
+        &self,
+        target_expr: hir::ExprId,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+    ) -> Option<Ty> {
+        let (_, target_ty) = guard_expr_place_with_ty(
+            self.input.hir,
+            self.input.resolution,
+            body,
+            local_types,
+            None,
+            target_expr,
+        )?;
+
+        if is_void_ty(&target_ty)
+            || self
+                .lower_llvm_type(
+                    &target_ty,
+                    self.input.hir.expr(target_expr).span,
+                    "cleanup assignment target",
+                )
+                .is_err()
+        {
+            return None;
+        }
+
+        Some(target_ty)
+    }
+
     fn supports_cleanup_assignment_expr(
         &self,
         target_expr: hir::ExprId,
@@ -2841,26 +2871,12 @@ impl<'a> ModuleEmitter<'a> {
         body: &mir::MirBody,
         local_types: &HashMap<mir::LocalId, Ty>,
     ) -> bool {
-        let Some((_, target_ty)) = guard_expr_place_with_ty(
-            self.input.hir,
-            self.input.resolution,
-            body,
-            local_types,
-            None,
-            target_expr,
-        ) else {
+        let Some(target_ty) = self.cleanup_assignment_target_ty(target_expr, body, local_types)
+        else {
             return false;
         };
 
-        !is_void_ty(&target_ty)
-            && self
-                .lower_llvm_type(
-                    &target_ty,
-                    self.input.hir.expr(target_expr).span,
-                    "cleanup assignment target",
-                )
-                .is_ok()
-            && self.supports_cleanup_value_expr(value_expr, &target_ty, body, local_types)
+        self.supports_cleanup_value_expr(value_expr, &target_ty, body, local_types)
     }
 
     fn supports_cleanup_call_expr(
@@ -2945,6 +2961,18 @@ impl<'a> ModuleEmitter<'a> {
                     body,
                     local_types,
                 );
+            }
+            hir::ExprKind::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => {
+                let Some(target_ty) = self.cleanup_assignment_target_ty(*left, body, local_types)
+                else {
+                    return false;
+                };
+                return expected_ty.compatible_with(&target_ty)
+                    && self.supports_cleanup_value_expr(*right, &target_ty, body, local_types);
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
                 return self.supports_cleanup_block_with_tail(
@@ -5946,7 +5974,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 op: BinaryOp::Assign,
                 right,
             } => {
-                self.render_cleanup_assignment_expr(output, *left, *right, span);
+                let _ = self.render_cleanup_assignment_expr(output, *left, *right, span);
             }
             hir::ExprKind::If {
                 condition,
@@ -5992,7 +6020,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         target_expr: hir::ExprId,
         value_expr: hir::ExprId,
         span: Span,
-    ) {
+    ) -> LoweredValue {
         let (place, target_ty) = guard_expr_place_with_ty(
             self.emitter.input.hir,
             self.emitter.input.resolution,
@@ -6017,6 +6045,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             "  store {} {}, ptr {}",
             rendered.llvm_ty, rendered.repr, target_ptr
         );
+        rendered
     }
 
     fn render_cleanup_match_expr(
@@ -6424,6 +6453,18 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             hir::ExprKind::Question(inner) => {
                 self.render_cleanup_value_expr(output, *inner, expected_ty, span)
+            }
+            hir::ExprKind::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => {
+                let rendered = self.render_cleanup_assignment_expr(output, *left, *right, span);
+                assert!(
+                    expected_ty.compatible_with(&rendered.ty),
+                    "supported cleanup lowering at {span:?} should only render compatible cleanup assignment values"
+                );
+                rendered
             }
             _ => {
                 let rendered = if expected_ty.is_bool() {
@@ -16758,6 +16799,43 @@ fn main() -> Int {
         );
 
         assert!(rendered.matches("store i64").count() >= 4);
+        assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support assignment expressions yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_value_assignment_expr_lowering() {
+        let rendered = emit(
+            r#"
+struct State {
+    current: Int,
+    values: [Int; 3],
+}
+
+fn forward(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    var index = 1
+    var state = State {
+        current: 2,
+        values: [3, 4, 5],
+    }
+    defer {
+        forward(state.current = 6);
+        forward({
+            state.values[index] = state.current + 1
+        });
+    }
+    return state.current + state.values[1]
+}
+"#,
+        );
+
+        assert!(rendered.matches("store i64").count() >= 2);
+        assert!(rendered.matches("call i64 @ql_").count() >= 2);
         assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support assignment expressions yet"));
