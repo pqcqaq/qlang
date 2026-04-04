@@ -19614,6 +19614,37 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_cleanup_block_for_lowering_for_projected_question_root() {
+        let rendered = emit(
+            r#"
+struct Boxed {
+    values: [Int; 3],
+}
+
+extern "c" fn sink(value: Int)
+
+fn helper() -> Boxed {
+    return Boxed { values: [1, 2, 3] }
+}
+
+fn main() -> Int {
+    defer {
+        for value in (helper()?).values {
+            sink(value);
+        }
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.contains("call void @sink(i64"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
+    }
+
+    #[test]
     fn emits_cleanup_block_for_destructuring() {
         let rendered = emit(
             r#"
