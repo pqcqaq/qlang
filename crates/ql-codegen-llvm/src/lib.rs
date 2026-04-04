@@ -8543,6 +8543,19 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
 
         match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => {
+                return self.render_guard_assignment_expr(
+                    output,
+                    *left,
+                    *right,
+                    span,
+                    guard_binding,
+                );
+            }
             hir::ExprKind::Tuple(items) => {
                 let tuple_ty = self
                     .emitter
@@ -10438,6 +10451,31 @@ fn guard_expr_ty(
             guard_expr_place_root(module, resolution, body, local_types, arm_pattern, expr_id)
                 .map(|(_, ty)| ty)
                 .or_else(|| guard_expr_item_root_ty(module, resolution, expr_id))
+        }
+        hir::ExprKind::Binary {
+            left,
+            op: BinaryOp::Assign,
+            right,
+        } => {
+            let (_, target_ty) = guard_expr_place_with_ty(
+                module,
+                resolution,
+                body,
+                local_types,
+                arm_pattern,
+                *left,
+            )?;
+            let value_ty = guard_expr_ty(
+                module,
+                resolution,
+                typeck,
+                signatures,
+                body,
+                local_types,
+                arm_pattern,
+                *right,
+            )?;
+            target_ty.compatible_with(&value_ty).then_some(target_ty)
         }
         hir::ExprKind::Member { object, field, .. } => {
             let current_ty = guard_expr_ty(
@@ -17128,6 +17166,36 @@ fn main() -> Int {
         assert!(rendered.contains("cleanup_then"));
         assert!(rendered.contains("cleanup_else"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support assignment expressions yet"));
+    }
+
+    #[test]
+    fn emits_guard_assignment_call_arg_lowering() {
+        let rendered = emit(
+            r#"
+struct State {
+    value: Int,
+}
+
+fn allow(state: State) -> Bool {
+    return state.value == 1
+}
+
+fn main() -> Int {
+    var state = State { value: 0 }
+    return match 1 {
+        1 if allow(state = State { value: 1 }) => state.value,
+        _ => 0,
+    }
+}
+"#,
+        );
+
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(rendered.contains("call i1 @ql_"));
+        assert!(rendered.matches("insertvalue { i64 }").count() >= 1);
+        assert!(rendered.matches("store { i64 }").count() >= 1);
+        assert!(!rendered.contains("does not support `match` lowering yet"));
         assert!(!rendered.contains("does not support assignment expressions yet"));
     }
 
