@@ -8640,6 +8640,52 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_cleanup_block_while_lowering() {
+        let dir = TestDir::new("ql-driver-cleanup-block-while");
+        let source = dir.write(
+            "cleanup_block_while.ql",
+            r#"
+fn running() -> Bool {
+    return false
+}
+
+fn step() {
+    return
+}
+
+fn main() -> Int {
+    defer {
+        while running() {
+            step()
+        }
+    }
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/cleanup_block_while.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup block while lowering should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("cleanup_while_cond"));
+        assert!(rendered.contains("cleanup_while_body"));
+        assert!(rendered.contains("call i1 @ql_0_running()"));
+        assert!(rendered.contains("call void @ql_1_step()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_block_guard_scrutinee_and_value_lowering() {
         let dir = TestDir::new("ql-driver-cleanup-block-guard-scrutinee-value");
         let source = dir.write(

@@ -633,12 +633,31 @@ impl<'a> ModuleEmitter<'a> {
     ) {
         let block = self.input.hir.block(block_id);
         for statement_id in &block.statements {
-            if let hir::StmtKind::Expr { expr, .. } = &self.input.hir.stmt(*statement_id).kind {
-                self.collect_guard_expr_callees(*expr, queue);
-            }
+            self.collect_guard_statement_callees(*statement_id, queue);
         }
         if let Some(tail) = block.tail {
             self.collect_guard_expr_callees(tail, queue);
+        }
+    }
+
+    fn collect_guard_statement_callees(
+        &self,
+        statement_id: hir::StmtId,
+        queue: &mut VecDeque<FunctionRef>,
+    ) {
+        match &self.input.hir.stmt(statement_id).kind {
+            hir::StmtKind::Expr { expr, .. } => self.collect_guard_expr_callees(*expr, queue),
+            hir::StmtKind::While { condition, body } => {
+                self.collect_guard_expr_callees(*condition, queue);
+                self.collect_guard_block_callees(*body, queue);
+            }
+            hir::StmtKind::Let { .. }
+            | hir::StmtKind::Return(_)
+            | hir::StmtKind::Defer(_)
+            | hir::StmtKind::Break
+            | hir::StmtKind::Continue
+            | hir::StmtKind::Loop { .. }
+            | hir::StmtKind::For { .. } => {}
         }
     }
 
@@ -1902,12 +1921,15 @@ impl<'a> ModuleEmitter<'a> {
     fn supports_cleanup_statement(&self, statement_id: hir::StmtId) -> bool {
         match &self.input.hir.stmt(statement_id).kind {
             hir::StmtKind::Expr { expr, .. } => self.supports_cleanup_expr(*expr),
+            hir::StmtKind::While { condition, body } => {
+                self.supports_cleanup_bool_expr(*condition)
+                    && self.supports_cleanup_block_expr(*body)
+            }
             hir::StmtKind::Let { .. }
             | hir::StmtKind::Return(_)
             | hir::StmtKind::Defer(_)
             | hir::StmtKind::Break
             | hir::StmtKind::Continue
-            | hir::StmtKind::While { .. }
             | hir::StmtKind::Loop { .. }
             | hir::StmtKind::For { .. } => false,
         }
@@ -4359,15 +4381,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         for statement_id in &block.statements {
             match &self.emitter.input.hir.stmt(*statement_id).kind {
                 hir::StmtKind::Expr { expr, .. } => self.render_cleanup_expr(output, *expr, span),
+                hir::StmtKind::While { condition, body } => {
+                    self.render_cleanup_while(output, *condition, *body, span)
+                }
                 hir::StmtKind::Let { .. }
                 | hir::StmtKind::Return(_)
                 | hir::StmtKind::Defer(_)
                 | hir::StmtKind::Break
                 | hir::StmtKind::Continue
-                | hir::StmtKind::While { .. }
                 | hir::StmtKind::Loop { .. }
                 | hir::StmtKind::For { .. } => panic!(
-                    "supported cleanup lowering at {span:?} should only render expr statements inside cleanup blocks"
+                    "supported cleanup lowering at {span:?} should only render expr or while statements inside cleanup blocks"
                 ),
             }
         }
@@ -4378,6 +4402,30 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         if let Some(tail) = self.render_cleanup_block_prefix(output, block_id, span) {
             self.render_cleanup_expr(output, tail, span);
         }
+    }
+
+    fn render_cleanup_while(
+        &mut self,
+        output: &mut String,
+        condition: hir::ExprId,
+        body: hir::BlockId,
+        span: Span,
+    ) {
+        let cond_label = self.fresh_label("cleanup_while_cond");
+        let body_label = self.fresh_label("cleanup_while_body");
+        let end_label = self.fresh_label("cleanup_while_end");
+        let _ = writeln!(output, "  br label %{cond_label}");
+        let _ = writeln!(output, "{cond_label}:");
+        let condition = self.render_bool_guard_expr(output, condition, span, None);
+        let _ = writeln!(
+            output,
+            "  br i1 {}, label %{body_label}, label %{end_label}",
+            condition.repr
+        );
+        let _ = writeln!(output, "{body_label}:");
+        self.render_cleanup_block(output, body, span);
+        let _ = writeln!(output, "  br label %{cond_label}");
+        let _ = writeln!(output, "{end_label}:");
     }
 
     fn render_cleanup_expr(&mut self, output: &mut String, expr_id: hir::ExprId, span: Span) {
@@ -14529,6 +14577,36 @@ fn main() -> Int {
 
         assert!(rendered.contains("call void @first()"));
         assert!(rendered.contains("call void @second()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_while_lowering() {
+        let rendered = emit(
+            r#"
+fn running() -> Bool {
+    return false
+}
+
+fn step() {
+    return
+}
+
+fn main() -> Int {
+    defer {
+        while running() {
+            step()
+        }
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("cleanup_while_cond"));
+        assert!(rendered.contains("cleanup_while_body"));
+        assert!(rendered.contains("call i1 @ql_0_running()"));
+        assert!(rendered.contains("call void @ql_1_step()"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
     }
 
