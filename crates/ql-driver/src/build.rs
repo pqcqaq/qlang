@@ -9966,49 +9966,6 @@ async fn helper() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_match_lowering_diagnostics() {
-        let dir = TestDir::new("ql-driver-match-unsupported");
-        let source = dir.write(
-            "match_main.ql",
-            r#"
-struct State {
-    ready: Bool,
-}
-
-fn enabled(state: State) -> Bool {
-    return state.ready
-}
-
-fn main() -> Int {
-    let flag = true
-    let state = State { ready: false }
-    return match flag {
-        true if enabled(state) => 1,
-        false => 0,
-    }
-}
-"#,
-        );
-
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("match codegen rejection should return diagnostics");
-
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support `match` lowering yet"
-        }));
-        assert!(diagnostics.iter().all(|diagnostic| {
-            !diagnostic
-                .message
-                .contains("could not resolve LLVM type for local")
-                && !diagnostic
-                    .message
-                    .contains("could not infer LLVM type for MIR local")
-        }));
-    }
-
-    #[test]
     fn build_file_writes_llvm_ir_with_bool_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-bool-match");
         let source = dir.write(
