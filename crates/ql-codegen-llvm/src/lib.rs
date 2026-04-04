@@ -546,6 +546,16 @@ impl<'a> ModuleEmitter<'a> {
     }
 
     fn collect_guard_expr_callees(&self, expr_id: hir::ExprId, queue: &mut VecDeque<FunctionRef>) {
+        let mut visited = HashSet::new();
+        if let Some(function) = const_expr_sync_function_ref(
+            self.input.hir,
+            self.input.resolution,
+            expr_id,
+            &mut visited,
+        ) {
+            queue.push_back(function);
+        }
+
         match &self.input.hir.expr(expr_id).kind {
             hir::ExprKind::Call { callee, args } => {
                 if let Some(function) =
@@ -1949,29 +1959,53 @@ impl<'a> ModuleEmitter<'a> {
         args: &[hir::CallArg],
         expected_ty: Option<&Ty>,
     ) -> bool {
-        let Some(function) =
+        if let Some(function) =
             guard_direct_callee_function(self.input.hir, self.input.resolution, callee_expr)
-        else {
+        {
+            let Some(signature) = self.signatures.get(&function) else {
+                return false;
+            };
+            let actual_ty = cleanup_call_result_ty(signature);
+            if let Some(expected_ty) = expected_ty
+                && (is_void_ty(&actual_ty) || !expected_ty.compatible_with(&actual_ty))
+            {
+                return false;
+            }
+            let Some(ordered_args) = ordered_guard_call_args(args, signature) else {
+                return false;
+            };
+            return ordered_args
+                .into_iter()
+                .zip(signature.params.iter())
+                .all(|(arg, param)| {
+                    self.supports_cleanup_value_expr(guard_call_arg_expr(arg), &param.ty)
+                });
+        }
+
+        let Some(callee_ty) = self.input.typeck.expr_ty(callee_expr) else {
             return false;
         };
-        let Some(signature) = self.signatures.get(&function) else {
+        let Ty::Callable { params, ret } = callee_ty else {
             return false;
         };
-        let actual_ty = cleanup_call_result_ty(signature);
+        if !self.supports_cleanup_value_expr(callee_expr, callee_ty) {
+            return false;
+        }
         if let Some(expected_ty) = expected_ty
-            && (is_void_ty(&actual_ty) || !expected_ty.compatible_with(&actual_ty))
+            && (is_void_ty(ret.as_ref()) || !expected_ty.compatible_with(ret.as_ref()))
         {
             return false;
         }
-        let Some(ordered_args) = ordered_guard_call_args(args, signature) else {
+        if args.len() != params.len()
+            || args
+                .iter()
+                .any(|arg| matches!(arg, hir::CallArg::Named { .. }))
+        {
             return false;
-        };
-        ordered_args
-            .into_iter()
-            .zip(signature.params.iter())
-            .all(|(arg, param)| {
-                self.supports_cleanup_value_expr(guard_call_arg_expr(arg), &param.ty)
-            })
+        }
+        args.iter().zip(params.iter()).all(|(arg, param_ty)| {
+            self.supports_cleanup_value_expr(guard_call_arg_expr(arg), param_ty)
+        })
     }
 
     fn supports_cleanup_value_expr(&self, expr_id: hir::ExprId, expected_ty: &Ty) -> bool {
@@ -4604,52 +4638,115 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         args: &[hir::CallArg],
         span: Span,
     ) -> Option<LoweredValue> {
-        let function = guard_direct_callee_function(
+        if let Some(function) = guard_direct_callee_function(
             self.emitter.input.hir,
             self.emitter.input.resolution,
             callee_expr,
-        )
-        .unwrap_or_else(|| {
-            panic!(
-                "supported cleanup lowering at {span:?} should only render direct resolved calls"
-            )
-        });
-        let signature = self.emitter.signatures.get(&function).unwrap_or_else(|| {
-            panic!("supported cleanup lowering at {span:?} should resolve cleanup-call signatures")
-        });
-        let ordered_args = ordered_guard_call_args(args, signature).unwrap_or_else(|| {
-            panic!(
-                "supported cleanup lowering at {span:?} should preserve direct cleanup-call argument mapping"
-            )
-        });
-        let rendered_args = ordered_args
-            .into_iter()
-            .zip(signature.params.iter())
-            .map(|(arg, param)| {
-                let expr_id = guard_call_arg_expr(arg);
-                let rendered = self.render_cleanup_value_expr(output, expr_id, &param.ty, span);
-                format!("{} {}", rendered.llvm_ty, rendered.repr)
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+        ) {
+            let signature = self.emitter.signatures.get(&function).unwrap_or_else(|| {
+                panic!(
+                    "supported cleanup lowering at {span:?} should resolve cleanup-call signatures"
+                )
+            });
+            let ordered_args = ordered_guard_call_args(args, signature).unwrap_or_else(|| {
+                panic!(
+                    "supported cleanup lowering at {span:?} should preserve direct cleanup-call argument mapping"
+                )
+            });
+            let rendered_args = ordered_args
+                .into_iter()
+                .zip(signature.params.iter())
+                .map(|(arg, param)| {
+                    let expr_id = guard_call_arg_expr(arg);
+                    let rendered = self.render_cleanup_value_expr(output, expr_id, &param.ty, span);
+                    format!("{} {}", rendered.llvm_ty, rendered.repr)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
 
-        if is_void_ty(&signature.return_ty) {
-            let _ = writeln!(
-                output,
-                "  call {} @{}({rendered_args})",
-                signature.return_llvm_ty, signature.llvm_name
-            );
-            None
-        } else {
+            if is_void_ty(&signature.return_ty) {
+                let _ = writeln!(
+                    output,
+                    "  call {} @{}({rendered_args})",
+                    signature.return_llvm_ty, signature.llvm_name
+                );
+                return None;
+            }
+
             let temp = self.fresh_temp();
             let _ = writeln!(
                 output,
                 "  {temp} = call {} @{}({rendered_args})",
                 signature.return_llvm_ty, signature.llvm_name
             );
-            Some(LoweredValue {
+            return Some(LoweredValue {
                 ty: cleanup_call_result_ty(signature),
                 llvm_ty: signature.return_llvm_ty.clone(),
+                repr: temp,
+            });
+        }
+
+        let callee_ty = self
+            .emitter
+            .input
+            .typeck
+            .expr_ty(callee_expr)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "supported cleanup lowering at {span:?} should type-check callable cleanup callees"
+                )
+            });
+        let callee = self.render_cleanup_value_expr(output, callee_expr, &callee_ty, span);
+        let Ty::Callable { params, ret } = &callee.ty else {
+            panic!(
+                "supported cleanup lowering at {span:?} should only render direct resolved calls or callable cleanup values"
+            );
+        };
+        assert!(
+            args.len() == params.len()
+                && args
+                    .iter()
+                    .all(|arg| matches!(arg, hir::CallArg::Positional(_))),
+            "supported cleanup lowering at {span:?} should only render positional callable cleanup arguments matching the callable arity"
+        );
+        let rendered_args = args
+            .iter()
+            .zip(params.iter())
+            .map(|(arg, param_ty)| {
+                let rendered =
+                    self.render_cleanup_value_expr(output, guard_call_arg_expr(arg), param_ty, span);
+                assert!(
+                    param_ty.compatible_with(&rendered.ty),
+                    "supported cleanup lowering at {span:?} should only render compatible callable cleanup arguments"
+                );
+                format!("{} {}", rendered.llvm_ty, rendered.repr)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let return_ty = ret.as_ref().clone();
+        let return_llvm_ty = self
+            .emitter
+            .lower_llvm_type(&return_ty, span, "cleanup call result")
+            .expect("supported cleanup lowering should only emit lowered callable cleanup results");
+
+        if is_void_ty(&return_ty) {
+            let _ = writeln!(
+                output,
+                "  call {return_llvm_ty} {}({rendered_args})",
+                callee.repr
+            );
+            None
+        } else {
+            let temp = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {temp} = call {return_llvm_ty} {}({rendered_args})",
+                callee.repr
+            );
+            Some(LoweredValue {
+                ty: return_ty,
+                llvm_ty: return_llvm_ty,
                 repr: temp,
             })
         }
@@ -10889,6 +10986,32 @@ fn main() -> Int {
         assert!(rendered.contains("load ptr, ptr %l2_g"));
         assert!(!rendered.contains("does not support callable const/static values yet"));
         assert!(!rendered.contains("does not support imported value lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_callable_const_alias_calls() {
+        let rendered = emit(
+            r#"
+use APPLY as run
+
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+
+const APPLY: (Int) -> Int = add_one
+
+fn main() -> Int {
+    defer run(41)
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i64 @ql_0_add_one(i64 %arg0)"));
+        assert!(rendered.contains("store ptr @ql_0_add_one"));
+        assert!(rendered.contains("call i64 %t"));
+        assert!(rendered.contains("(i64 41)"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
     }
 
     #[test]

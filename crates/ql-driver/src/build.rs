@@ -7254,6 +7254,48 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_cleanup_callable_const_alias() {
+        let dir = TestDir::new("ql-driver-cleanup-callable-const-alias");
+        let source = dir.write(
+            "cleanup_callable_const_alias.ql",
+            r#"
+use APPLY as run
+
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+
+const APPLY: (Int) -> Int = add_one
+
+fn main() -> Int {
+    defer run(41)
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/cleanup_callable_const_alias.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup callable const alias should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("define i64 @ql_0_add_one(i64 %arg0)"));
+        assert!(rendered.contains("store ptr @ql_0_add_one"));
+        assert!(rendered.contains("call i64 %t"));
+        assert!(rendered.contains("(i64 41)"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_async_main() {
         let dir = TestDir::new("ql-driver-async-llvm-ir-main");
         let source = dir.write(
