@@ -19773,6 +19773,59 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_cleanup_awaited_helper_and_inline_guards() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use load_state as async_alias
+use LOAD as async_const_alias
+use matches as helper_alias
+
+struct State {
+    value: Int,
+}
+
+extern "c" fn sink(value: Int)
+
+async fn load_state(value: Int) -> State {
+    return State {
+        value: value,
+    }
+}
+
+fn matches(expected: Int, state: State) -> Bool {
+    return state.value == expected
+}
+
+const LOAD: (Int) -> Task[State] = load_state
+
+async fn main() -> Int {
+    let branch = true
+    defer if helper_alias(13, await (if branch { async_alias } else { async_const_alias })(13)) {
+        sink(1);
+    }
+    defer if State { value: (await (match branch { true => async_const_alias, false => async_alias })(14)).value }.value == 14 {
+        sink(2);
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(rendered.matches("call ptr %t").count() >= 2);
+        assert!(rendered.matches("call i1 @ql_").count() >= 1);
+        assert!(rendered.contains("cleanup_then"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
     fn emits_assignment_expr_value_lowering() {
         let rendered = emit(
             r#"
