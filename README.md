@@ -1,8 +1,13 @@
 # Qlang
 
-Qlang is an LLVM-based compiled language project implemented as a Rust workspace.
+Qlang is a compiled systems language with its own syntax, type system, ownership model, and toolchain goals.
+The current compiler and tools are implemented in a Rust workspace, but Qlang is not a Rust dialect and should not drift toward Rust syntax by implementation convenience.
 
 ## Current Reality
+
+- Language-facing source of truth lives in `docs/design/` and `docs/vision.md`.
+- Compiler/runtime/build truth lives in `crates/`, `fixtures/`, `ramdon_tests/`, and the regression matrix.
+- If implementation convenience conflicts with Qlang language design, the design docs win and the implementation must be corrected.
 
 - Phase 1 through Phase 6 foundations are already landed.
 - Active work is conservative Phase 7: async/runtime/task-handle lowering, library/program build surface, and Rust interop.
@@ -18,6 +23,9 @@ Qlang is an LLVM-based compiled language project implemented as a Rust workspace
 
 Read these first:
 
+- [`docs/vision.md`](./docs/vision.md)
+- [`docs/design/principles.md`](./docs/design/principles.md)
+- [`docs/design/syntax.md`](./docs/design/syntax.md)
 - [`docs/roadmap/current-supported-surface.md`](./docs/roadmap/current-supported-surface.md)
 - [`docs/roadmap/development-plan.md`](./docs/roadmap/development-plan.md)
 - [`docs/roadmap/phase-progress.md`](./docs/roadmap/phase-progress.md)

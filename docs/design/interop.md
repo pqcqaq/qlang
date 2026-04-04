@@ -41,7 +41,7 @@ Rust 互操作优先方案：
 
 建议提供清晰的 FFI 语法：
 
-```rust
+```ql
 extern "c" {
     fn strlen(ptr: *const U8) -> USize;
 }

@@ -62,7 +62,7 @@
 
 例如这行代码：
 
-```rust
+```ql
 let answer = add(40, 2)
 ```
 

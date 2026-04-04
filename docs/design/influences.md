@@ -99,7 +99,7 @@ TypeScript 在 discriminated unions 和 narrowing 上非常成功。Qlang 虽然
 
 TypeScript 的 `satisfies` 很值得借鉴，因为它能“检查某个值满足某个形状”，同时保留表达式更具体的推断结果。Qlang 非常适合引入：
 
-```rust
+```ql
 let config = {
     host: "127.0.0.1",
     port: 8080,
