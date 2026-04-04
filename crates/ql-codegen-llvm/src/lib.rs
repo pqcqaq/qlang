@@ -19401,6 +19401,49 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_cleanup_awaited_control_flow_roots() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use ready as async_alias
+use APPLY as async_const_alias
+
+extern "c" fn sink(value: Int)
+
+async fn ready(value: Int) -> Bool {
+    return value == 1
+}
+
+const APPLY: (Int) -> Task[Bool] = ready
+
+async fn main() -> Int {
+    let branch = true
+    defer if await (if branch { async_alias } else { async_const_alias })(1) {
+        sink(1);
+    }
+    defer match await (match branch { true => async_const_alias, false => async_alias })(1) {
+        true => sink(2),
+        false => sink(3),
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(rendered.matches("call ptr %t").count() >= 2);
+        assert!(rendered.contains("cleanup_match_end"));
+        assert!(rendered.contains("cleanup_then"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
     fn emits_assignment_expr_value_lowering() {
         let rendered = emit(
             r#"
