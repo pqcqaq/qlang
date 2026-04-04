@@ -12559,6 +12559,31 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_local_non_capturing_closures_in_cleanup_and_match_guards() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let check = (value: Int) => value == 42
+    let run = (value: Int) => value + 1
+    defer run(41)
+    return match 42 {
+        current if check(current) => 1,
+        _ => 0,
+    }
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i1 @ql_0_main__closure0(i64 %arg0)"));
+        assert!(rendered.contains("define i64 @ql_0_main__closure1(i64 %arg0)"));
+        assert!(rendered.contains("call i1 %t"));
+        assert!(rendered.contains("call i64 %t"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(!rendered.contains("currently only supports non-capturing sync closure values"));
+    }
+
+    #[test]
     fn rejects_capturing_closure_values() {
         let messages = emit_error(
             r#"
