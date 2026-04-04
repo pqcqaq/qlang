@@ -621,6 +621,12 @@ impl<'a> ModuleEmitter<'a> {
         match operand {
             Operand::Constant(Constant::Function { function, .. }) => queue.push_back(*function),
             Operand::Constant(Constant::Item { item, .. }) => {
+                if let Some((value_expr, _)) =
+                    runtime_task_backed_item_value(self.input.hir, self.input.resolution, *item)
+                {
+                    self.collect_guard_expr_callees(value_expr, queue);
+                    return;
+                }
                 let mut visited = HashSet::new();
                 if let Some(function) = const_or_static_callable_function_ref(
                     self.input.hir,
@@ -635,6 +641,12 @@ impl<'a> ModuleEmitter<'a> {
                 let Some(item_id) = local_item_for_import_path(self.input.hir, path) else {
                     return;
                 };
+                if let Some((value_expr, _)) =
+                    runtime_task_backed_item_value(self.input.hir, self.input.resolution, item_id)
+                {
+                    self.collect_guard_expr_callees(value_expr, queue);
+                    return;
+                }
                 if matches!(&self.input.hir.item(item_id).kind, ItemKind::Function(_)) {
                     queue.push_back(FunctionRef::Item(item_id));
                     return;
@@ -736,8 +748,8 @@ impl<'a> ModuleEmitter<'a> {
             }
             hir::ExprKind::Name(_) => {
                 if let Some(item_id) =
-                    task_iterable_item_root_expr(self.input.hir, self.input.resolution, expr_id)
-                    && let Some((value_expr, _)) = runtime_task_iterable_item_value(
+                    task_backed_item_root_expr(self.input.hir, self.input.resolution, expr_id)
+                    && let Some((value_expr, _)) = runtime_task_backed_item_value(
                         self.input.hir,
                         self.input.resolution,
                         item_id,
@@ -9203,7 +9215,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 Constant::Function { function, .. } => {
                     self.render_function_constant(*function, span)
                 }
-                Constant::Item { item, .. } => self.render_item_constant(output, *item, span),
+                Constant::Item { item, .. } => {
+                    if let Some((value_expr, ty)) = runtime_task_backed_item_value(
+                        self.emitter.input.hir,
+                        self.emitter.input.resolution,
+                        *item,
+                    ) {
+                        self.render_cleanup_value_expr(output, value_expr, &ty, span)
+                    } else {
+                        self.render_item_constant(output, *item, span)
+                    }
+                }
                 Constant::String { .. } | Constant::None | Constant::UnresolvedName(_) => {
                     panic!("prepared operands should not contain unsupported constants")
                 }
@@ -9219,7 +9241,15 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                             self.render_function_constant(FunctionRef::Item(item_id), span)
                         }
                         ItemKind::Const(_) | ItemKind::Static(_) => {
-                            self.render_item_constant(output, item_id, span)
+                            if let Some((value_expr, ty)) = runtime_task_backed_item_value(
+                                self.emitter.input.hir,
+                                self.emitter.input.resolution,
+                                item_id,
+                            ) {
+                                self.render_cleanup_value_expr(output, value_expr, &ty, span)
+                            } else {
+                                self.render_item_constant(output, item_id, span)
+                            }
                         }
                         _ => panic!(
                             "prepared operands should only contain local function/const/static imports"
@@ -12615,15 +12645,14 @@ fn guard_literal_source_item(
     result
 }
 
-fn runtime_task_iterable_item_value(
+fn runtime_task_backed_item_value(
     module: &hir::Module,
     resolution: &ResolutionMap,
     item_id: ItemId,
 ) -> Option<(hir::ExprId, Ty)> {
     let ty = const_or_static_item_type(module, resolution, item_id)?;
-    match cleanup_for_iterable_shape(&ty) {
-        Some((_, Ty::TaskHandle(_), _)) => {}
-        _ => return None,
+    if !ty_contains_task_handles_in_runtime_item(module, resolution, &ty) {
+        return None;
     }
     let value = match &module.item(item_id).kind {
         ItemKind::Const(global) | ItemKind::Static(global) => global.value,
@@ -12632,7 +12661,17 @@ fn runtime_task_iterable_item_value(
     Some((value, ty))
 }
 
-fn task_iterable_item_root_expr(
+fn runtime_task_iterable_item_value(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    item_id: ItemId,
+) -> Option<(hir::ExprId, Ty)> {
+    let (value, ty) = runtime_task_backed_item_value(module, resolution, item_id)?;
+    cleanup_for_iterable_shape(&ty)?;
+    Some((value, ty))
+}
+
+fn task_backed_item_root_expr(
     module: &hir::Module,
     resolution_map: &ResolutionMap,
     expr_id: hir::ExprId,
@@ -12642,7 +12681,49 @@ fn task_iterable_item_root_expr(
     };
     let resolution = resolution_map.expr_resolution(expr_id)?;
     let item_id = local_item_for_value_resolution(module, resolution)?;
+    runtime_task_backed_item_value(module, resolution_map, item_id).map(|_| item_id)
+}
+
+fn task_iterable_item_root_expr(
+    module: &hir::Module,
+    resolution_map: &ResolutionMap,
+    expr_id: hir::ExprId,
+) -> Option<ItemId> {
+    let item_id = task_backed_item_root_expr(module, resolution_map, expr_id)?;
     runtime_task_iterable_item_value(module, resolution_map, item_id).map(|_| item_id)
+}
+
+fn ty_contains_task_handles_in_runtime_item(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    ty: &Ty,
+) -> bool {
+    match ty {
+        Ty::TaskHandle(_) => true,
+        Ty::Array { element, .. } | Ty::Pointer { inner: element, .. } => {
+            ty_contains_task_handles_in_runtime_item(module, resolution, element)
+        }
+        Ty::Tuple(items) => items
+            .iter()
+            .any(|item| ty_contains_task_handles_in_runtime_item(module, resolution, item)),
+        Ty::Item { item_id, args, .. } => {
+            if !args.is_empty() {
+                return false;
+            }
+            let item = module.item(*item_id);
+            let ItemKind::Struct(struct_decl) = &item.kind else {
+                return false;
+            };
+            if !struct_decl.generics.is_empty() {
+                return false;
+            }
+            struct_decl.fields.iter().any(|field| {
+                let field_ty = lower_type(module, resolution, field.ty);
+                ty_contains_task_handles_in_runtime_item(module, resolution, &field_ty)
+            })
+        }
+        _ => false,
+    }
 }
 
 fn local_item_for_value_resolution(
@@ -19707,6 +19788,69 @@ async fn main() -> Int {
                 .count()
                 >= 6
         );
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_for_await_lowering_for_projected_task_item_roots() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use MORE as STATIC_ENV
+use BOX as CONST_ENV
+
+struct Pending {
+    tasks: [Task[Int]; 2],
+}
+
+extern "c" fn step(value: Int)
+
+const BOX: Pending = Pending { tasks: [worker(1), worker(2)] }
+static MORE: Pending = Pending { tasks: [worker(3), worker(4)] }
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var total = 0
+    for await value in BOX.tasks {
+        total = total + value
+    }
+    for await value in STATIC_ENV.tasks {
+        total = total + value
+    }
+    for await value in CONST_ENV.tasks {
+        total = total + value
+    }
+    defer {
+        for await value in BOX.tasks {
+            step(value);
+        }
+        for await value in STATIC_ENV.tasks {
+            step(value);
+        }
+        for await value in CONST_ENV.tasks {
+            step(value);
+        }
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.matches("insertvalue").count() >= 3);
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 6);
+        assert!(rendered.matches("call void @step(i64").count() >= 1);
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `for await` lowering yet"));
     }
