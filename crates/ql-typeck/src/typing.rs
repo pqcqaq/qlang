@@ -434,10 +434,7 @@ impl<'a> Checker<'a> {
             ExprKind::StructLiteral { .. } => self.check_struct_literal(expr_id),
             ExprKind::Binary { left, op, right } => self.check_binary(expr_id, *left, *op, *right),
             ExprKind::Unary { op, expr } => self.check_unary(expr_id, *op, *expr),
-            ExprKind::Question(expr) => {
-                self.check_expr(*expr, None);
-                Ty::Unknown
-            }
+            ExprKind::Question(expr) => self.check_expr(*expr, expected),
         };
         self.expr_types.insert(expr_id, ty.clone());
         ty
