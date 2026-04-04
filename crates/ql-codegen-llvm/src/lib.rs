@@ -3013,6 +3013,31 @@ impl<'a> ModuleEmitter<'a> {
             hir::ExprKind::Question(inner) => {
                 return self.supports_cleanup_value_expr(*inner, expected_ty, body, local_types);
             }
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                return self.supports_cleanup_bool_expr(*condition, body, local_types)
+                    && self.supports_cleanup_block_with_tail(
+                        *then_branch,
+                        true,
+                        false,
+                        body,
+                        local_types,
+                        |this, tail, _, cleanup_body, cleanup_local_types| {
+                            this.supports_cleanup_value_expr(
+                                tail,
+                                expected_ty,
+                                cleanup_body,
+                                cleanup_local_types,
+                            )
+                        },
+                    )
+                    && else_branch.is_some_and(|other| {
+                        self.supports_cleanup_value_expr(other, expected_ty, body, local_types)
+                    });
+            }
             _ => {}
         }
 
@@ -6197,6 +6222,65 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         panic!("prepared functions should not contain unsupported cleanup matches");
     }
 
+    fn render_cleanup_value_if_expr(
+        &mut self,
+        output: &mut String,
+        condition_expr: hir::ExprId,
+        then_branch: hir::BlockId,
+        else_expr: hir::ExprId,
+        expected_ty: &Ty,
+        span: Span,
+    ) -> LoweredValue {
+        let condition = self.render_bool_guard_expr(output, condition_expr, span, None);
+        let result_llvm_ty = self
+            .emitter
+            .lower_llvm_type(expected_ty, span, "cleanup if value")
+            .expect("supported cleanup lowering should lower cleanup if values");
+        let result_slot = self.fresh_temp();
+        let then_label = self.fresh_label("cleanup_then");
+        let else_label = self.fresh_label("cleanup_else");
+        let end_label = self.fresh_label("cleanup_end");
+        let _ = writeln!(output, "  {result_slot} = alloca {result_llvm_ty}");
+        let _ = writeln!(
+            output,
+            "  br i1 {}, label %{then_label}, label %{else_label}",
+            condition.repr
+        );
+
+        let _ = writeln!(output, "{then_label}:");
+        self.cleanup_path_open = true;
+        let binding_depth = self.cleanup_bindings.len();
+        let then_tail = self
+            .render_cleanup_block_prefix(output, then_branch, span)
+            .unwrap_or_else(|| {
+                panic!(
+                    "supported cleanup lowering at {span:?} should only render valued cleanup `if` branches with tails"
+                )
+            });
+        let then_value = self.render_cleanup_value_expr(output, then_tail, expected_ty, span);
+        self.cleanup_bindings.truncate(binding_depth);
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {result_slot}",
+            then_value.llvm_ty, then_value.repr
+        );
+        let _ = writeln!(output, "  br label %{end_label}");
+
+        let _ = writeln!(output, "{else_label}:");
+        self.cleanup_path_open = true;
+        let else_value = self.render_cleanup_value_expr(output, else_expr, expected_ty, span);
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {result_slot}",
+            else_value.llvm_ty, else_value.repr
+        );
+        let _ = writeln!(output, "  br label %{end_label}");
+
+        let _ = writeln!(output, "{end_label}:");
+        self.cleanup_path_open = true;
+        self.render_loaded_pointer_value(output, result_slot, expected_ty.clone(), span)
+    }
+
     fn render_cleanup_bool_match_expr(
         &mut self,
         output: &mut String,
@@ -6567,6 +6651,18 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             hir::ExprKind::Question(inner) => {
                 self.render_cleanup_value_expr(output, *inner, expected_ty, span)
             }
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch: Some(other),
+            } => self.render_cleanup_value_if_expr(
+                output,
+                *condition,
+                *then_branch,
+                *other,
+                expected_ty,
+                span,
+            ),
             hir::ExprKind::Binary {
                 left,
                 op: BinaryOp::Assign,
@@ -17110,6 +17206,31 @@ fn main() -> Int {
         assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support assignment expressions yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_if_value_lowering() {
+        let rendered = emit(
+            r#"
+fn forward(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    var value = 0
+    defer {
+        forward(if value == 0 { 1 } else { 2 });
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("cleanup_then"));
+        assert!(rendered.contains("cleanup_else"));
+        assert!(rendered.contains("alloca i64"));
+        assert!(rendered.contains("call i64 @ql_"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
     }
 
     #[test]
