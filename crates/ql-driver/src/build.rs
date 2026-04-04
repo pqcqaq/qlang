@@ -11585,6 +11585,103 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_import_alias_nested_call_root_fixed_shapes() {
+        let dir = TestDir::new("ql-driver-llvm-ir-import-alias-nested-call-root-fixed-shapes");
+        let source = dir.write(
+            "import_alias_nested_call_root_fixed_shapes.ql",
+            r#"
+use array_env as arrays
+use tuple_env as tuples
+use deep_env as deep
+
+struct ArrayPayload {
+    values: [Int; 2],
+}
+
+struct TuplePayload {
+    values: (Int, Int),
+}
+
+struct ArrayEnvelope {
+    payload: ArrayPayload,
+}
+
+struct TupleEnvelope {
+    payload: TuplePayload,
+}
+
+struct DeepEnvelope {
+    outer: ArrayEnvelope,
+}
+
+fn array_env(base: Int) -> ArrayEnvelope {
+    return ArrayEnvelope {
+        payload: ArrayPayload {
+            values: [base, base],
+        },
+    }
+}
+
+fn tuple_env(base: Int) -> TupleEnvelope {
+    return TupleEnvelope {
+        payload: TuplePayload {
+            values: (base, base + 1),
+        },
+    }
+}
+
+fn deep_env(base: Int) -> DeepEnvelope {
+    return DeepEnvelope {
+        outer: ArrayEnvelope {
+            payload: ArrayPayload {
+                values: [base, base + 1],
+            },
+        },
+    }
+}
+
+fn main() -> Int {
+    var total = 0
+    for value in arrays(10).payload.values {
+        total = total + value
+    }
+    for value in tuples(7).payload.values {
+        total = total + value
+    }
+    for value in deep(3).outer.payload.values {
+        total = total + value
+    }
+    return total
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/import_alias_nested_call_root_fixed_shapes.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options).expect(
+            "llvm-ir build with import-alias nested call-root fixed-shape for should succeed",
+        );
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call { { [2 x i64] } } @ql_"));
+        assert!(rendered.contains("call { { { i64, i64 } } } @ql_"));
+        assert!(rendered.contains("call { { { [2 x i64] } } } @ql_"));
+        assert!(rendered.matches("for_await_setup").count() >= 3);
+        assert!(rendered.contains("getelementptr inbounds { [2 x i64] }, ptr"));
+        assert!(rendered.contains("getelementptr inbounds { { [2 x i64] } }, ptr"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_static_item_values_in_expressions() {
         let dir = TestDir::new("ql-driver-llvm-ir-static-item-values-in-expressions");
         let source = dir.write(
