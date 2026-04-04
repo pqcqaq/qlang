@@ -29,6 +29,7 @@
 - 现阶段最重要的目标不是盲目扩语法，而是沿着现有边界持续扩展，不推翻已有真相源
 - 文档、测试、实现必须继续保持同一事实面，否则项目会重新退化成“代码和路线图各说各话”
 - sync backend 的普通 bind-pattern lowering 现也已进入真实扩容：ordinary `let` 与 fixed-shape `for` 的 tuple / struct destructuring 已接入当前 LLVM build surface，后续继续沿这类“前端已存在、后端仍保守拒绝”的缺口推进
+- ordinary fixed-shape loop root 现也应按真实 build 面理解：普通 `for` 与 `for await` 已不再只限 direct/projected/call-root 的最早子集，projected block/assignment/runtime `if`/`match` roots 也已进入当前 LLVM build surface
 
 ## 总体原则
 

@@ -69,6 +69,7 @@
   - homogeneous tuple
   - `binding` / `_` / tuple destructuring / struct destructuring loop pattern
   - projected root / direct call-root / same-file import-alias call-root / nested call-root / same-file import-alias nested call-root
+  - block-valued / assignment-valued / runtime `if` / `match` valued projected root
   - parenthesized / unparenthesized inline projected root
   - same-file `const` / `static` root 及其 same-file alias
 - 赋值表达式的当前可运行子集
@@ -117,7 +118,7 @@
   - fixed-array
   - homogeneous tuple
   - task-array / task-tuple auto-await
-  - projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
+  - projected / block-valued projected / assignment-valued projected / runtime `if` / `match` valued projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
 - 普通标量赋值表达式的当前可运行子集
   - mutable local
   - tuple literal index projection，以及 same-file `const` / `static` / `use ... as ...` alias、branch-selected const `if` / 最小 literal `match` item value、direct inline foldable `if` / `match` integer expression，和 immutable direct local alias 复用驱动的 foldable integer constant expression tuple index
@@ -207,7 +208,7 @@
   - fixed-array
   - homogeneous tuple
   - task-array / task-tuple auto-await
-  - projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
+  - projected / block-valued projected / assignment-valued projected / runtime `if` / `match` valued projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
 - 普通表达式与 `if` / `while` 条件里的 same-file foldable `const` / `static`
   - 包括 computed/projected item value
   - 包括 foldable const `if` / 最小 literal `match` 选出的 branch-selected item value

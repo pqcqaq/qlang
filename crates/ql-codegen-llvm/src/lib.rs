@@ -18363,6 +18363,50 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_for_lowering_for_projected_control_flow_roots_in_program_bodies() {
+        let rendered = emit_with_mode(
+            r#"
+struct Boxed {
+    values: [Int; 3],
+}
+
+fn main() -> Int {
+    let branch = true
+    var boxed = Boxed { values: [0, 0, 0] }
+    var total = 0
+    for value in ({ let current = Boxed { values: [1, 2, 3] }; current }).values {
+        total = total + value
+    }
+    for value in (boxed = Boxed { values: [4, 5, 6] }).values {
+        total = total + value
+    }
+    for value in (if branch { Boxed { values: [7, 8, 9] } } else { Boxed { values: [10, 11, 12] } }).values {
+        total = total + value
+    }
+    for item in (match branch {
+        true => Boxed { values: [13, 14, 15] },
+        false => Boxed { values: [16, 17, 18] },
+    }).values {
+        total = total + item
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(
+            rendered
+                .matches("store i64 -1, ptr %for_await_index_bb")
+                .count()
+                >= 4
+        );
+        assert!(rendered.contains("for_await_setup"));
+        assert!(rendered.contains("insertvalue { [3 x i64] }"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
+    }
+
+    #[test]
     fn emits_bind_pattern_destructuring_in_program_bodies() {
         let rendered = emit_with_mode(
             r#"
@@ -20260,6 +20304,67 @@ async fn main() -> Int {
                 >= 2
         );
         assert!(rendered.contains("store i64 %t"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_for_await_lowering_for_projected_control_flow_roots_in_program_mode() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrapper {
+    tasks: [Task[Int]; 2],
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let branch = true
+    var wrapper = Wrapper { tasks: [worker(0), worker(0)] }
+    var total = 0
+    for await value in ({ let current = Wrapper { tasks: [worker(1), worker(2)] }; current }).tasks {
+        total = total + value
+    }
+    for await value in (wrapper = Wrapper { tasks: [worker(3), worker(4)] }).tasks {
+        total = total + value
+    }
+    for await value in (if branch { Wrapper { tasks: [worker(5), worker(6)] } } else { Wrapper { tasks: [worker(7), worker(8)] } }).tasks {
+        total = total + value
+    }
+    for await item in (match branch {
+        true => Wrapper { tasks: [worker(9), worker(10)] },
+        false => Wrapper { tasks: [worker(11), worker(12)] },
+    }).tasks {
+        total = total + item
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 4);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 4
+        );
+        assert!(
+            rendered
+                .matches("store i64 -1, ptr %for_await_index_bb")
+                .count()
+                >= 4
+        );
+        assert!(rendered.contains("for_await_setup"));
         assert!(!rendered.contains("does not support `for await` lowering yet"));
     }
 

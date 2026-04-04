@@ -4929,6 +4929,46 @@ fn cleanup_block_for_await_projected_question_root_codegen_case_matches() {
 }
 
 #[test]
+fn fixed_shape_for_projected_control_flow_roots_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "fixed_shape_for_projected_control_flow_roots_build",
+        source_relative: "fixtures/codegen/pass/fixed_shape_for_projected_control_flow_roots.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("fixed-shape for projected control-flow roots build regression:\n\n{message}");
+    }
+}
+
+#[test]
+fn fixed_shape_for_await_projected_control_flow_roots_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "fixed_shape_for_await_projected_control_flow_roots_build",
+        source_relative: "fixtures/codegen/pass/fixed_shape_for_await_projected_control_flow_roots.ql",
+        emit: "staticlib",
+        expected_relative: "tests/codegen/pass/minimal_library.staticlib.txt",
+        mock_compiler: true,
+        mock_archiver: true,
+        archiver_style: Some(current_archiver_style()),
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("fixed-shape for-await projected control-flow roots build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn cleanup_block_for_projected_question_root_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {
