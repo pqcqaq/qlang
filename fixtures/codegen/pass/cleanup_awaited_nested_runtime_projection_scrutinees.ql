@@ -1,0 +1,39 @@
+use load_state as async_alias
+use LOAD as async_const_alias
+
+struct Slot {
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+}
+
+extern "c" fn sink(value: Int)
+
+async fn load_state(value: Int) -> State {
+    return State { slot: Slot { value: value } }
+}
+
+fn wrap(state: State) -> State {
+    return state
+}
+
+fn offset(value: Int) -> Int {
+    return value - 11
+}
+
+const LOAD: (Int) -> Task[State] = load_state
+
+async fn main() -> Int {
+    let branch = true
+    defer match wrap(await (if branch { async_alias } else { async_const_alias })(13)).slot.value {
+        13 => sink(1),
+        _ => sink(0),
+    }
+    defer match [wrap(await (match branch { true => async_const_alias, false => async_alias })(15)).slot.value, 0][offset(11)] {
+        15 => sink(2),
+        _ => sink(3),
+    }
+    return 0
+}
