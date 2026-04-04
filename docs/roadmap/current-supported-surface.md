@@ -57,7 +57,7 @@
   - non-capturing sync closure-backed callable `const` / `static`，以及它们的 same-file `use ... as ...` alias；当前 public regression 先锁定 ordinary positional indirect call 子集
   - non-capturing sync closure value；当前 public regression 已锁定 ordinary positional indirect call 的最小子集：zero-arg 形态、显式 typed closure parameter 形态、由 statement-level local callable type annotation 驱动的 parameterized local 形态，以及由 call-site positional argument 反推参数类型的 parameterized local/immutable-alias 形态，capturing closure 仍保持关闭
   - ordinary call 可 direct call，或先绑定到 local 后再做 positional indirect call
-  - ordinary `match` guard，以及当前 shipped cleanup call / guard-call 子路径，也可通过 function-item-backed callable local / callable `const` / `static` / same-file alias 进入 positional indirect call
+  - ordinary `match` guard，以及当前 shipped cleanup call / guard-call 子路径，也可通过 function-item-backed callable local / callable `const` / `static` / same-file alias 进入 positional indirect call；当前 public regression 也已显式锁定 direct closure-backed callable `const` guard + closure-backed callable `static` cleanup 的最小子集
 - 最小 first-class async function value 子集
   - same-file async function item
   - same-file `use ... as ...` async function alias
@@ -226,7 +226,7 @@
 - bool-guard 驱动的 call-backed `if` cleanup branch；当前 bool/int guard call 子路径也已覆盖 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect call
 - bool / int scrutinee + literal-or-path / wildcard arms + optional bool guard 的 cleanup `match` branch；当前 arm guard 和 cleanup scalar call-arg value 里的 call 子路径也已覆盖同一批 callable-value 间接调用
 - 透明 `?` wrapper，可包裹当前 shipped cleanup expr / guard / scrutinee 子路径
-- 当前已锁定的用户面包括 direct cleanup `obj` build、callable-const-alias cleanup `obj` build、callable-guard-alias cleanup `match` `obj` build、statement-sequenced cleanup block `obj` build、statement-sequenced cleanup guard / scrutinee / call-arg value block `obj` build、带 body-local `break` / `continue` 的 statement-level cleanup `while` / `loop` `obj` build、fixed-shape statement-level cleanup `for` `obj` build、guarded dynamic task-handle cleanup `staticlib` build、cleanup `match` `obj` build，以及 cleanup-internal question-mark `obj` build
+- 当前已锁定的用户面包括 direct cleanup `obj` build、callable-const-alias cleanup `obj` build、closure-backed callable global cleanup + guard `obj` build、callable-guard-alias cleanup `match` `obj` build、statement-sequenced cleanup block `obj` build、statement-sequenced cleanup guard / scrutinee / call-arg value block `obj` build、带 body-local `break` / `continue` 的 statement-level cleanup `while` / `loop` `obj` build、fixed-shape statement-level cleanup `for` `obj` build、guarded dynamic task-handle cleanup `staticlib` build、cleanup `match` `obj` build，以及 cleanup-internal question-mark `obj` build
 
 ### 透明 `?` lowering
 
@@ -254,7 +254,7 @@
 - 更广义的 async `dylib` surface，尤其是公开 async ABI
 - generalized `for await`，超出 fixed-array / homogeneous tuple 之外的 iterable
 - broader cleanup lowering / cleanup codegen，超出当前 direct / call-backed `defer` + `if` / `match` + 透明 `?` wrapper cleanup 子集之外
-- broader callable value lowering，超出当前 same-file sync function item / same-file alias / function-item-backed callable `const` / `static` 子集、closure-backed callable `const` / `static` 的 ordinary positional indirect-call 最小子集、non-capturing sync closure value 的 ordinary positional indirect-call 最小子集（zero-arg + explicit typed-parameter shape + statement-level local callable type-annotation shape + call-site positional-arg-inferred parameterized local/immutable-alias shape），以及 same-file async function item / alias 的 ordinary local indirect-call + `await` 子集之外；capturing closure value、async callable `const` / `static` 与 async cleanup / guard-call path 仍未开放
+- broader callable value lowering，超出当前 same-file sync function item / same-file alias / function-item-backed callable `const` / `static` 子集、closure-backed callable `const` / `static` 的 ordinary positional indirect-call 最小子集与 direct cleanup/guard item 子集、non-capturing sync closure value 的 ordinary positional indirect-call 最小子集（zero-arg + explicit typed-parameter shape + statement-level local callable type-annotation shape + call-site positional-arg-inferred parameterized local/immutable-alias shape），以及 same-file async function item / alias 的 ordinary local indirect-call + `await` 子集之外；capturing closure value、async callable `const` / `static` 与 async cleanup / guard-call path 仍未开放
 - cancellation / polling / drop semantics
 - generic async ABI / layout substitution
 - arbitrary dynamic overlap precision

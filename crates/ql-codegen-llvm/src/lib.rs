@@ -12533,6 +12533,32 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_closure_backed_callable_globals_in_cleanup_and_match_guards() {
+        let rendered = emit(
+            r#"
+const CHECK: (Int) -> Bool = (value: Int) => value == 42
+static APPLY: (Int) -> Int = (value: Int) => value + 1
+
+fn main() -> Int {
+    defer APPLY(41)
+    return match 42 {
+        current if CHECK(current) => 1,
+        _ => 0,
+    }
+}
+"#,
+        );
+
+        assert!(rendered.contains("define i1 @ql_0_CHECK__closure0(i64 %arg0)"));
+        assert!(rendered.contains("define i64 @ql_1_APPLY__closure0(i64 %arg0)"));
+        assert!(rendered.contains("call i1 %t"));
+        assert!(rendered.contains("call i64 %t"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support callable const/static values yet"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn rejects_capturing_closure_values() {
         let messages = emit_error(
             r#"
