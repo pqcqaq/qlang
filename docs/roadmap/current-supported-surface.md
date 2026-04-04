@@ -50,7 +50,8 @@
 - fixed-shape `for`
   - fixed-array
   - homogeneous tuple
-  - projected root / call-root / nested call-root / inline projected root
+  - projected root / direct call-root / same-file import-alias call-root / nested call-root / same-file import-alias nested call-root
+  - parenthesized / unparenthesized inline projected root
   - same-file `const` / `static` root 及其 same-file alias
 - 赋值表达式的当前可运行子集
   - mutable local

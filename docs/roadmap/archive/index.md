@@ -14,6 +14,7 @@
 
 - [2026-04-03 当前支持基线详细归档](/roadmap/archive/2026-04-03-current-supported-surface-detailed)
 - [2026-04-03 P1-P7 阶段总览详细归档](/roadmap/archive/2026-04-03-phase-progress-detailed)
+- [2026-04-04 路线图入口整理与进度对账](/roadmap/archive/2026-04-04-roadmap-entry-cleanup)
 
 ## 设计稿与原始切片稿
 

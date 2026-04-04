@@ -22,7 +22,7 @@
 
 ## 当前判断
 
-截至 2026-04-03，Qlang 已经不是“只有语言设计文档的预研空壳”，而是一个真实的 Rust 编译器与工具链工作区：
+截至 2026-04-04，Qlang 已经不是“只有语言设计文档的预研空壳”，而是一个真实的 Rust 编译器与工具链工作区：
 
 - Phase 1 到 Phase 6 的基础设施已经在仓库中落地
 - 当前主线工作是保守的 Phase 7：async/runtime/library-build/program-build/Rust interop
@@ -268,7 +268,7 @@
 > 目标：继续沿着“保守可验证切片”推进，但优先级从纯 toolchain 体验回到**语言可用子集本身**：先扩用户可写、可编、可测试的语言能力，再补外围 UX。
 
 1. **Task 3：放宽更多 `await` / `spawn` payload 路径**
-   - 状态：进行中（首刀已完成：`BuildEmit::Executable` 下的 nested task-handle payload，`let next = await outer(); await next`，已在 codegen / driver / CLI 三层锁定；2026-03-30 起又补齐了 tuple / fixed-array / nested aggregate task-handle payload、direct task-handle flow、bound task-handle spawn flow、sync-helper task-handle flow、local-return helper task-handle flow、非零尺寸 aggregate-result flow、spawned 非零尺寸 aggregate-result flow、递归 aggregate-result flow、spawned 递归 aggregate-result flow、aggregate-parameter flow、spawned 递归 aggregate-parameter flow、spawned zero-sized aggregate-parameter flow、non-zero-sized projected task-handle await flow、non-zero-sized projected task-handle spawn flow、non-zero-sized projected task-handle direct reinit flow、non-zero-sized projected task-handle conditional reinit flow、regular-size direct-local branch spawned reinit flow、regular-size conditional async-call spawn flow、regular-size conditional helper-task-handle spawn flow、zero-sized helper `Task[Wrap]` flow、zero-sized aggregate-result flow、zero-sized nested / struct aggregate task-handle payload，以及 zero-sized projected task-handle await / spawn / direct reinit / conditional reinit、zero-sized direct-local branch spawned reinit / reverse-branch spawned reinit、zero-sized conditional async-call spawn、zero-sized conditional helper-task-handle spawn 的 executable 回归矩阵，并把 dynamic task-handle array 继续推进到三层保守子集：generic dynamic 写入/读取已不会污染 sibling projection，same immutable stable index path 现也可精确走 `await tasks[index]; tasks[index] = worker(); await tasks[index]` 与 `await tasks[slot.value]; tasks[slot.value] = worker(); await tasks[slot.value]` 这条 consume/reinit 路径，而跨具体元素的 overlap/reinit 仍保持 maybe-moved；本轮又把 same immutable source alias（例如 `alias = index`、`slot.value -> index`）纳入 stable dynamic path 归一化，使跨别名的 consume/reinit 不再额外退化为 maybe-overlap，并继续把由稳定 dynamic source path 继续组成的 composed index（例如 `slots[row]`）及其再经 immutable alias 形成的路径（例如 `alias[row]`）纳入同一套 definite move / precise reinit 结果，最后把 same-file const item（例如 `const INDEX: Int = 0`、`const SLOT: Slot = Slot { value: 0 }`）也接进 literal/stable path 归一化，使 const-backed literal reuse 与 projected reinit 进入 borrowck / codegen / driver 的成功链路）
+   - 状态：进行中。当前受控子集已经覆盖 executable / library 两侧共享的主要 `await` / `spawn` payload family、projected task-handle consume/reinit、stable-dynamic 与 guard-refined dynamic path、fixed-shape `for await`、awaited `match` guard，以及 sync/async assignment-expression executable surface。详细 family inventory 以 [当前支持基线](/roadmap/current-supported-surface) 为准，逐轮切片记录已归档到 [路线图归档](/roadmap/archive/index)。
    - Why：当前前端语法与类型面已经明显快于 backend executable subset，最大的语言可用性缺口不在 lexer/parser，而在“用户已经能写出的 async 程序里，哪些 payload/aggregate/path 还不能稳定编译”。
    - Deliverables：
      - 扩大 `await` / `spawn` 在 executable / library 两种 build mode 下共享支持的 payload 子集。
