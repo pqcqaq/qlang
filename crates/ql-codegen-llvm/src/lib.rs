@@ -9273,6 +9273,31 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_guard_await_expr(
+        &mut self,
+        output: &mut String,
+        task_expr: hir::ExprId,
+        span: Span,
+        guard_binding: Option<&GuardBindingValue>,
+    ) -> LoweredValue {
+        let task_ty = self
+            .emitter
+            .input
+            .typeck
+            .expr_ty(task_expr)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "prepared bool guard lowering at {span:?} should type-check awaited guard task values"
+                )
+            });
+        let handle_info = self.task_handle_info_for_ty(&task_ty, span);
+        let rendered =
+            self.render_guard_expr_as_type(output, task_expr, &task_ty, span, guard_binding);
+        self.render_await_handle(output, rendered, handle_info, span)
+            .expect("prepared bool guard await lowering should produce a value")
+    }
+
     fn render_bool_guard_expr(
         &mut self,
         output: &mut String,
@@ -9508,6 +9533,18 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     llvm_ty: "i64".to_owned(),
                     repr: temp,
                 }
+            }
+            hir::ExprKind::Unary {
+                op: UnaryOp::Await,
+                expr,
+            } => {
+                let rendered = self.render_guard_await_expr(output, *expr, span, guard_binding);
+                assert!(
+                    rendered.ty.is_bool()
+                        || rendered.ty.compatible_with(&Ty::Builtin(BuiltinType::Int)),
+                    "prepared bool guard lowering at {span:?} should only render scalar awaited guard expressions"
+                );
+                rendered
             }
             hir::ExprKind::Integer(value) => LoweredValue {
                 ty: Ty::Builtin(BuiltinType::Int),
@@ -9961,6 +9998,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             hir::ExprKind::Question(inner) => {
                 return self.render_guard_loadable_expr(output, *inner, span, guard_binding);
+            }
+            hir::ExprKind::Unary {
+                op: UnaryOp::Await,
+                expr,
+            } => {
+                return self.render_guard_await_expr(output, *expr, span, guard_binding);
             }
             _ => {}
         }
@@ -10575,6 +10618,23 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             hir::ExprKind::Call { callee, args } => {
                 let rendered =
                     self.render_guard_call_value(output, *callee, args, span, guard_binding);
+                let slot = self.fresh_temp();
+                let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {slot}",
+                    rendered.llvm_ty, rendered.repr
+                );
+                Some((slot, rendered.ty))
+            }
+            hir::ExprKind::Unary {
+                op: UnaryOp::Await,
+                expr,
+            } => {
+                let rendered = self.render_guard_await_expr(output, *expr, span, guard_binding);
+                if is_void_ty(&rendered.ty) {
+                    return None;
+                }
                 let slot = self.fresh_temp();
                 let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
                 let _ = writeln!(
@@ -11649,6 +11709,9 @@ fn supported_guard_scalar_expr(
             *expr,
         )
         .filter(|kind| *kind == GuardScalarKind::Int),
+        hir::ExprKind::Unary {
+            op: UnaryOp::Await, ..
+        } => typeck.expr_ty(expr_id).and_then(guard_scalar_kind_for_ty),
         hir::ExprKind::Call { callee, args } => supported_guard_call_expr(
             module,
             resolution,
@@ -12123,6 +12186,9 @@ fn guard_expr_ty(
             arm_pattern,
             *inner,
         ),
+        hir::ExprKind::Unary {
+            op: UnaryOp::Await, ..
+        } => typeck.expr_ty(expr_id).cloned(),
         hir::ExprKind::Tuple(_) | hir::ExprKind::Array(_) | hir::ExprKind::StructLiteral { .. } => {
             typeck.expr_ty(expr_id).cloned()
         }
@@ -15079,6 +15145,44 @@ async fn main() -> Int {
         assert!(rendered.contains("i64 30)"));
         assert!(rendered.contains("i64 40)"));
         assert!(rendered.contains("call ptr @qlrt_task_await"));
+    }
+
+    #[test]
+    fn emits_awaited_guard_async_callable_control_flow_roots() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use worker as async_alias
+use APPLY as async_const_alias
+
+async fn worker(value: Int) -> Int {
+    return value + 10
+}
+
+const APPLY: (Int) -> Task[Int] = worker
+
+async fn main() -> Int {
+    let branch = true
+    return match 1 {
+        1 if await (if branch { async_alias } else { async_const_alias })(3) == 13 => 10,
+        1 if await (match branch { true => async_const_alias, false => async_alias })(4) == 14 => 20,
+        _ => 0,
+    }
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("call ptr @qlrt_task_await"));
+        assert!(rendered.matches("call ptr %t").count() >= 2);
+        assert!(rendered.contains("guard_match_arm"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(!rendered.contains("does not support imported value lowering yet"));
     }
 
     #[test]
