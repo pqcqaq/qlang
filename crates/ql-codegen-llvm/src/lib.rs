@@ -651,12 +651,14 @@ impl<'a> ModuleEmitter<'a> {
                 self.collect_guard_expr_callees(*condition, queue);
                 self.collect_guard_block_callees(*body, queue);
             }
+            hir::StmtKind::Loop { body } => {
+                self.collect_guard_block_callees(*body, queue);
+            }
             hir::StmtKind::Let { .. }
             | hir::StmtKind::Return(_)
             | hir::StmtKind::Defer(_)
             | hir::StmtKind::Break
             | hir::StmtKind::Continue
-            | hir::StmtKind::Loop { .. }
             | hir::StmtKind::For { .. } => {}
         }
     }
@@ -1949,11 +1951,11 @@ impl<'a> ModuleEmitter<'a> {
                 self.supports_cleanup_bool_expr(*condition)
                     && self.supports_cleanup_block_expr_with_loop(*body, true)
             }
+            hir::StmtKind::Loop { body } => self.supports_cleanup_block_expr_with_loop(*body, true),
             hir::StmtKind::Break | hir::StmtKind::Continue => in_cleanup_loop,
             hir::StmtKind::Let { .. }
             | hir::StmtKind::Return(_)
             | hir::StmtKind::Defer(_)
-            | hir::StmtKind::Loop { .. }
             | hir::StmtKind::For { .. } => false,
         }
     }
@@ -4447,6 +4449,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             hir::StmtKind::While { condition, body } => {
                 self.render_cleanup_while(output, *condition, *body, span)
             }
+            hir::StmtKind::Loop { body } => self.render_cleanup_loop(output, *body, span),
             hir::StmtKind::Break => {
                 let labels = self.cleanup_loop_labels.last().unwrap_or_else(|| {
                     panic!(
@@ -4468,9 +4471,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             hir::StmtKind::Let { .. }
             | hir::StmtKind::Return(_)
             | hir::StmtKind::Defer(_)
-            | hir::StmtKind::Loop { .. }
             | hir::StmtKind::For { .. } => panic!(
-                "supported cleanup lowering at {span:?} should only render expr, while, break, or continue statements inside cleanup blocks"
+                "supported cleanup lowering at {span:?} should only render expr, while, loop, break, or continue statements inside cleanup blocks"
             ),
         }
     }
@@ -4504,6 +4506,31 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         self.cleanup_loop_labels.pop();
         if body_falls_through {
             let _ = writeln!(output, "  br label %{cond_label}");
+        }
+        let _ = writeln!(output, "{end_label}:");
+        self.cleanup_path_open = true;
+    }
+
+    fn render_cleanup_loop(
+        &mut self,
+        output: &mut String,
+        body: hir::BlockId,
+        span: Span,
+    ) {
+        let body_label = self.fresh_label("cleanup_loop_body");
+        let end_label = self.fresh_label("cleanup_loop_end");
+        let _ = writeln!(output, "  br label %{body_label}");
+        let _ = writeln!(output, "{body_label}:");
+        self.cleanup_loop_labels.push(CleanupLoopLabels {
+            continue_label: body_label.clone(),
+            break_label: end_label.clone(),
+        });
+        self.cleanup_path_open = true;
+        self.render_cleanup_block(output, body, span);
+        let body_falls_through = self.cleanup_path_open;
+        self.cleanup_loop_labels.pop();
+        if body_falls_through {
+            let _ = writeln!(output, "  br label %{body_label}");
         }
         let _ = writeln!(output, "{end_label}:");
         self.cleanup_path_open = true;
@@ -14734,6 +14761,38 @@ fn main() -> Int {
         assert!(rendered.contains("cleanup_while_cond"));
         assert!(rendered.contains("cleanup_while_body"));
         assert!(rendered.contains("call i1 @running()"));
+        assert!(rendered.contains("call i1 @stop()"));
+        assert!(rendered.contains("call void @step()"));
+        assert!(!rendered.contains("call void @after()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_loop_break_continue_lowering() {
+        let rendered = emit(
+            r#"
+extern "c" fn stop() -> Bool
+extern "c" fn step()
+extern "c" fn after()
+
+fn main() -> Int {
+    defer {
+        loop {
+            if stop() {
+                break
+            };
+            step();
+            continue;
+            after();
+        }
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("cleanup_loop_body"));
+        assert!(rendered.contains("cleanup_loop_end"));
         assert!(rendered.contains("call i1 @stop()"));
         assert!(rendered.contains("call void @step()"));
         assert!(!rendered.contains("call void @after()"));
