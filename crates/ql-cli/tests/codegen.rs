@@ -4949,6 +4949,26 @@ fn task_item_value_flow_in_async_builds_codegen_case_matches() {
 }
 
 #[test]
+fn callable_value_control_flow_in_async_and_cleanup_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "callable_value_control_flow_in_async_and_cleanup_build",
+        source_relative: "fixtures/codegen/pass/callable_value_control_flow_in_async_and_cleanup.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("callable value control-flow async/cleanup build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn cleanup_block_for_await_inline_task_roots_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {

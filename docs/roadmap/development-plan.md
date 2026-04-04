@@ -39,6 +39,7 @@
 - cleanup fixed-shape `for await` 的 task-producing item root 现也已进入 current LLVM build surface：same-file `const` / `static` root、same-file item alias root，以及 projected task item root 现在都能稳定 build，而不再只由 inline task-array / task-tuple root 代表
 - cleanup runtime task-backed item value flow 现也已进入 current LLVM build surface：same-file task-producing `const` / `static` item 与 same-file alias，当前也可经过 cleanup local binding、sync helper 参数/返回值，以及 runtime `if` / `match` 选值后继续进入 projected `await` / cleanup `for await`
 - cleanup branch body 现也应按真实 build 面理解：cleanup `if` / `match` 分支已经不再只限 call-backed expr，而是可以承载当前已开放的 cleanup block 语句子集，包括 local binding 与 async `for await`
+- runtime callable value flow 现也应按真实 build 面理解：ordinary / cleanup value path 里的 runtime `if` / `match` 已不再只限挑选 scalar / aggregate value；当前 same-file function item / alias、callable `const` / `static` / alias，以及 closure-backed callable `const` / `static` / alias，也可以作为 typed callable value 被选出并继续间接调用；对应的 same-file async function item / alias 与 async callable `const` / `static` / alias，也可以继续进入 local `await` 与 cleanup value-path `await`
 
 ## 总体原则
 

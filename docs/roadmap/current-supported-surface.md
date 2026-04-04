@@ -56,6 +56,7 @@
   - transparently resolve 到 same-file sync function item 的 callable `const` / `static`，以及它们的 same-file `use ... as ...` alias
   - non-capturing sync closure-backed callable `const` / `static`，以及它们的 same-file `use ... as ...` alias；当前 public regression 先锁定 ordinary positional indirect call 子集
   - non-capturing sync closure value；当前 public regression 已锁定 ordinary positional indirect call 的最小子集：zero-arg 形态、显式 typed closure parameter 形态、由 statement-level local callable type annotation 驱动的 parameterized local 形态，以及由 call-site positional argument 反推参数类型的 parameterized local/immutable-alias 形态；当前 shipped cleanup / guard-call 子路径也已显式锁定 direct local non-capturing closure 的最小子集，capturing closure 仍保持关闭
+  - runtime `if` / `match` callable value 子集：当前 ordinary local binding 与 cleanup value path 也可从 same-file function item / alias、function-item-backed callable `const` / `static` / alias，以及 closure-backed callable `const` / `static` / alias 里选出 indirect callee
   - ordinary call 可 direct call，或先绑定到 local 后再做 positional indirect call
   - ordinary `match` guard，以及当前 shipped cleanup call / guard-call 子路径，也可通过 function-item-backed callable local / callable `const` / `static` / same-file alias 进入 positional indirect call；当前 public regression 也已显式锁定 direct closure-backed callable `const` guard + closure-backed callable `static` cleanup，以及 direct local non-capturing closure cleanup + guard 的最小子集
 - 最小 first-class async function value 子集
@@ -63,7 +64,8 @@
   - same-file `use ... as ...` async function alias
   - transparently resolve 到 same-file async function item 的 callable `const` / `static`，以及它们的 same-file `use ... as ...` alias
   - 当前 public regression 已锁定 `async fn` 内 ordinary direct call 或 ordinary local positional indirect call + `await` 子集
-  - capturing closure value，以及 cleanup / guard-call 上的 async callable path 仍保持关闭
+  - runtime `if` / `match` callable value 子集：当前 `async fn` 内 ordinary local binding + `await`，以及 cleanup value path 里的 `await callable(...)`，也可从 same-file async function item / alias 与 async callable `const` / `static` / alias 里选出 indirect callee
+  - capturing closure value，以及 cleanup callee / guard-call 上的 async callable path 仍保持关闭
 - fixed-shape `for`
   - fixed-array
   - homogeneous tuple
