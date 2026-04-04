@@ -184,12 +184,17 @@ impl Ty {
                 Param::Receiver(_) => None,
             })
             .collect();
-        let ret = Box::new(
-            function
+        let ret = Box::new({
+            let output = function
                 .return_type
                 .map(|type_id| lower_type(module, resolution, type_id))
-                .unwrap_or_else(void_ty),
-        );
+                .unwrap_or_else(void_ty);
+            if function.is_async {
+                Ty::TaskHandle(Box::new(output))
+            } else {
+                output
+            }
+        });
 
         Ty::Callable { params, ret }
     }

@@ -93,6 +93,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "async_function_value_build_llvm_ir",
+            source_relative: "fixtures/codegen/pass/async_function_value_build.ql",
+            emit: "llvm-ir",
+            expected_relative: "tests/codegen/pass/async_function_value_build.ll",
+            mock_compiler: false,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "non_capturing_closure_build_llvm_ir",
             source_relative: "fixtures/codegen/pass/non_capturing_closure_build.ql",
             emit: "llvm-ir",

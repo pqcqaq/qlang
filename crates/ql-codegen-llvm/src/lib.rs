@@ -1944,7 +1944,7 @@ impl<'a> ModuleEmitter<'a> {
         }
     }
 
-    fn infer_sync_function_value_type(
+    fn infer_function_value_type(
         &self,
         function: FunctionRef,
         diagnostics: &mut Vec<Diagnostic>,
@@ -1957,13 +1957,6 @@ impl<'a> ModuleEmitter<'a> {
             ));
             return None;
         };
-        if signature.is_async {
-            diagnostics.push(unsupported(
-                span,
-                "LLVM IR backend foundation does not support first-class async function values yet",
-            ));
-            return None;
-        }
         Some(callable_ty_from_signature(signature))
     }
 
@@ -1997,7 +1990,7 @@ impl<'a> ModuleEmitter<'a> {
             return None;
         };
 
-        self.infer_sync_function_value_type(function, diagnostics, span)
+        self.infer_function_value_type(function, diagnostics, span)
     }
 
     fn ordered_call_args<'b>(
@@ -3130,7 +3123,7 @@ impl<'a> ModuleEmitter<'a> {
                 Constant::Bool(_) => Some(Ty::Builtin(BuiltinType::Bool)),
                 Constant::Void => Some(void_ty()),
                 Constant::Function { function, .. } => {
-                    self.infer_sync_function_value_type(*function, diagnostics, span)
+                    self.infer_function_value_type(*function, diagnostics, span)
                 }
                 Constant::Item { item, .. } => match &self.input.hir.item(*item).kind {
                     ItemKind::Const(_) | ItemKind::Static(_) => {
@@ -3160,7 +3153,7 @@ impl<'a> ModuleEmitter<'a> {
                 }
                 Constant::Import(path) => local_item_for_import_path(self.input.hir, path)
                     .and_then(|item_id| match &self.input.hir.item(item_id).kind {
-                        ItemKind::Function(_) => self.infer_sync_function_value_type(
+                        ItemKind::Function(_) => self.infer_function_value_type(
                             FunctionRef::Item(item_id),
                             diagnostics,
                             span,
@@ -6855,10 +6848,6 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 "prepared function-value lowering at {span:?} should resolve the function signature"
             )
         });
-        assert!(
-            !signature.is_async,
-            "prepared function-value lowering at {span:?} should not materialize async function values"
-        );
         LoweredValue {
             ty: callable_ty_from_signature(signature),
             llvm_ty: "ptr".to_owned(),
@@ -11739,6 +11728,40 @@ fn main() -> Int {
         assert!(rendered.contains("store ptr @ql_0_add_one"));
         assert!(rendered.contains("load ptr, ptr %l1_f"));
         assert!(rendered.contains("call i64 %t0(i64 41)"));
+    }
+
+    #[test]
+    fn emits_async_function_value_local_calls() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use worker as run_alias
+
+async fn worker(value: Int) -> Int {
+    return value + 1
+}
+
+async fn main() -> Int {
+    let direct = worker
+    let aliased = run_alias
+    let first = await direct(10)
+    let second = await aliased(20)
+    return first + second
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("store ptr @ql_0_worker, ptr %l1_direct"));
+        assert!(rendered.contains("store ptr @ql_0_worker, ptr %l2_aliased"));
+        assert!(rendered.contains("call ptr %t0(i64 10)"));
+        assert!(rendered.contains("call ptr %t6(i64 20)"));
+        assert!(rendered.contains("call ptr @qlrt_task_await"));
     }
 
     #[test]
