@@ -213,6 +213,8 @@
   - same-file scalar `const` / `static` root、same-file scalar item alias，以及 scalar item-backed read-only projected root
   - same-file task-producing `const` / `static` root、same-file task item alias root，以及 projected task item root
   - projected / block-valued projected / assignment-valued projected / runtime `if` / `match` valued projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
+- runtime task-backed item value flow
+  - same-file task-producing `const` / `static` item 与 same-file alias，当前也可经过 ordinary local binding、sync helper 参数/返回值，以及 runtime `if` / `match` 选值后，再进入 projected `await` / fixed-shape `for await`
 - 普通表达式与 `if` / `while` 条件里的 same-file foldable `const` / `static`
   - 包括 computed/projected item value
   - 包括 foldable const `if` / 最小 literal `match` 选出的 branch-selected item value
@@ -241,6 +243,8 @@
 - statement-level cleanup `loop`：当前开放已支持 cleanup block body 的最小 lowering 子集，并支持 body-local `break` / `continue`（包括经由当前已开放 cleanup `if` branch 进入的 loop-exit path）
 - statement-level cleanup `for`：当前开放 fixed array / homogeneous tuple iterable + binding / `_` / tuple destructuring / struct destructuring（叶子仍限 binding / `_`）pattern 的最小 lowering 子集，iterable 当前已覆盖 direct root、same-file `const` / `static` root 及其 same-file alias、item-backed read-only projected root、direct call-root、same-file import-alias call-root、nested call-root projected root，以及 transparent `?` wrapper 下的 projected root 形态；body 内可读取当前 item，并支持 body-local `break` / `continue`（包括经由当前已开放 cleanup `if` branch 进入的 loop-exit path）
 - statement-level cleanup `for await`：当前在 async body 内开放 fixed array / homogeneous tuple iterable 的最小 lowering 子集；普通元素会直接逐项绑定，`Task[...]` 元素会复用既有 `await` + result-release 路径做逐项 auto-await，并支持 body-local `break` / `continue`；当前已锁定 direct local root、same-file scalar `const` / `static` root、same-file scalar item alias、same-file task-producing `const` / `static` root、same-file task item alias root、projected task item root、scalar item-backed read-only projected root、direct block-valued / assignment-valued / runtime `if` / `match` / awaited direct root、direct question-mark root、read-only projected root、assignment-valued projected root、block-valued projected root、direct call-root、same-file import-alias call-root、nested call-root projected root、awaited projected root、runtime `if` / `match` aggregate projected root、transparent `?` wrapper 下的 projected root，以及 inline array/tuple task root
+- cleanup runtime task-backed item value flow
+  - same-file task-producing `const` / `static` item 与 same-file alias，当前也可经过 cleanup local binding、sync helper 参数/返回值，以及 runtime `if` / `match` 选值后，再进入 projected `await` / fixed-shape cleanup `for await`
 - cleanup aggregate value staging：cleanup `let` / valued block / projected-root materialization 现在会沿 tuple / array / struct literal 递归走 cleanup 自身的 value path；这意味着 awaited projected loadable value 现在可以先被装入 cleanup struct literal 字段，再继续被后续 cleanup `for await` / projected read 消费
 - bool-guard 驱动的 call-backed `if` cleanup branch；当前 bool/int guard call 子路径也已覆盖 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect call，并接受 runtime `if` / `match` 选出的 same-file function item / same-file import alias callee root
 - bool / int scrutinee + literal-or-path / wildcard-or-single-binding catch-all arms + optional bool guard 的 cleanup `match` branch；当前 arm guard、binding arm body，以及 cleanup scalar call-arg value 里的 call 子路径也已覆盖同一批 callable-value 间接调用
@@ -273,7 +277,7 @@
 - 更广义的 async executable / program bootstrap，除最小 `async fn main` 以外
 - 更广义的 async `dylib` surface，尤其是公开 async ABI
 - generalized `for await`，超出 fixed-array / homogeneous tuple 之外的 iterable
-- 更广义的 runtime const/static/item-backed aggregate lowering，超出当前 fixed-shape `for await` / cleanup `for await` 已锁定的 same-file task-backed item root 与 projected item-root 子集之外仍未开放；当前 const item lowering 仍不会把 `worker(...)` 这类 runtime task-producing initializer 普遍提升为通用常量值
+- 更广义的 runtime const/static/item-backed aggregate lowering，超出当前 async ordinary/cleanup value path 已锁定的 same-file task-backed item root、projected item-root，以及 local/helper/control-flow 传递子集之外仍未开放；当前 const item lowering 仍不会把 `worker(...)` 这类 runtime task-producing initializer 普遍提升为通用常量值
 - broader cleanup lowering / cleanup codegen，超出当前 direct / call-backed `defer` + `if` / `match` + 透明 `?` wrapper cleanup 子集之外
 - broader callable value lowering，超出当前 same-file sync function item / same-file alias / function-item-backed callable `const` / `static` 子集、closure-backed callable `const` / `static` 的 ordinary positional indirect-call 最小子集与 direct cleanup/guard item 子集、non-capturing sync closure value 的 ordinary positional indirect-call 最小子集与 direct local cleanup/guard 子集（zero-arg + explicit typed-parameter shape + statement-level local callable type-annotation shape + call-site positional-arg-inferred parameterized local/immutable-alias shape），以及 same-file async function item / alias / callable `const` / `static` / same-file alias 的 ordinary local indirect-call + `await` 子集之外；capturing closure value与 cleanup 内更广义的 async control-flow 仍未开放
 - cancellation / polling / drop semantics

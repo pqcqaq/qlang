@@ -31,11 +31,13 @@
 - sync backend 的普通 bind-pattern lowering 现也已进入真实扩容：ordinary `let` 与 fixed-shape `for` 的 tuple / struct destructuring 已接入当前 LLVM build surface，后续继续沿这类“前端已存在、后端仍保守拒绝”的缺口推进
 - ordinary fixed-shape loop root 现也应按真实 build 面理解：普通 `for` 与 `for await` 已不再只限 direct/projected/call-root 的最早子集，projected block/assignment/runtime `if`/`match` roots 也已进入当前 LLVM build surface
 - ordinary fixed-shape `for await` 的 task-producing item root 现也应按真实 build 面理解：same-file `const` / `static` root、same-file item alias root，以及 projected task item root 现在已进入 current LLVM build surface，而不再只由 inline task-array / task-tuple root 代表
+- runtime task-backed item value flow 现也应按真实 build 面理解：same-file task-producing `const` / `static` item 与 same-file alias，已经不再只限 root-level `for await` / projected `await` 入口，而是可以经过 ordinary local binding、sync helper 参数/返回值，以及 runtime `if` / `match` 选值后继续进入当前 async build surface
 - cleanup fixed-shape `for await` root 现也要按同样标准理解：current build surface 不再只限 direct/projected/awaited root，direct call-root、same-file import-alias call-root 与 nested call-root projected root 也已进入当前 LLVM build surface
 - cleanup fixed-shape `for await` 的 direct iterable root 也已扩到当前真实 build 面：block-valued、assignment-valued、runtime `if` / `match`、以及 awaited direct fixed-shape root 都已进入 current LLVM build surface，而不再只由 direct local / projected family 代表
 - cleanup fixed-shape `for await` 的 transparent `?` 也已不再只限 projected family：direct fixed-shape array / tuple root 与 block-wrapped direct root 现在也已进入 current LLVM build surface
 - cleanup fixed-shape `for await` 的 item-backed scalar root 现也已进入 current LLVM build surface：same-file scalar `const` / `static` root、same-file scalar item alias、以及 item-backed read-only projected scalar root 现在都能稳定 build
 - cleanup fixed-shape `for await` 的 task-producing item root 现也已进入 current LLVM build surface：same-file `const` / `static` root、same-file item alias root，以及 projected task item root 现在都能稳定 build，而不再只由 inline task-array / task-tuple root 代表
+- cleanup runtime task-backed item value flow 现也已进入 current LLVM build surface：same-file task-producing `const` / `static` item 与 same-file alias，当前也可经过 cleanup local binding、sync helper 参数/返回值，以及 runtime `if` / `match` 选值后继续进入 projected `await` / cleanup `for await`
 
 ## 总体原则
 
