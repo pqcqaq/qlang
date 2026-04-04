@@ -47,7 +47,7 @@
 - `extern "c"` 顶层声明、extern block、顶层导出定义
 - `main` 程序入口
 - 标量整数 / `Bool` / `Void`
-- `let` / `var` 局部绑定；当前已支持 statement-level 显式类型标注 `let name: Type = value` / `var name: Type = value`
+- `let` / `var` 局部绑定；当前已支持 statement-level 显式类型标注 `let name: Type = value` / `var name: Type = value`，以及 tuple / struct destructuring（叶子当前限 binding / `_`）
 - direct call 与 named arguments
 - same-file `use ... as ...` function alias call
 - 最小 first-class sync function value 子集
@@ -67,6 +67,7 @@
 - fixed-shape `for`
   - fixed-array
   - homogeneous tuple
+  - `binding` / `_` / tuple destructuring / struct destructuring loop pattern
   - projected root / direct call-root / same-file import-alias call-root / nested call-root / same-file import-alias nested call-root
   - parenthesized / unparenthesized inline projected root
   - same-file `const` / `static` root 及其 same-file alias

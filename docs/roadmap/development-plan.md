@@ -28,6 +28,7 @@
 - 当前主线工作是保守的 Phase 7：async/runtime/library-build/program-build/Rust interop
 - 现阶段最重要的目标不是盲目扩语法，而是沿着现有边界持续扩展，不推翻已有真相源
 - 文档、测试、实现必须继续保持同一事实面，否则项目会重新退化成“代码和路线图各说各话”
+- sync backend 的普通 bind-pattern lowering 现也已进入真实扩容：ordinary `let` 与 fixed-shape `for` 的 tuple / struct destructuring 已接入当前 LLVM build surface，后续继续沿这类“前端已存在、后端仍保守拒绝”的缺口推进
 
 ## 总体原则
 

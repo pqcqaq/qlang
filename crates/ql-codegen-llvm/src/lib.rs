@@ -2655,6 +2655,19 @@ impl<'a> ModuleEmitter<'a> {
         }
     }
 
+    fn supports_destructuring_bind_pattern(&self, pattern: hir::PatternId) -> bool {
+        match pattern_kind(self.input.hir, pattern) {
+            PatternKind::Binding(_) | PatternKind::Wildcard => true,
+            PatternKind::Tuple(items) => items
+                .iter()
+                .all(|item| self.supports_destructuring_bind_pattern(*item)),
+            PatternKind::Struct { fields, .. } => fields
+                .iter()
+                .all(|field| self.supports_destructuring_bind_pattern(field.pattern)),
+            _ => false,
+        }
+    }
+
     fn supports_cleanup_for_iterable(&self, expr_id: hir::ExprId) -> bool {
         let Some(iterable_ty) = self.input.typeck.expr_ty(expr_id) else {
             return false;
@@ -4091,13 +4104,19 @@ impl<'a> ModuleEmitter<'a> {
                 pattern_literal_bool(self.input.hir, self.input.resolution, pattern).is_some()
                     || pattern_literal_int(self.input.hir, self.input.resolution, pattern).is_some()
             }
+            PatternKind::Tuple(items) => items
+                .iter()
+                .all(|item| self.supports_destructuring_bind_pattern(*item)),
+            PatternKind::Struct { fields, .. } => fields
+                .iter()
+                .all(|field| self.supports_destructuring_bind_pattern(field.pattern)),
             _ => false,
         };
 
         if !supported {
             diagnostics.push(unsupported(
                 span,
-                "LLVM IR backend foundation only supports single-name binding patterns",
+                "LLVM IR backend foundation only supports single-name or tuple/struct destructuring binding patterns",
             ));
         }
     }
@@ -5116,25 +5135,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             StatementKind::BindPattern {
                 pattern, source, ..
             } => match pattern_kind(self.emitter.input.hir, *pattern) {
-                PatternKind::Binding(local) => {
+                PatternKind::Binding(_) | PatternKind::Tuple(_) | PatternKind::Struct { .. } => {
                     let rendered = self.render_operand(output, source, statement.span);
-                    let binding_local = self
-                        .body
-                        .local_ids()
-                        .find(|candidate| {
-                            matches!(
-                                self.body.local(*candidate).origin,
-                                LocalOrigin::Binding(hir_local) if hir_local == *local
-                            )
-                        })
-                        .expect("binding local should exist in MIR body");
-                    let _ = writeln!(
-                        output,
-                        "  store {} {}, ptr {}",
-                        rendered.llvm_ty,
-                        rendered.repr,
-                        llvm_slot_name(self.body, binding_local)
-                    );
+                    self.bind_pattern_value(output, *pattern, rendered, statement.span);
                 }
                 PatternKind::Path(_)
                 | PatternKind::Integer(_)
@@ -5288,7 +5291,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         .expect(
                             "supported cleanup lowering should lower cleanup tuple pattern items",
                         );
-                    let item_value = self.extract_cleanup_aggregate_value(
+                    let item_value = self.extract_aggregate_value(
                         output,
                         &value,
                         index,
@@ -5317,7 +5320,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                                 "supported cleanup lowering at {span:?} should only destructure cleanup struct patterns with known fields"
                             )
                         });
-                    let field_value = self.extract_cleanup_aggregate_value(
+                    let field_value = self.extract_aggregate_value(
                         output,
                         &value,
                         index,
@@ -5334,7 +5337,99 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
-    fn extract_cleanup_aggregate_value(
+    fn bind_pattern_value(
+        &mut self,
+        output: &mut String,
+        pattern: hir::PatternId,
+        value: LoweredValue,
+        span: Span,
+    ) {
+        match pattern_kind(self.emitter.input.hir, pattern) {
+            PatternKind::Binding(local) => {
+                let binding_local = self
+                    .body
+                    .local_ids()
+                    .find(|candidate| {
+                        matches!(
+                            self.body.local(*candidate).origin,
+                            LocalOrigin::Binding(hir_local) if hir_local == *local
+                        )
+                    })
+                    .expect("binding local should exist in MIR body");
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {}",
+                    value.llvm_ty,
+                    value.repr,
+                    llvm_slot_name(self.body, binding_local)
+                );
+            }
+            PatternKind::Tuple(items) => {
+                let Ty::Tuple(item_tys) = &value.ty else {
+                    panic!(
+                        "supported bind-pattern lowering at {span:?} should only destructure tuple values with tuple patterns"
+                    );
+                };
+                assert_eq!(
+                    items.len(),
+                    item_tys.len(),
+                    "supported bind-pattern lowering at {span:?} should only destructure tuple values with matching arity"
+                );
+                for (index, (item, item_ty)) in items.iter().zip(item_tys.iter()).enumerate() {
+                    let item_llvm_ty = self
+                        .emitter
+                        .lower_llvm_type(item_ty, span, "tuple pattern item")
+                        .expect("supported bind-pattern lowering should lower tuple pattern items");
+                    let item_value = self.extract_aggregate_value(
+                        output,
+                        &value,
+                        index,
+                        item_ty.clone(),
+                        item_llvm_ty,
+                    );
+                    self.bind_pattern_value(output, *item, item_value, span);
+                }
+            }
+            PatternKind::Struct { fields, .. } => {
+                let field_layouts = self
+                    .emitter
+                    .struct_field_lowerings(&value.ty, span, "struct pattern")
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "supported bind-pattern lowering at {span:?} should only destructure struct values with struct patterns"
+                        )
+                    });
+                for field in fields {
+                    let (index, field_layout) = field_layouts
+                        .iter()
+                        .enumerate()
+                        .find(|(_, candidate)| candidate.name == field.name)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "supported bind-pattern lowering at {span:?} should only destructure struct patterns with known fields"
+                            )
+                        });
+                    let field_value = self.extract_aggregate_value(
+                        output,
+                        &value,
+                        index,
+                        field_layout.ty.clone(),
+                        field_layout.llvm_ty.clone(),
+                    );
+                    self.bind_pattern_value(output, field.pattern, field_value, span);
+                }
+            }
+            PatternKind::Path(_)
+            | PatternKind::Integer(_)
+            | PatternKind::Bool(_)
+            | PatternKind::Wildcard => {}
+            _ => panic!(
+                "supported bind-pattern lowering at {span:?} should only destructure binding, wildcard, tuple, or struct patterns"
+            ),
+        }
+    }
+
+    fn extract_aggregate_value(
         &mut self,
         output: &mut String,
         aggregate: &LoweredValue,
@@ -15953,6 +16048,40 @@ fn main() -> Int {
         assert!(rendered.contains("%for_iterable_bb"));
         assert!(rendered.contains("insertvalue [3 x i64]"));
         assert!(rendered.contains("getelementptr inbounds [3 x i64], ptr %for_iterable_bb"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
+    }
+
+    #[test]
+    fn emits_bind_pattern_destructuring_in_program_bodies() {
+        let rendered = emit_with_mode(
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+fn pair_values() -> [Pair; 2] {
+    return [Pair { left: 20, right: 22 }, Pair { left: 24, right: 26 }]
+}
+
+fn main() -> Int {
+    let (first, second) = (1, 2)
+    var total = first + second
+    for (left, current) in ((4, 6), (8, 10)) {
+        total = total + left + current
+    }
+    for Pair { left, right: current } in pair_values() {
+        total = total + left + current
+    }
+    return total
+}
+"#,
+            CodegenMode::Program,
+        );
+
+        assert!(rendered.matches("extractvalue { i64, i64 }").count() >= 6);
+        assert!(rendered.contains("getelementptr inbounds [2 x { i64, i64 }], ptr"));
+        assert!(!rendered.contains("only supports single-name binding patterns"));
         assert!(!rendered.contains("does not support `for` lowering yet"));
     }
 
