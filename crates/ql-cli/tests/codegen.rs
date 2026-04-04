@@ -4789,6 +4789,26 @@ fn cleanup_block_for_await_fixed_shapes_codegen_case_matches() {
 }
 
 #[test]
+fn cleanup_block_for_await_call_roots_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "cleanup_block_for_await_call_roots_build",
+        source_relative: "fixtures/codegen/pass/cleanup_block_for_await_call_roots.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("cleanup block for-await call-root build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn cleanup_block_for_await_inline_task_roots_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {
