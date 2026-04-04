@@ -18836,6 +18836,59 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_cleanup_if_and_match_block_lowering_with_async_bodies() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+extern "c" fn step(value: Int)
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let branch = true
+    defer if branch {
+        let values = [worker(1), worker(2)]
+        for await value in values {
+            step(value);
+        }
+    } else {
+        step(0);
+    }
+    defer match branch {
+        true => {
+            let values = [worker(3), worker(4)]
+            for await value in values {
+                step(value);
+            }
+        }
+        false => {
+            step(0);
+        }
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("cleanup_then"));
+        assert!(rendered.contains("cleanup_else"));
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 3);
+        assert!(rendered.matches("call void @step(i64").count() >= 3);
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
     fn emits_cleanup_block_sequence_lowering() {
         let rendered = emit(
             r#"
