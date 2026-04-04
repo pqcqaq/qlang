@@ -11429,6 +11429,72 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_import_alias_call_root_fixed_shapes() {
+        let dir = TestDir::new("ql-driver-llvm-ir-import-alias-call-root-fixed-shapes");
+        let source = dir.write(
+            "import_alias_call_root_fixed_shapes.ql",
+            r#"
+use array_values as values
+use tuple_values as pairs
+use make_payload as payload
+
+struct Payload {
+    values: [Int; 2],
+}
+
+fn array_values(base: Int) -> [Int; 2] {
+    return [base, base]
+}
+
+fn tuple_values(base: Int) -> (Int, Int) {
+    return (base, base + 1)
+}
+
+fn make_payload(base: Int) -> Payload {
+    return Payload {
+        values: [base, base + 1],
+    }
+}
+
+fn main() -> Int {
+    var total = 0
+    for value in values(10) {
+        total = total + value
+    }
+    for value in pairs(7) {
+        total = total + value
+    }
+    for value in payload(3).values {
+        total = total + value
+    }
+    return total
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/import_alias_call_root_fixed_shapes.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with import-alias call-root fixed-shape for should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call [2 x i64] @ql_"));
+        assert!(rendered.contains("call { i64, i64 } @ql_"));
+        assert!(rendered.contains("call { [2 x i64] } @ql_"));
+        assert!(rendered.matches("for_await_setup").count() >= 3);
+        assert!(rendered.contains("getelementptr inbounds [2 x i64], ptr"));
+        assert!(rendered.contains("getelementptr inbounds { [2 x i64] }, ptr"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_static_item_values_in_expressions() {
         let dir = TestDir::new("ql-driver-llvm-ir-static-item-values-in-expressions");
         let source = dir.write(
