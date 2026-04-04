@@ -4,5 +4,5 @@ fn add_one(value: Int) -> Int {
 
 fn main() -> Int {
     let f = add_one
-    return 0
+    return f(41)
 }

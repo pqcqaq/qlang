@@ -7173,7 +7173,7 @@ async fn helper() -> Wrap {
     }
 
     #[test]
-    fn build_file_surfaces_function_value_diagnostics_without_panicking() {
+    fn build_file_writes_llvm_ir_with_function_value_local_calls() {
         let dir = TestDir::new("ql-driver-function-values");
         let source = dir.write(
             "function_values.ql",
@@ -7184,20 +7184,28 @@ fn add_one(value: Int) -> Int {
 
 fn main() -> Int {
     let f = add_one
-    return 0
+    return f(41)
 }
 "#,
         );
+        let output = dir.path().join("artifacts/function_values.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("function value local calls should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
-        let error = build_file(&source, &BuildOptions::default()).expect_err("build should fail");
-        let diagnostics = error
-            .diagnostics()
-            .expect("unsupported codegen should return diagnostics");
-
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message
-                == "LLVM IR backend foundation does not support first-class function values yet"
-        }));
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("store ptr @ql_0_add_one"));
+        assert!(rendered.contains("call i64 %t0(i64 41)"));
+        assert!(!rendered.contains("does not support first-class function values yet"));
     }
 
     #[test]

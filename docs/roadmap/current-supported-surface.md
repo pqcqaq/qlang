@@ -49,6 +49,9 @@
 - 标量整数 / `Bool` / `Void`
 - direct call 与 named arguments
 - same-file `use ... as ...` function alias call
+- 最小 first-class sync function value 子集
+  - same-file sync function item
+  - 绑定到 local 后的 positional indirect call
 - fixed-shape `for`
   - fixed-array
   - homogeneous tuple
@@ -234,6 +237,7 @@
 - 更广义的 async `dylib` surface，尤其是公开 async ABI
 - generalized `for await`，超出 fixed-array / homogeneous tuple 之外的 iterable
 - broader cleanup lowering / cleanup codegen，超出当前 direct / call-backed `defer` + `if` / `match` + 透明 `?` wrapper cleanup 子集之外
+- broader callable value lowering，超出当前 same-file sync function item / import-alias + local indirect call 子集之外
 - cancellation / polling / drop semantics
 - generic async ABI / layout substitution
 - arbitrary dynamic overlap precision

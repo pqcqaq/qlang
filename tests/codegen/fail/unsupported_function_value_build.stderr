@@ -1,3 +1,0 @@
-error: tests/codegen/fail/unsupported_function_value_build.ql:6:9: LLVM IR backend foundation does not support first-class function values yet
-      let f = add_one
-          ^

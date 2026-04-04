@@ -65,6 +65,13 @@ fn cleanup_call_result_ty(signature: &FunctionSignature) -> Ty {
     }
 }
 
+fn callable_ty_from_signature(signature: &FunctionSignature) -> Ty {
+    Ty::Callable {
+        params: signature.params.iter().map(|param| param.ty.clone()).collect(),
+        ret: Box::new(signature.return_ty.clone()),
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ParamSignature {
     name: String,
@@ -421,6 +428,9 @@ impl<'a> ModuleEmitter<'a> {
                         StatementKind::Assign { value, .. } | StatementKind::Eval { value } => {
                             self.collect_rvalue_callees(value, &mut queue);
                         }
+                        StatementKind::BindPattern { source, .. } => {
+                            self.collect_operand_function_values(source, &mut queue);
+                        }
                         StatementKind::RegisterCleanup { cleanup } => {
                             let cleanup = body.cleanup(*cleanup);
                             match &cleanup.kind {
@@ -429,8 +439,7 @@ impl<'a> ModuleEmitter<'a> {
                                 }
                             }
                         }
-                        StatementKind::BindPattern { .. }
-                        | StatementKind::StorageLive { .. }
+                        StatementKind::StorageLive { .. }
                         | StatementKind::StorageDead { .. }
                         | StatementKind::RunCleanup { .. } => {}
                     }
@@ -450,10 +459,65 @@ impl<'a> ModuleEmitter<'a> {
     }
 
     fn collect_rvalue_callees(&self, value: &Rvalue, queue: &mut VecDeque<FunctionRef>) {
-        if let Rvalue::Call { callee, .. } = value
-            && let Some(function) = self.resolve_direct_callee_function(callee)
-        {
-            queue.push_back(function);
+        match value {
+            Rvalue::Use(operand) | Rvalue::Question(operand) => {
+                self.collect_operand_function_values(operand, queue);
+            }
+            Rvalue::Tuple(items) | Rvalue::Array(items) => {
+                for item in items {
+                    self.collect_operand_function_values(item, queue);
+                }
+            }
+            Rvalue::Call { callee, args } => {
+                if let Some(function) = self.resolve_direct_callee_function(callee) {
+                    queue.push_back(function);
+                }
+                self.collect_operand_function_values(callee, queue);
+                for arg in args {
+                    self.collect_operand_function_values(&arg.value, queue);
+                }
+            }
+            Rvalue::Binary { left, right, .. } => {
+                self.collect_operand_function_values(left, queue);
+                self.collect_operand_function_values(right, queue);
+            }
+            Rvalue::Unary { operand, .. } => {
+                self.collect_operand_function_values(operand, queue);
+            }
+            Rvalue::AggregateStruct { fields, .. } => {
+                for field in fields {
+                    self.collect_operand_function_values(&field.value, queue);
+                }
+            }
+            Rvalue::Closure { .. } | Rvalue::OpaqueExpr(_) => {}
+        }
+    }
+
+    fn collect_operand_function_values(
+        &self,
+        operand: &Operand,
+        queue: &mut VecDeque<FunctionRef>,
+    ) {
+        match operand {
+            Operand::Constant(Constant::Function { function, .. }) => queue.push_back(*function),
+            Operand::Constant(Constant::Import(path)) => {
+                let Some(item_id) = local_item_for_import_path(self.input.hir, path) else {
+                    return;
+                };
+                if matches!(&self.input.hir.item(item_id).kind, ItemKind::Function(_)) {
+                    queue.push_back(FunctionRef::Item(item_id));
+                }
+            }
+            Operand::Place(_)
+            | Operand::Constant(
+                Constant::Integer(_)
+                | Constant::String { .. }
+                | Constant::Bool(_)
+                | Constant::None
+                | Constant::Void
+                | Constant::Item { .. }
+                | Constant::UnresolvedName(_),
+            ) => {}
         }
     }
 
@@ -1461,7 +1525,13 @@ impl<'a> ModuleEmitter<'a> {
                 ) {
                     self.seed_expected_temp_from_rvalue(body, value, &expected_ty, local_types);
                 }
-                self.seed_expected_temp_from_call_args(body, value, local_types);
+                self.seed_expected_temp_from_call_args(
+                    body,
+                    value,
+                    local_types,
+                    async_task_handles,
+                    statement.span,
+                );
             }
             StatementKind::BindPattern {
                 pattern, source, ..
@@ -1474,7 +1544,13 @@ impl<'a> ModuleEmitter<'a> {
                 }
             }
             StatementKind::Eval { value } => {
-                self.seed_expected_temp_from_call_args(body, value, local_types);
+                self.seed_expected_temp_from_call_args(
+                    body,
+                    value,
+                    local_types,
+                    async_task_handles,
+                    statement.span,
+                );
             }
             StatementKind::StorageLive { .. }
             | StatementKind::StorageDead { .. }
@@ -1577,23 +1653,42 @@ impl<'a> ModuleEmitter<'a> {
         body: &mir::MirBody,
         value: &Rvalue,
         local_types: &mut HashMap<mir::LocalId, Ty>,
+        async_task_handles: &HashMap<mir::LocalId, AsyncTaskHandleInfo>,
+        span: Span,
     ) {
         let Rvalue::Call { callee, args } = value else {
             return;
         };
-        let Some(function) = self.resolve_direct_callee_function(callee) else {
+        if let Some(function) = self.resolve_direct_callee_function(callee)
+            && let Some(signature) = self.signatures.get(&function)
+            && let Some(ordered_args) = self.ordered_call_args(args, signature)
+        {
+            for (arg, param) in ordered_args.into_iter().zip(signature.params.iter()) {
+                self.seed_expected_temp_from_operand(body, &arg.value, &param.ty, local_types);
+            }
             return;
-        };
-        let Some(signature) = self.signatures.get(&function) else {
-            return;
-        };
+        }
 
-        let Some(ordered_args) = self.ordered_call_args(args, signature) else {
+        let mut diagnostics = Vec::new();
+        let Some(callee_ty) = self.infer_operand_type(
+            body,
+            callee,
+            local_types,
+            async_task_handles,
+            &mut diagnostics,
+            span,
+        ) else {
             return;
         };
+        let Ty::Callable { params, .. } = callee_ty else {
+            return;
+        };
+        if args.iter().any(|arg| arg.name.is_some()) || args.len() != params.len() {
+            return;
+        }
 
-        for (arg, param) in ordered_args.into_iter().zip(signature.params.iter()) {
-            self.seed_expected_temp_from_operand(body, &arg.value, &param.ty, local_types);
+        for (arg, param_ty) in args.iter().zip(params.iter()) {
+            self.seed_expected_temp_from_operand(body, &arg.value, param_ty, local_types);
         }
     }
 
@@ -1609,6 +1704,29 @@ impl<'a> ModuleEmitter<'a> {
             }
             _ => None,
         }
+    }
+
+    fn infer_sync_function_value_type(
+        &self,
+        function: FunctionRef,
+        diagnostics: &mut Vec<Diagnostic>,
+        span: Span,
+    ) -> Option<Ty> {
+        let Some(signature) = self.signatures.get(&function) else {
+            diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation could not resolve the function declaration for this value",
+            ));
+            return None;
+        };
+        if signature.is_async {
+            diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation does not support first-class async function values yet",
+            ));
+            return None;
+        }
+        Some(callable_ty_from_signature(signature))
     }
 
     fn ordered_call_args<'b>(
@@ -2209,45 +2327,78 @@ impl<'a> ModuleEmitter<'a> {
                 span,
             ),
             Rvalue::Call { callee, args } => {
-                let Some(function) = self.resolve_direct_callee_function(callee) else {
-                    ctx.diagnostics.push(unsupported(
-                        span,
-                        "LLVM IR backend foundation only supports direct resolved function calls",
-                    ));
-                    return None;
-                };
+                if let Some(function) = self.resolve_direct_callee_function(callee) {
+                    let Some(signature) = self.signatures.get(&function) else {
+                        ctx.diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation could not resolve the direct callee declaration",
+                        ));
+                        return None;
+                    };
 
-                let Some(signature) = self.signatures.get(&function) else {
-                    ctx.diagnostics.push(unsupported(
-                        span,
-                        "LLVM IR backend foundation could not resolve the direct callee declaration",
-                    ));
-                    return None;
-                };
+                    let Some(ordered_args) = self.ordered_call_args(args, signature) else {
+                        ctx.diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation could not map call arguments to direct callee parameters",
+                        ));
+                        return None;
+                    };
 
-                let Some(ordered_args) = self.ordered_call_args(args, signature) else {
-                    ctx.diagnostics.push(unsupported(
-                        span,
-                        "LLVM IR backend foundation could not map call arguments to direct callee parameters",
-                    ));
-                    return None;
-                };
+                    for arg in ordered_args {
+                        let _ = self.infer_operand_type(
+                            ctx.body,
+                            &arg.value,
+                            ctx.local_types,
+                            ctx.async_task_handles,
+                            ctx.diagnostics,
+                            span,
+                        );
+                    }
 
-                for arg in ordered_args {
-                    let _ = self.infer_operand_type(
+                    if signature.is_async {
+                        None
+                    } else {
+                        Some(signature.return_ty.clone())
+                    }
+                } else {
+                    let Some(callee_ty) = self.infer_operand_type(
                         ctx.body,
-                        &arg.value,
+                        callee,
                         ctx.local_types,
                         ctx.async_task_handles,
                         ctx.diagnostics,
                         span,
-                    );
-                }
+                    ) else {
+                        return None;
+                    };
+                    let Ty::Callable { params, ret } = callee_ty else {
+                        ctx.diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation only supports direct resolved function calls or callable operands",
+                        ));
+                        return None;
+                    };
+                    if args.iter().any(|arg| arg.name.is_some()) || args.len() != params.len() {
+                        ctx.diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation could not map call arguments to callable parameters",
+                        ));
+                        return None;
+                    }
 
-                if signature.is_async {
-                    None
-                } else {
-                    Some(signature.return_ty.clone())
+                    for (arg, param_ty) in args.iter().zip(params.iter()) {
+                        let _ = self.infer_operand_type(
+                            ctx.body,
+                            &arg.value,
+                            ctx.local_types,
+                            ctx.async_task_handles,
+                            ctx.diagnostics,
+                            span,
+                        );
+                        let _ = param_ty;
+                    }
+
+                    Some(ret.as_ref().clone())
                 }
             }
             Rvalue::Binary { left, op, right } => {
@@ -2600,16 +2751,21 @@ impl<'a> ModuleEmitter<'a> {
                 Constant::Integer(_) => Some(Ty::Builtin(BuiltinType::Int)),
                 Constant::Bool(_) => Some(Ty::Builtin(BuiltinType::Bool)),
                 Constant::Void => Some(void_ty()),
-                Constant::Function { .. } => {
-                    diagnostics.push(unsupported(
-                        span,
-                        "LLVM IR backend foundation does not support first-class function values yet",
-                    ));
-                    None
+                Constant::Function { function, .. } => {
+                    self.infer_sync_function_value_type(*function, diagnostics, span)
                 }
                 Constant::Item { item, .. } => match &self.input.hir.item(*item).kind {
                     ItemKind::Const(global) | ItemKind::Static(global) => {
-                        Some(lower_type(self.input.hir, self.input.resolution, global.ty))
+                        let ty = lower_type(self.input.hir, self.input.resolution, global.ty);
+                        if matches!(ty, Ty::Callable { .. }) {
+                            diagnostics.push(unsupported(
+                                span,
+                                "LLVM IR backend foundation does not support callable const/static values yet",
+                            ));
+                            None
+                        } else {
+                            Some(ty)
+                        }
                     }
                     _ => {
                         diagnostics.push(unsupported(
@@ -2635,8 +2791,22 @@ impl<'a> ModuleEmitter<'a> {
                 }
                 Constant::Import(path) => local_item_for_import_path(self.input.hir, path)
                     .and_then(|item_id| match &self.input.hir.item(item_id).kind {
+                        ItemKind::Function(_) => self.infer_sync_function_value_type(
+                            FunctionRef::Item(item_id),
+                            diagnostics,
+                            span,
+                        ),
                         ItemKind::Const(global) | ItemKind::Static(global) => {
-                            Some(lower_type(self.input.hir, self.input.resolution, global.ty))
+                            let ty = lower_type(self.input.hir, self.input.resolution, global.ty);
+                            if matches!(ty, Ty::Callable { .. }) {
+                                diagnostics.push(unsupported(
+                                    span,
+                                    "LLVM IR backend foundation does not support callable const/static values yet",
+                                ));
+                                None
+                            } else {
+                                Some(ty)
+                            }
                         }
                         _ => None,
                     })
@@ -4872,50 +5042,101 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             Rvalue::Use(operand) => Some(self.render_operand(output, operand, span)),
             Rvalue::Question(operand) => Some(self.render_operand(output, operand, span)),
             Rvalue::Call { callee, args } => {
-                let Some(function) = self.emitter.resolve_direct_callee_function(callee) else {
-                    panic!("prepared calls should only contain direct resolved callees");
-                };
-                let signature = self
-                    .emitter
-                    .signatures
-                    .get(&function)
-                    .expect("callee signatures should exist");
-                let rendered_args = self
-                    .emitter
-                    .ordered_call_args(args, signature)
-                    .expect("prepared direct calls should preserve callee argument mapping")
-                    .iter()
-                    .map(|arg| {
-                        let value = self.render_operand(output, &arg.value, span);
-                        format!("{} {}", value.llvm_ty, value.repr)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                if let Some(function) = self.emitter.resolve_direct_callee_function(callee) {
+                    let signature = self
+                        .emitter
+                        .signatures
+                        .get(&function)
+                        .expect("callee signatures should exist");
+                    let rendered_args = self
+                        .emitter
+                        .ordered_call_args(args, signature)
+                        .expect("prepared direct calls should preserve callee argument mapping")
+                        .iter()
+                        .map(|arg| {
+                            let value = self.render_operand(output, &arg.value, span);
+                            format!("{} {}", value.llvm_ty, value.repr)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
 
-                if is_void_ty(&signature.return_ty) {
-                    let _ = writeln!(
-                        output,
-                        "  call {} @{}({rendered_args})",
-                        signature.return_llvm_ty, signature.llvm_name
-                    );
-                    None
-                } else {
-                    let temp = self.fresh_temp();
-                    let _ = writeln!(
-                        output,
-                        "  {temp} = call {} @{}({rendered_args})",
-                        signature.return_llvm_ty, signature.llvm_name
-                    );
-                    let ty = if signature.is_async {
-                        Ty::TaskHandle(Box::new(signature.body_return_ty.clone()))
+                    if is_void_ty(&signature.return_ty) {
+                        let _ = writeln!(
+                            output,
+                            "  call {} @{}({rendered_args})",
+                            signature.return_llvm_ty, signature.llvm_name
+                        );
+                        None
                     } else {
-                        signature.return_ty.clone()
+                        let temp = self.fresh_temp();
+                        let _ = writeln!(
+                            output,
+                            "  {temp} = call {} @{}({rendered_args})",
+                            signature.return_llvm_ty, signature.llvm_name
+                        );
+                        let ty = if signature.is_async {
+                            Ty::TaskHandle(Box::new(signature.body_return_ty.clone()))
+                        } else {
+                            signature.return_ty.clone()
+                        };
+                        Some(LoweredValue {
+                            ty,
+                            llvm_ty: signature.return_llvm_ty.clone(),
+                            repr: temp,
+                        })
+                    }
+                } else {
+                    let callee = self.render_operand(output, callee, span);
+                    let Ty::Callable { params, ret } = &callee.ty else {
+                        panic!(
+                            "prepared calls should only contain direct resolved callees or callable operands"
+                        );
                     };
-                    Some(LoweredValue {
-                        ty,
-                        llvm_ty: signature.return_llvm_ty.clone(),
-                        repr: temp,
-                    })
+                    assert!(
+                        args.iter().all(|arg| arg.name.is_none()) && args.len() == params.len(),
+                        "prepared indirect calls at {span:?} should only contain positional arguments matching the callable arity"
+                    );
+                    let rendered_args = args
+                        .iter()
+                        .zip(params.iter())
+                        .map(|(arg, param_ty)| {
+                            let value = self.render_operand(output, &arg.value, span);
+                            assert!(
+                                param_ty.compatible_with(&value.ty),
+                                "prepared indirect calls at {span:?} should preserve callable argument types"
+                            );
+                            format!("{} {}", value.llvm_ty, value.repr)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let return_ty = ret.as_ref().clone();
+                    let return_llvm_ty = self
+                        .emitter
+                        .lower_llvm_type(&return_ty, span, "call result")
+                        .expect(
+                            "prepared indirect calls should only produce lowered callable result types",
+                        );
+
+                    if is_void_ty(&return_ty) {
+                        let _ = writeln!(
+                            output,
+                            "  call {return_llvm_ty} {}({rendered_args})",
+                            callee.repr
+                        );
+                        None
+                    } else {
+                        let temp = self.fresh_temp();
+                        let _ = writeln!(
+                            output,
+                            "  {temp} = call {return_llvm_ty} {}({rendered_args})",
+                            callee.repr
+                        );
+                        Some(LoweredValue {
+                            ty: return_ty,
+                            llvm_ty: return_llvm_ty,
+                            repr: temp,
+                        })
+                    }
                 }
             }
             Rvalue::Binary { left, op, right } => {
@@ -5721,10 +5942,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     llvm_ty: "void".to_owned(),
                     repr: "void".to_owned(),
                 },
-                Constant::Function { .. } => {
-                    panic!(
-                        "prepared non-call operands should not materialize function declarations"
-                    )
+                Constant::Function { function, .. } => {
+                    self.render_function_constant(*function, span)
                 }
                 Constant::Item { item, .. } => self.render_item_constant(output, *item, span),
                 Constant::String { .. } | Constant::None | Constant::UnresolvedName(_) => {
@@ -5734,12 +5953,39 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     let item_id = local_item_for_import_path(self.emitter.input.hir, path)
                         .unwrap_or_else(|| {
                             panic!(
-                                "prepared operands should only contain local const/static imports"
+                                "prepared operands should only contain local function/const/static imports"
                             )
                         });
-                    self.render_item_constant(output, item_id, span)
+                    match &self.emitter.input.hir.item(item_id).kind {
+                        ItemKind::Function(_) => {
+                            self.render_function_constant(FunctionRef::Item(item_id), span)
+                        }
+                        ItemKind::Const(_) | ItemKind::Static(_) => {
+                            self.render_item_constant(output, item_id, span)
+                        }
+                        _ => panic!(
+                            "prepared operands should only contain local function/const/static imports"
+                        ),
+                    }
                 }
             },
+        }
+    }
+
+    fn render_function_constant(&mut self, function: FunctionRef, span: Span) -> LoweredValue {
+        let signature = self.emitter.signatures.get(&function).unwrap_or_else(|| {
+            panic!(
+                "prepared function-value lowering at {span:?} should resolve the function signature"
+            )
+        });
+        assert!(
+            !signature.is_async,
+            "prepared function-value lowering at {span:?} should not materialize async function values"
+        );
+        LoweredValue {
+            ty: callable_ty_from_signature(signature),
+            llvm_ty: "ptr".to_owned(),
+            repr: format!("@{}", signature.llvm_name),
         }
     }
 
@@ -8695,6 +8941,7 @@ fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnos
         Ty::Builtin(BuiltinType::ISize) | Ty::Builtin(BuiltinType::USize) => Ok("i64".to_owned()),
         Ty::Builtin(BuiltinType::F32) => Ok("float".to_owned()),
         Ty::Builtin(BuiltinType::F64) => Ok("double".to_owned()),
+        Ty::Callable { .. } => Ok("ptr".to_owned()),
         Ty::TaskHandle(_) => Ok("ptr".to_owned()),
         Ty::Tuple(items) => {
             if items.iter().any(is_void_ty) {
@@ -10426,8 +10673,8 @@ extern "c" fn main() -> Int {
     }
 
     #[test]
-    fn rejects_first_class_function_values() {
-        let messages = emit_error(
+    fn emits_first_class_function_value_local_calls() {
+        let rendered = emit(
             r#"
 fn add_one(value: Int) -> Int {
     return value + 1
@@ -10435,14 +10682,14 @@ fn add_one(value: Int) -> Int {
 
 fn main() -> Int {
     let f = add_one
-    return 0
+    return f(41)
 }
 "#,
         );
 
-        assert!(messages.iter().any(|message| {
-            message == "LLVM IR backend foundation does not support first-class function values yet"
-        }));
+        assert!(rendered.contains("store ptr @ql_0_add_one"));
+        assert!(rendered.contains("load ptr, ptr %l1_f"));
+        assert!(rendered.contains("call i64 %t0(i64 41)"));
     }
 
     #[test]

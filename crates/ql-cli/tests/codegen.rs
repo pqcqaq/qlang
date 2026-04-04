@@ -3848,13 +3848,6 @@ fn codegen_snapshots_match() {
             extra_args: &[],
         },
         FailCase {
-            name: "unsupported_function_value_build",
-            source_relative: "tests/codegen/fail/unsupported_function_value_build.ql",
-            emit: "llvm-ir",
-            expected_stderr_relative: "tests/codegen/fail/unsupported_function_value_build.stderr",
-            extra_args: &[],
-        },
-        FailCase {
             name: "unsupported_empty_array_without_expected_build",
             source_relative: "tests/codegen/fail/unsupported_empty_array_without_expected_build.ql",
             emit: "llvm-ir",
@@ -4115,6 +4108,26 @@ fn direct_cleanup_codegen_case_matches() {
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
         panic!("direct cleanup build regression:\n\n{message}");
+    }
+}
+
+#[test]
+fn function_value_local_call_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "function_value_local_call_build",
+        source_relative: "fixtures/codegen/pass/function_value_local_call.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("function value local call build regression:\n\n{message}");
     }
 }
 
