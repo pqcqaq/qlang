@@ -76,6 +76,10 @@ fn callable_ty_from_signature(signature: &FunctionSignature) -> Ty {
     }
 }
 
+fn closure_llvm_name(parent_llvm_name: &str, closure: mir::ClosureId) -> String {
+    format!("{parent_llvm_name}__closure{}", closure.index())
+}
+
 #[derive(Clone, Debug)]
 struct ParamSignature {
     name: String,
@@ -126,11 +130,13 @@ impl AsyncTaskResultLayout {
 #[derive(Clone, Debug)]
 struct PreparedFunction {
     signature: FunctionSignature,
+    body: mir::MirBody,
     local_types: HashMap<mir::LocalId, Ty>,
     async_task_handles: HashMap<mir::LocalId, AsyncTaskHandleInfo>,
     task_handle_place_aliases: HashMap<mir::LocalId, mir::Place>,
     supported_for_loops: HashMap<mir::BasicBlockId, SupportedForLoopLowering>,
     supported_matches: HashMap<mir::BasicBlockId, SupportedMatchLowering>,
+    param_binding_locals: Vec<mir::LocalId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,18 +184,23 @@ enum SupportedForLoopIterableRoot {
 
 fn cleanup_for_iterable_shape(ty: &Ty) -> Option<(SupportedForLoopIterableKind, Ty, usize)> {
     match ty {
-        Ty::Array { element, len } if !is_void_ty(element.as_ref()) => {
-            Some((SupportedForLoopIterableKind::Array, element.as_ref().clone(), *len))
-        }
+        Ty::Array { element, len } if !is_void_ty(element.as_ref()) => Some((
+            SupportedForLoopIterableKind::Array,
+            element.as_ref().clone(),
+            *len,
+        )),
         Ty::Tuple(items)
             if !items.is_empty()
                 && !items.iter().any(is_void_ty)
-                && items
-                    .iter()
-                    .skip(1)
-                    .all(|item| item.compatible_with(&items[0]) && items[0].compatible_with(item)) =>
+                && items.iter().skip(1).all(|item| {
+                    item.compatible_with(&items[0]) && items[0].compatible_with(item)
+                }) =>
         {
-            Some((SupportedForLoopIterableKind::Tuple, items[0].clone(), items.len()))
+            Some((
+                SupportedForLoopIterableKind::Tuple,
+                items[0].clone(),
+                items.len(),
+            ))
         }
         _ => None,
     }
@@ -371,7 +382,22 @@ impl<'a> ModuleEmitter<'a> {
             return Err(CodegenError::new(dedupe_diagnostics(diagnostics)));
         }
 
-        Ok(self.render_module(&reachable, &prepared, entry))
+        let mut prepared_closures = Vec::new();
+        for function in &prepared {
+            self.collect_prepared_closures(
+                function.signature.function_ref,
+                &function.signature.llvm_name,
+                &function.body,
+                &mut prepared_closures,
+                &mut diagnostics,
+            );
+        }
+
+        if !diagnostics.is_empty() {
+            return Err(CodegenError::new(dedupe_diagnostics(diagnostics)));
+        }
+
+        Ok(self.render_module(&reachable, &prepared, &prepared_closures, entry))
     }
 
     fn find_entry_function(&self) -> Result<FunctionRef, CodegenError> {
@@ -673,9 +699,7 @@ impl<'a> ModuleEmitter<'a> {
             hir::StmtKind::Loop { body } => {
                 self.collect_guard_block_callees(*body, queue);
             }
-            hir::StmtKind::For {
-                iterable, body, ..
-            } => {
+            hir::StmtKind::For { iterable, body, .. } => {
                 self.collect_guard_expr_callees(*iterable, queue);
                 self.collect_guard_block_callees(*body, queue);
             }
@@ -683,8 +707,7 @@ impl<'a> ModuleEmitter<'a> {
             | hir::StmtKind::Return(_)
             | hir::StmtKind::Defer(_)
             | hir::StmtKind::Break
-            | hir::StmtKind::Continue
-             => {}
+            | hir::StmtKind::Continue => {}
         }
     }
 
@@ -933,6 +956,127 @@ impl<'a> ModuleEmitter<'a> {
                 ]
             })?;
 
+        self.prepare_body(signature, body)
+    }
+
+    fn prepare_closure(
+        &self,
+        root_function_ref: FunctionRef,
+        parent_llvm_name: &str,
+        closure_id: mir::ClosureId,
+        closure: &mir::ClosureDecl,
+    ) -> Result<PreparedFunction, Vec<Diagnostic>> {
+        let body = closure.lowered_body.as_deref().ok_or_else(|| {
+            vec![unsupported(
+                closure.span,
+                "LLVM IR backend foundation currently only supports non-capturing sync closure values",
+            )]
+        })?;
+        let closure_ty = self
+            .input
+            .typeck
+            .expr_ty(closure.expr)
+            .cloned()
+            .ok_or_else(|| {
+                vec![unsupported(
+                    closure.span,
+                    "LLVM IR backend foundation could not resolve the callable type for this closure value",
+                )]
+            })?;
+        let Ty::Callable { params, ret } = closure_ty else {
+            return Err(vec![unsupported(
+                closure.span,
+                "LLVM IR backend foundation expected closures to lower as callable values",
+            )]);
+        };
+        if params.len() != closure.param_locals.len() {
+            return Err(vec![unsupported(
+                closure.span,
+                "LLVM IR backend foundation encountered a closure whose lowered parameter list no longer matches the inferred callable arity",
+            )]);
+        }
+
+        let return_ty = ret.as_ref().clone();
+        let return_llvm_ty =
+            match self.lower_llvm_type(&return_ty, closure.span, "closure return type") {
+                Ok(llvm_ty) => llvm_ty,
+                Err(error) => return Err(vec![error]),
+            };
+        let mut param_signatures = Vec::with_capacity(params.len());
+        for (local_id, ty) in closure.param_locals.iter().zip(params.iter()) {
+            let local = self.input.hir.local(*local_id);
+            let llvm_ty = match self.lower_llvm_type(ty, local.span, "closure parameter type") {
+                Ok(llvm_ty) => llvm_ty,
+                Err(error) => return Err(vec![error]),
+            };
+            param_signatures.push(ParamSignature {
+                name: local.name.clone(),
+                ty: ty.clone(),
+                llvm_ty,
+            });
+        }
+
+        let mut prepared = self.prepare_body(
+            FunctionSignature {
+                function_ref: root_function_ref,
+                name: format!("{}::closure{}", parent_llvm_name, closure_id.index()),
+                llvm_name: closure_llvm_name(parent_llvm_name, closure_id),
+                span: closure.span,
+                body_return_ty: return_ty.clone(),
+                body_return_llvm_ty: return_llvm_ty.clone(),
+                return_ty,
+                return_llvm_ty,
+                params: param_signatures,
+                body_style: FunctionBodyStyle::Definition,
+                is_async: false,
+                async_body_llvm_name: None,
+                async_frame_layout: None,
+                async_result_layout: None,
+            },
+            body,
+        )?;
+        prepared.param_binding_locals = closure
+            .param_locals
+            .iter()
+            .filter_map(|local_id| mir_local_for_hir_local(&prepared.body, *local_id))
+            .collect();
+        Ok(prepared)
+    }
+
+    fn collect_prepared_closures(
+        &self,
+        root_function_ref: FunctionRef,
+        parent_llvm_name: &str,
+        body: &mir::MirBody,
+        prepared: &mut Vec<PreparedFunction>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        for closure_id in body.closure_ids() {
+            let closure = body.closure(closure_id);
+            let Some(_) = closure.lowered_body.as_ref() else {
+                continue;
+            };
+            match self.prepare_closure(root_function_ref, parent_llvm_name, closure_id, closure) {
+                Ok(prepared_closure) => {
+                    self.collect_prepared_closures(
+                        root_function_ref,
+                        &prepared_closure.signature.llvm_name,
+                        &prepared_closure.body,
+                        prepared,
+                        diagnostics,
+                    );
+                    prepared.push(prepared_closure);
+                }
+                Err(mut errors) => diagnostics.append(&mut errors),
+            }
+        }
+    }
+
+    fn prepare_body(
+        &self,
+        signature: FunctionSignature,
+        body: &mir::MirBody,
+    ) -> Result<PreparedFunction, Vec<Diagnostic>> {
         let mut diagnostics = Vec::new();
         let mut local_types = self.seed_local_types(body, &signature, &mut diagnostics);
         let async_task_handles = self.collect_async_task_handles(body);
@@ -1554,11 +1698,13 @@ impl<'a> ModuleEmitter<'a> {
         if diagnostics.is_empty() {
             Ok(PreparedFunction {
                 signature,
+                body: body.clone(),
                 local_types,
                 async_task_handles,
                 task_handle_place_aliases,
                 supported_for_loops,
                 supported_matches,
+                param_binding_locals: Vec::new(),
             })
         } else {
             Err(dedupe_diagnostics(diagnostics))
@@ -1903,11 +2049,7 @@ impl<'a> ModuleEmitter<'a> {
         self.supports_cleanup_expr_with_loop(expr_id, false)
     }
 
-    fn supports_cleanup_expr_with_loop(
-        &self,
-        expr_id: hir::ExprId,
-        in_cleanup_loop: bool,
-    ) -> bool {
+    fn supports_cleanup_expr_with_loop(&self, expr_id: hir::ExprId, in_cleanup_loop: bool) -> bool {
         match &self.input.hir.expr(expr_id).kind {
             hir::ExprKind::Call { callee, args } => {
                 self.supports_cleanup_call_expr(*callee, args, None)
@@ -1925,8 +2067,9 @@ impl<'a> ModuleEmitter<'a> {
             } => {
                 self.supports_cleanup_bool_expr(*condition)
                     && self.supports_cleanup_block_expr_with_loop(*then_branch, in_cleanup_loop)
-                    && else_branch
-                        .is_none_or(|expr| self.supports_cleanup_expr_with_loop(expr, in_cleanup_loop))
+                    && else_branch.is_none_or(|expr| {
+                        self.supports_cleanup_expr_with_loop(expr, in_cleanup_loop)
+                    })
             }
             hir::ExprKind::Match { value, arms } => {
                 self.supports_cleanup_match_expr_with_loop(*value, arms, in_cleanup_loop)
@@ -1940,9 +2083,12 @@ impl<'a> ModuleEmitter<'a> {
         block_id: hir::BlockId,
         in_cleanup_loop: bool,
     ) -> bool {
-        self.supports_cleanup_block_with_tail(block_id, false, in_cleanup_loop, |this, tail, loop_scope| {
-            this.supports_cleanup_expr_with_loop(tail, loop_scope)
-        })
+        self.supports_cleanup_block_with_tail(
+            block_id,
+            false,
+            in_cleanup_loop,
+            |this, tail, loop_scope| this.supports_cleanup_expr_with_loop(tail, loop_scope),
+        )
     }
 
     fn supports_cleanup_block_with_tail(
@@ -1953,14 +2099,12 @@ impl<'a> ModuleEmitter<'a> {
         tail_support: impl Fn(&Self, hir::ExprId, bool) -> bool,
     ) -> bool {
         let block = self.input.hir.block(block_id);
-        block
-            .statements
-            .iter()
-            .all(|statement_id| self.supports_cleanup_statement_with_loop(*statement_id, in_cleanup_loop))
-            && match block.tail {
-                Some(tail) => tail_support(self, tail, in_cleanup_loop),
-                None => !require_tail,
-            }
+        block.statements.iter().all(|statement_id| {
+            self.supports_cleanup_statement_with_loop(*statement_id, in_cleanup_loop)
+        }) && match block.tail {
+            Some(tail) => tail_support(self, tail, in_cleanup_loop),
+            None => !require_tail,
+        }
     }
 
     fn supports_cleanup_statement_with_loop(
@@ -1989,10 +2133,7 @@ impl<'a> ModuleEmitter<'a> {
                     && self.supports_cleanup_block_expr_with_loop(*body, true)
             }
             hir::StmtKind::Break | hir::StmtKind::Continue => in_cleanup_loop,
-            hir::StmtKind::Let { .. }
-            | hir::StmtKind::Return(_)
-            | hir::StmtKind::Defer(_)
-             => false,
+            hir::StmtKind::Let { .. } | hir::StmtKind::Return(_) | hir::StmtKind::Defer(_) => false,
         }
     }
 
@@ -2123,9 +2264,12 @@ impl<'a> ModuleEmitter<'a> {
                 return self.supports_cleanup_call_expr(*callee, args, Some(expected_ty));
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-                return self.supports_cleanup_block_with_tail(*block_id, true, false, |this, tail, _| {
-                    this.supports_cleanup_value_expr(tail, expected_ty)
-                });
+                return self.supports_cleanup_block_with_tail(
+                    *block_id,
+                    true,
+                    false,
+                    |this, tail, _| this.supports_cleanup_value_expr(tail, expected_ty),
+                );
             }
             hir::ExprKind::Question(inner) => {
                 return self.supports_cleanup_value_expr(*inner, expected_ty);
@@ -2804,12 +2948,17 @@ impl<'a> ModuleEmitter<'a> {
             Rvalue::AggregateStruct { path, fields } => {
                 self.infer_struct_rvalue_type(path, fields, expected_ty, ctx, span)
             }
-            Rvalue::Closure { .. } => {
-                ctx.diagnostics.push(unsupported(
-                    span,
-                    "LLVM IR backend foundation does not support closure values yet",
-                ));
-                None
+            Rvalue::Closure { closure } => {
+                let closure = ctx.body.closure(*closure);
+                if !closure.captures.is_empty() || closure.lowered_body.is_none() {
+                    ctx.diagnostics.push(unsupported(
+                        span,
+                        "LLVM IR backend foundation currently only supports non-capturing sync closure values",
+                    ));
+                    None
+                } else {
+                    self.input.typeck.expr_ty(closure.expr).cloned()
+                }
             }
             Rvalue::OpaqueExpr(_) => {
                 ctx.diagnostics.push(unsupported(
@@ -3477,6 +3626,7 @@ impl<'a> ModuleEmitter<'a> {
         &self,
         reachable: &[FunctionRef],
         functions: &[PreparedFunction],
+        closures: &[PreparedFunction],
         entry: Option<FunctionRef>,
     ) -> String {
         let mut output = String::new();
@@ -3523,6 +3673,13 @@ impl<'a> ModuleEmitter<'a> {
         {
             output.push('\n');
             self.render_host_entry_wrapper(&mut output, entry_function);
+        }
+
+        let mut closures = closures.iter().collect::<Vec<_>>();
+        closures.sort_by(|left, right| left.signature.llvm_name.cmp(&right.signature.llvm_name));
+        for closure in closures {
+            output.push('\n');
+            self.render_function(&mut output, closure);
         }
 
         output
@@ -3925,15 +4082,7 @@ impl<'a> ModuleEmitter<'a> {
         function: &PreparedFunction,
         llvm_name: &str,
     ) {
-        let body = self
-            .input
-            .mir
-            .body_for_owner(BodyOwner::Item(
-                self.input
-                    .hir
-                    .function_owner_item(function.signature.function_ref),
-            ))
-            .expect("prepared function should still have a MIR body");
+        let body = &function.body;
         let params = if function.signature.is_async {
             "ptr %frame".to_owned()
         } else {
@@ -4070,6 +4219,16 @@ impl<'a> ModuleEmitter<'a> {
                 param.llvm_ty,
                 index,
                 llvm_slot_name(body, local_id)
+            );
+        }
+        for (index, local_id) in function.param_binding_locals.iter().enumerate() {
+            let param = &function.signature.params[index];
+            let _ = writeln!(
+                output,
+                "  store {} %arg{}, ptr {}",
+                param.llvm_ty,
+                index,
+                llvm_slot_name(body, *local_id)
             );
         }
         for block_id in body.block_ids() {
@@ -4553,11 +4712,11 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 let _ = writeln!(output, "  br label %{}", labels.continue_label);
                 self.cleanup_path_open = false;
             }
-            hir::StmtKind::Let { .. }
-            | hir::StmtKind::Return(_)
-            | hir::StmtKind::Defer(_) => panic!(
-                "supported cleanup lowering at {span:?} should only render expr, while, loop, for, break, or continue statements inside cleanup blocks"
-            ),
+            hir::StmtKind::Let { .. } | hir::StmtKind::Return(_) | hir::StmtKind::Defer(_) => {
+                panic!(
+                    "supported cleanup lowering at {span:?} should only render expr, while, loop, for, break, or continue statements inside cleanup blocks"
+                )
+            }
         }
     }
 
@@ -4595,12 +4754,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         self.cleanup_path_open = true;
     }
 
-    fn render_cleanup_loop(
-        &mut self,
-        output: &mut String,
-        body: hir::BlockId,
-        span: Span,
-    ) {
+    fn render_cleanup_loop(&mut self, output: &mut String, body: hir::BlockId, span: Span) {
         let body_label = self.fresh_label("cleanup_loop_body");
         let end_label = self.fresh_label("cleanup_loop_end");
         let _ = writeln!(output, "  br label %{body_label}");
@@ -4658,7 +4812,11 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         let rendered_iterable =
             self.render_cleanup_value_expr(output, iterable, &iterable_ty, span);
         let iterable_slot = self.fresh_temp();
-        let _ = writeln!(output, "  {iterable_slot} = alloca {}", rendered_iterable.llvm_ty);
+        let _ = writeln!(
+            output,
+            "  {iterable_slot} = alloca {}",
+            rendered_iterable.llvm_ty
+        );
         let _ = writeln!(
             output,
             "  store {} {}, ptr {iterable_slot}",
@@ -4724,7 +4882,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         let index = self.fresh_temp();
         let continue_flag = self.fresh_temp();
         let _ = writeln!(output, "  {index} = load i64, ptr {index_slot}");
-        let _ = writeln!(output, "  {continue_flag} = icmp ult i64 {index}, {iterable_len}");
+        let _ = writeln!(
+            output,
+            "  {continue_flag} = icmp ult i64 {index}, {iterable_len}"
+        );
         let _ = writeln!(
             output,
             "  br i1 {continue_flag}, label %{body_label}, label %{end_label}"
@@ -4736,7 +4897,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             output,
             "  {item_ptr} = getelementptr inbounds {iterable_llvm_ty}, ptr {iterable_slot}, i64 0, i64 {index}"
         );
-        let _ = writeln!(output, "  {item_value} = load {element_llvm_ty}, ptr {item_ptr}");
+        let _ = writeln!(
+            output,
+            "  {item_value} = load {element_llvm_ty}, ptr {item_ptr}"
+        );
         if let Some(local) = binding_local {
             self.cleanup_bindings.push(GuardBindingValue {
                 local,
@@ -4806,7 +4970,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 output,
                 "  {item_ptr} = getelementptr inbounds {iterable_llvm_ty}, ptr {iterable_slot}, i32 0, i32 {index}"
             );
-            let _ = writeln!(output, "  {item_value} = load {element_llvm_ty}, ptr {item_ptr}");
+            let _ = writeln!(
+                output,
+                "  {item_value} = load {element_llvm_ty}, ptr {item_ptr}"
+            );
             if let Some(local) = binding_local {
                 self.cleanup_bindings.push(GuardBindingValue {
                     local,
@@ -5841,7 +6008,30 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             Rvalue::AggregateStruct { path, fields } => {
                 self.render_struct_rvalue(output, path, fields, expected_ty, span)
             }
-            Rvalue::Closure { .. } | Rvalue::OpaqueExpr(_) => {
+            Rvalue::Closure { closure } => {
+                let closure_id = *closure;
+                let closure = self.body.closure(closure_id);
+                assert!(
+                    closure.captures.is_empty() && closure.lowered_body.is_some(),
+                    "prepared functions should only contain supported non-capturing closure values"
+                );
+                let ty = self
+                    .emitter
+                    .input
+                    .typeck
+                    .expr_ty(closure.expr)
+                    .cloned()
+                    .expect("prepared closure values should preserve callable types");
+                Some(LoweredValue {
+                    ty,
+                    llvm_ty: "ptr".to_owned(),
+                    repr: format!(
+                        "@{}",
+                        closure_llvm_name(&self.prepared.signature.llvm_name, closure_id)
+                    ),
+                })
+            }
+            Rvalue::OpaqueExpr(_) => {
                 panic!("prepared functions should not contain unsupported rvalues")
             }
         }
@@ -6872,9 +7062,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     Some(ValueResolution::Local(local))
                         if self.cleanup_binding(*local).is_some() =>
                     {
-                        self.cleanup_binding(*local)
-                            .expect("checked above")
-                            .clone()
+                        self.cleanup_binding(*local).expect("checked above").clone()
                     }
                     Some(ValueResolution::Item(_)) | Some(ValueResolution::Import(_)) => {
                         if let Some(value) = guard_literal_bool(
@@ -9715,7 +9903,11 @@ fn supported_guard_call<'a>(
             }
         }
         return Some((
-            signature.params.iter().map(|param| param.ty.clone()).collect(),
+            signature
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect(),
             signature.return_ty.clone(),
         ));
     }
@@ -11550,6 +11742,23 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_non_capturing_closure_value_local_calls() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let run = () => 41
+    return run()
+}
+"#,
+        );
+
+        assert!(rendered.contains("store ptr @ql_0_main__closure0"));
+        assert!(rendered.contains("load ptr, ptr %l2_run"));
+        assert!(rendered.contains("call i64 %t1()"));
+        assert!(rendered.contains("define i64 @ql_0_main__closure0()"));
+    }
+
+    #[test]
     fn emits_callable_const_and_static_item_calls() {
         let rendered = emit(
             r#"
@@ -11607,18 +11816,20 @@ fn main() -> Int {
     }
 
     #[test]
-    fn rejects_unsupported_closure_values() {
+    fn rejects_capturing_closure_values() {
         let messages = emit_error(
             r#"
 fn main() -> Int {
-    let capture = () => 1
-    return 0
+    let value = 1
+    let capture = () => value
+    return capture()
 }
 "#,
         );
 
         assert!(messages.iter().any(|message| {
-            message == "LLVM IR backend foundation does not support closure values yet"
+            message
+                == "LLVM IR backend foundation currently only supports non-capturing sync closure values"
         }));
         assert!(messages.iter().all(|message| {
             !message.contains("could not resolve LLVM type for local")
@@ -15269,15 +15480,16 @@ fn main() -> Int {
     }
 
     #[test]
-    fn dedupes_cleanup_and_closure_value_lowering_diagnostics() {
+    fn dedupes_cleanup_and_capturing_closure_value_lowering_diagnostics() {
         let messages = emit_error(
             r#"
 extern "c" fn first()
 
 fn main() -> Int {
     defer first()
-    let capture = () => 1
-    return 0
+    let value = 1
+    let capture = () => value
+    return capture()
 }
 "#,
         );
@@ -15297,7 +15509,7 @@ fn main() -> Int {
                 .iter()
                 .filter(|message| {
                     message.as_str()
-                        == "LLVM IR backend foundation does not support closure values yet"
+                        == "LLVM IR backend foundation currently only supports non-capturing sync closure values"
                 })
                 .count(),
             1

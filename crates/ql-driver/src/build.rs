@@ -5267,14 +5267,15 @@ fn add_one(value: Int) -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_codegen_diagnostics() {
+    fn build_file_surfaces_capturing_closure_codegen_diagnostics() {
         let dir = TestDir::new("ql-driver-unsupported");
         let source = dir.write(
             "unsupported.ql",
             r#"
 fn main() -> Int {
-    let capture = () => 1
-    return 0
+    let value = 1
+    let capture = () => value
+    return capture()
 }
 "#,
         );
@@ -5285,7 +5286,8 @@ fn main() -> Int {
             .expect("unsupported codegen should return diagnostics");
 
         assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "LLVM IR backend foundation does not support closure values yet"
+            diagnostic.message
+                == "LLVM IR backend foundation currently only supports non-capturing sync closure values"
         }));
         assert!(diagnostics.iter().all(|diagnostic| {
             !diagnostic
@@ -7209,6 +7211,39 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_non_capturing_closure_values() {
+        let dir = TestDir::new("ql-driver-non-capturing-closure-values");
+        let source = dir.write(
+            "non_capturing_closure_values.ql",
+            r#"
+fn main() -> Int {
+    let run = () => 41
+    return run()
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/non_capturing_closure_values.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("non-capturing closure values should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("store ptr @ql_0_main__closure0"));
+        assert!(rendered.contains("load ptr, ptr %l2_run"));
+        assert!(rendered.contains("call i64 %t1()"));
+        assert!(rendered.contains("define i64 @ql_0_main__closure0()"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_callable_const_and_static_values() {
         let dir = TestDir::new("ql-driver-callable-const-static-values");
         let source = dir.write(
@@ -8817,7 +8852,9 @@ fn main() -> Int {
 }
 "#,
         );
-        let output = dir.path().join("artifacts/cleanup_block_for_fixed_shapes.ll");
+        let output = dir
+            .path()
+            .join("artifacts/cleanup_block_for_fixed_shapes.ll");
         let artifact = build_file(
             &source,
             &BuildOptions {
@@ -9026,7 +9063,7 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_surfaces_cleanup_and_closure_value_codegen_diagnostics_once_each() {
+    fn build_file_surfaces_cleanup_and_capturing_closure_value_codegen_diagnostics_once_each() {
         let dir = TestDir::new("ql-driver-cleanup-closure-value-unsupported");
         let source = dir.write(
             "cleanup_closure_value.ql",
@@ -9035,8 +9072,9 @@ extern "c" fn first()
 
 fn main() -> Int {
     defer first()
-    let capture = () => 1
-    return 0
+    let value = 1
+    let capture = () => value
+    return capture()
 }
 "#,
         );
@@ -9061,7 +9099,7 @@ fn main() -> Int {
                 .iter()
                 .filter(|diagnostic| {
                     diagnostic.message
-                        == "LLVM IR backend foundation does not support closure values yet"
+                        == "LLVM IR backend foundation currently only supports non-capturing sync closure values"
                 })
                 .count(),
             1
@@ -10852,7 +10890,9 @@ fn main() -> Int {
 }
 "#,
         );
-        let output = dir.path().join("artifacts/match_guard_callable_alias_calls.ll");
+        let output = dir
+            .path()
+            .join("artifacts/match_guard_callable_alias_calls.ll");
         let options = BuildOptions {
             emit: BuildEmit::LlvmIr,
             profile: BuildProfile::Debug,

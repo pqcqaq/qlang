@@ -5,7 +5,7 @@ mod render;
 use std::collections::HashMap;
 
 use ql_ast::{BinaryOp, Path, UnaryOp};
-use ql_hir::{ExprId, FunctionRef, ItemId, PatternId};
+use ql_hir::{ExprId, FunctionRef, ItemId, LocalId as HirLocalId, PatternId};
 use ql_span::Span;
 
 pub use ids::{BasicBlockId, BodyId, CleanupId, ClosureId, LocalId, ScopeId, StatementId};
@@ -372,11 +372,14 @@ pub struct ClosureCapture {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClosureDecl {
+    pub expr: ExprId,
     pub span: Span,
     pub is_move: bool,
     pub params: Vec<String>,
+    pub param_locals: Vec<HirLocalId>,
     pub captures: Vec<ClosureCapture>,
     pub body: ExprId,
+    pub lowered_body: Option<Box<MirBody>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1,0 +1,3 @@
+error: tests/codegen/fail/unsupported_capturing_closure_build.ql:3:19: LLVM IR backend foundation currently only supports non-capturing sync closure values
+      let capture = () => value
+                    ^^^^^^^^

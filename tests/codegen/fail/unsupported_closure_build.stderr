@@ -1,3 +1,0 @@
-error: tests/codegen/fail/unsupported_closure_build.ql:2:19: LLVM IR backend foundation does not support closure values yet
-      let capture = () => 1
-                    ^^^^^^^

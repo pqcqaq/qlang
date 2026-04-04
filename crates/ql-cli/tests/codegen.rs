@@ -93,6 +93,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "non_capturing_closure_build_llvm_ir",
+            source_relative: "fixtures/codegen/pass/non_capturing_closure_build.ql",
+            emit: "llvm-ir",
+            expected_relative: "tests/codegen/pass/non_capturing_closure_build.ll",
+            mock_compiler: false,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "bool_match_llvm_ir",
             source_relative: "fixtures/codegen/pass/bool_match.ql",
             emit: "llvm-ir",
@@ -3827,10 +3838,10 @@ fn codegen_snapshots_match() {
 
     let mut fail_cases = vec![
         FailCase {
-            name: "unsupported_closure_build",
-            source_relative: "tests/codegen/fail/unsupported_closure_build.ql",
+            name: "unsupported_capturing_closure_build",
+            source_relative: "tests/codegen/fail/unsupported_capturing_closure_build.ql",
             emit: "llvm-ir",
-            expected_stderr_relative: "tests/codegen/fail/unsupported_closure_build.stderr",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_capturing_closure_build.stderr",
             extra_args: &[],
         },
         FailCase {
@@ -3855,10 +3866,10 @@ fn codegen_snapshots_match() {
             extra_args: &[],
         },
         FailCase {
-            name: "unsupported_cleanup_closure_value_build",
-            source_relative: "tests/codegen/fail/unsupported_cleanup_closure_value_build.ql",
+            name: "unsupported_cleanup_capturing_closure_value_build",
+            source_relative: "tests/codegen/fail/unsupported_cleanup_capturing_closure_value_build.ql",
             emit: "llvm-ir",
-            expected_stderr_relative: "tests/codegen/fail/unsupported_cleanup_closure_value_build.stderr",
+            expected_stderr_relative: "tests/codegen/fail/unsupported_cleanup_capturing_closure_value_build.stderr",
             extra_args: &[],
         },
         FailCase {

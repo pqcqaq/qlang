@@ -610,7 +610,11 @@ struct LoopFrame {
 struct BodyBuilder<'a> {
     hir: &'a hir::Module,
     resolution: &'a ResolutionMap,
-    function: &'a Function,
+    function: Option<&'a Function>,
+    callable_name: String,
+    callable_span: ql_span::Span,
+    closure_params: Vec<hir::LocalId>,
+    closure_body: Option<ExprId>,
     body: MirBody,
     local_map: HashMap<hir::LocalId, LocalId>,
     immutable_local_values: HashMap<hir::LocalId, ExprId>,
@@ -634,7 +638,11 @@ impl<'a> BodyBuilder<'a> {
         Self {
             hir,
             resolution,
-            function,
+            function: Some(function),
+            callable_name: function.name.clone(),
+            callable_span: function.span,
+            closure_params: Vec::new(),
+            closure_body: None,
             body: MirBody {
                 owner,
                 name: function.name.clone(),
@@ -659,13 +667,58 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
+    fn new_closure(
+        hir: &'a hir::Module,
+        resolution: &'a ResolutionMap,
+        owner: BodyOwner,
+        name: String,
+        span: ql_span::Span,
+        params: Vec<hir::LocalId>,
+        body_expr: ExprId,
+    ) -> Self {
+        let placeholder_block = BasicBlockId::from_index(0);
+        let placeholder_scope = ScopeId::from_index(0);
+        let placeholder_local = LocalId::from_index(0);
+
+        Self {
+            hir,
+            resolution,
+            function: None,
+            callable_name: name.clone(),
+            callable_span: span,
+            closure_params: params.clone(),
+            closure_body: Some(body_expr),
+            body: MirBody {
+                owner,
+                name,
+                span,
+                entry: placeholder_block,
+                return_block: placeholder_block,
+                return_local: placeholder_local,
+                root_scope: placeholder_scope,
+                local_data: Vec::new(),
+                block_data: Vec::new(),
+                statement_data: Vec::new(),
+                scope_data: Vec::new(),
+                cleanup_data: Vec::new(),
+                closure_data: Vec::new(),
+            },
+            local_map: HashMap::new(),
+            immutable_local_values: HashMap::new(),
+            param_locals: vec![None; params.len()],
+            self_local: None,
+            temp_counter: 0,
+            loop_stack: Vec::new(),
+        }
+    }
+
     fn lower(mut self) -> MirBody {
-        let root_scope = self.alloc_scope(self.function.span, ScopeKind::Function, None);
-        let entry = self.new_block(self.function.span);
-        let return_block = self.new_block(self.function.span);
+        let root_scope = self.alloc_scope(self.callable_span, ScopeKind::Function, None);
+        let entry = self.new_block(self.callable_span);
+        let return_block = self.new_block(self.callable_span);
         let return_local = self.body.alloc_local(LocalDecl {
             name: "$return".to_owned(),
-            span: self.function.span,
+            span: self.callable_span,
             mutable: false,
             kind: LocalKind::Return,
             origin: LocalOrigin::ReturnSlot,
@@ -676,59 +729,114 @@ impl<'a> BodyBuilder<'a> {
         self.body.entry = entry;
         self.body.return_block = return_block;
         self.body.return_local = return_local;
-        self.set_terminator(return_block, self.function.span, TerminatorKind::Return);
+        self.set_terminator(return_block, self.callable_span, TerminatorKind::Return);
 
         self.lower_params(entry, root_scope);
 
-        let body_block = self
-            .function
-            .body
-            .expect("only body-bearing functions should reach MIR lowering");
-        self.lower_scoped_block(
-            body_block,
-            entry,
-            root_scope,
-            Some(Place::local(return_local)),
-            return_block,
-        );
+        if let Some(function) = self.function {
+            let body_block = function
+                .body
+                .expect("only body-bearing functions should reach MIR lowering");
+            self.lower_scoped_block(
+                body_block,
+                entry,
+                root_scope,
+                Some(Place::local(return_local)),
+                return_block,
+            );
+        } else {
+            let body_expr = self
+                .closure_body
+                .expect("closure MIR lowering should provide a body expression");
+            self.lower_expr_into_target(
+                body_expr,
+                entry,
+                root_scope,
+                Place::local(return_local),
+                return_block,
+            );
+        }
 
         self.body
     }
 
     fn lower_params(&mut self, entry: BasicBlockId, root_scope: ScopeId) {
-        for (index, param) in self.function.params.iter().enumerate() {
-            match param {
-                Param::Regular(param) => {
-                    let local = self.alloc_local_in_scope(
-                        root_scope,
-                        param.name.clone(),
-                        param.name_span,
-                        false,
-                        LocalKind::Param,
-                        LocalOrigin::Param { index },
-                    );
-                    self.param_locals[index] = Some(local);
-                    self.push_statement(
-                        entry,
-                        param.name_span,
-                        StatementKind::StorageLive { local },
-                    );
-                }
-                Param::Receiver(receiver) => {
-                    let local = self.alloc_local_in_scope(
-                        root_scope,
-                        "self".to_owned(),
-                        receiver.span,
-                        matches!(receiver.kind, ReceiverKind::Mutable),
-                        LocalKind::Param,
-                        LocalOrigin::Receiver,
-                    );
-                    self.self_local = Some(local);
-                    self.param_locals[index] = Some(local);
-                    self.push_statement(entry, receiver.span, StatementKind::StorageLive { local });
+        if let Some(function) = self.function {
+            for (index, param) in function.params.iter().enumerate() {
+                match param {
+                    Param::Regular(param) => {
+                        let local = self.alloc_local_in_scope(
+                            root_scope,
+                            param.name.clone(),
+                            param.name_span,
+                            false,
+                            LocalKind::Param,
+                            LocalOrigin::Param { index },
+                        );
+                        self.param_locals[index] = Some(local);
+                        self.push_statement(
+                            entry,
+                            param.name_span,
+                            StatementKind::StorageLive { local },
+                        );
+                    }
+                    Param::Receiver(receiver) => {
+                        let local = self.alloc_local_in_scope(
+                            root_scope,
+                            "self".to_owned(),
+                            receiver.span,
+                            matches!(receiver.kind, ReceiverKind::Mutable),
+                            LocalKind::Param,
+                            LocalOrigin::Receiver,
+                        );
+                        self.self_local = Some(local);
+                        self.param_locals[index] = Some(local);
+                        self.push_statement(
+                            entry,
+                            receiver.span,
+                            StatementKind::StorageLive { local },
+                        );
+                    }
                 }
             }
+        } else {
+            for (index, local_id) in self.closure_params.clone().into_iter().enumerate() {
+                let local_decl = self.hir.local(local_id);
+                let local = self.alloc_local_in_scope(
+                    root_scope,
+                    local_decl.name.clone(),
+                    local_decl.span,
+                    false,
+                    LocalKind::Binding,
+                    LocalOrigin::Binding(local_id),
+                );
+                self.param_locals[index] = Some(local);
+                self.push_statement(entry, local_decl.span, StatementKind::StorageLive { local });
+            }
         }
+    }
+
+    fn lower_non_capturing_closure_body(
+        &self,
+        span: ql_span::Span,
+        params: Vec<hir::LocalId>,
+        body_expr: ExprId,
+    ) -> MirBody {
+        let name = format!(
+            "{}::closure{}",
+            self.callable_name,
+            self.body.closure_ids().count()
+        );
+        BodyBuilder::new_closure(
+            self.hir,
+            self.resolution,
+            self.body.owner,
+            name,
+            span,
+            params,
+            body_expr,
+        )
+        .lower()
     }
 
     fn lower_scoped_block(
@@ -1155,16 +1263,27 @@ impl<'a> BodyBuilder<'a> {
                 body,
             } => {
                 let captures = self.collect_closure_captures(*body);
+                let param_locals = params.clone();
                 let params = params
                     .iter()
                     .map(|local_id| self.hir.local(*local_id).name.clone())
                     .collect();
+                let lowered_body = captures.is_empty().then(|| {
+                    Box::new(self.lower_non_capturing_closure_body(
+                        expr.span,
+                        param_locals.clone(),
+                        *body,
+                    ))
+                });
                 let closure = self.body.alloc_closure(ClosureDecl {
+                    expr: expr_id,
                     span: expr.span,
                     is_move: *is_move,
                     params,
+                    param_locals,
                     captures,
                     body: *body,
+                    lowered_body,
                 });
                 self.materialize_rvalue(current, scope, expr.span, Rvalue::Closure { closure })
             }
