@@ -8936,12 +8936,12 @@ fn pattern_binds_local(
 }
 
 fn mir_local_for_hir_local(body: &mir::MirBody, hir_local: hir::LocalId) -> Option<mir::LocalId> {
-    body.local_ids().find(|candidate| {
+    body.local_ids().filter(|candidate| {
         matches!(
             body.local(*candidate).origin,
             LocalOrigin::Binding(candidate_local) if candidate_local == hir_local
         )
-    })
+    }).last()
 }
 
 fn mir_param_local(body: &mir::MirBody, index: usize) -> Option<mir::LocalId> {
@@ -11823,6 +11823,24 @@ fn main() -> Int {
         assert!(rendered.contains("load ptr, ptr %l2_run"));
         assert!(rendered.contains("call i64 %t1()"));
         assert!(rendered.contains("define i64 @ql_0_main__closure0()"));
+    }
+
+    #[test]
+    fn emits_parameterized_non_capturing_closure_value_local_calls() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let run = (value) => value + 1
+    let alias = run
+    return alias(41)
+}
+"#,
+        );
+
+        assert!(rendered.contains("store ptr @ql_0_main__closure0"));
+        assert!(rendered.contains("load ptr, ptr %l3_alias"));
+        assert!(rendered.contains("call i64 %t2(i64 41)"));
+        assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
     }
 
     #[test]

@@ -817,6 +817,70 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn immutable_closure_source(&self, expr_id: ExprId) -> Option<(Vec<LocalId>, ExprId)> {
+        let mut locals = Vec::new();
+        let mut seen = HashSet::new();
+        let mut current = expr_id;
+
+        loop {
+            match &self.module.expr(current).kind {
+                ExprKind::Closure { .. } => return Some((locals, current)),
+                ExprKind::Name(_) => {
+                    let Some(ValueResolution::Local(local_id)) =
+                        self.resolution.expr_resolution(current)
+                    else {
+                        return None;
+                    };
+                    if !seen.insert(*local_id) {
+                        return None;
+                    }
+                    let value = *self.immutable_local_values.get(local_id)?;
+                    locals.push(*local_id);
+                    current = value;
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    fn refine_closure_callee_type_from_args(
+        &mut self,
+        callee: ExprId,
+        callee_ty: &Ty,
+        args: &[CallArg],
+    ) -> Option<Ty> {
+        let needs_refinement = matches!(
+            callee_ty,
+            Ty::Callable { params, .. } if params.iter().any(Ty::is_unknown)
+        ) || matches!(self.module.expr(callee).kind, ExprKind::Closure { .. });
+        if !needs_refinement || args.iter().any(|arg| matches!(arg, CallArg::Named { .. })) {
+            return None;
+        }
+
+        let (bound_locals, closure_expr) = self.immutable_closure_source(callee).or_else(|| {
+            matches!(self.module.expr(callee).kind, ExprKind::Closure { .. }).then_some((
+                Vec::new(),
+                callee,
+            ))
+        })?;
+        let expected = Ty::Callable {
+            params: args
+                .iter()
+                .map(|arg| match arg {
+                    CallArg::Positional(expr) => self.check_expr(*expr, None),
+                    CallArg::Named { value, .. } => self.check_expr(*value, None),
+                })
+                .collect(),
+            ret: Box::new(Ty::Unknown),
+        };
+        let refined = self.check_expr(closure_expr, Some(&expected));
+        self.expr_types.insert(callee, refined.clone());
+        for local_id in bound_locals {
+            self.local_types.insert(local_id, refined.clone());
+        }
+        Some(refined)
+    }
+
     fn expr_flow(&self, expr_id: ExprId) -> ControlFlowSummary {
         match &self.module.expr(expr_id).kind {
             ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => self.block_flow(*block_id),
@@ -1558,7 +1622,10 @@ impl<'a> Checker<'a> {
         args: &[CallArg],
         _expected: Option<&Ty>,
     ) -> Ty {
-        let callee_ty = self.check_expr(callee, None);
+        let mut callee_ty = self.check_expr(callee, None);
+        if let Some(refined) = self.refine_closure_callee_type_from_args(callee, &callee_ty, args) {
+            callee_ty = refined;
+        }
         let signature = self.call_signature(callee, &callee_ty);
         let Some(signature) = signature else {
             if !callee_ty.is_unknown() {

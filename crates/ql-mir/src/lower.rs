@@ -810,6 +810,7 @@ impl<'a> BodyBuilder<'a> {
                     LocalKind::Binding,
                     LocalOrigin::Binding(local_id),
                 );
+                self.local_map.insert(local_id, local);
                 self.param_locals[index] = Some(local);
                 self.push_statement(entry, local_decl.span, StatementKind::StorageLive { local });
             }
