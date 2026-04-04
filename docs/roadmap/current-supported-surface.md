@@ -51,7 +51,9 @@
 - same-file `use ... as ...` function alias call
 - 最小 first-class sync function value 子集
   - same-file sync function item
-  - 绑定到 local 后的 positional indirect call
+  - same-file `use ... as ...` function alias
+  - transparently resolve 到 same-file sync function item 的 callable `const` / `static`，以及它们的 same-file `use ... as ...` alias
+  - direct call，或先绑定到 local 后再做 positional indirect call
 - fixed-shape `for`
   - fixed-array
   - homogeneous tuple

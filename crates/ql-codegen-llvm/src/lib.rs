@@ -67,7 +67,11 @@ fn cleanup_call_result_ty(signature: &FunctionSignature) -> Ty {
 
 fn callable_ty_from_signature(signature: &FunctionSignature) -> Ty {
     Ty::Callable {
-        params: signature.params.iter().map(|param| param.ty.clone()).collect(),
+        params: signature
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect(),
         ret: Box::new(signature.return_ty.clone()),
     }
 }
@@ -500,12 +504,33 @@ impl<'a> ModuleEmitter<'a> {
     ) {
         match operand {
             Operand::Constant(Constant::Function { function, .. }) => queue.push_back(*function),
+            Operand::Constant(Constant::Item { item, .. }) => {
+                let mut visited = HashSet::new();
+                if let Some(function) = const_or_static_callable_function_ref(
+                    self.input.hir,
+                    self.input.resolution,
+                    *item,
+                    &mut visited,
+                ) {
+                    queue.push_back(function);
+                }
+            }
             Operand::Constant(Constant::Import(path)) => {
                 let Some(item_id) = local_item_for_import_path(self.input.hir, path) else {
                     return;
                 };
                 if matches!(&self.input.hir.item(item_id).kind, ItemKind::Function(_)) {
                     queue.push_back(FunctionRef::Item(item_id));
+                    return;
+                }
+                let mut visited = HashSet::new();
+                if let Some(function) = const_or_static_callable_function_ref(
+                    self.input.hir,
+                    self.input.resolution,
+                    item_id,
+                    &mut visited,
+                ) {
+                    queue.push_back(function);
                 }
             }
             Operand::Place(_)
@@ -515,7 +540,6 @@ impl<'a> ModuleEmitter<'a> {
                 | Constant::Bool(_)
                 | Constant::None
                 | Constant::Void
-                | Constant::Item { .. }
                 | Constant::UnresolvedName(_),
             ) => {}
         }
@@ -1729,6 +1753,39 @@ impl<'a> ModuleEmitter<'a> {
         Some(callable_ty_from_signature(signature))
     }
 
+    fn infer_const_or_static_item_type(
+        &self,
+        item_id: ItemId,
+        diagnostics: &mut Vec<Diagnostic>,
+        span: Span,
+    ) -> Option<Ty> {
+        let (ItemKind::Const(global) | ItemKind::Static(global)) =
+            &self.input.hir.item(item_id).kind
+        else {
+            return None;
+        };
+        let ty = lower_type(self.input.hir, self.input.resolution, global.ty);
+        if !matches!(ty, Ty::Callable { .. }) {
+            return Some(ty);
+        }
+
+        let mut visited = HashSet::new();
+        let Some(function) = const_or_static_callable_function_ref(
+            self.input.hir,
+            self.input.resolution,
+            item_id,
+            &mut visited,
+        ) else {
+            diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation does not support callable const/static values yet",
+            ));
+            return None;
+        };
+
+        self.infer_sync_function_value_type(function, diagnostics, span)
+    }
+
     fn ordered_call_args<'b>(
         &self,
         args: &'b [mir::CallArgument],
@@ -2755,17 +2812,8 @@ impl<'a> ModuleEmitter<'a> {
                     self.infer_sync_function_value_type(*function, diagnostics, span)
                 }
                 Constant::Item { item, .. } => match &self.input.hir.item(*item).kind {
-                    ItemKind::Const(global) | ItemKind::Static(global) => {
-                        let ty = lower_type(self.input.hir, self.input.resolution, global.ty);
-                        if matches!(ty, Ty::Callable { .. }) {
-                            diagnostics.push(unsupported(
-                                span,
-                                "LLVM IR backend foundation does not support callable const/static values yet",
-                            ));
-                            None
-                        } else {
-                            Some(ty)
-                        }
+                    ItemKind::Const(_) | ItemKind::Static(_) => {
+                        self.infer_const_or_static_item_type(*item, diagnostics, span)
                     }
                     _ => {
                         diagnostics.push(unsupported(
@@ -2796,17 +2844,8 @@ impl<'a> ModuleEmitter<'a> {
                             diagnostics,
                             span,
                         ),
-                        ItemKind::Const(global) | ItemKind::Static(global) => {
-                            let ty = lower_type(self.input.hir, self.input.resolution, global.ty);
-                            if matches!(ty, Ty::Callable { .. }) {
-                                diagnostics.push(unsupported(
-                                    span,
-                                    "LLVM IR backend foundation does not support callable const/static values yet",
-                                ));
-                                None
-                            } else {
-                                Some(ty)
-                            }
+                        ItemKind::Const(_) | ItemKind::Static(_) => {
+                            self.infer_const_or_static_item_type(item_id, diagnostics, span)
                         }
                         _ => None,
                     })
@@ -5626,9 +5665,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     let operand = self.render_const_expr(output, *expr, expected_ty, span);
                     let temp = self.fresh_temp();
                     if is_float_ty(&operand.ty) {
-                        let _ = writeln!(output, "  {temp} = fneg {} {}", operand.llvm_ty, operand.repr);
+                        let _ = writeln!(
+                            output,
+                            "  {temp} = fneg {} {}",
+                            operand.llvm_ty, operand.repr
+                        );
                     } else {
-                        let _ = writeln!(output, "  {temp} = sub {} 0, {}", operand.llvm_ty, operand.repr);
+                        let _ = writeln!(
+                            output,
+                            "  {temp} = sub {} 0, {}",
+                            operand.llvm_ty, operand.repr
+                        );
                     }
                     LoweredValue {
                         ty: operand.ty,
@@ -5674,21 +5721,44 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             hir::ExprKind::Name(_) => {
                 match self.emitter.input.resolution.expr_resolution(expr_id) {
-                    Some(ValueResolution::Item(item_id)) => {
-                        self.render_item_constant(output, *item_id, span)
+                    Some(ValueResolution::Function(function)) => {
+                        self.render_function_constant(*function, span)
                     }
-                    Some(ValueResolution::Import(import_binding)) => self.render_item_constant(
-                        output,
-                        local_item_for_import_binding(self.emitter.input.hir, import_binding)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "prepared const item lowering at {span:?} should only reference resolved local const/static imports"
-                                )
-                            }),
-                        span,
-                    ),
+                    Some(ValueResolution::Item(item_id)) => {
+                        match &self.emitter.input.hir.item(*item_id).kind {
+                            ItemKind::Function(_) => {
+                                self.render_function_constant(FunctionRef::Item(*item_id), span)
+                            }
+                            ItemKind::Const(_) | ItemKind::Static(_) => {
+                                self.render_item_constant(output, *item_id, span)
+                            }
+                            _ => panic!(
+                                "prepared const item lowering at {span:?} should only reference resolved local function/const/static items"
+                            ),
+                        }
+                    }
+                    Some(ValueResolution::Import(import_binding)) => {
+                        let item_id =
+                            local_item_for_import_binding(self.emitter.input.hir, import_binding)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "prepared const item lowering at {span:?} should only reference resolved local function/const/static imports"
+                                    )
+                                });
+                        match &self.emitter.input.hir.item(item_id).kind {
+                            ItemKind::Function(_) => {
+                                self.render_function_constant(FunctionRef::Item(item_id), span)
+                            }
+                            ItemKind::Const(_) | ItemKind::Static(_) => {
+                                self.render_item_constant(output, item_id, span)
+                            }
+                            _ => panic!(
+                                "prepared const item lowering at {span:?} should only reference resolved local function/const/static imports"
+                            ),
+                        }
+                    }
                     _ => panic!(
-                        "prepared const item lowering at {span:?} should only reference resolved const/static items"
+                        "prepared const item lowering at {span:?} should only reference resolved local function/const/static items"
                     ),
                 }
             }
@@ -8807,6 +8877,61 @@ fn local_item_for_import_binding(
         })
 }
 
+fn const_or_static_callable_function_ref(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    item_id: ItemId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<FunctionRef> {
+    if !visited.insert(item_id) {
+        return None;
+    }
+
+    let result = match &module.item(item_id).kind {
+        ItemKind::Const(global) | ItemKind::Static(global) => {
+            const_expr_sync_function_ref(module, resolution, global.value, visited)
+        }
+        _ => None,
+    };
+
+    visited.remove(&item_id);
+    result
+}
+
+fn const_expr_sync_function_ref(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    expr_id: hir::ExprId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<FunctionRef> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Name(_) => match resolution.expr_resolution(expr_id)? {
+            ValueResolution::Function(function_ref) => Some(*function_ref),
+            ValueResolution::Local(_) | ValueResolution::Param(_) | ValueResolution::SelfValue => {
+                None
+            }
+            value_resolution => {
+                let item_id = local_item_for_value_resolution(module, value_resolution)?;
+                match &module.item(item_id).kind {
+                    ItemKind::Function(_) => Some(FunctionRef::Item(item_id)),
+                    ItemKind::Const(_) | ItemKind::Static(_) => {
+                        const_or_static_callable_function_ref(module, resolution, item_id, visited)
+                    }
+                    _ => None,
+                }
+            }
+        },
+        hir::ExprKind::Block(block) | hir::ExprKind::Unsafe(block) => {
+            let tail = module.block(*block).tail?;
+            const_expr_sync_function_ref(module, resolution, tail, visited)
+        }
+        hir::ExprKind::Question(inner) => {
+            const_expr_sync_function_ref(module, resolution, *inner, visited)
+        }
+        _ => None,
+    }
+}
+
 fn guard_direct_callee_function(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -10690,6 +10815,37 @@ fn main() -> Int {
         assert!(rendered.contains("store ptr @ql_0_add_one"));
         assert!(rendered.contains("load ptr, ptr %l1_f"));
         assert!(rendered.contains("call i64 %t0(i64 41)"));
+    }
+
+    #[test]
+    fn emits_callable_const_and_static_item_calls() {
+        let rendered = emit(
+            r#"
+use APPLY_CONST as run_const
+use APPLY_STATIC as run_static
+
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+
+const APPLY_CONST: (Int) -> Int = add_one
+static APPLY_STATIC: (Int) -> Int = add_one
+
+fn main() -> Int {
+    let f = run_const
+    let g = run_static
+    return APPLY_CONST(10) + APPLY_STATIC(20) + f(30) + g(40)
+}
+"#,
+        );
+
+        assert!(rendered.contains("call i64 @ql_0_add_one(i64 10)"));
+        assert!(rendered.contains("call i64 @ql_0_add_one(i64 20)"));
+        assert!(rendered.contains("store ptr @ql_0_add_one"));
+        assert!(rendered.contains("load ptr, ptr %l1_f"));
+        assert!(rendered.contains("load ptr, ptr %l2_g"));
+        assert!(!rendered.contains("does not support callable const/static values yet"));
+        assert!(!rendered.contains("does not support imported value lowering yet"));
     }
 
     #[test]
