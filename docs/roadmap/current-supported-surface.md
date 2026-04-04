@@ -98,7 +98,7 @@
   - guard-call arg value path 现也接受同一批 ordinary local / param / `self` root 的 assignment expr value，包括当前 loadable guard-call arg 子集
   - guard-call arg value path 现也接受最小 runtime `if` value 子集：当前已锁定 loadable guard-call arg 的 `if cond { ... } else { ... }` 形态
   - guard-call arg value path 现也接受最小 runtime `match` value 子集：当前已锁定 bool/int scrutinee + 既有 guard-match arm 子集上的 loadable guard-call arg 形态
-  - guard-call callee root 现也接受最小 runtime `if` / `match` callable value 子集：当前已锁定由 same-file function item 选出的 indirect callee 形态
+  - guard-call callee root 现也接受最小 runtime `if` / `match` callable value 子集：当前已锁定由 same-file function item / alias、function-item-backed callable `const` / `static` / alias，以及 closure-backed callable `const` / `static` / alias 选出的 indirect callee 形态
   - callable-value positional indirect guard call 子集：当前已覆盖 callable local / callable `const` / `static` / same-file alias
   - inline aggregate guard-call arg / inline projection-root 子集
   - call-root / nested call-root guard 子集
@@ -234,7 +234,7 @@
 当前 cleanup lowering 只开放首个受控子集：
 
 - direct / call-backed `defer`
-- 其中 call-backed `defer` 当前已覆盖 direct resolved callee，以及 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect callee；runtime `if` / `match` typed-value path 当前也可选出 same-file function item / same-file import alias 作为 callable cleanup callee root
+- 其中 call-backed `defer` 当前已覆盖 direct resolved callee，以及 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect callee；runtime `if` / `match` typed-value path 当前也可选出 same-file function item / alias、function-item-backed callable `const` / `static` / alias，以及 closure-backed callable `const` / `static` / alias 作为 callable cleanup callee root
 - statement-sequenced block wrapper：当前接受 binding / `_`、tuple destructuring、struct destructuring（叶子仍限 binding / `_`）的最小 `let` statement、已支持 cleanup expr statement、statement-level assignment expr、statement-level `while` / `loop` / `for`，外加可选 tail；当前已覆盖 direct cleanup body、cleanup `let` binding / destructuring block、cleanup guard / scrutinee block、cleanup call-arg value block，以及 rooted in ordinary local / param / `self` place family 的 local/field/tuple-index/fixed-array-index assignment expr statement
 - cleanup value path 现也接受同一批 ordinary local / param / `self` place family root 的 assignment expr value，包括 direct cleanup call arg 与 valued cleanup block tail；当前仍限 local/field/tuple-index/fixed-array-index target path
 - cleanup value path 现也接受最小 runtime `if` value 子集：当前已锁定 direct cleanup call arg 的 `if cond { ... } else { ... }` 形态
@@ -248,7 +248,7 @@
 - cleanup runtime task-backed item value flow
   - same-file task-producing `const` / `static` item 与 same-file alias，当前也可经过 cleanup local binding、sync helper 参数/返回值，以及 runtime `if` / `match` 选值后，再进入 projected `await` / fixed-shape cleanup `for await`
 - cleanup aggregate value staging：cleanup `let` / valued block / projected-root materialization 现在会沿 tuple / array / struct literal 递归走 cleanup 自身的 value path；这意味着 awaited projected loadable value 现在可以先被装入 cleanup struct literal 字段，再继续被后续 cleanup `for await` / projected read 消费
-- bool-guard 驱动的 cleanup `if` branch；当前已不再只限 call-backed expr，branch body 也可承载当前已开放的 cleanup block 语句子集，包括 local binding、nested control-flow value path 与 async `for await`；对应 bool/int guard call 子路径也已覆盖 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect call，并接受 runtime `if` / `match` 选出的 same-file function item / same-file import alias callee root
+- bool-guard 驱动的 cleanup `if` branch；当前已不再只限 call-backed expr，branch body 也可承载当前已开放的 cleanup block 语句子集，包括 local binding、nested control-flow value path 与 async `for await`；对应 bool/int guard call 子路径也已覆盖 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect call，并接受 runtime `if` / `match` 选出的 same-file function item / alias、function-item-backed callable `const` / `static` / alias，以及 closure-backed callable `const` / `static` / alias callee root
 - bool / int scrutinee + literal-or-path / wildcard-or-single-binding catch-all arms + optional bool guard 的 cleanup `match` branch；当前也不再只限 call-backed arm expr，arm body 可承载同一批已开放 cleanup block 语句子集，包括 binding arm body 与 async `for await`；cleanup scalar call-arg value 里的 call 子路径也已覆盖同一批 callable-value 间接调用
 - 透明 `?` wrapper，可包裹当前 shipped cleanup expr / guard / scrutinee 子路径
 - cleanup value path 现也会复用既有 literal-source folding：cleanup `let` value、cleanup `for` iterable、cleanup `if` bool condition，以及 cleanup call-arg scalar/value path 当前都接受可折叠回既有 literal / aggregate root 的 `if` / 最小 literal `match` 根表达式
