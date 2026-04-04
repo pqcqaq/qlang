@@ -745,6 +745,7 @@ impl<'a> ModuleEmitter<'a> {
     ) {
         match &self.input.hir.stmt(statement_id).kind {
             hir::StmtKind::Expr { expr, .. } => self.collect_guard_expr_callees(*expr, queue),
+            hir::StmtKind::Let { value, .. } => self.collect_guard_expr_callees(*value, queue),
             hir::StmtKind::While { condition, body } => {
                 self.collect_guard_expr_callees(*condition, queue);
                 self.collect_guard_block_callees(*body, queue);
@@ -756,8 +757,7 @@ impl<'a> ModuleEmitter<'a> {
                 self.collect_guard_expr_callees(*iterable, queue);
                 self.collect_guard_block_callees(*body, queue);
             }
-            hir::StmtKind::Let { .. }
-            | hir::StmtKind::Return(_)
+            hir::StmtKind::Return(_)
             | hir::StmtKind::Defer(_)
             | hir::StmtKind::Break
             | hir::StmtKind::Continue => {}
@@ -2587,6 +2587,14 @@ impl<'a> ModuleEmitter<'a> {
         in_cleanup_loop: bool,
     ) -> bool {
         match &self.input.hir.stmt(statement_id).kind {
+            hir::StmtKind::Let { pattern, value, .. } => {
+                self.supports_cleanup_let_pattern(*pattern)
+                    && self
+                        .cleanup_let_expected_ty(*pattern, *value)
+                        .is_some_and(|expected_ty| {
+                            self.supports_cleanup_value_expr(*value, expected_ty)
+                        })
+            }
             hir::StmtKind::Expr { expr, .. } => {
                 self.supports_cleanup_expr_with_loop(*expr, in_cleanup_loop)
             }
@@ -2607,7 +2615,22 @@ impl<'a> ModuleEmitter<'a> {
                     && self.supports_cleanup_block_expr_with_loop(*body, true)
             }
             hir::StmtKind::Break | hir::StmtKind::Continue => in_cleanup_loop,
-            hir::StmtKind::Let { .. } | hir::StmtKind::Return(_) | hir::StmtKind::Defer(_) => false,
+            hir::StmtKind::Return(_) | hir::StmtKind::Defer(_) => false,
+        }
+    }
+
+    fn supports_cleanup_let_pattern(&self, pattern: hir::PatternId) -> bool {
+        matches!(
+            pattern_kind(self.input.hir, pattern),
+            PatternKind::Binding(_) | PatternKind::Wildcard
+        )
+    }
+
+    fn cleanup_let_expected_ty(&self, pattern: hir::PatternId, value: hir::ExprId) -> Option<&Ty> {
+        match pattern_kind(self.input.hir, pattern) {
+            PatternKind::Binding(local) => self.input.typeck.local_ty(*local),
+            PatternKind::Wildcard => self.input.typeck.expr_ty(value),
+            _ => None,
         }
     }
 
@@ -5145,9 +5168,11 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
     }
 
     fn render_cleanup_block(&mut self, output: &mut String, block_id: hir::BlockId, span: Span) {
+        let binding_depth = self.cleanup_bindings.len();
         if let Some(tail) = self.render_cleanup_block_prefix(output, block_id, span) {
             self.render_cleanup_expr(output, tail, span);
         }
+        self.cleanup_bindings.truncate(binding_depth);
     }
 
     fn render_cleanup_statement(
@@ -5157,6 +5182,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
     ) {
         match &self.emitter.input.hir.stmt(statement_id).kind {
+            hir::StmtKind::Let { pattern, value, .. } => {
+                self.render_cleanup_let(output, *pattern, *value, span)
+            }
             hir::StmtKind::Expr { expr, .. } => self.render_cleanup_expr(output, *expr, span),
             hir::StmtKind::While { condition, body } => {
                 self.render_cleanup_while(output, *condition, *body, span)
@@ -5186,11 +5214,36 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 let _ = writeln!(output, "  br label %{}", labels.continue_label);
                 self.cleanup_path_open = false;
             }
-            hir::StmtKind::Let { .. } | hir::StmtKind::Return(_) | hir::StmtKind::Defer(_) => {
+            hir::StmtKind::Return(_) | hir::StmtKind::Defer(_) => {
                 panic!(
-                    "supported cleanup lowering at {span:?} should only render expr, while, loop, for, break, or continue statements inside cleanup blocks"
+                    "supported cleanup lowering at {span:?} should only render let, expr, while, loop, for, break, or continue statements inside cleanup blocks"
                 )
             }
+        }
+    }
+
+    fn render_cleanup_let(
+        &mut self,
+        output: &mut String,
+        pattern: hir::PatternId,
+        value: hir::ExprId,
+        span: Span,
+    ) {
+        let expected_ty = self
+            .emitter
+            .cleanup_let_expected_ty(pattern, value)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "supported cleanup lowering at {span:?} should only render binding or wildcard `let` patterns"
+                )
+            });
+        let rendered = self.render_cleanup_value_expr(output, value, &expected_ty, span);
+        if let PatternKind::Binding(local) = pattern_kind(self.emitter.input.hir, pattern) {
+            self.cleanup_bindings.push(GuardBindingValue {
+                local: *local,
+                value: rendered,
+            });
         }
     }
 
@@ -5885,6 +5938,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 rendered
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                let binding_depth = self.cleanup_bindings.len();
                 let tail = self
                     .render_cleanup_block_prefix(output, *block_id, span)
                     .unwrap_or_else(|| {
@@ -5892,7 +5946,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         "supported cleanup lowering at {span:?} should only render valued cleanup blocks with tails"
                     )
                 });
-                self.render_cleanup_value_expr(output, tail, expected_ty, span)
+                let rendered = self.render_cleanup_value_expr(output, tail, expected_ty, span);
+                self.cleanup_bindings.truncate(binding_depth);
+                rendered
             }
             hir::ExprKind::Question(inner) => {
                 self.render_cleanup_value_expr(output, *inner, expected_ty, span)
@@ -15993,6 +16049,32 @@ fn main() -> Int {
 
         assert!(rendered.contains("call void @first()"));
         assert!(rendered.contains("call void @second()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_let_bindings() {
+        let rendered = emit(
+            r#"
+extern "c" fn sink(value: Int)
+
+fn amount() -> Int {
+    return 41
+}
+
+fn main() -> Int {
+    defer {
+        let value = amount()
+        sink(value)
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("_amount()"));
+        assert!(rendered.contains("call i64 @ql_"));
+        assert!(rendered.contains("call void @sink(i64"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
     }
 

@@ -219,14 +219,14 @@
 
 - direct / call-backed `defer`
 - 其中 call-backed `defer` 当前已覆盖 direct resolved callee，以及 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect callee
-- statement-sequenced block wrapper：只接受当前已支持 cleanup expr statement、statement-level `while` / `loop` / `for`，外加可选 tail；当前已覆盖 direct cleanup body、cleanup guard / scrutinee block，以及 cleanup call-arg value block
+- statement-sequenced block wrapper：当前接受 binding / `_` pattern 的最小 `let` statement、已支持 cleanup expr statement、statement-level `while` / `loop` / `for`，外加可选 tail；当前已覆盖 direct cleanup body、cleanup `let` binding block、cleanup guard / scrutinee block，以及 cleanup call-arg value block
 - statement-level cleanup `while`：当前开放 bool 条件 + 已支持 cleanup block body 的最小 lowering 子集，可在 cleanup block 内重复执行 direct / callable-backed call 路径，并支持 body-local `break` / `continue`（包括经由当前已开放 cleanup `if` branch 进入的 loop-exit path）
 - statement-level cleanup `loop`：当前开放已支持 cleanup block body 的最小 lowering 子集，并支持 body-local `break` / `continue`（包括经由当前已开放 cleanup `if` branch 进入的 loop-exit path）
 - statement-level cleanup `for`：当前开放 fixed array / homogeneous tuple iterable + `binding` / `_` pattern 的最小 lowering 子集，body 内可读取当前 item，并支持 body-local `break` / `continue`（包括经由当前已开放 cleanup `if` branch 进入的 loop-exit path）
 - bool-guard 驱动的 call-backed `if` cleanup branch；当前 bool/int guard call 子路径也已覆盖 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect call
 - bool / int scrutinee + literal-or-path / wildcard arms + optional bool guard 的 cleanup `match` branch；当前 arm guard 和 cleanup scalar call-arg value 里的 call 子路径也已覆盖同一批 callable-value 间接调用
 - 透明 `?` wrapper，可包裹当前 shipped cleanup expr / guard / scrutinee 子路径
-- 当前已锁定的用户面包括 direct cleanup `obj` build、callable-const-alias cleanup `obj` build、closure-backed callable global cleanup + guard `obj` build、local non-capturing closure cleanup + guard `obj` build、callable-guard-alias cleanup `match` `obj` build、statement-sequenced cleanup block `obj` build、statement-sequenced cleanup guard / scrutinee / call-arg value block `obj` build、带 body-local `break` / `continue` 的 statement-level cleanup `while` / `loop` `obj` build、fixed-shape statement-level cleanup `for` `obj` build、guarded dynamic task-handle cleanup `staticlib` build、cleanup `match` `obj` build，以及 cleanup-internal question-mark `obj` build
+- 当前已锁定的用户面包括 direct cleanup `obj` build、callable-const-alias cleanup `obj` build、closure-backed callable global cleanup + guard `obj` build、local non-capturing closure cleanup + guard `obj` build、cleanup `let` binding block `obj` build、callable-guard-alias cleanup `match` `obj` build、statement-sequenced cleanup block `obj` build、statement-sequenced cleanup guard / scrutinee / call-arg value block `obj` build、带 body-local `break` / `continue` 的 statement-level cleanup `while` / `loop` `obj` build、fixed-shape statement-level cleanup `for` `obj` build、guarded dynamic task-handle cleanup `staticlib` build、cleanup `match` `obj` build，以及 cleanup-internal question-mark `obj` build
 
 ### 透明 `?` lowering
 
