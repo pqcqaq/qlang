@@ -3146,6 +3146,61 @@ impl<'a> ModuleEmitter<'a> {
 
                 return false;
             }
+            hir::ExprKind::Tuple(items) => {
+                let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
+                    return false;
+                };
+                let Ty::Tuple(expected_items) = actual_ty else {
+                    return false;
+                };
+                return expected_ty.compatible_with(actual_ty)
+                    && expected_items.len() == items.len()
+                    && items
+                        .iter()
+                        .zip(expected_items.iter())
+                        .all(|(item, item_ty)| {
+                            self.supports_cleanup_value_expr(*item, item_ty, body, local_types)
+                        });
+            }
+            hir::ExprKind::Array(items) => {
+                let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
+                    return false;
+                };
+                let Ty::Array { element, len } = actual_ty else {
+                    return false;
+                };
+                return expected_ty.compatible_with(actual_ty)
+                    && *len == items.len()
+                    && items.iter().all(|item| {
+                        self.supports_cleanup_value_expr(*item, element.as_ref(), body, local_types)
+                    });
+            }
+            hir::ExprKind::StructLiteral { fields, .. } => {
+                let Some(actual_ty) = self.input.typeck.expr_ty(expr_id) else {
+                    return false;
+                };
+                let Ok(field_layouts) = self.struct_field_lowerings(
+                    actual_ty,
+                    self.input.hir.expr(expr_id).span,
+                    "cleanup value",
+                ) else {
+                    return false;
+                };
+                return expected_ty.compatible_with(actual_ty)
+                    && fields.iter().all(|field| {
+                        field_layouts
+                            .iter()
+                            .find(|layout| layout.name == field.name)
+                            .is_some_and(|layout| {
+                                self.supports_cleanup_value_expr(
+                                    field.value,
+                                    &layout.ty,
+                                    body,
+                                    local_types,
+                                )
+                            })
+                    });
+            }
             _ => {}
         }
 
@@ -7216,17 +7271,120 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_cleanup_struct_expr(
+        &mut self,
+        output: &mut String,
+        fields: &[hir::StructLiteralField],
+        expected_ty: &Ty,
+        span: Span,
+    ) -> LoweredValue {
+        let struct_ty = expected_ty.clone();
+        let field_layouts = self
+            .emitter
+            .struct_field_lowerings(&struct_ty, span, "cleanup struct value")
+            .unwrap_or_else(|_| {
+                panic!(
+                    "supported cleanup lowering at {span:?} should have a loadable struct literal layout"
+                )
+            });
+        let llvm_ty = self
+            .emitter
+            .lower_llvm_type(&struct_ty, span, "cleanup struct value")
+            .unwrap_or_else(|_| {
+                panic!(
+                    "supported cleanup lowering at {span:?} should have a lowered struct literal type"
+                )
+            });
+        let mut rendered_fields = HashMap::with_capacity(fields.len());
+        for field in fields {
+            let field_ty = field_layouts
+                .iter()
+                .find(|layout| layout.name == field.name)
+                .map(|layout| &layout.ty)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "supported cleanup lowering at {span:?} should provide declared struct literal field `{}`",
+                        field.name
+                    )
+                });
+            let rendered = self.render_cleanup_value_expr(output, field.value, field_ty, span);
+            rendered_fields.insert(field.name.clone(), rendered);
+        }
+
+        if field_layouts.is_empty() {
+            return LoweredValue {
+                ty: struct_ty,
+                llvm_ty,
+                repr: "zeroinitializer".to_owned(),
+            };
+        }
+
+        let mut aggregate = "undef".to_owned();
+        for (index, field) in field_layouts.iter().enumerate() {
+            let rendered = rendered_fields.remove(&field.name).unwrap_or_else(|| {
+                panic!(
+                    "supported cleanup lowering at {span:?} should provide every declared struct literal field"
+                )
+            });
+            let next = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {next} = insertvalue {llvm_ty} {aggregate}, {} {}, {}",
+                rendered.llvm_ty, rendered.repr, index
+            );
+            aggregate = next;
+        }
+
+        LoweredValue {
+            ty: struct_ty,
+            llvm_ty,
+            repr: aggregate,
+        }
+    }
+
     fn render_cleanup_projection_pointer(
         &mut self,
         output: &mut String,
         expr_id: hir::ExprId,
         span: Span,
     ) -> Option<(String, Ty)> {
-        if let Some(projected) = self.render_guard_projection_pointer(output, expr_id, span, None) {
-            return Some(projected);
-        }
-
         match &self.emitter.input.hir.expr(expr_id).kind {
+            hir::ExprKind::Tuple(items) => {
+                let tuple_ty = self.emitter.input.typeck.expr_ty(expr_id)?.clone();
+                let rendered = self.render_cleanup_tuple_expr(output, items, &tuple_ty, span);
+                let slot = self.fresh_temp();
+                let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {slot}",
+                    rendered.llvm_ty, rendered.repr
+                );
+                Some((slot, rendered.ty))
+            }
+            hir::ExprKind::Array(items) => {
+                let array_ty = self.emitter.input.typeck.expr_ty(expr_id)?.clone();
+                let rendered = self.render_cleanup_array_expr(output, items, &array_ty, span);
+                let slot = self.fresh_temp();
+                let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {slot}",
+                    rendered.llvm_ty, rendered.repr
+                );
+                Some((slot, rendered.ty))
+            }
+            hir::ExprKind::StructLiteral { fields, .. } => {
+                let struct_ty = self.emitter.input.typeck.expr_ty(expr_id)?.clone();
+                let rendered = self.render_cleanup_struct_expr(output, fields, &struct_ty, span);
+                let slot = self.fresh_temp();
+                let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {slot}",
+                    rendered.llvm_ty, rendered.repr
+                );
+                Some((slot, rendered.ty))
+            }
             hir::ExprKind::Unary {
                 op: UnaryOp::Await,
                 expr,
@@ -7341,7 +7499,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             hir::ExprKind::Question(inner) => {
                 self.render_cleanup_projection_pointer(output, *inner, span)
             }
-            _ => None,
+            _ => self.render_guard_projection_pointer(output, expr_id, span, None),
         }
     }
 
@@ -7433,6 +7591,14 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 assert!(
                     expected_ty.compatible_with(&rendered.ty),
                     "supported cleanup lowering at {span:?} should only render compatible cleanup array values"
+                );
+                rendered
+            }
+            hir::ExprKind::StructLiteral { fields, .. } => {
+                let rendered = self.render_cleanup_struct_expr(output, fields, expected_ty, span);
+                assert!(
+                    expected_ty.compatible_with(&rendered.ty),
+                    "supported cleanup lowering at {span:?} should only render compatible cleanup struct values"
                 );
                 rendered
             }
@@ -19147,6 +19313,65 @@ async fn main() -> Int {
         );
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_let_struct_literal_with_awaited_projected_field() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct TaskArrayPayload {
+    tasks: [Task[Int]; 2],
+}
+
+struct TaskEnvelope {
+    payload: TaskArrayPayload,
+}
+
+struct Wrapper {
+    tasks: [Task[Int]; 2],
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn task_env(base: Int) -> TaskEnvelope {
+    return TaskEnvelope {
+        payload: TaskArrayPayload {
+            tasks: [worker(base), worker(base + 1)],
+        },
+    }
+}
+
+async fn main() -> Int {
+    defer {
+        let wrapper = Wrapper { tasks: (await task_env(1)).payload.tasks }
+        for await value in wrapper.tasks {
+            let copy = value
+        }
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("insertvalue { [2 x ptr] }").count() >= 1);
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 3);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 3
+        );
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
     }
 
     #[test]
