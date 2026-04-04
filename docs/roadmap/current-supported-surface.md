@@ -23,7 +23,7 @@
 - 当前活跃主线是保守推进的 Phase 7：async/runtime/task-handle lowering、library/program build surface、Rust interop。
 - 外部稳定互操作边界仍是 C ABI；Rust 继续走 `build.rs + staticlib + header` 路线。
 - async 已经不是“只有语法”，而是有真实 build、真实样例和真实回归的受控子集；但 broader async ABI、broader runtime semantics 仍然刻意关闭。
-- cleanup lowering 已不再是“全量关闭”：首个 `defer` + cleanup branch/match + 透明 `?` wrapper lowering 子集已进入真实 build 回归，并已接通 callable-value cleanup callee 的最小间接调用；broader cleanup control flow 仍保持保守拒绝。
+- cleanup lowering 已不再是“全量关闭”：首个 `defer` + cleanup branch/match + 透明 `?` wrapper lowering 子集已进入真实 build 回归，并已接通 callable-value cleanup callee 与 cleanup guard-call 子路径的最小间接调用；broader cleanup control flow 仍保持保守拒绝。
 - 普通 `?` lowering 已接入当前 codegen 路径，并已流入当前 shipped cleanup 子集；当前 user-facing build blocker 不再包含 `return helper()?` 或 `defer helper()?` 这类透明 question-mark 表达式。
 
 ## 当前已开放的构建表面
@@ -54,7 +54,7 @@
   - same-file `use ... as ...` function alias
   - transparently resolve 到 same-file sync function item 的 callable `const` / `static`，以及它们的 same-file `use ... as ...` alias
   - ordinary call 可 direct call，或先绑定到 local 后再做 positional indirect call
-  - call-backed cleanup `defer` 现也可通过同一批 callable local / callable `const` / `static` / same-file alias 进入 positional indirect call
+  - ordinary call 之外，当前 shipped cleanup call / guard-call 子路径也可通过同一批 callable local / callable `const` / `static` / same-file alias 进入 positional indirect call
 - fixed-shape `for`
   - fixed-array
   - homogeneous tuple
@@ -210,10 +210,10 @@
 - direct / call-backed `defer`
 - 其中 call-backed `defer` 当前已覆盖 direct resolved callee，以及 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect callee
 - statement-sequenced block wrapper：只接受当前已支持 cleanup expr statement，外加可选 tail；当前已覆盖 direct cleanup body、cleanup guard / scrutinee block，以及 cleanup call-arg value block
-- bool-guard 驱动的 call-backed `if` cleanup branch
-- bool / int scrutinee + literal-or-path / wildcard arms + optional bool guard 的 cleanup `match` branch
+- bool-guard 驱动的 call-backed `if` cleanup branch；当前 bool/int guard call 子路径也已覆盖 callable local / callable `const` / `static` / same-file alias 驱动的 positional indirect call
+- bool / int scrutinee + literal-or-path / wildcard arms + optional bool guard 的 cleanup `match` branch；当前 arm guard 和 cleanup scalar call-arg value 里的 call 子路径也已覆盖同一批 callable-value 间接调用
 - 透明 `?` wrapper，可包裹当前 shipped cleanup expr / guard / scrutinee 子路径
-- 当前已锁定的用户面包括 direct cleanup `obj` build、callable-const-alias cleanup `obj` build、statement-sequenced cleanup block `obj` build、statement-sequenced cleanup guard / scrutinee / call-arg value block `obj` build、guarded dynamic task-handle cleanup `staticlib` build、cleanup `match` `obj` build，以及 cleanup-internal question-mark `obj` build
+- 当前已锁定的用户面包括 direct cleanup `obj` build、callable-const-alias cleanup `obj` build、callable-guard-alias cleanup `match` `obj` build、statement-sequenced cleanup block `obj` build、statement-sequenced cleanup guard / scrutinee / call-arg value block `obj` build、guarded dynamic task-handle cleanup `staticlib` build、cleanup `match` `obj` build，以及 cleanup-internal question-mark `obj` build
 
 ### 透明 `?` lowering
 

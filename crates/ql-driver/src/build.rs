@@ -8546,6 +8546,62 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_cleanup_match_callable_guard_alias() {
+        let dir = TestDir::new("ql-driver-cleanup-match-callable-guard-alias");
+        let source = dir.write(
+            "cleanup_match_callable_guard_alias.ql",
+            r#"
+use READY as ready
+use AMOUNT as amount
+
+extern "c" fn sink(value: Int)
+extern "c" fn second()
+
+fn enabled() -> Bool {
+    return true
+}
+
+fn measure() -> Int {
+    return 7
+}
+
+const READY: () -> Bool = enabled
+const AMOUNT: () -> Int = measure
+
+fn main() -> Int {
+    let flag = true
+    defer match flag {
+        true if ready() => sink(amount()),
+        _ => second(),
+    }
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/cleanup_match_callable_guard_alias.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup match callable guard alias should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call i1 %t"));
+        assert!(rendered.contains("call i64 %t"));
+        assert!(rendered.contains("call void @sink(i64"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_block_sequence_lowering() {
         let dir = TestDir::new("ql-driver-cleanup-block-sequence");
         let source = dir.write(
