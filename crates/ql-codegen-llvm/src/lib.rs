@@ -7385,6 +7385,42 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 );
                 Some((slot, rendered.ty))
             }
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch: Some(other),
+            } => {
+                let value_ty = self.emitter.input.typeck.expr_ty(expr_id)?.clone();
+                let rendered = self.render_cleanup_value_if_expr(
+                    output,
+                    *condition,
+                    *then_branch,
+                    *other,
+                    &value_ty,
+                    span,
+                );
+                let slot = self.fresh_temp();
+                let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {slot}",
+                    rendered.llvm_ty, rendered.repr
+                );
+                Some((slot, rendered.ty))
+            }
+            hir::ExprKind::Match { value, arms } => {
+                let value_ty = self.emitter.input.typeck.expr_ty(expr_id)?.clone();
+                let rendered =
+                    self.render_cleanup_value_match_expr(output, *value, arms, &value_ty, span);
+                let slot = self.fresh_temp();
+                let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {slot}",
+                    rendered.llvm_ty, rendered.repr
+                );
+                Some((slot, rendered.ty))
+            }
             hir::ExprKind::Unary {
                 op: UnaryOp::Await,
                 expr,
@@ -19247,12 +19283,14 @@ async fn main() -> Int {
         assert!(rendered.contains("cleanup_for_cond"));
         assert!(rendered.contains("cleanup_for_tuple_item"));
         assert!(rendered.matches("call ptr @ql_").count() >= 4);
-        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 4);
+        assert!(rendered.contains("cleanup_then"));
+        assert!(rendered.contains("cleanup_match_arm"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
         assert!(
             rendered
                 .matches("call void @qlrt_task_result_release")
                 .count()
-                >= 4
+                >= 2
         );
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `for await` lowering yet"));
@@ -19372,6 +19410,56 @@ async fn main() -> Int {
                 >= 3
         );
         assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_for_await_lowering_for_projected_if_and_match_roots() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrapper {
+    tasks: [Task[Int]; 2],
+}
+
+extern "c" fn step(value: Int)
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    let branch = true
+    defer {
+        for await value in (if branch { Wrapper { tasks: [worker(1), worker(2)] } } else { Wrapper { tasks: [worker(3), worker(4)] } }).tasks {
+            step(value);
+        }
+        for await item in (match branch { true => Wrapper { tasks: [worker(5), worker(6)] }, false => Wrapper { tasks: [worker(7), worker(8)] } }).tasks {
+            step(item);
+        }
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("cleanup_then"));
+        assert!(rendered.contains("cleanup_match_arm"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 2
+        );
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
     }
 
     #[test]
