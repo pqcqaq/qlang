@@ -2620,16 +2620,24 @@ impl<'a> ModuleEmitter<'a> {
     }
 
     fn supports_cleanup_let_pattern(&self, pattern: hir::PatternId) -> bool {
-        matches!(
-            pattern_kind(self.input.hir, pattern),
-            PatternKind::Binding(_) | PatternKind::Wildcard
-        )
+        match pattern_kind(self.input.hir, pattern) {
+            PatternKind::Binding(_) | PatternKind::Wildcard => true,
+            PatternKind::Tuple(items) => items
+                .iter()
+                .all(|item| self.supports_cleanup_let_pattern(*item)),
+            PatternKind::Struct { fields, .. } => fields
+                .iter()
+                .all(|field| self.supports_cleanup_let_pattern(field.pattern)),
+            _ => false,
+        }
     }
 
     fn cleanup_let_expected_ty(&self, pattern: hir::PatternId, value: hir::ExprId) -> Option<&Ty> {
         match pattern_kind(self.input.hir, pattern) {
             PatternKind::Binding(local) => self.input.typeck.local_ty(*local),
-            PatternKind::Wildcard => self.input.typeck.expr_ty(value),
+            PatternKind::Tuple(_) | PatternKind::Struct { .. } | PatternKind::Wildcard => {
+                self.input.typeck.expr_ty(value)
+            }
             _ => None,
         }
     }
@@ -5235,15 +5243,109 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             .cloned()
             .unwrap_or_else(|| {
                 panic!(
-                    "supported cleanup lowering at {span:?} should only render binding or wildcard `let` patterns"
+                    "supported cleanup lowering at {span:?} should only render binding, wildcard, tuple, or struct cleanup `let` patterns"
                 )
             });
         let rendered = self.render_cleanup_value_expr(output, value, &expected_ty, span);
-        if let PatternKind::Binding(local) = pattern_kind(self.emitter.input.hir, pattern) {
-            self.cleanup_bindings.push(GuardBindingValue {
-                local: *local,
-                value: rendered,
-            });
+        self.bind_cleanup_pattern(output, pattern, rendered, span);
+    }
+
+    fn bind_cleanup_pattern(
+        &mut self,
+        output: &mut String,
+        pattern: hir::PatternId,
+        value: LoweredValue,
+        span: Span,
+    ) {
+        match pattern_kind(self.emitter.input.hir, pattern) {
+            PatternKind::Binding(local) => {
+                self.cleanup_bindings.push(GuardBindingValue {
+                    local: *local,
+                    value,
+                });
+            }
+            PatternKind::Tuple(items) => {
+                let Ty::Tuple(item_tys) = &value.ty else {
+                    panic!(
+                        "supported cleanup lowering at {span:?} should only destructure tuple cleanup `let` values with tuple patterns"
+                    );
+                };
+                assert_eq!(
+                    items.len(),
+                    item_tys.len(),
+                    "supported cleanup lowering at {span:?} should only destructure tuple cleanup `let` values with matching arity"
+                );
+                for (index, (item, item_ty)) in items.iter().zip(item_tys.iter()).enumerate() {
+                    let item_llvm_ty = self
+                        .emitter
+                        .lower_llvm_type(item_ty, span, "cleanup tuple pattern item")
+                        .expect(
+                            "supported cleanup lowering should lower cleanup tuple pattern items",
+                        );
+                    let item_value = self.extract_cleanup_aggregate_value(
+                        output,
+                        &value,
+                        index,
+                        item_ty.clone(),
+                        item_llvm_ty,
+                    );
+                    self.bind_cleanup_pattern(output, *item, item_value, span);
+                }
+            }
+            PatternKind::Struct { fields, .. } => {
+                let field_layouts = self
+                    .emitter
+                    .struct_field_lowerings(&value.ty, span, "cleanup struct pattern")
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "supported cleanup lowering at {span:?} should only destructure struct cleanup `let` values with struct patterns"
+                        )
+                    });
+                for field in fields {
+                    let (index, field_layout) = field_layouts
+                        .iter()
+                        .enumerate()
+                        .find(|(_, candidate)| candidate.name == field.name)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "supported cleanup lowering at {span:?} should only destructure cleanup struct patterns with known fields"
+                            )
+                        });
+                    let field_value = self.extract_cleanup_aggregate_value(
+                        output,
+                        &value,
+                        index,
+                        field_layout.ty.clone(),
+                        field_layout.llvm_ty.clone(),
+                    );
+                    self.bind_cleanup_pattern(output, field.pattern, field_value, span);
+                }
+            }
+            PatternKind::Wildcard => {}
+            _ => panic!(
+                "supported cleanup lowering at {span:?} should only destructure binding, wildcard, tuple, or struct cleanup `let` patterns"
+            ),
+        }
+    }
+
+    fn extract_cleanup_aggregate_value(
+        &mut self,
+        output: &mut String,
+        aggregate: &LoweredValue,
+        index: usize,
+        ty: Ty,
+        llvm_ty: String,
+    ) -> LoweredValue {
+        let temp = self.fresh_temp();
+        let _ = writeln!(
+            output,
+            "  {temp} = extractvalue {} {}, {index}",
+            aggregate.llvm_ty, aggregate.repr
+        );
+        LoweredValue {
+            ty,
+            llvm_ty,
+            repr: temp,
         }
     }
 
@@ -16132,6 +16234,43 @@ fn main() -> Int {
         assert!(rendered.contains("_amount()"));
         assert!(rendered.contains("call i64 @ql_"));
         assert!(rendered.contains("call void @sink(i64"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_let_destructuring() {
+        let rendered = emit(
+            r#"
+struct Pair {
+    left: Int,
+    right: Int,
+}
+
+extern "c" fn sink(value: Int)
+
+fn values() -> (Int, Int) {
+    return (4, 6)
+}
+
+fn pair_value() -> Pair {
+    return Pair { left: 20, right: 22 }
+}
+
+fn main() -> Int {
+    defer {
+        let (first, _) = values();
+        let Pair { left, right: current } = pair_value();
+        sink(first);
+        sink(left);
+        sink(current)
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.matches("extractvalue { i64, i64 }").count() >= 2);
+        assert_eq!(rendered.matches("call void @sink(i64").count(), 3);
         assert!(!rendered.contains("does not support cleanup lowering yet"));
     }
 
