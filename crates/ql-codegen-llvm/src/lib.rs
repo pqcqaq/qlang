@@ -7525,13 +7525,14 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 }
                 Some((current_ptr, current_ty))
             }
-            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => self
-                .emitter
-                .input
-                .hir
-                .block(*block_id)
-                .tail
-                .and_then(|tail| self.render_cleanup_projection_pointer(output, tail, span)),
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                let binding_depth = self.cleanup_bindings.len();
+                let projected = self
+                    .render_cleanup_block_prefix(output, *block_id, span)
+                    .and_then(|tail| self.render_cleanup_projection_pointer(output, tail, span));
+                self.cleanup_bindings.truncate(binding_depth);
+                projected
+            }
             hir::ExprKind::Question(inner) => {
                 self.render_cleanup_projection_pointer(output, *inner, span)
             }
@@ -19457,6 +19458,49 @@ async fn main() -> Int {
                 .matches("call void @qlrt_task_result_release")
                 .count()
                 >= 2
+        );
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_for_await_lowering_for_projected_block_root() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrapper {
+    tasks: [Task[Int]; 2],
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    defer {
+        for await value in ({ let wrapper = Wrapper { tasks: [worker(1), worker(2)] }; wrapper }).tasks {
+            let copy = value
+        }
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 1);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 1
         );
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `for await` lowering yet"));
