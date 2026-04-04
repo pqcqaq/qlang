@@ -19514,6 +19514,54 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_cleanup_block_for_await_lowering_for_scalar_item_roots() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use MORE as ITEMS
+use BOX as STATE
+
+struct Holder {
+    values: [Int; 2],
+}
+
+extern "c" fn step(value: Int)
+
+const VALUES: [Int; 2] = [1, 2]
+static MORE: [Int; 2] = [3, 4]
+const BOX: Holder = Holder { values: [5, 6] }
+
+async fn main() -> Int {
+    defer {
+        for await value in VALUES {
+            step(value);
+        }
+        for await item in ITEMS {
+            step(item);
+        }
+        for await projected in STATE.values {
+            step(projected);
+        }
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.matches("call void @step(i64").count() >= 1);
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
     fn emits_cleanup_block_for_await_lowering_for_inline_task_roots() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
