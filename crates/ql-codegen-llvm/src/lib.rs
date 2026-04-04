@@ -19458,6 +19458,62 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_cleanup_block_for_await_lowering_for_direct_question_roots() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+extern "c" fn step(value: Int)
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+fn task_array() -> [Task[Int]; 2] {
+    return [worker(1), worker(2)]
+}
+
+fn task_pair() -> (Task[Int], Task[Int]) {
+    return (worker(3), worker(4))
+}
+
+async fn main() -> Int {
+    defer {
+        for await value in task_array()? {
+            step(value);
+        }
+        for await item in task_pair()? {
+            step(item);
+        }
+        for await tail in ({ let tasks = [worker(5), worker(6)]; tasks })? {
+            step(tail);
+        }
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.matches("call void @step(i64").count() >= 1);
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 4);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 4
+        );
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
     fn emits_cleanup_block_for_await_lowering_for_inline_task_roots() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
