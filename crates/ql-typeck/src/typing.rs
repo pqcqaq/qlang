@@ -2186,8 +2186,10 @@ impl<'a> Checker<'a> {
                 };
                 if assignment_policy == AssignmentTargetPolicy::EnforceValueType {
                     self.report_type_mismatch(right, &left_ty, &right_ty, "assignment");
+                    left_ty
+                } else {
+                    Ty::Unknown
                 }
-                Ty::Unknown
             }
             BinaryOp::OrOr | BinaryOp::AndAnd => {
                 let right_ty =

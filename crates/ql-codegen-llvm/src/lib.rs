@@ -7421,6 +7421,21 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 );
                 Some((slot, rendered.ty))
             }
+            hir::ExprKind::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => {
+                let rendered = self.render_cleanup_assignment_expr(output, *left, *right, span);
+                let slot = self.fresh_temp();
+                let _ = writeln!(output, "  {slot} = alloca {}", rendered.llvm_ty);
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {slot}",
+                    rendered.llvm_ty, rendered.repr
+                );
+                Some((slot, rendered.ty))
+            }
             hir::ExprKind::Unary {
                 op: UnaryOp::Await,
                 expr,
@@ -19495,6 +19510,51 @@ async fn main() -> Int {
         );
 
         assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 1);
+        assert!(
+            rendered
+                .matches("call void @qlrt_task_result_release")
+                .count()
+                >= 1
+        );
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for await` lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_for_await_lowering_for_projected_assignment_root() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+            RuntimeCapability::AsyncIteration,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+struct Wrapper {
+    tasks: [Task[Int]; 2],
+}
+
+async fn worker(value: Int) -> Int {
+    return value
+}
+
+async fn main() -> Int {
+    var wrapper = Wrapper { tasks: [worker(0), worker(0)] }
+    defer {
+        for await value in (wrapper = Wrapper { tasks: [worker(1), worker(2)] }).tasks {
+            let copy = value
+        }
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.matches("store { [2 x ptr] }").count() >= 2);
         assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 1);
         assert!(
             rendered
