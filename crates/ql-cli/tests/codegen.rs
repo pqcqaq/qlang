@@ -4811,6 +4811,26 @@ fn awaited_guard_async_callable_control_flow_roots_codegen_case_matches() {
 }
 
 #[test]
+fn awaited_scrutinee_async_callable_control_flow_roots_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "awaited_scrutinee_async_callable_control_flow_roots_build",
+        source_relative: "fixtures/codegen/pass/awaited_scrutinee_async_callable_control_flow_roots.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("awaited scrutinee async callable control-flow root build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn awaited_projection_async_callable_control_flow_guard_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {

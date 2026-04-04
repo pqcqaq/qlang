@@ -230,6 +230,7 @@
   - nested call-root runtime projection family；当前也已锁定 ordinary `match` guard 里的 awaited nested call-root runtime projection 形态，其中 nested projected scalar 可来自 `wrap(await ...)` 这类 call-backed aggregate root，且 inner `await` operand 继续接受 runtime `if` / `match` 选出的 same-file async function item / alias 与 async callable `const` / `static` / alias direct callee root
   - nested call-root deeper inline-combo family；当前也已锁定最小 awaited inline-combo 形态，例如 `[wrap(await ...).slot.value, 0][offset(...)]`
 - awaited `match` scrutinee 子集
+  - direct awaited scrutinee + control-flow-root family；当前也已锁定 ordinary `match await ...` 形态，其中 awaited direct scrutinee 的 callee root 可来自 runtime `if` / `match` 选出的 same-file async function item / alias 与 async callable `const` / `static` / alias
   - helper / inline scrutinee family；当前也已锁定 ordinary `match` 里的 awaited helper scrutinee 与 awaited inline projection-root scrutinee 形态，例如 `match helper_alias(13, (await ...).slot.value)` 与 `match State { slot: Slot { value: (await ...).slot.value } }.slot.value`
   - nested call-root runtime projection / inline-combo scrutinee family；当前也已锁定 ordinary `match` 里的 `match wrap(await ...).slot.value` 与 `match [wrap(await ...).slot.value, 0][offset(...)]` 形态，其中 inner `await` operand 同样接受 runtime `if` / `match` 选出的 same-file async function item / alias 与 async callable `const` / `static` / alias direct callee root
 

@@ -15210,6 +15210,49 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn emits_awaited_scrutinee_async_callable_control_flow_roots() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use worker as async_alias
+use APPLY as async_const_alias
+
+extern "c" fn sink(value: Int)
+
+async fn worker(value: Int) -> Int {
+    return value + 10
+}
+
+const APPLY: (Int) -> Task[Int] = worker
+
+async fn main() -> Int {
+    let branch = true
+    match await (if branch { async_alias } else { async_const_alias })(3) {
+        13 => sink(1),
+        _ => sink(0),
+    }
+    match await (match branch { true => async_const_alias, false => async_alias })(4) {
+        14 => sink(2),
+        _ => sink(3),
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(rendered.matches("call ptr %t").count() >= 2);
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(!rendered.contains("does not support imported value lowering yet"));
+    }
+
+    #[test]
     fn emits_awaited_projection_async_callable_control_flow_guards() {
         let runtime_hooks = collect_runtime_hook_signatures([
             RuntimeCapability::AsyncFunctionBodies,
