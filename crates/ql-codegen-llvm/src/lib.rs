@@ -3530,6 +3530,43 @@ impl<'a> ModuleEmitter<'a> {
                     Some(ret.as_ref().clone())
                 }
             }
+            Rvalue::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => {
+                let Operand::Place(place) = left else {
+                    ctx.diagnostics.push(unsupported(
+                        span,
+                        "LLVM IR backend foundation currently requires assignment expressions to target a mutable place",
+                    ));
+                    return None;
+                };
+                let target_ty = self.assignment_place_type(
+                    ctx.body,
+                    place,
+                    ctx.local_types,
+                    ctx.async_task_handles,
+                    span,
+                    ctx.diagnostics,
+                )?;
+                let value_ty = self.infer_operand_type(
+                    ctx.body,
+                    right,
+                    ctx.local_types,
+                    ctx.async_task_handles,
+                    ctx.diagnostics,
+                    span,
+                )?;
+                if !target_ty.compatible_with(&value_ty) {
+                    ctx.diagnostics.push(unsupported(
+                        span,
+                        "LLVM IR backend foundation currently requires assignment expressions to store a value compatible with the target place",
+                    ));
+                    return None;
+                }
+                Some(target_ty)
+            }
             Rvalue::Binary { left, op, right } => {
                 let left_ty = self.infer_operand_type(
                     ctx.body,
@@ -7004,6 +7041,38 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         })
                     }
                 }
+            }
+            Rvalue::Binary {
+                left,
+                op: BinaryOp::Assign,
+                right,
+            } => {
+                let Operand::Place(place) = left else {
+                    panic!(
+                        "prepared assignment expressions at {span:?} should only target mutable places"
+                    );
+                };
+                let target_ty = self.prepared_place_type(place, span).unwrap_or_else(|| {
+                    panic!(
+                        "prepared assignment expressions at {span:?} should have a resolved target type"
+                    )
+                });
+                let rendered = self.render_operand(output, right, span);
+                assert!(
+                    target_ty.compatible_with(&rendered.ty),
+                    "prepared assignment expressions at {span:?} should preserve value compatibility with the target place"
+                );
+                let target_ptr = if place.projections.is_empty() {
+                    llvm_slot_name(self.body, place.base)
+                } else {
+                    self.render_place_pointer(output, place, span).0
+                };
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {}",
+                    rendered.llvm_ty, rendered.repr, target_ptr
+                );
+                Some(rendered)
             }
             Rvalue::Binary { left, op, right } => {
                 let left = self.render_operand(output, left, span);
@@ -16838,6 +16907,40 @@ fn main() -> Int {
         assert!(rendered.matches("call i64 @ql_").count() >= 2);
         assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support assignment expressions yet"));
+    }
+
+    #[test]
+    fn emits_assignment_expr_value_lowering() {
+        let rendered = emit(
+            r#"
+struct State {
+    current: Int,
+    values: [Int; 3],
+}
+
+fn forward(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    var index = 1
+    var state = State {
+        current: 2,
+        values: [3, 4, 5],
+    }
+    let first = forward(state.current = 6)
+    let second = {
+        state.values[index] = state.current + 1
+    }
+    return first + second + state.values[1]
+}
+"#,
+        );
+
+        assert!(rendered.matches("store i64").count() >= 2);
+        assert!(rendered.matches("call i64 @ql_").count() >= 1);
+        assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
         assert!(!rendered.contains("does not support assignment expressions yet"));
     }
 

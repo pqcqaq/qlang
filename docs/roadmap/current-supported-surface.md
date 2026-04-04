@@ -77,6 +77,7 @@
   - struct field
   - fixed-array literal index projection
   - projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root tuple / struct-field / fixed-array literal-index chains
+  - assignment expr value form：当前已覆盖 direct call arg 与 valued block tail
 - 动态数组索引赋值的当前可运行子集
   - non-`Task[...]` element arrays
   - nested dynamic array projections
