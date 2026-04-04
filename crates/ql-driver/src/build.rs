@@ -8788,6 +8788,60 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_cleanup_block_for_lowering_for_fixed_shapes() {
+        let dir = TestDir::new("ql-driver-cleanup-block-for-fixed-shapes");
+        let source = dir.write(
+            "cleanup_block_for_fixed_shapes.ql",
+            r#"
+extern "c" fn stop() -> Bool
+extern "c" fn step(value: Int)
+extern "c" fn finish(value: Int)
+
+fn main() -> Int {
+    defer {
+        for value in [1, 2] {
+            if stop() {
+                break
+            };
+            step(value);
+            continue;
+            finish(value);
+        }
+        for item in (3, 4) {
+            step(item);
+            break;
+            finish(item);
+        }
+    }
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/cleanup_block_for_fixed_shapes.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup block for lowering should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.contains("cleanup_for_tuple_item"));
+        assert!(rendered.contains("call i1 @stop()"));
+        assert!(rendered.contains("call void @step(i64"));
+        assert!(!rendered.contains("call void @finish(i64"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_block_guard_scrutinee_and_value_lowering() {
         let dir = TestDir::new("ql-driver-cleanup-block-guard-scrutinee-value");
         let source = dir.write(

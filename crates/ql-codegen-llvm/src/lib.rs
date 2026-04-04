@@ -176,6 +176,25 @@ enum SupportedForLoopIterableRoot {
     Item(ItemId),
 }
 
+fn cleanup_for_iterable_shape(ty: &Ty) -> Option<(SupportedForLoopIterableKind, Ty, usize)> {
+    match ty {
+        Ty::Array { element, len } if !is_void_ty(element.as_ref()) => {
+            Some((SupportedForLoopIterableKind::Array, element.as_ref().clone(), *len))
+        }
+        Ty::Tuple(items)
+            if !items.is_empty()
+                && !items.iter().any(is_void_ty)
+                && items
+                    .iter()
+                    .skip(1)
+                    .all(|item| item.compatible_with(&items[0]) && items[0].compatible_with(item)) =>
+        {
+            Some((SupportedForLoopIterableKind::Tuple, items[0].clone(), items.len()))
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug)]
 enum SupportedMatchLowering {
     Bool {
@@ -654,12 +673,18 @@ impl<'a> ModuleEmitter<'a> {
             hir::StmtKind::Loop { body } => {
                 self.collect_guard_block_callees(*body, queue);
             }
+            hir::StmtKind::For {
+                iterable, body, ..
+            } => {
+                self.collect_guard_expr_callees(*iterable, queue);
+                self.collect_guard_block_callees(*body, queue);
+            }
             hir::StmtKind::Let { .. }
             | hir::StmtKind::Return(_)
             | hir::StmtKind::Defer(_)
             | hir::StmtKind::Break
             | hir::StmtKind::Continue
-            | hir::StmtKind::For { .. } => {}
+             => {}
         }
     }
 
@@ -1952,12 +1977,40 @@ impl<'a> ModuleEmitter<'a> {
                     && self.supports_cleanup_block_expr_with_loop(*body, true)
             }
             hir::StmtKind::Loop { body } => self.supports_cleanup_block_expr_with_loop(*body, true),
+            hir::StmtKind::For {
+                is_await,
+                pattern,
+                iterable,
+                body,
+            } => {
+                !is_await
+                    && self.supports_cleanup_for_pattern(*pattern)
+                    && self.supports_cleanup_for_iterable(*iterable)
+                    && self.supports_cleanup_block_expr_with_loop(*body, true)
+            }
             hir::StmtKind::Break | hir::StmtKind::Continue => in_cleanup_loop,
             hir::StmtKind::Let { .. }
             | hir::StmtKind::Return(_)
             | hir::StmtKind::Defer(_)
-            | hir::StmtKind::For { .. } => false,
+             => false,
         }
+    }
+
+    fn supports_cleanup_for_pattern(&self, pattern: hir::PatternId) -> bool {
+        matches!(
+            pattern_kind(self.input.hir, pattern),
+            PatternKind::Binding(_) | PatternKind::Wildcard
+        )
+    }
+
+    fn supports_cleanup_for_iterable(&self, expr_id: hir::ExprId) -> bool {
+        let Some(iterable_ty) = self.input.typeck.expr_ty(expr_id) else {
+            return false;
+        };
+        let Some(_) = cleanup_for_iterable_shape(iterable_ty) else {
+            return false;
+        };
+        self.supports_cleanup_value_expr(expr_id, iterable_ty)
     }
 
     fn supports_cleanup_match_expr_with_loop(
@@ -4036,6 +4089,7 @@ impl<'a> ModuleEmitter<'a> {
             next_temp: 0,
             cleanup_loop_labels: Vec::new(),
             cleanup_path_open: true,
+            cleanup_bindings: Vec::new(),
         };
         for block_id in body.block_ids() {
             let Some(loop_lowering) = renderer
@@ -4334,6 +4388,7 @@ struct FunctionRenderer<'a, 'b> {
     next_temp: usize,
     cleanup_loop_labels: Vec<CleanupLoopLabels>,
     cleanup_path_open: bool,
+    cleanup_bindings: Vec<GuardBindingValue>,
 }
 
 struct CleanupLoopLabels {
@@ -4342,6 +4397,30 @@ struct CleanupLoopLabels {
 }
 
 impl<'a, 'b> FunctionRenderer<'a, 'b> {
+    fn cleanup_binding(&self, local: hir::LocalId) -> Option<&LoweredValue> {
+        self.cleanup_bindings
+            .iter()
+            .rev()
+            .find(|binding| binding.local == local)
+            .map(|binding| &binding.value)
+    }
+
+    fn materialize_cleanup_binding_root(
+        &mut self,
+        output: &mut String,
+        local: hir::LocalId,
+    ) -> Option<(String, Ty)> {
+        let value = self.cleanup_binding(local)?.clone();
+        let slot = self.fresh_temp();
+        let _ = writeln!(output, "  {slot} = alloca {}", value.llvm_ty);
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {slot}",
+            value.llvm_ty, value.repr
+        );
+        Some((slot, value.ty))
+    }
+
     fn render_statement(&mut self, output: &mut String, statement: &mir::Statement) {
         match &statement.kind {
             StatementKind::Assign { place, value } => {
@@ -4450,6 +4529,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 self.render_cleanup_while(output, *condition, *body, span)
             }
             hir::StmtKind::Loop { body } => self.render_cleanup_loop(output, *body, span),
+            hir::StmtKind::For {
+                is_await,
+                pattern,
+                iterable,
+                body,
+            } => self.render_cleanup_for(output, *is_await, *pattern, *iterable, *body, span),
             hir::StmtKind::Break => {
                 let labels = self.cleanup_loop_labels.last().unwrap_or_else(|| {
                     panic!(
@@ -4470,9 +4555,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             hir::StmtKind::Let { .. }
             | hir::StmtKind::Return(_)
-            | hir::StmtKind::Defer(_)
-            | hir::StmtKind::For { .. } => panic!(
-                "supported cleanup lowering at {span:?} should only render expr, while, loop, break, or continue statements inside cleanup blocks"
+            | hir::StmtKind::Defer(_) => panic!(
+                "supported cleanup lowering at {span:?} should only render expr, while, loop, for, break, or continue statements inside cleanup blocks"
             ),
         }
     }
@@ -4532,6 +4616,224 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         if body_falls_through {
             let _ = writeln!(output, "  br label %{body_label}");
         }
+        let _ = writeln!(output, "{end_label}:");
+        self.cleanup_path_open = true;
+    }
+
+    fn render_cleanup_for(
+        &mut self,
+        output: &mut String,
+        is_await: bool,
+        pattern: hir::PatternId,
+        iterable: hir::ExprId,
+        body: hir::BlockId,
+        span: Span,
+    ) {
+        assert!(
+            !is_await,
+            "supported cleanup lowering at {span:?} should not render `for await` inside cleanup blocks"
+        );
+        let iterable_ty = self
+            .emitter
+            .input
+            .typeck
+            .expr_ty(iterable)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!("supported cleanup lowering at {span:?} should type-check cleanup `for` iterables")
+            });
+        let (iterable_kind, element_ty, iterable_len) =
+            cleanup_for_iterable_shape(&iterable_ty).unwrap_or_else(|| {
+                panic!(
+                    "supported cleanup lowering at {span:?} should only render fixed-shape cleanup `for` iterables"
+                )
+            });
+        let binding_local = match pattern_kind(self.emitter.input.hir, pattern) {
+            PatternKind::Binding(local) => Some(*local),
+            PatternKind::Wildcard => None,
+            _ => panic!(
+                "supported cleanup lowering at {span:?} should only render binding or wildcard cleanup `for` patterns"
+            ),
+        };
+        let rendered_iterable =
+            self.render_cleanup_value_expr(output, iterable, &iterable_ty, span);
+        let iterable_slot = self.fresh_temp();
+        let _ = writeln!(output, "  {iterable_slot} = alloca {}", rendered_iterable.llvm_ty);
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {iterable_slot}",
+            rendered_iterable.llvm_ty, rendered_iterable.repr
+        );
+
+        match iterable_kind {
+            SupportedForLoopIterableKind::Array => {
+                self.render_cleanup_array_for(
+                    output,
+                    iterable_slot,
+                    &iterable_ty,
+                    &element_ty,
+                    iterable_len,
+                    binding_local,
+                    body,
+                    span,
+                );
+            }
+            SupportedForLoopIterableKind::Tuple => {
+                self.render_cleanup_tuple_for(
+                    output,
+                    iterable_slot,
+                    &iterable_ty,
+                    &element_ty,
+                    iterable_len,
+                    binding_local,
+                    body,
+                    span,
+                );
+            }
+        }
+    }
+
+    fn render_cleanup_array_for(
+        &mut self,
+        output: &mut String,
+        iterable_slot: String,
+        iterable_ty: &Ty,
+        element_ty: &Ty,
+        iterable_len: usize,
+        binding_local: Option<hir::LocalId>,
+        body: hir::BlockId,
+        span: Span,
+    ) {
+        let iterable_llvm_ty = self
+            .emitter
+            .lower_llvm_type(iterable_ty, span, "cleanup for iterable")
+            .expect("supported cleanup lowering should lower cleanup `for` array iterables");
+        let element_llvm_ty = self
+            .emitter
+            .lower_llvm_type(element_ty, span, "cleanup for item")
+            .expect("supported cleanup lowering should lower cleanup `for` array items");
+        let index_slot = self.fresh_temp();
+        let cond_label = self.fresh_label("cleanup_for_cond");
+        let body_label = self.fresh_label("cleanup_for_body");
+        let step_label = self.fresh_label("cleanup_for_step");
+        let end_label = self.fresh_label("cleanup_for_end");
+        let _ = writeln!(output, "  {index_slot} = alloca i64");
+        let _ = writeln!(output, "  store i64 0, ptr {index_slot}");
+        let _ = writeln!(output, "  br label %{cond_label}");
+        let _ = writeln!(output, "{cond_label}:");
+        let index = self.fresh_temp();
+        let continue_flag = self.fresh_temp();
+        let _ = writeln!(output, "  {index} = load i64, ptr {index_slot}");
+        let _ = writeln!(output, "  {continue_flag} = icmp ult i64 {index}, {iterable_len}");
+        let _ = writeln!(
+            output,
+            "  br i1 {continue_flag}, label %{body_label}, label %{end_label}"
+        );
+        let _ = writeln!(output, "{body_label}:");
+        let item_ptr = self.fresh_temp();
+        let item_value = self.fresh_temp();
+        let _ = writeln!(
+            output,
+            "  {item_ptr} = getelementptr inbounds {iterable_llvm_ty}, ptr {iterable_slot}, i64 0, i64 {index}"
+        );
+        let _ = writeln!(output, "  {item_value} = load {element_llvm_ty}, ptr {item_ptr}");
+        if let Some(local) = binding_local {
+            self.cleanup_bindings.push(GuardBindingValue {
+                local,
+                value: LoweredValue {
+                    ty: element_ty.clone(),
+                    llvm_ty: element_llvm_ty.clone(),
+                    repr: item_value,
+                },
+            });
+        }
+        self.cleanup_loop_labels.push(CleanupLoopLabels {
+            continue_label: step_label.clone(),
+            break_label: end_label.clone(),
+        });
+        self.cleanup_path_open = true;
+        self.render_cleanup_block(output, body, span);
+        let body_falls_through = self.cleanup_path_open;
+        self.cleanup_loop_labels.pop();
+        if binding_local.is_some() {
+            self.cleanup_bindings.pop();
+        }
+        if body_falls_through {
+            let _ = writeln!(output, "  br label %{step_label}");
+        }
+        let _ = writeln!(output, "{step_label}:");
+        let next_index = self.fresh_temp();
+        let _ = writeln!(output, "  {next_index} = add i64 {index}, 1");
+        let _ = writeln!(output, "  store i64 {next_index}, ptr {index_slot}");
+        let _ = writeln!(output, "  br label %{cond_label}");
+        let _ = writeln!(output, "{end_label}:");
+        self.cleanup_path_open = true;
+    }
+
+    fn render_cleanup_tuple_for(
+        &mut self,
+        output: &mut String,
+        iterable_slot: String,
+        iterable_ty: &Ty,
+        element_ty: &Ty,
+        iterable_len: usize,
+        binding_local: Option<hir::LocalId>,
+        body: hir::BlockId,
+        span: Span,
+    ) {
+        let iterable_llvm_ty = self
+            .emitter
+            .lower_llvm_type(iterable_ty, span, "cleanup for iterable")
+            .expect("supported cleanup lowering should lower cleanup `for` tuple iterables");
+        let element_llvm_ty = self
+            .emitter
+            .lower_llvm_type(element_ty, span, "cleanup for item")
+            .expect("supported cleanup lowering should lower cleanup `for` tuple items");
+        let end_label = self.fresh_label("cleanup_for_end");
+        let mut item_label = self.fresh_label("cleanup_for_tuple_item");
+        let _ = writeln!(output, "  br label %{item_label}");
+
+        for index in 0..iterable_len {
+            let _ = writeln!(output, "{item_label}:");
+            let item_ptr = self.fresh_temp();
+            let item_value = self.fresh_temp();
+            let next_label = if index + 1 < iterable_len {
+                self.fresh_label("cleanup_for_tuple_item")
+            } else {
+                end_label.clone()
+            };
+            let _ = writeln!(
+                output,
+                "  {item_ptr} = getelementptr inbounds {iterable_llvm_ty}, ptr {iterable_slot}, i32 0, i32 {index}"
+            );
+            let _ = writeln!(output, "  {item_value} = load {element_llvm_ty}, ptr {item_ptr}");
+            if let Some(local) = binding_local {
+                self.cleanup_bindings.push(GuardBindingValue {
+                    local,
+                    value: LoweredValue {
+                        ty: element_ty.clone(),
+                        llvm_ty: element_llvm_ty.clone(),
+                        repr: item_value,
+                    },
+                });
+            }
+            self.cleanup_loop_labels.push(CleanupLoopLabels {
+                continue_label: next_label.clone(),
+                break_label: end_label.clone(),
+            });
+            self.cleanup_path_open = true;
+            self.render_cleanup_block(output, body, span);
+            let body_falls_through = self.cleanup_path_open;
+            self.cleanup_loop_labels.pop();
+            if binding_local.is_some() {
+                self.cleanup_bindings.pop();
+            }
+            if body_falls_through {
+                let _ = writeln!(output, "  br label %{next_label}");
+            }
+            item_label = next_label;
+        }
+
         let _ = writeln!(output, "{end_label}:");
         self.cleanup_path_open = true;
     }
@@ -6567,6 +6869,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     {
                         guard_binding.expect("checked above").value.clone()
                     }
+                    Some(ValueResolution::Local(local))
+                        if self.cleanup_binding(*local).is_some() =>
+                    {
+                        self.cleanup_binding(*local)
+                            .expect("checked above")
+                            .clone()
+                    }
                     Some(ValueResolution::Item(_)) | Some(ValueResolution::Import(_)) => {
                         if let Some(value) = guard_literal_bool(
                             self.emitter.input.hir,
@@ -7240,6 +7549,11 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         let binding_local = mir_local_for_hir_local(self.body, *local)?;
                         let ty = self.prepared.local_types.get(&binding_local)?.clone();
                         Some((llvm_slot_name(self.body, binding_local), ty))
+                    }
+                    Some(ValueResolution::Local(local))
+                        if self.cleanup_binding(*local).is_some() =>
+                    {
+                        self.materialize_cleanup_binding_root(output, *local)
                     }
                     Some(ValueResolution::Item(item_id)) => {
                         self.materialize_guard_item_root(output, *item_id, span)
@@ -14797,6 +15111,44 @@ fn main() -> Int {
         assert!(rendered.contains("call void @step()"));
         assert!(!rendered.contains("call void @after()"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_for_lowering_for_fixed_shapes() {
+        let rendered = emit(
+            r#"
+extern "c" fn stop() -> Bool
+extern "c" fn step(value: Int)
+extern "c" fn finish(value: Int)
+
+fn main() -> Int {
+    defer {
+        for value in [1, 2] {
+            if stop() {
+                break
+            };
+            step(value);
+            continue;
+            finish(value);
+        }
+        for item in (3, 4) {
+            step(item);
+            break;
+            finish(item);
+        }
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("cleanup_for_cond"));
+        assert!(rendered.contains("cleanup_for_tuple_item"));
+        assert!(rendered.contains("call i1 @stop()"));
+        assert!(rendered.contains("call void @step(i64"));
+        assert!(!rendered.contains("call void @finish(i64"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `for` lowering yet"));
     }
 
     #[test]
