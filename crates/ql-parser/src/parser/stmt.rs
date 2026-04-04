@@ -18,6 +18,11 @@ impl Parser {
                     self.expect(TokenKind::Let, "expected `let` or `var`")?;
                 }
                 let pattern = self.parse_pattern()?;
+                let ty = if self.eat(TokenKind::Colon) {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
                 self.expect(TokenKind::Eq, "expected `=` after pattern")?;
                 let value = self.parse_expr()?;
                 self.eat(TokenKind::Semi);
@@ -26,6 +31,7 @@ impl Parser {
                     StmtKind::Let {
                         mutable,
                         pattern,
+                        ty,
                         value,
                     },
                 ));

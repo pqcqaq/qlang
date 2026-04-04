@@ -4379,6 +4379,7 @@ fn collect_immutable_binding_values_in_stmt(
         hir::StmtKind::Let {
             mutable,
             pattern,
+            ty: _,
             value,
         } => {
             if !mutable && let hir::PatternKind::Binding(local) = &hir.pattern(*pattern).kind {

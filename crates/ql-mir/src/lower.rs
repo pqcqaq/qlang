@@ -914,6 +914,7 @@ impl<'a> BodyBuilder<'a> {
             StmtKind::Let {
                 mutable,
                 pattern,
+                ty: _,
                 value,
             } => {
                 let (current, operand) = self.lower_expr_to_operand(*value, current, scope);

@@ -571,7 +571,10 @@ fn main() {
         panic!("expected closure expression");
     };
 
-    let value_ty = params[0].ty.as_ref().expect("first closure param should have type");
+    let value_ty = params[0]
+        .ty
+        .as_ref()
+        .expect("first closure param should have type");
     assert!(matches!(
         &value_ty.kind,
         ql_ast::TypeExprKind::Named { path, args }
@@ -597,6 +600,37 @@ fn main() {
                 if path.segments == ["Int"] && args.is_empty()
             )
     ));
+}
+
+#[test]
+fn parses_local_binding_type_annotations() {
+    let source = r#"
+fn main() {
+    let run: (Int) -> Int = (value) => value + 1;
+}
+"#;
+    let module = parse_source(source).expect("annotated local binding should parse");
+    let function = match &module.items[0].kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+    let body = function.body.as_ref().expect("function should have body");
+    let StmtKind::Let { ty, value, .. } = &body.statements[0].kind else {
+        panic!("expected let statement");
+    };
+    let ty = ty
+        .as_ref()
+        .expect("local binding should preserve type annotation");
+    let ql_ast::TypeExprKind::Callable { params, ret } = &ty.kind else {
+        panic!("expected callable type annotation");
+    };
+    assert_eq!(params.len(), 1);
+    assert!(matches!(params[0].kind, ql_ast::TypeExprKind::Named { .. }));
+    assert!(matches!(ret.kind, ql_ast::TypeExprKind::Named { .. }));
+    let ExprKind::Closure { params, .. } = &value.kind else {
+        panic!("expected closure expression");
+    };
+    assert!(params[0].ty.is_none());
 }
 
 #[test]

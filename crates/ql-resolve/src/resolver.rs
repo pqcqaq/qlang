@@ -356,8 +356,13 @@ impl<'module> Resolver<'module> {
         for &stmt_id in &block.statements {
             let stmt = self.module.stmt(stmt_id);
             match &stmt.kind {
-                StmtKind::Let { pattern, value, .. } => {
+                StmtKind::Let {
+                    pattern, ty, value, ..
+                } => {
                     self.resolve_pattern(*pattern, scope);
+                    if let Some(ty) = ty {
+                        self.resolve_type(*ty, scope);
+                    }
                     self.resolve_expr(*value, scope);
                     self.bind_pattern_locals(*pattern, scope);
                 }

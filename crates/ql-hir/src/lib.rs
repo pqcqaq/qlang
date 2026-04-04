@@ -329,6 +329,7 @@ pub enum StmtKind {
     Let {
         mutable: bool,
         pattern: PatternId,
+        ty: Option<TypeId>,
         value: ExprId,
     },
     Return(Option<ExprId>),

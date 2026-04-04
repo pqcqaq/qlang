@@ -340,10 +340,12 @@ impl Lowerer {
             ast::StmtKind::Let {
                 mutable,
                 pattern,
+                ty,
                 value,
             } => StmtKind::Let {
                 mutable: *mutable,
                 pattern: self.lower_pattern(pattern),
+                ty: ty.as_ref().map(|ty| self.lower_type_expr(ty)),
                 value: self.lower_expr(value),
             },
             ast::StmtKind::Return(expr) => {

@@ -437,10 +437,15 @@ fn format_stmt(stmt: &Stmt, indent: usize, out: &mut String) {
         StmtKind::Let {
             mutable,
             pattern,
+            ty,
             value,
         } => {
             out.push_str(if *mutable { "var " } else { "let " });
             format_pattern(pattern, out);
+            if let Some(ty) = ty {
+                out.push_str(": ");
+                format_type(ty, out);
+            }
             out.push_str(" = ");
             format_expr(value, indent, out);
         }

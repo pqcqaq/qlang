@@ -148,6 +148,17 @@ fn codegen_snapshots_match() {
             expected_header_relative: None,
         },
         PassCase {
+            name: "annotated_local_closure_build_llvm_ir",
+            source_relative: "fixtures/codegen/pass/annotated_local_closure_build.ql",
+            emit: "llvm-ir",
+            expected_relative: "tests/codegen/pass/annotated_local_closure_build.ll",
+            mock_compiler: false,
+            mock_archiver: false,
+            archiver_style: None,
+            header_surface: None,
+            expected_header_relative: None,
+        },
+        PassCase {
             name: "bool_match_llvm_ir",
             source_relative: "fixtures/codegen/pass/bool_match.ql",
             emit: "llvm-ir",

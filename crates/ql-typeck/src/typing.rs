@@ -280,10 +280,23 @@ impl<'a> Checker<'a> {
                 StmtKind::Let {
                     mutable,
                     pattern,
+                    ty,
                     value,
                 } => {
-                    let value_ty = self.check_expr(*value, None);
-                    self.bind_pattern(*pattern, &value_ty);
+                    let declared_ty =
+                        ty.map(|ty_id| lower_type(self.module, self.resolution, ty_id));
+                    let value_ty = self.check_expr(*value, declared_ty.as_ref());
+                    if let Some(expected) = declared_ty.as_ref() {
+                        self.report_type_mismatch_stmt(
+                            stmt_id,
+                            expected,
+                            &value_ty,
+                            "local binding value",
+                        );
+                        self.bind_pattern(*pattern, expected);
+                    } else {
+                        self.bind_pattern(*pattern, &value_ty);
+                    }
                     if !*mutable
                         && let PatternKind::Binding(local_id) = &self.module.pattern(*pattern).kind
                     {
@@ -861,19 +874,18 @@ impl<'a> Checker<'a> {
         callee_ty: &Ty,
         args: &[CallArg],
     ) -> Option<Ty> {
-        let needs_refinement = matches!(
-            callee_ty,
-            Ty::Callable { params, .. } if params.iter().any(Ty::is_unknown)
-        ) || matches!(self.module.expr(callee).kind, ExprKind::Closure { .. });
+        let needs_refinement =
+            matches!(
+                callee_ty,
+                Ty::Callable { params, .. } if params.iter().any(Ty::is_unknown)
+            ) || matches!(self.module.expr(callee).kind, ExprKind::Closure { .. });
         if !needs_refinement || args.iter().any(|arg| matches!(arg, CallArg::Named { .. })) {
             return None;
         }
 
         let (bound_locals, closure_expr) = self.immutable_closure_source(callee).or_else(|| {
-            matches!(self.module.expr(callee).kind, ExprKind::Closure { .. }).then_some((
-                Vec::new(),
-                callee,
-            ))
+            matches!(self.module.expr(callee).kind, ExprKind::Closure { .. })
+                .then_some((Vec::new(), callee))
         })?;
         let expected = Ty::Callable {
             params: args

@@ -47,13 +47,14 @@
 - `extern "c"` 顶层声明、extern block、顶层导出定义
 - `main` 程序入口
 - 标量整数 / `Bool` / `Void`
+- `let` / `var` 局部绑定；当前已支持 statement-level 显式类型标注 `let name: Type = value` / `var name: Type = value`
 - direct call 与 named arguments
 - same-file `use ... as ...` function alias call
 - 最小 first-class sync function value 子集
   - same-file sync function item
   - same-file `use ... as ...` function alias
   - transparently resolve 到 same-file sync function item 的 callable `const` / `static`，以及它们的 same-file `use ... as ...` alias
-  - non-capturing sync closure value；当前 public regression 已锁定 ordinary positional indirect call 的最小子集：zero-arg 形态、显式 typed closure parameter 形态，以及由 call-site positional argument 反推参数类型的 parameterized local/immutable-alias 形态，capturing closure 仍保持关闭
+  - non-capturing sync closure value；当前 public regression 已锁定 ordinary positional indirect call 的最小子集：zero-arg 形态、显式 typed closure parameter 形态、由 statement-level local callable type annotation 驱动的 parameterized local 形态，以及由 call-site positional argument 反推参数类型的 parameterized local/immutable-alias 形态，capturing closure 仍保持关闭
   - ordinary call 可 direct call，或先绑定到 local 后再做 positional indirect call
   - ordinary `match` guard，以及当前 shipped cleanup call / guard-call 子路径，也可通过同一批 callable local / callable `const` / `static` / same-file alias 进入 positional indirect call
 - 最小 first-class async function value 子集
@@ -252,7 +253,7 @@
 - 更广义的 async `dylib` surface，尤其是公开 async ABI
 - generalized `for await`，超出 fixed-array / homogeneous tuple 之外的 iterable
 - broader cleanup lowering / cleanup codegen，超出当前 direct / call-backed `defer` + `if` / `match` + 透明 `?` wrapper cleanup 子集之外
-- broader callable value lowering，超出当前 same-file sync function item / same-file alias / callable `const` / `static` 子集、non-capturing sync closure value 的 ordinary positional indirect-call 最小子集（zero-arg + explicit typed-parameter shape + call-site positional-arg-inferred parameterized local/immutable-alias shape），以及 same-file async function item / alias 的 ordinary local indirect-call + `await` 子集之外；capturing closure value、async callable `const` / `static` 与 async cleanup / guard-call path 仍未开放
+- broader callable value lowering，超出当前 same-file sync function item / same-file alias / callable `const` / `static` 子集、non-capturing sync closure value 的 ordinary positional indirect-call 最小子集（zero-arg + explicit typed-parameter shape + statement-level local callable type-annotation shape + call-site positional-arg-inferred parameterized local/immutable-alias shape），以及 same-file async function item / alias 的 ordinary local indirect-call + `await` 子集之外；capturing closure value、async callable `const` / `static` 与 async cleanup / guard-call path 仍未开放
 - cancellation / polling / drop semantics
 - generic async ABI / layout substitution
 - arbitrary dynamic overlap precision

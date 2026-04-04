@@ -199,6 +199,38 @@ fn main() {
 }
 
 #[test]
+fn lower_module_preserves_local_binding_type_annotations() {
+    let source = r#"
+fn main() {
+    let run: (Int) -> Int = (value) => value + 1;
+}
+"#;
+    let ast = parse_source(source).expect("source should parse");
+    let hir = lower_module(&ast);
+    let function = match &hir.item(hir.items[0]).kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+    let body = hir.block(function.body.expect("function should have body"));
+    let stmt = hir.stmt(body.statements[0]);
+    let ty = match &stmt.kind {
+        StmtKind::Let { ty, .. } => *ty,
+        other => panic!("expected let statement, got {other:?}"),
+    };
+    let ty = ty.expect("local binding should preserve type annotation");
+    let ty = hir.ty(ty);
+    let ql_hir::TypeKind::Callable { params, ret } = &ty.kind else {
+        panic!("expected callable type");
+    };
+    assert_eq!(params.len(), 1);
+    assert!(matches!(
+        hir.ty(params[0]).kind,
+        ql_hir::TypeKind::Named { .. }
+    ));
+    assert!(matches!(hir.ty(*ret).kind, ql_hir::TypeKind::Named { .. }));
+}
+
+#[test]
 fn lower_module_preserves_receiver_parameter_spans() {
     let source = r#"
 impl Counter {
