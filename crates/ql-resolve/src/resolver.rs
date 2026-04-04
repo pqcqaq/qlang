@@ -528,6 +528,9 @@ impl<'module> Resolver<'module> {
                         local.name.clone(),
                         ValueResolution::Local(local_id),
                     );
+                    if let Some(ty) = local.ty {
+                        self.resolve_type(ty, closure_scope);
+                    }
                 }
                 self.resolve_expr(*body, closure_scope);
             }

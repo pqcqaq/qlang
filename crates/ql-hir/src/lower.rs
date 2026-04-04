@@ -386,6 +386,7 @@ impl Lowerer {
         let local = self.module.alloc_local(Local {
             name: name.to_owned(),
             span,
+            ty: None,
         });
         self.module.alloc_pattern(Pattern {
             span,
@@ -493,9 +494,11 @@ impl Lowerer {
                 params: params
                     .iter()
                     .map(|param| {
+                        let ty = param.ty.as_ref().map(|ty| self.lower_type_expr(ty));
                         self.module.alloc_local(Local {
                             name: param.name.clone(),
                             span: param.span,
+                            ty,
                         })
                     })
                     .collect(),

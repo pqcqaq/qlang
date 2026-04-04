@@ -552,6 +552,76 @@ fn sample[T](value: Int) {
 }
 
 #[test]
+fn parses_typed_closure_parameters() {
+    let source = r#"
+fn main() {
+    let closure = (value: Int, apply: (Int) -> Int) => apply(value);
+}
+"#;
+    let module = parse_source(source).expect("typed closure should parse");
+    let function = match &module.items[0].kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+    let body = function.body.as_ref().expect("function should have body");
+    let StmtKind::Let { value, .. } = &body.statements[0].kind else {
+        panic!("expected closure binding");
+    };
+    let ExprKind::Closure { params, .. } = &value.kind else {
+        panic!("expected closure expression");
+    };
+
+    let value_ty = params[0].ty.as_ref().expect("first closure param should have type");
+    assert!(matches!(
+        &value_ty.kind,
+        ql_ast::TypeExprKind::Named { path, args }
+        if path.segments == ["Int"] && args.is_empty()
+    ));
+
+    let apply_ty = params[1]
+        .ty
+        .as_ref()
+        .expect("second closure param should have type");
+    assert!(matches!(
+        &apply_ty.kind,
+        ql_ast::TypeExprKind::Callable { params, ret }
+        if params.len() == 1
+            && matches!(
+                &params[0].kind,
+                ql_ast::TypeExprKind::Named { path, args }
+                if path.segments == ["Int"] && args.is_empty()
+            )
+            && matches!(
+                &ret.kind,
+                ql_ast::TypeExprKind::Named { path, args }
+                if path.segments == ["Int"] && args.is_empty()
+            )
+    ));
+}
+
+#[test]
+fn keeps_parenthesized_expressions_after_closure_backtracking() {
+    let source = r#"
+fn main() {
+    (1 + 2) * 3;
+}
+"#;
+    let module = parse_source(source).expect("parenthesized expression should still parse");
+    let function = match &module.items[0].kind {
+        ItemKind::Function(function) => function,
+        other => panic!("expected function item, got {other:?}"),
+    };
+    let body = function.body.as_ref().expect("function should have body");
+    let StmtKind::Expr { expr, .. } = &body.statements[0].kind else {
+        panic!("expected expression statement");
+    };
+    let ExprKind::Binary { op, .. } = &expr.kind else {
+        panic!("expected binary expression");
+    };
+    assert_eq!(*op, ql_ast::BinaryOp::Mul);
+}
+
+#[test]
 fn captures_precise_receiver_parameter_spans() {
     let source = r#"
 impl Counter {

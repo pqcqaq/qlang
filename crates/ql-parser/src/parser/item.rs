@@ -580,7 +580,7 @@ impl Parser {
         }
     }
 
-    fn parse_type(&mut self) -> Result<TypeExpr, ()> {
+    pub(super) fn parse_type(&mut self) -> Result<TypeExpr, ()> {
         let start = self.current_start();
         if self.eat(TokenKind::Star) {
             let is_const = self.eat(TokenKind::Const);

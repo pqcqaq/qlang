@@ -395,10 +395,11 @@ pub struct PatternField {
     pub pattern: Option<Box<Pattern>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ClosureParam {
     pub name: String,
     pub span: Span,
+    pub ty: Option<TypeExpr>,
 }
 
 /// Expression nodes preserved by the AST before HIR lowering.

@@ -739,13 +739,25 @@ impl<'a> Checker<'a> {
     }
 
     fn check_closure(&mut self, params: &[LocalId], body: ExprId, expected: Option<&Ty>) -> Ty {
-        let param_types = match expected {
+        let expected_params = match expected {
             Some(Ty::Callable {
                 params: expected_params,
                 ..
-            }) if expected_params.len() == params.len() => expected_params.clone(),
-            _ => vec![Ty::Unknown; params.len()],
+            }) if expected_params.len() == params.len() => Some(expected_params),
+            _ => None,
         };
+        let param_types = params
+            .iter()
+            .enumerate()
+            .map(|(index, local_id)| {
+                self.module
+                    .local(*local_id)
+                    .ty
+                    .map(|ty| lower_type(self.module, self.resolution, ty))
+                    .or_else(|| expected_params.map(|params| params[index].clone()))
+                    .unwrap_or(Ty::Unknown)
+            })
+            .collect::<Vec<_>>();
 
         for (&local_id, ty) in params.iter().zip(param_types.iter().cloned()) {
             self.local_types.insert(local_id, ty);

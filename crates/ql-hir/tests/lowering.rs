@@ -162,10 +162,10 @@ fn main() {
 }
 
 #[test]
-fn lower_module_preserves_closure_parameter_local_spans() {
+fn lower_module_preserves_closure_parameter_local_spans_and_types() {
     let source = r#"
 fn main() {
-    let closure = (item, next) => item + next;
+    let closure = (item: Int, next: Int) => item + next;
 }
 "#;
     let ast = parse_source(source).expect("source should parse");
@@ -194,6 +194,8 @@ fn main() {
         &source[hir.local(params[1]).span.start..hir.local(params[1]).span.end],
         "next"
     );
+    assert!(hir.local(params[0]).ty.is_some());
+    assert!(hir.local(params[1]).ty.is_some());
 }
 
 #[test]

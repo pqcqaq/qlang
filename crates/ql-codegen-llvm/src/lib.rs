@@ -11844,6 +11844,24 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_typed_non_capturing_closure_value_local_calls() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let run = (value: Int) => value + 1
+    let alias = run
+    return alias(41)
+}
+"#,
+        );
+
+        assert!(rendered.contains("store ptr @ql_0_main__closure0"));
+        assert!(rendered.contains("load ptr, ptr %l3_alias"));
+        assert!(rendered.contains("call i64 %t2(i64 41)"));
+        assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
+    }
+
+    #[test]
     fn emits_callable_const_and_static_item_calls() {
         let rendered = emit(
             r#"

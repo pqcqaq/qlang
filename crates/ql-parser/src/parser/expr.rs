@@ -150,7 +150,7 @@ impl Parser {
     }
 
     fn parse_prefix_expr(&mut self, struct_literal_mode: StructLiteralMode) -> Result<Expr, ()> {
-        if self.at(TokenKind::MoveKw) && self.is_closure_start(self.idx) {
+        if self.at(TokenKind::MoveKw) {
             return self.parse_closure();
         }
 
@@ -211,8 +211,24 @@ impl Parser {
                     },
                 ))
             }
-            TokenKind::LParen if self.is_closure_start(self.idx) => self.parse_closure(),
+            TokenKind::LParen => self.parse_paren_or_closure(struct_literal_mode),
             _ => self.parse_postfix_expr(struct_literal_mode),
+        }
+    }
+
+    fn parse_paren_or_closure(
+        &mut self,
+        struct_literal_mode: StructLiteralMode,
+    ) -> Result<Expr, ()> {
+        let checkpoint = self.idx;
+        let error_count = self.errors.len();
+        match self.parse_closure() {
+            Ok(expr) => Ok(expr),
+            Err(()) => {
+                self.idx = checkpoint;
+                self.errors.truncate(error_count);
+                self.parse_postfix_expr(struct_literal_mode)
+            }
         }
     }
 
@@ -226,9 +242,15 @@ impl Parser {
         let mut params = Vec::new();
         while !self.at(TokenKind::RParen) && !self.at(TokenKind::Eof) {
             let param = self.expect_ident_token("expected closure parameter name")?;
+            let ty = if self.eat(TokenKind::Colon) {
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
             params.push(ClosureParam {
                 name: param.text,
                 span: param.span,
+                ty,
             });
             if !self.eat(TokenKind::Comma) {
                 break;
@@ -499,46 +521,6 @@ impl Parser {
                 Err(())
             }
         }
-    }
-
-    fn is_closure_start(&self, start: usize) -> bool {
-        let mut idx = start;
-        if self.tokens.get(idx).map(|token| token.kind) == Some(TokenKind::MoveKw) {
-            idx += 1;
-        }
-
-        if self.tokens.get(idx).map(|token| token.kind) != Some(TokenKind::LParen) {
-            return false;
-        }
-
-        let mut depth = 0;
-        while let Some(token) = self.tokens.get(idx) {
-            match token.kind {
-                TokenKind::LParen => {
-                    depth += 1;
-                    if depth > 1 {
-                        return false;
-                    }
-                }
-                TokenKind::RParen => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return self
-                            .tokens
-                            .get(idx + 1)
-                            .map(|token| token.kind == TokenKind::FatArrow)
-                            .unwrap_or(false);
-                    }
-                }
-                TokenKind::Ident | TokenKind::Comma if depth == 1 => {}
-                _ if depth == 1 => return false,
-                TokenKind::Eof => return false,
-                _ => {}
-            }
-            idx += 1;
-        }
-
-        false
     }
 
     fn looks_like_struct_literal(&self) -> bool {

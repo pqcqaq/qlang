@@ -481,4 +481,5 @@ pub struct StructLiteralField {
 pub struct Local {
     pub name: String,
     pub span: Span,
+    pub ty: Option<TypeId>,
 }

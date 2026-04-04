@@ -7378,6 +7378,42 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_typed_non_capturing_closure_values() {
+        let dir = TestDir::new("ql-driver-typed-non-capturing-closure-values");
+        let source = dir.write(
+            "typed_non_capturing_closure_values.ql",
+            r#"
+fn main() -> Int {
+    let run = (value: Int) => value + 1
+    let alias = run
+    return alias(41)
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/typed_non_capturing_closure_values.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("typed non-capturing closure values should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("store ptr @ql_0_main__closure0"));
+        assert!(rendered.contains("load ptr, ptr %l3_alias"));
+        assert!(rendered.contains("call i64 %t2(i64 41)"));
+        assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_callable_const_and_static_values() {
         let dir = TestDir::new("ql-driver-callable-const-static-values");
         let source = dir.write(
