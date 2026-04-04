@@ -573,9 +573,7 @@ impl<'a> ModuleEmitter<'a> {
                 }
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-                if let Some(tail) = self.input.hir.block(*block_id).tail {
-                    self.collect_guard_expr_callees(tail, queue);
-                }
+                self.collect_guard_block_callees(*block_id, queue);
             }
             hir::ExprKind::If {
                 condition,
@@ -583,9 +581,7 @@ impl<'a> ModuleEmitter<'a> {
                 else_branch,
             } => {
                 self.collect_guard_expr_callees(*condition, queue);
-                if let Some(tail) = self.input.hir.block(*then_branch).tail {
-                    self.collect_guard_expr_callees(tail, queue);
-                }
+                self.collect_guard_block_callees(*then_branch, queue);
                 if let Some(other) = else_branch {
                     self.collect_guard_expr_callees(*other, queue);
                 }
@@ -617,6 +613,22 @@ impl<'a> ModuleEmitter<'a> {
             | hir::ExprKind::String { .. }
             | hir::ExprKind::Bool(_)
             | hir::ExprKind::NoneLiteral => {}
+        }
+    }
+
+    fn collect_guard_block_callees(
+        &self,
+        block_id: hir::BlockId,
+        queue: &mut VecDeque<FunctionRef>,
+    ) {
+        let block = self.input.hir.block(block_id);
+        for statement_id in &block.statements {
+            if let hir::StmtKind::Expr { expr, .. } = &self.input.hir.stmt(*statement_id).kind {
+                self.collect_guard_expr_callees(*expr, queue);
+            }
+        }
+        if let Some(tail) = block.tail {
+            self.collect_guard_expr_callees(tail, queue);
         }
     }
 
@@ -1856,10 +1868,27 @@ impl<'a> ModuleEmitter<'a> {
 
     fn supports_cleanup_block_expr(&self, block_id: hir::BlockId) -> bool {
         let block = self.input.hir.block(block_id);
-        block.statements.is_empty()
+        block
+            .statements
+            .iter()
+            .all(|statement_id| self.supports_cleanup_statement(*statement_id))
             && block
                 .tail
                 .is_none_or(|tail| self.supports_cleanup_expr(tail))
+    }
+
+    fn supports_cleanup_statement(&self, statement_id: hir::StmtId) -> bool {
+        match &self.input.hir.stmt(statement_id).kind {
+            hir::StmtKind::Expr { expr, .. } => self.supports_cleanup_expr(*expr),
+            hir::StmtKind::Let { .. }
+            | hir::StmtKind::Return(_)
+            | hir::StmtKind::Defer(_)
+            | hir::StmtKind::Break
+            | hir::StmtKind::Continue
+            | hir::StmtKind::While { .. }
+            | hir::StmtKind::Loop { .. }
+            | hir::StmtKind::For { .. } => false,
+        }
     }
 
     fn supports_cleanup_match_expr(&self, value_expr: hir::ExprId, arms: &[hir::MatchArm]) -> bool {
@@ -4282,20 +4311,35 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_cleanup_block(&mut self, output: &mut String, block_id: hir::BlockId, span: Span) {
+        let block = self.emitter.input.hir.block(block_id);
+        for statement_id in &block.statements {
+            match &self.emitter.input.hir.stmt(*statement_id).kind {
+                hir::StmtKind::Expr { expr, .. } => self.render_cleanup_expr(output, *expr, span),
+                hir::StmtKind::Let { .. }
+                | hir::StmtKind::Return(_)
+                | hir::StmtKind::Defer(_)
+                | hir::StmtKind::Break
+                | hir::StmtKind::Continue
+                | hir::StmtKind::While { .. }
+                | hir::StmtKind::Loop { .. }
+                | hir::StmtKind::For { .. } => panic!(
+                    "supported cleanup lowering at {span:?} should only render expr statements inside cleanup blocks"
+                ),
+            }
+        }
+        if let Some(tail) = block.tail {
+            self.render_cleanup_expr(output, tail, span);
+        }
+    }
+
     fn render_cleanup_expr(&mut self, output: &mut String, expr_id: hir::ExprId, span: Span) {
         match &self.emitter.input.hir.expr(expr_id).kind {
             hir::ExprKind::Call { callee, args } => {
                 let _ = self.render_cleanup_call(output, *callee, args, span);
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-                let block = self.emitter.input.hir.block(*block_id);
-                assert!(
-                    block.statements.is_empty(),
-                    "supported cleanup lowering at {span:?} should only render empty-tail blocks"
-                );
-                if let Some(tail) = block.tail {
-                    self.render_cleanup_expr(output, tail, span);
-                }
+                self.render_cleanup_block(output, *block_id, span);
             }
             hir::ExprKind::Question(inner) => {
                 self.render_cleanup_expr(output, *inner, span);
@@ -4315,14 +4359,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     condition.repr
                 );
                 let _ = writeln!(output, "{then_label}:");
-                let then_block = self.emitter.input.hir.block(*then_branch);
-                assert!(
-                    then_block.statements.is_empty(),
-                    "supported cleanup lowering at {span:?} should only render empty-tail if branches"
-                );
-                if let Some(tail) = then_block.tail {
-                    self.render_cleanup_expr(output, tail, span);
-                }
+                self.render_cleanup_block(output, *then_branch, span);
                 let _ = writeln!(output, "  br label %{end_label}");
                 let _ = writeln!(output, "{else_label}:");
                 if let Some(other) = else_branch {
@@ -14157,6 +14194,28 @@ fn main() -> Int {
         assert!(rendered.contains("call void @second()"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_sequence_lowering() {
+        let rendered = emit(
+            r#"
+extern "c" fn first()
+extern "c" fn second()
+
+fn main() -> Int {
+    defer {
+        first();
+        second()
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("call void @first()"));
+        assert!(rendered.contains("call void @second()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
     }
 
     #[test]

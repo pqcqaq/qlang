@@ -8504,6 +8504,44 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_cleanup_block_sequence_lowering() {
+        let dir = TestDir::new("ql-driver-cleanup-block-sequence");
+        let source = dir.write(
+            "cleanup_block_sequence.ql",
+            r#"
+extern "c" fn first()
+extern "c" fn second()
+
+fn main() -> Int {
+    defer {
+        first();
+        second()
+    }
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/cleanup_block_sequence.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup block sequence lowering should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call void @first()"));
+        assert!(rendered.contains("call void @second()"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_match_question_mark_lowering() {
         let dir = TestDir::new("ql-driver-match-question-unsupported");
         let source = dir.write(
