@@ -207,11 +207,11 @@
 当前 cleanup lowering 只开放首个受控子集：
 
 - direct / call-backed `defer`
-- statement-sequenced block wrapper：只接受当前已支持 cleanup expr statement，外加可选 tail
+- statement-sequenced block wrapper：只接受当前已支持 cleanup expr statement，外加可选 tail；当前已覆盖 direct cleanup body、cleanup guard / scrutinee block，以及 cleanup call-arg value block
 - bool-guard 驱动的 call-backed `if` cleanup branch
 - bool / int scrutinee + literal-or-path / wildcard arms + optional bool guard 的 cleanup `match` branch
 - 透明 `?` wrapper，可包裹当前 shipped cleanup expr / guard / scrutinee 子路径
-- 当前已锁定的用户面包括 direct cleanup `obj` build、statement-sequenced cleanup block `obj` build、guarded dynamic task-handle cleanup `staticlib` build、cleanup `match` `obj` build，以及 cleanup-internal question-mark `obj` build
+- 当前已锁定的用户面包括 direct cleanup `obj` build、statement-sequenced cleanup block `obj` build、statement-sequenced cleanup guard / scrutinee / call-arg value block `obj` build、guarded dynamic task-handle cleanup `staticlib` build、cleanup `match` `obj` build，以及 cleanup-internal question-mark `obj` build
 
 ### 透明 `?` lowering
 

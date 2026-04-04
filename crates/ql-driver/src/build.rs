@@ -8542,6 +8542,69 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_cleanup_block_guard_scrutinee_and_value_lowering() {
+        let dir = TestDir::new("ql-driver-cleanup-block-guard-scrutinee-value");
+        let source = dir.write(
+            "cleanup_block_guard_scrutinee_value.ql",
+            r#"
+extern "c" fn note()
+extern "c" fn first()
+extern "c" fn second()
+extern "c" fn sink(value: Int)
+
+fn enabled() -> Bool {
+    return true
+}
+
+fn main() -> Int {
+    let flag = true
+    defer if {
+        note();
+        enabled()
+    } {
+        match {
+            note();
+            flag
+        } {
+            true => sink({
+                note();
+                1
+            }),
+            false => second(),
+        }
+    } else {
+        first()
+    }
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/cleanup_block_guard_scrutinee_value.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup guard/scrutinee/value block lowering should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call void @note()"));
+        assert!(rendered.contains("call void @first()"));
+        assert!(rendered.contains("call void @second()"));
+        assert!(rendered.contains("call void @sink(i64 1)"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_match_question_mark_lowering() {
         let dir = TestDir::new("ql-driver-match-question-unsupported");
         let source = dir.write(

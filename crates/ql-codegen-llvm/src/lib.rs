@@ -1867,14 +1867,26 @@ impl<'a> ModuleEmitter<'a> {
     }
 
     fn supports_cleanup_block_expr(&self, block_id: hir::BlockId) -> bool {
+        self.supports_cleanup_block_with_tail(block_id, false, |this, tail| {
+            this.supports_cleanup_expr(tail)
+        })
+    }
+
+    fn supports_cleanup_block_with_tail(
+        &self,
+        block_id: hir::BlockId,
+        require_tail: bool,
+        tail_support: impl Fn(&Self, hir::ExprId) -> bool,
+    ) -> bool {
         let block = self.input.hir.block(block_id);
         block
             .statements
             .iter()
             .all(|statement_id| self.supports_cleanup_statement(*statement_id))
-            && block
-                .tail
-                .is_none_or(|tail| self.supports_cleanup_expr(tail))
+            && match block.tail {
+                Some(tail) => tail_support(self, tail),
+                None => !require_tail,
+            }
     }
 
     fn supports_cleanup_statement(&self, statement_id: hir::StmtId) -> bool {
@@ -1972,11 +1984,9 @@ impl<'a> ModuleEmitter<'a> {
                 return self.supports_cleanup_call_expr(*callee, args, Some(expected_ty));
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-                let block = self.input.hir.block(*block_id);
-                return block.statements.is_empty()
-                    && block
-                        .tail
-                        .is_some_and(|tail| self.supports_cleanup_value_expr(tail, expected_ty));
+                return self.supports_cleanup_block_with_tail(*block_id, true, |this, tail| {
+                    this.supports_cleanup_value_expr(tail, expected_ty)
+                });
             }
             hir::ExprKind::Question(inner) => {
                 return self.supports_cleanup_value_expr(*inner, expected_ty);
@@ -2056,13 +2066,10 @@ impl<'a> ModuleEmitter<'a> {
                 op: UnaryOp::Not,
                 expr,
             } => self.supports_cleanup_bool_expr(*expr),
-            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-                let block = self.input.hir.block(*block_id);
-                block.statements.is_empty()
-                    && block
-                        .tail
-                        .is_some_and(|tail| self.supports_cleanup_bool_expr(tail))
-            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => self
+                .supports_cleanup_block_with_tail(*block_id, true, |this, tail| {
+                    this.supports_cleanup_bool_expr(tail)
+                }),
             hir::ExprKind::Question(inner) => self.supports_cleanup_bool_expr(*inner),
             _ => false,
         }
@@ -2103,13 +2110,10 @@ impl<'a> ModuleEmitter<'a> {
                 op: UnaryOp::Neg,
                 expr,
             } => self.supports_cleanup_scalar_expr(*expr),
-            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-                let block = self.input.hir.block(*block_id);
-                block.statements.is_empty()
-                    && block
-                        .tail
-                        .is_some_and(|tail| self.supports_cleanup_scalar_expr(tail))
-            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => self
+                .supports_cleanup_block_with_tail(*block_id, true, |this, tail| {
+                    this.supports_cleanup_scalar_expr(tail)
+                }),
             hir::ExprKind::Question(inner) => self.supports_cleanup_scalar_expr(*inner),
             _ => false,
         }
@@ -4311,7 +4315,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
-    fn render_cleanup_block(&mut self, output: &mut String, block_id: hir::BlockId, span: Span) {
+    fn render_cleanup_block_prefix(
+        &mut self,
+        output: &mut String,
+        block_id: hir::BlockId,
+        span: Span,
+    ) -> Option<hir::ExprId> {
         let block = self.emitter.input.hir.block(block_id);
         for statement_id in &block.statements {
             match &self.emitter.input.hir.stmt(*statement_id).kind {
@@ -4328,7 +4337,11 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 ),
             }
         }
-        if let Some(tail) = block.tail {
+        block.tail
+    }
+
+    fn render_cleanup_block(&mut self, output: &mut String, block_id: hir::BlockId, span: Span) {
+        if let Some(tail) = self.render_cleanup_block_prefix(output, block_id, span) {
             self.render_cleanup_expr(output, tail, span);
         }
     }
@@ -4661,12 +4674,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 rendered
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-                let block = self.emitter.input.hir.block(*block_id);
-                assert!(
-                    block.statements.is_empty(),
-                    "supported cleanup lowering at {span:?} should only render empty-tail value blocks"
-                );
-                let tail = block.tail.unwrap_or_else(|| {
+                let tail = self
+                    .render_cleanup_block_prefix(output, *block_id, span)
+                    .unwrap_or_else(|| {
                     panic!(
                         "supported cleanup lowering at {span:?} should only render valued cleanup blocks with tails"
                     )
@@ -6429,11 +6439,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
                 let tail = self
-                    .emitter
-                    .input
-                    .hir
-                    .block(*block_id)
-                    .tail
+                    .render_cleanup_block_prefix(output, *block_id, span)
                     .unwrap_or_else(|| {
                         panic!(
                             "prepared bool guard lowering at {span:?} should only render block guard operands with tails"
@@ -14216,6 +14222,51 @@ fn main() -> Int {
         assert!(rendered.contains("call void @first()"));
         assert!(rendered.contains("call void @second()"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_block_guard_scrutinee_and_value_lowering() {
+        let rendered = emit(
+            r#"
+extern "c" fn note()
+extern "c" fn first()
+extern "c" fn second()
+extern "c" fn sink(value: Int)
+
+fn enabled() -> Bool {
+    return true
+}
+
+fn main() -> Int {
+    let flag = true
+    defer if {
+        note();
+        enabled()
+    } {
+        match {
+            note();
+            flag
+        } {
+            true => sink({
+                note();
+                1
+            }),
+            false => second(),
+        }
+    } else {
+        first()
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.contains("call void @note()"));
+        assert!(rendered.contains("call void @first()"));
+        assert!(rendered.contains("call void @second()"));
+        assert!(rendered.contains("call void @sink(i64 1)"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
     #[test]
