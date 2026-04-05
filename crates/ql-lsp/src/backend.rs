@@ -1,4 +1,4 @@
-use ql_analysis::{Analysis, analyze_source};
+use ql_analysis::{Analysis, analyze_package, analyze_source};
 use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
@@ -13,9 +13,9 @@ use tower_lsp::lsp_types::{
 use tower_lsp::{Client, LanguageServer};
 
 use crate::bridge::{
-    completion_for_analysis, definition_for_analysis, diagnostics_to_lsp, hover_for_analysis,
-    prepare_rename_for_analysis, references_for_analysis, rename_for_analysis,
-    semantic_tokens_for_analysis, semantic_tokens_legend,
+    completion_for_analysis, definition_for_package_analysis, diagnostics_to_lsp,
+    hover_for_package_analysis, prepare_rename_for_analysis, references_for_analysis,
+    rename_for_analysis, semantic_tokens_for_analysis, semantic_tokens_legend,
 };
 use crate::store::DocumentStore;
 
@@ -48,6 +48,11 @@ impl Backend {
         let source = self.documents.get(uri).await?;
         let analysis = analyze_source(&source).ok()?;
         Some((source, analysis))
+    }
+
+    fn package_analysis_for_uri(&self, uri: &Url) -> Option<ql_analysis::PackageAnalysis> {
+        let path = uri.to_file_path().ok()?;
+        analyze_package(&path).ok()
     }
 }
 
@@ -133,7 +138,15 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        Ok(hover_for_analysis(&source, &analysis, position))
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            return Ok(hover_for_package_analysis(
+                &source, &analysis, &package, position,
+            ));
+        }
+
+        Ok(crate::bridge::hover_for_analysis(
+            &source, &analysis, position,
+        ))
     }
 
     async fn goto_definition(
@@ -146,7 +159,15 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        Ok(definition_for_analysis(&uri, &source, &analysis, position))
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            return Ok(definition_for_package_analysis(
+                &uri, &source, &analysis, &package, position,
+            ));
+        }
+
+        Ok(crate::bridge::definition_for_analysis(
+            &uri, &source, &analysis, position,
+        ))
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {

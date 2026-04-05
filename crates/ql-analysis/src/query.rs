@@ -242,6 +242,14 @@ impl QueryIndex {
         })
     }
 
+    pub(crate) fn import_binding_at(&self, offset: usize) -> Option<(ImportBinding, Span)> {
+        let entry = self.occurrence_at(offset)?;
+        match &entry.key {
+            SymbolKey::Import(binding) => Some((binding.clone(), entry.span)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn references_at(&self, offset: usize) -> Option<Vec<ReferenceTarget>> {
         let key = self.occurrence_at(offset).map(|entry| entry.key.clone())?;
         let references = self

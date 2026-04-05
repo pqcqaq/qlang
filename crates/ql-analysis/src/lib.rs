@@ -17,7 +17,7 @@ use ql_project::{
     collect_package_sources, default_interface_path, load_interface_artifact,
     load_project_manifest, load_reference_manifests,
 };
-use ql_resolve::{ResolutionMap, resolve_module};
+use ql_resolve::{ImportBinding, ResolutionMap, resolve_module};
 use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
 use query::QueryIndex;
@@ -70,6 +70,26 @@ pub struct DependencySymbol {
     pub kind: SymbolKind,
     pub name: String,
     pub detail: String,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyHoverInfo {
+    pub span: Span,
+    pub package_name: String,
+    pub source_path: String,
+    pub kind: SymbolKind,
+    pub name: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyDefinitionTarget {
+    pub package_name: String,
+    pub source_path: String,
+    pub kind: SymbolKind,
+    pub name: String,
+    pub path: PathBuf,
     pub span: Span,
 }
 
@@ -128,6 +148,30 @@ impl DependencyInterface {
             .filter(|symbol| symbol.name == name)
             .collect()
     }
+
+    fn artifact_span_for(&self, symbol: &DependencySymbol) -> Option<Span> {
+        let source = fs::read_to_string(&self.interface_path)
+            .ok()?
+            .replace("\r\n", "\n");
+        let mut search_start = 0usize;
+        for module in &self.artifact.modules {
+            let header = format!("// source: {}", module.source_path);
+            let header_index = source.get(search_start..)?.find(&header)? + search_start;
+            let body_search_start = header_index + header.len();
+            let module_index = source
+                .get(body_search_start..)?
+                .find(&module.contents)
+                .map(|offset| body_search_start + offset)?;
+            if module.source_path == symbol.source_path {
+                return Some(Span::new(
+                    module_index + symbol.span.start,
+                    module_index + symbol.span.end,
+                ));
+            }
+            search_start = module_index + module.contents.len();
+        }
+        None
+    }
 }
 
 impl PackageAnalysis {
@@ -155,6 +199,66 @@ impl PackageAnalysis {
             .iter()
             .flat_map(|dependency| dependency.symbols_named(name))
             .collect()
+    }
+
+    pub fn dependency_hover_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<DependencyHoverInfo> {
+        let (dependency, symbol, import_span) =
+            self.resolve_dependency_import_target(analysis, offset)?;
+        Some(DependencyHoverInfo {
+            span: import_span,
+            package_name: dependency.artifact.package_name.clone(),
+            source_path: symbol.source_path.clone(),
+            kind: symbol.kind,
+            name: symbol.name.clone(),
+            detail: symbol.detail.clone(),
+        })
+    }
+
+    pub fn dependency_definition_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let (dependency, symbol, _) = self.resolve_dependency_import_target(analysis, offset)?;
+        let span = dependency.artifact_span_for(symbol)?;
+        Some(DependencyDefinitionTarget {
+            package_name: dependency.artifact.package_name.clone(),
+            source_path: symbol.source_path.clone(),
+            kind: symbol.kind,
+            name: symbol.name.clone(),
+            path: dependency.interface_path.clone(),
+            span,
+        })
+    }
+
+    fn resolve_dependency_import_target<'a>(
+        &'a self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<(&'a DependencyInterface, &'a DependencySymbol, Span)> {
+        let (binding, import_span) = analysis.import_binding_at(offset)?;
+        let imported_name = binding.path.segments.last()?;
+        let mut matches = self
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency_matches_import(dependency, &binding))
+            .flat_map(|dependency| {
+                dependency
+                    .symbols()
+                    .iter()
+                    .filter(move |symbol| &symbol.name == imported_name)
+                    .map(move |symbol| (dependency, symbol))
+            })
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return None;
+        }
+        let (dependency, symbol) = matches.pop()?;
+        Some((dependency, symbol, import_span))
     }
 }
 
@@ -227,6 +331,10 @@ impl Analysis {
     /// Return hover-ready semantic data for the symbol covering `offset`.
     pub fn hover_at(&self, offset: usize) -> Option<HoverInfo> {
         self.symbol_at(offset)
+    }
+
+    fn import_binding_at(&self, offset: usize) -> Option<(ImportBinding, Span)> {
+        self.index.import_binding_at(offset)
     }
 
     /// Return async semantic context for `await` / `spawn` / `for await` at `offset`.
@@ -426,7 +534,7 @@ fn index_interface_item_symbols(
                 &module.source_path,
                 SymbolKind::Function,
                 &function.name,
-                function.name_span,
+                function.span,
                 interface_detail_text(&module.contents, function.span, &function.name),
                 symbols,
             )
@@ -436,7 +544,7 @@ fn index_interface_item_symbols(
             &module.source_path,
             SymbolKind::Const,
             &global.name,
-            global.name_span,
+            item.span,
             interface_detail_text(&module.contents, item.span, &global.name),
             symbols,
         ),
@@ -445,7 +553,7 @@ fn index_interface_item_symbols(
             &module.source_path,
             SymbolKind::Static,
             &global.name,
-            global.name_span,
+            item.span,
             interface_detail_text(&module.contents, item.span, &global.name),
             symbols,
         ),
@@ -455,7 +563,7 @@ fn index_interface_item_symbols(
                 &module.source_path,
                 SymbolKind::Struct,
                 &struct_decl.name,
-                struct_decl.name_span,
+                item.span,
                 interface_detail_text(&module.contents, item.span, &struct_decl.name),
                 symbols,
             );
@@ -466,7 +574,7 @@ fn index_interface_item_symbols(
                 &module.source_path,
                 SymbolKind::Enum,
                 &enum_decl.name,
-                enum_decl.name_span,
+                item.span,
                 interface_detail_text(&module.contents, item.span, &enum_decl.name),
                 symbols,
             );
@@ -477,7 +585,7 @@ fn index_interface_item_symbols(
                 &module.source_path,
                 SymbolKind::Trait,
                 &trait_decl.name,
-                trait_decl.name_span,
+                item.span,
                 interface_detail_text(&module.contents, item.span, &trait_decl.name),
                 symbols,
             );
@@ -487,7 +595,7 @@ fn index_interface_item_symbols(
                     &module.source_path,
                     SymbolKind::Method,
                     &method.name,
-                    method.name_span,
+                    method.span,
                     interface_detail_text(&module.contents, method.span, &method.name),
                     symbols,
                 );
@@ -504,7 +612,7 @@ fn index_interface_item_symbols(
                     &module.source_path,
                     SymbolKind::Method,
                     &method.name,
-                    method.name_span,
+                    method.span,
                     interface_detail_text(&module.contents, method.span, &method.name),
                     symbols,
                 );
@@ -521,7 +629,7 @@ fn index_interface_item_symbols(
                     &module.source_path,
                     SymbolKind::Method,
                     &method.name,
-                    method.name_span,
+                    method.span,
                     interface_detail_text(&module.contents, method.span, &method.name),
                     symbols,
                 );
@@ -533,7 +641,7 @@ fn index_interface_item_symbols(
                 &module.source_path,
                 SymbolKind::TypeAlias,
                 &type_alias.name,
-                type_alias.name_span,
+                item.span,
                 interface_detail_text(&module.contents, item.span, &type_alias.name),
                 symbols,
             );
@@ -545,7 +653,7 @@ fn index_interface_item_symbols(
                     &module.source_path,
                     SymbolKind::Function,
                     &function.name,
-                    function.name_span,
+                    function.span,
                     interface_detail_text(&module.contents, function.span, &function.name),
                     symbols,
                 );
@@ -589,6 +697,28 @@ fn interface_detail_text(source: &str, span: Span, fallback_name: &str) -> Strin
 
 fn is_public(visibility: &AstVisibility) -> bool {
     matches!(visibility, AstVisibility::Public)
+}
+
+fn dependency_matches_import(dependency: &DependencyInterface, binding: &ImportBinding) -> bool {
+    let prefix_segments = binding
+        .path
+        .segments
+        .split_last()
+        .map(|(_, prefix)| prefix)
+        .unwrap_or(&[]);
+    if prefix_segments.is_empty() {
+        return true;
+    }
+
+    let manifest_name = dependency
+        .manifest
+        .package
+        .as_ref()
+        .map(|package| package.name.as_str());
+    prefix_segments
+        .iter()
+        .any(|segment| segment == &dependency.artifact.package_name)
+        || manifest_name.is_some_and(|name| prefix_segments.iter().any(|segment| segment == name))
 }
 
 pub fn parse_errors_to_diagnostics(errors: Vec<ParseError>) -> Vec<Diagnostic> {

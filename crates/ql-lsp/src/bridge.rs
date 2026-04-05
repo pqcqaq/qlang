@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fs};
 
 use ql_analysis::{
-    Analysis, AsyncOperatorKind, HoverInfo, LoopControlKind, RenameError, SymbolKind,
+    Analysis, AsyncOperatorKind, HoverInfo, LoopControlKind, PackageAnalysis, RenameError,
+    SymbolKind,
 };
 use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
@@ -86,6 +87,34 @@ pub fn hover_for_analysis(source: &str, analysis: &Analysis, position: Position)
     })
 }
 
+pub fn hover_for_package_analysis(
+    source: &str,
+    analysis: &Analysis,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<Hover> {
+    let offset = position_to_offset(source, position)?;
+    if let Some(info) = package.dependency_hover_at(analysis, offset) {
+        let hover = HoverInfo {
+            span: info.span,
+            kind: info.kind,
+            name: info.name,
+            detail: info.detail,
+            ty: None,
+            definition_span: None,
+        };
+        return Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: render_hover_markdown(&hover),
+            }),
+            range: Some(span_to_range(source, hover.span)),
+        });
+    }
+
+    hover_for_analysis(source, analysis, position)
+}
+
 pub fn async_context_for_analysis(
     source: &str,
     analysis: &Analysis,
@@ -126,6 +155,26 @@ pub fn definition_for_analysis(
         uri.clone(),
         span_to_range(source, target.span),
     )))
+}
+
+pub fn definition_for_package_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<GotoDefinitionResponse> {
+    let offset = position_to_offset(source, position)?;
+    if let Some(target) = package.dependency_definition_at(analysis, offset) {
+        let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
+        let target_uri = Url::from_file_path(&target.path).ok()?;
+        return Some(GotoDefinitionResponse::Scalar(Location::new(
+            target_uri,
+            span_to_range(&target_source, target.span),
+        )));
+    }
+
+    definition_for_analysis(uri, source, analysis, position)
 }
 
 pub fn references_for_analysis(
