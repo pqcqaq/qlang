@@ -14615,6 +14615,17 @@ fn supported_direct_local_capturing_closure_callee_closure(
     cleanup_aliases: &[CleanupCapturingClosureBinding],
     expr_id: hir::ExprId,
 ) -> Option<mir::ClosureId> {
+    if let Some(expr) = cleanup_direct_capturing_closure_callee_expr(
+        module,
+        resolution,
+        body,
+        supported,
+        cleanup_aliases,
+        expr_id,
+    ) {
+        return Some(expr.closure_id());
+    }
+
     if let Some(closure_id) = direct_local_capturing_closure_for_expr(
         module,
         resolution,
@@ -14708,14 +14719,48 @@ fn supported_direct_local_capturing_closure_callee_block_closure(
                 let PatternKind::Binding(local) = pattern_kind(module, *pattern) else {
                     return None;
                 };
-                let closure_id = supported_direct_local_capturing_closure_callee_closure(
+                let mut assignment_binding = None;
+                let closure_id = if let Some(expr) = cleanup_direct_capturing_closure_callee_expr(
                     module,
                     resolution,
                     body,
                     supported,
                     &scoped_aliases,
                     *value,
-                )?;
+                ) {
+                    if let CleanupDirectCapturingClosureExpr::Assignment(binding) = expr {
+                        assignment_binding = Some(binding);
+                    }
+                    expr.closure_id()
+                } else if let Some(closure_id) =
+                    supported_direct_local_capturing_closure_callee_closure(
+                        module,
+                        resolution,
+                        body,
+                        supported,
+                        &scoped_aliases,
+                        *value,
+                    )
+                {
+                    closure_id
+                } else if let Some(closure_id) = direct_local_capturing_closure_for_expr(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    &scoped_aliases,
+                    *value,
+                ) {
+                    closure_id
+                } else {
+                    return None;
+                };
+                if let Some(binding) = assignment_binding {
+                    if !block_locals.contains(&binding.local) {
+                        return None;
+                    }
+                    scoped_aliases.push(binding);
+                }
                 block_locals.insert(*local);
                 scoped_aliases.push(CleanupCapturingClosureBinding {
                     local: *local,
@@ -19170,6 +19215,44 @@ fn main() -> Int {
     }
     let second = match 42 {
         current if rebound(current) => 2,
+        _ => 0,
+    }
+    return first + second
+}
+"#,
+        );
+
+        assert!(rendered.matches("__closure0(").count() >= 3);
+        assert!(rendered.contains("call i1 @"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
+    }
+
+    #[test]
+    fn emits_match_guard_block_assignment_bound_capturing_closure_calls() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let branch = true
+    let target = 42
+    let check = (value: Int) => value == target
+    let first = match 42 {
+        current if ({
+            var alias = check
+            let chosen = alias = check
+            chosen
+        })(current) => 1,
+        _ => 0,
+    }
+    let second = match 42 {
+        current if ({
+            var alias = check
+            let chosen = if branch { alias = check } else { check }
+            chosen
+        })(current) => 2,
         _ => 0,
     }
     return first + second
