@@ -9,7 +9,7 @@
 
 - P1 到 P6 已完成，并且已经形成可持续扩展的工程主干。
 - P7 正在进行，但主线不是“重新设计 async”，而是在既有 compiler/runtime/build 真相源上保守扩面。
-- P8 已进入前两条工程入口切片：最小 `qlang.toml` manifest graph、`ql project graph` 与 `.qi` V1 emit 已落地，但 `.qi` load / analysis 消费 与 cross-file editor semantics 仍未开始实现。
+- P8 已进入前三条工程入口切片：最小 `qlang.toml` manifest graph、`ql project graph`、`.qi` V1 emit 与 package-aware dependency `.qi` load 已落地，但依赖符号 query 与 cross-file editor semantics 仍未开始实现。
 - 当前最重要的治理要求仍然是三者一致：
   - 代码里的真实实现
   - 测试里的真实合同
@@ -26,7 +26,7 @@
 | P5 | 已完成 | 最小 C ABI 闭环、header projection、C/Rust host examples、FFI 集成回归 |
 | P6 | 已完成 | same-file hover / definition / references / rename / completion / semantic tokens / LSP parity |
 | P7 | 进行中 | 受控 async/runtime/task-handle lowering、library/program build 子集、Rust interop 扩展 |
-| P8 | 启动中 | 最小 `qlang.toml` manifest graph、`ql project graph`、`.qi` V1 emit、后续 `.qi` load / cross-file LSP 入口 |
+| P8 | 启动中 | 最小 `qlang.toml` manifest graph、`ql project graph`、`.qi` V1 emit、package-aware dependency `.qi` load、后续 cross-file LSP 入口 |
 
 ## 各阶段一句话总结
 
@@ -71,7 +71,8 @@
 - 当前真实 contract 已锁定在 `[package].name`、`[workspace].members`、`[references].packages`。
 - `ql project graph [file-or-dir]` 已可向上发现 manifest 并输出当前 package/workspace/reference graph。
 - `ql project emit-interface [file-or-dir] [-o <output>]` 已可对 package manifest 的 `src/**/*.ql` 做逐文件分析，并输出 text-based `.qi` public interface artifact。
-- 当前 `.qi` V1 只负责 emit：保留 public declaration surface，去掉 body / value / field default，并按源文件写成 section；`.qi` load、真实 dependency build graph，以及 cross-file query / references / rename / completion 仍未开放。
+- `ql-analysis::analyze_package` 与 package-aware `ql check <package-dir>` 现已开始加载 `[references].packages` 指向的 dependency `.qi` artifact，并在 interface 缺失时显式失败。
+- 当前 dependency `.qi` load 仍停在 artifact-level section 消费：保留 package header 与 `// source: ...` module section，尚未进入 dependency symbol identity、query truth surface、真实 dependency build graph，以及 cross-file query / references / rename / completion。
 
 ## 当前进度对账
 
@@ -86,7 +87,7 @@
 
 1. 继续沿已开放的 async executable / library 子集扩真实用户可写 surface，而不是另开 ABI 或 runtime 设计。
 2. 继续让 task-handle、dynamic path、`for await`、awaited `match` 这几条线共享同一份 truth source。
-3. 按已固定顺序继续推进 Phase 8：`.qi` emit 已落地，下一步进入 `ql-analysis` 消费依赖 `.qi`，不直接跳到 cross-file rename。
+3. 按已固定顺序继续推进 Phase 8：dependency `.qi` 的最小 load 已落地，下一步进入 dependency symbol identity 与 `ql-analysis` query truth surface，而不是直接跳到 cross-file rename。
 
 ## 归档入口
 

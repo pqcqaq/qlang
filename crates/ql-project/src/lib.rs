@@ -33,11 +33,41 @@ pub struct ProjectManifest {
     pub references: ReferencesManifest,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InterfaceModule {
+    pub source_path: String,
+    pub contents: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InterfaceArtifact {
+    pub package_name: String,
+    pub modules: Vec<InterfaceModule>,
+}
+
 #[derive(Debug)]
 pub enum ProjectError {
     ManifestNotFound {
         start: PathBuf,
     },
+    PackageNotDefined {
+        path: PathBuf,
+    },
+    PackageSourceRootNotFound {
+        path: PathBuf,
+    },
+    Read {
+        path: PathBuf,
+        error: std::io::Error,
+    },
+    Parse {
+        path: PathBuf,
+        message: String,
+    },
+}
+
+#[derive(Debug)]
+pub enum InterfaceError {
     Read {
         path: PathBuf,
         error: std::io::Error,
@@ -56,6 +86,16 @@ impl fmt::Display for ProjectError {
                 "could not find `qlang.toml` starting from `{}`",
                 display_path(start)
             ),
+            Self::PackageNotDefined { path } => write!(
+                f,
+                "manifest `{}` does not declare `[package].name`",
+                display_path(path)
+            ),
+            Self::PackageSourceRootNotFound { path } => write!(
+                f,
+                "package source directory `{}` does not exist",
+                display_path(path)
+            ),
             Self::Read { path, error } => write!(
                 f,
                 "failed to read manifest `{}`: {error}",
@@ -63,6 +103,21 @@ impl fmt::Display for ProjectError {
             ),
             Self::Parse { path, message } => {
                 write!(f, "invalid manifest `{}`: {message}", display_path(path))
+            }
+        }
+    }
+}
+
+impl fmt::Display for InterfaceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read { path, error } => write!(
+                f,
+                "failed to read interface `{}`: {error}",
+                display_path(path)
+            ),
+            Self::Parse { path, message } => {
+                write!(f, "invalid interface `{}`: {message}", display_path(path))
             }
         }
     }
@@ -140,6 +195,61 @@ pub fn render_project_graph(manifest: &ProjectManifest) -> String {
     output
 }
 
+pub fn manifest_dir(manifest: &ProjectManifest) -> &Path {
+    manifest.manifest_path.parent().unwrap_or(Path::new("."))
+}
+
+pub fn package_name(manifest: &ProjectManifest) -> Result<&str, ProjectError> {
+    manifest
+        .package
+        .as_ref()
+        .map(|package| package.name.as_str())
+        .ok_or_else(|| ProjectError::PackageNotDefined {
+            path: manifest.manifest_path.clone(),
+        })
+}
+
+pub fn package_source_root(manifest: &ProjectManifest) -> Result<PathBuf, ProjectError> {
+    let _ = package_name(manifest)?;
+    Ok(manifest_dir(manifest).join("src"))
+}
+
+pub fn collect_package_sources(manifest: &ProjectManifest) -> Result<Vec<PathBuf>, ProjectError> {
+    let source_root = package_source_root(manifest)?;
+    if !source_root.is_dir() {
+        return Err(ProjectError::PackageSourceRootNotFound { path: source_root });
+    }
+
+    let mut files = Vec::new();
+    collect_package_sources_recursive(&source_root, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+pub fn default_interface_path(manifest: &ProjectManifest) -> Result<PathBuf, ProjectError> {
+    let package_name = package_name(manifest)?;
+    Ok(manifest_dir(manifest).join(format!("{package_name}.qi")))
+}
+
+pub fn load_interface_artifact(path: &Path) -> Result<InterfaceArtifact, InterfaceError> {
+    let source = fs::read_to_string(path).map_err(|error| InterfaceError::Read {
+        path: path.to_path_buf(),
+        error,
+    })?;
+    parse_interface_artifact(path, &source)
+}
+
+pub fn load_reference_manifests(
+    manifest: &ProjectManifest,
+) -> Result<Vec<ProjectManifest>, ProjectError> {
+    let manifest_dir = manifest_dir(manifest);
+    let mut references = Vec::with_capacity(manifest.references.packages.len());
+    for package in &manifest.references.packages {
+        references.push(load_project_manifest(&manifest_dir.join(package))?);
+    }
+    Ok(references)
+}
+
 pub fn render_module_interface(module: &Module) -> Option<String> {
     let rendered_items = module
         .items
@@ -184,6 +294,121 @@ pub fn render_module_interface(module: &Module) -> Option<String> {
     }
 
     Some(out)
+}
+
+fn collect_package_sources_recursive(
+    path: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), ProjectError> {
+    for entry in fs::read_dir(path).map_err(|error| ProjectError::Read {
+        path: path.to_path_buf(),
+        error,
+    })? {
+        let entry = entry.map_err(|error| ProjectError::Read {
+            path: path.to_path_buf(),
+            error,
+        })?;
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            collect_package_sources_recursive(&entry_path, files)?;
+        } else if entry_path.extension().and_then(|ext| ext.to_str()) == Some("ql") {
+            files.push(entry_path);
+        }
+    }
+    Ok(())
+}
+
+fn parse_interface_artifact(
+    path: &Path,
+    source: &str,
+) -> Result<InterfaceArtifact, InterfaceError> {
+    let normalized = source.replace("\r\n", "\n");
+    let lines = normalized.lines().collect::<Vec<_>>();
+    let mut index = 0;
+
+    let version_line =
+        next_nonempty_line(&lines, &mut index).ok_or_else(|| InterfaceError::Parse {
+            path: path.to_path_buf(),
+            message: "missing `// qlang interface v1` header".to_owned(),
+        })?;
+    if version_line != "// qlang interface v1" {
+        return Err(InterfaceError::Parse {
+            path: path.to_path_buf(),
+            message: "expected `// qlang interface v1` header".to_owned(),
+        });
+    }
+
+    let package_line =
+        next_nonempty_line(&lines, &mut index).ok_or_else(|| InterfaceError::Parse {
+            path: path.to_path_buf(),
+            message: "missing `// package: ...` header".to_owned(),
+        })?;
+    let Some(package_name) = package_line.strip_prefix("// package: ") else {
+        return Err(InterfaceError::Parse {
+            path: path.to_path_buf(),
+            message: "expected `// package: ...` header".to_owned(),
+        });
+    };
+
+    let mut modules = Vec::new();
+    let mut current_source = None::<String>;
+    let mut current_lines = Vec::new();
+
+    while index < lines.len() {
+        let line = lines[index];
+        index += 1;
+        if let Some(source_path) = line.strip_prefix("// source: ") {
+            if let Some(source_path) = current_source.take() {
+                modules.push(InterfaceModule {
+                    source_path,
+                    contents: finalize_interface_module(&current_lines),
+                });
+                current_lines.clear();
+            }
+            current_source = Some(source_path.to_owned());
+            continue;
+        }
+
+        if current_source.is_none() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            return Err(InterfaceError::Parse {
+                path: path.to_path_buf(),
+                message: "unexpected content before first `// source: ...` section".to_owned(),
+            });
+        }
+
+        current_lines.push(line);
+    }
+
+    if let Some(source_path) = current_source {
+        modules.push(InterfaceModule {
+            source_path,
+            contents: finalize_interface_module(&current_lines),
+        });
+    }
+
+    Ok(InterfaceArtifact {
+        package_name: package_name.to_owned(),
+        modules,
+    })
+}
+
+fn next_nonempty_line<'a>(lines: &'a [&str], index: &mut usize) -> Option<&'a str> {
+    while *index < lines.len() {
+        let line = lines[*index];
+        *index += 1;
+        if !line.trim().is_empty() {
+            return Some(line);
+        }
+    }
+    None
+}
+
+fn finalize_interface_module(lines: &[&str]) -> String {
+    let joined = lines.join("\n");
+    joined.trim_start_matches('\n').trim().to_owned()
 }
 
 fn find_manifest_path(path: &Path) -> Result<PathBuf, ProjectError> {

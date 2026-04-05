@@ -3,14 +3,20 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 
-use ql_analysis::{analyze_source as analyze_semantics, parse_errors_to_diagnostics};
+use ql_analysis::{
+    PackageAnalysisError, analyze_package, analyze_source as analyze_semantics,
+    parse_errors_to_diagnostics,
+};
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
     BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderError,
     CHeaderOptions, CHeaderSurface, build_file, emit_c_header,
 };
 use ql_fmt::format_source;
-use ql_project::{load_project_manifest, render_module_interface, render_project_graph};
+use ql_project::{
+    collect_package_sources, default_interface_path, load_project_manifest, package_name,
+    package_source_root, render_module_interface, render_project_graph,
+};
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 
 fn main() -> ExitCode {
@@ -303,6 +309,52 @@ fn run() -> Result<(), u8> {
 }
 
 fn check_path(path: &Path) -> Result<(), u8> {
+    if should_use_package_check(path) {
+        match analyze_package(path) {
+            Ok(package) => {
+                if package.modules().is_empty() {
+                    let source_root = package_source_root(package.manifest()).expect(
+                        "package-aware `ql check` should only succeed for package manifests",
+                    );
+                    eprintln!(
+                        "error: no `.ql` files found under `{}`",
+                        source_root.display()
+                    );
+                    return Err(1);
+                }
+                for module in package.modules() {
+                    println!("ok: {}", module.path().display());
+                }
+                for dependency in package.dependencies() {
+                    println!(
+                        "loaded interface: {}",
+                        dependency.interface_path().display()
+                    );
+                }
+                return Ok(());
+            }
+            Err(PackageAnalysisError::Project(ql_project::ProjectError::ManifestNotFound {
+                ..
+            })) => {
+                if path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
+                {
+                    eprintln!(
+                        "error: could not find `qlang.toml` starting from `{}`",
+                        path.display()
+                    );
+                    return Err(1);
+                }
+            }
+            Err(error) => {
+                print_package_analysis_error(&error);
+                return Err(1);
+            }
+        }
+    }
+
     let files = collect_ql_files(path).map_err(|error| {
         eprintln!("error: {error}");
         1
@@ -511,25 +563,13 @@ fn project_emit_interface_path(path: &Path, output: Option<&Path>) -> Result<(),
         eprintln!("error: {error}");
         1
     })?;
-    let Some(package) = &manifest.package else {
-        eprintln!("error: `ql project emit-interface` currently requires `[package].name`");
-        return Err(1);
-    };
+    let package_name = package_name(&manifest).map_err(|error| {
+        eprintln!("error: `ql project emit-interface` {error}");
+        1
+    })?;
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
-    let source_root = manifest_dir.join("src");
-    if !source_root.is_dir() {
-        eprintln!(
-            "error: package source directory `{}` does not exist",
-            source_root.display()
-        );
-        return Err(1);
-    }
-
-    let files = collect_ql_files(&source_root).map_err(|error| {
-        eprintln!(
-            "error: failed to enumerate package sources under `{}`: {error}",
-            source_root.display()
-        );
+    let files = collect_package_sources(&manifest).map_err(|error| {
+        eprintln!("error: {error}");
         1
     })?;
 
@@ -556,9 +596,9 @@ fn project_emit_interface_path(path: &Path, output: Option<&Path>) -> Result<(),
         }
     }
 
-    let output_path = output
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| manifest_dir.join(format!("{}.qi", package.name)));
+    let output_path = output.map(Path::to_path_buf).unwrap_or_else(|| {
+        default_interface_path(&manifest).expect("package emit should have a default qi path")
+    });
     if let Some(parent) = output_path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -571,7 +611,7 @@ fn project_emit_interface_path(path: &Path, output: Option<&Path>) -> Result<(),
         })?;
     }
 
-    let rendered = render_interface_artifact(&package.name, &rendered_modules);
+    let rendered = render_interface_artifact(package_name, &rendered_modules);
     fs::write(&output_path, rendered).map_err(|error| {
         eprintln!(
             "error: failed to write interface `{}`: {error}",
@@ -719,6 +759,14 @@ fn component_name(component: Component<'_>) -> Option<&str> {
     }
 }
 
+fn should_use_package_check(path: &Path) -> bool {
+    path.is_dir()
+        || path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
+}
+
 fn normalize_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -743,6 +791,29 @@ fn render_interface_artifact(package_name: &str, modules: &[(String, String)]) -
 
 fn print_diagnostics(path: &Path, source: &str, diagnostics: &[Diagnostic]) {
     eprint!("{}", render_diagnostics(path, source, diagnostics));
+}
+
+fn print_package_analysis_error(error: &PackageAnalysisError) {
+    match error {
+        PackageAnalysisError::Project(error) => eprintln!("error: {error}"),
+        PackageAnalysisError::Read { path, error } => {
+            eprintln!("error: failed to read `{}`: {error}", path.display());
+        }
+        PackageAnalysisError::SourceDiagnostics {
+            path,
+            source,
+            diagnostics,
+        } => print_diagnostics(path, source, diagnostics),
+        PackageAnalysisError::InterfaceNotFound { package_name, path } => {
+            eprintln!(
+                "error: referenced package `{package_name}` is missing interface artifact `{}`",
+                path.display()
+            );
+        }
+        PackageAnalysisError::InterfaceParse { path, message } => {
+            eprintln!("error: invalid interface `{}`: {message}", path.display());
+        }
+    }
 }
 
 fn print_usage() {

@@ -13,6 +13,7 @@ ql-borrowck.workspace = true
 ql-lexer.workspace = true
 ql-mir.workspace = true
 ql-parser.workspace = true
+ql-project.workspace = true
 ql-resolve.workspace = true
 ql-runtime.workspace = true
 ql-span.workspace = true

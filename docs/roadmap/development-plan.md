@@ -373,8 +373,8 @@
 - 当前不建议直接从 Phase 6 的 same-file LSP 跳到 cross-file rename / 全量 workspace IDE。
 - 推荐顺序已经固定为：`package/workspace graph -> .qi 接口产物 -> ql-analysis 消费依赖 .qi -> ql-lsp cross-file hover/definition/completion/references -> cross-file rename`。
 - `.qi` 应优先被设计成 compiler-facing 的文本接口产物，而不是 LSP 私有缓存；语法风格应保持 Qlang 自身表面，不应漂向 Rust/JSON 专用内部格式。
-- 这条顺序的前两个实现切片现已落地：仓库新增 `ql-project` manifest loader，并已开放 `ql project graph [file-or-dir]` 与 `ql project emit-interface [file-or-dir] [-o <output>]`。
-- 当前真实已支持的工程 contract 仍刻意收窄在 `[package].name`、`[workspace].members`、`[references].packages` 与 `.qi` V1 emit；其中 `.qi` 当前只支持 package manifest、只扫描 `src/**/*.ql`、逐文件通过 `ql-analysis` 后输出 text-based public interface section，尚未进入 dependency load / build graph / cross-file LSP 消费。
+- 这条顺序的前三个最小实现切片已开始落地：仓库现已开放 `ql project graph [file-or-dir]`、`ql project emit-interface [file-or-dir] [-o <output>]`，以及 package-aware `ql check <package-dir>` 对 `[references].packages` 的最小 `.qi` artifact load。
+- 当前真实已支持的工程 contract 仍刻意收窄在 `[package].name`、`[workspace].members`、`[references].packages`、`.qi` V1 emit，以及 `ql-analysis::analyze_package` 对 dependency `.qi` 的 artifact-level section load；依赖符号 identity、dependency semantic query、真实 build graph 与 cross-file LSP 还没有开。
 - cross-file rename、code actions、call hierarchy 继续后置，等 dependency symbol identity 与 workspace edit graph 稳定后再开。
 - 这条顺序的入口设计稿见：[2026-04-05 Phase 8：`.qi` 接口产物与 Cross-File LSP 设计入口](/plans/2026-04-05-phase8-interface-artifacts-and-cross-file-lsp)。
 

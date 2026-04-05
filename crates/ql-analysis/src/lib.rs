@@ -1,7 +1,8 @@
 mod query;
 mod runtime;
 
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use ql_borrowck::{
     BorrowckResult, analyze_module as analyze_borrowck, render_result as render_borrowck_result,
@@ -10,6 +11,11 @@ use ql_diagnostics::{Diagnostic, Label, render_diagnostics};
 use ql_hir::{ExprId, LocalId, PatternId, lower_module};
 use ql_mir::{MirModule, lower_module as lower_mir, render_module as render_mir_module};
 use ql_parser::{ParseError, parse_source};
+use ql_project::{
+    InterfaceArtifact, InterfaceError, ProjectError, ProjectManifest, collect_package_sources,
+    default_interface_path, load_interface_artifact, load_project_manifest,
+    load_reference_manifests,
+};
 use ql_resolve::{ResolutionMap, resolve_module};
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
 use query::QueryIndex;
@@ -32,6 +38,86 @@ pub struct Analysis {
     index: QueryIndex,
     runtime_requirements: Vec<RuntimeRequirement>,
     diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PackageModuleAnalysis {
+    path: PathBuf,
+    analysis: Analysis,
+}
+
+#[derive(Clone, Debug)]
+pub struct DependencyInterface {
+    manifest: ProjectManifest,
+    interface_path: PathBuf,
+    artifact: InterfaceArtifact,
+}
+
+#[derive(Clone, Debug)]
+pub struct PackageAnalysis {
+    manifest: ProjectManifest,
+    modules: Vec<PackageModuleAnalysis>,
+    dependencies: Vec<DependencyInterface>,
+}
+
+#[derive(Debug)]
+pub enum PackageAnalysisError {
+    Project(ProjectError),
+    Read {
+        path: PathBuf,
+        error: std::io::Error,
+    },
+    SourceDiagnostics {
+        path: PathBuf,
+        source: String,
+        diagnostics: Vec<Diagnostic>,
+    },
+    InterfaceNotFound {
+        package_name: String,
+        path: PathBuf,
+    },
+    InterfaceParse {
+        path: PathBuf,
+        message: String,
+    },
+}
+
+impl PackageModuleAnalysis {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn analysis(&self) -> &Analysis {
+        &self.analysis
+    }
+}
+
+impl DependencyInterface {
+    pub fn manifest(&self) -> &ProjectManifest {
+        &self.manifest
+    }
+
+    pub fn interface_path(&self) -> &Path {
+        &self.interface_path
+    }
+
+    pub fn artifact(&self) -> &InterfaceArtifact {
+        &self.artifact
+    }
+}
+
+impl PackageAnalysis {
+    pub fn manifest(&self) -> &ProjectManifest {
+        &self.manifest
+    }
+
+    pub fn modules(&self) -> &[PackageModuleAnalysis] {
+        &self.modules
+    }
+
+    pub fn dependencies(&self) -> &[DependencyInterface] {
+        &self.dependencies
+    }
 }
 
 impl Analysis {
@@ -199,6 +285,73 @@ pub fn analyze_source(source: &str) -> Result<Analysis, Vec<Diagnostic>> {
         index,
         runtime_requirements,
         diagnostics,
+    })
+}
+
+pub fn analyze_package(path: &Path) -> Result<PackageAnalysis, PackageAnalysisError> {
+    let manifest = load_project_manifest(path).map_err(PackageAnalysisError::Project)?;
+    let files = collect_package_sources(&manifest).map_err(PackageAnalysisError::Project)?;
+
+    let mut modules = Vec::with_capacity(files.len());
+    for file in files {
+        let source = fs::read_to_string(&file).map_err(|error| PackageAnalysisError::Read {
+            path: file.clone(),
+            error,
+        })?;
+        let analysis = analyze_source(&source).map_err(|diagnostics| {
+            PackageAnalysisError::SourceDiagnostics {
+                path: file.clone(),
+                source: source.clone(),
+                diagnostics,
+            }
+        })?;
+        if analysis.has_errors() {
+            return Err(PackageAnalysisError::SourceDiagnostics {
+                path: file,
+                source,
+                diagnostics: analysis.diagnostics().to_vec(),
+            });
+        }
+        modules.push(PackageModuleAnalysis {
+            path: file,
+            analysis,
+        });
+    }
+
+    let dependency_manifests =
+        load_reference_manifests(&manifest).map_err(PackageAnalysisError::Project)?;
+    let mut dependencies = Vec::with_capacity(dependency_manifests.len());
+    for dependency_manifest in dependency_manifests {
+        let interface_path =
+            default_interface_path(&dependency_manifest).map_err(PackageAnalysisError::Project)?;
+        if !interface_path.is_file() {
+            let package_name = dependency_manifest
+                .package
+                .as_ref()
+                .map(|package| package.name.clone())
+                .unwrap_or_else(|| "<unknown>".to_owned());
+            return Err(PackageAnalysisError::InterfaceNotFound {
+                package_name,
+                path: interface_path,
+            });
+        }
+        let artifact = load_interface_artifact(&interface_path).map_err(|error| match error {
+            InterfaceError::Read { path, error } => PackageAnalysisError::Read { path, error },
+            InterfaceError::Parse { path, message } => {
+                PackageAnalysisError::InterfaceParse { path, message }
+            }
+        })?;
+        dependencies.push(DependencyInterface {
+            manifest: dependency_manifest,
+            interface_path,
+            artifact,
+        });
+    }
+
+    Ok(PackageAnalysis {
+        manifest,
+        modules,
+        dependencies,
     })
 }
 

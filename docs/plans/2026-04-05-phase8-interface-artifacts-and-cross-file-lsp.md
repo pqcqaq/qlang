@@ -113,6 +113,12 @@ LSP V1 继续关闭：
 
 把 `ql-analysis` 从 same-file `analyze_source` 扩成可消费 package graph 和 `.qi` 的更高层入口，但不推翻当前 same-file query API。
 
+已完成（2026-04-05，最小入口）：
+
+- `ql-analysis::analyze_package` 已落地
+- package-aware `ql check <package-dir>` 现已通过该入口分析当前包源码，并加载 `[references].packages` 指向的 dependency `.qi`
+- 当前 dependency `.qi` 仍停在 artifact-level section load，不做 dependency symbol query / cross-file semantic index
+
 交付目标：
 
 - same-file query 保持兼容

@@ -209,7 +209,7 @@ members = ["packages/app"]
         "project-interface-workspace-only",
         "workspace-only interface emission",
         &stderr,
-        "`ql project emit-interface` currently requires `[package].name`",
+        "does not declare `[package].name`",
     )
     .expect("workspace-only manifest failure should mention the package contract");
 }
