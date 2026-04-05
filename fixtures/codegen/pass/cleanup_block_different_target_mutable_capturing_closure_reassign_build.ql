@@ -36,6 +36,15 @@ fn main() -> Int {
         };
         alias
     }
+    var assignment_run = left_run
+    let direct_control_flow_assignment_run =
+        (if choose() { assignment_run = right_run } else { left_run })(9)
+    var binding_run = left_run
+    let chosen_control_flow_run = match choose() {
+        true => binding_run = right_run,
+        false => left_run,
+    }
+    let rebound_control_flow_run = chosen_control_flow_run
 
     var direct_check = left_check
     if choose() {
@@ -98,7 +107,12 @@ fn main() -> Int {
         }
     }
 
-    let ordinary = direct_run(5) + chosen_run(6) + match_direct_run(7) + match_chosen_run(8)
+    let ordinary = direct_run(5)
+        + chosen_run(6)
+        + match_direct_run(7)
+        + match_chosen_run(8)
+        + direct_control_flow_assignment_run
+        + rebound_control_flow_run(10)
     let direct_guarded = match 42 {
         current if direct_check(current) => 1,
         current if chosen_check(current) => 2,

@@ -1035,13 +1035,29 @@ let chosen = if branch {
 } else {
     run
 }
-return direct_assignment + direct_control_flow_assignment + direct_block_local + chosen(4)
+let left = (value: Int) => value + target
+let right = (value: Int) => value + target + 1
+var different_target_alias = left
+let different_target_direct_control_flow_assignment =
+    (if branch { different_target_alias = right } else { left })(4)
+let different_target_chosen = match branch {
+    true => different_target_alias = right,
+    false => left,
+}
+let different_target_rebound = different_target_chosen
+return direct_assignment
+    + direct_control_flow_assignment
+    + direct_block_local
+    + chosen(5)
+    + different_target_direct_control_flow_assignment
+    + different_target_rebound(6)
 }
 "#,
     );
 
-    assert!(rendered.matches("@ql_0_main__closure0(").count() >= 4);
+    assert!(rendered.matches("__closure").count() >= 3);
     assert!(rendered.contains("call i64 @ql_0_main__closure0("));
+    assert!(rendered.matches("ordinary_call_if_then").count() >= 2);
     assert!(
         !rendered.contains("currently only supports a narrow non-`move` capturing-closure subset")
     );

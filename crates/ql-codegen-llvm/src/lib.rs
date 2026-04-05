@@ -16710,7 +16710,7 @@ fn control_flow_capturing_closure_block_assignment(
         let statement = body.statement(*statement_id);
         match &statement.kind {
             StatementKind::Assign { place, value } => {
-                if assignment.is_some() || !place.projections.is_empty() {
+                if !place.projections.is_empty() {
                     return None;
                 }
                 let (closure_id, _) = direct_local_capturing_closure_assignment_source(
