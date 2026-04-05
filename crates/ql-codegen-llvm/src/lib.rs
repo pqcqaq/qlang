@@ -6368,6 +6368,36 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     });
                 return;
             }
+            if let Some(closure_id) = cleanup_supported_capturing_closure_callee_closure(
+                self.emitter.input.hir,
+                self.emitter.input.resolution,
+                self.body,
+                &self.prepared.direct_local_capturing_closures,
+                &self.cleanup_capturing_closure_bindings,
+                value,
+            ) {
+                if cleanup_capturing_closure_binding_requires_runtime_eval(
+                    self.emitter.input.hir,
+                    value,
+                ) {
+                    let expected_ty = self
+                        .emitter
+                        .cleanup_let_expected_ty(pattern, value)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "supported cleanup lowering at {span:?} should preserve callable cleanup binding types"
+                            )
+                        });
+                    let _ = self.render_cleanup_value_expr(output, value, &expected_ty, span);
+                }
+                self.cleanup_capturing_closure_bindings
+                    .push(CleanupCapturingClosureBinding {
+                        local: *local,
+                        closure_id,
+                    });
+                return;
+            }
             if let Some(closure_id) = self.supported_direct_local_capturing_closure_for_expr(value)
             {
                 self.cleanup_capturing_closure_bindings
@@ -14181,6 +14211,25 @@ fn cleanup_supported_capturing_closure_callee_closure(
     }
 }
 
+fn cleanup_capturing_closure_binding_requires_runtime_eval(
+    module: &hir::Module,
+    expr_id: hir::ExprId,
+) -> bool {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::If { .. } | hir::ExprKind::Match { .. } => true,
+        hir::ExprKind::Question(inner) => {
+            cleanup_capturing_closure_binding_requires_runtime_eval(module, *inner)
+        }
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+            let block = module.block(*block_id);
+            block.tail.is_some_and(|tail| {
+                cleanup_capturing_closure_binding_requires_runtime_eval(module, tail)
+            })
+        }
+        _ => false,
+    }
+}
+
 fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -14455,6 +14504,20 @@ fn cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_c
                             Some(CleanupCapturingClosureBinding {
                                 local: *local,
                                 closure_id: expr.closure_id(),
+                            })
+                        } else if let Some(closure_id) =
+                            cleanup_supported_capturing_closure_callee_closure(
+                                module,
+                                resolution,
+                                body,
+                                supported,
+                                &scoped_aliases,
+                                *value,
+                            )
+                        {
+                            Some(CleanupCapturingClosureBinding {
+                                local: *local,
+                                closure_id,
                             })
                         } else {
                             direct_local_capturing_closure_for_expr(
@@ -18025,6 +18088,46 @@ fn main() -> Int {
         assert!(rendered.matches("__closure").count() >= 2);
         assert!(rendered.contains("call i64 @"));
         assert!(rendered.contains("call i1 @"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
+    }
+
+    #[test]
+    fn emits_cleanup_block_control_flow_assignment_valued_capturing_closure_bindings() {
+        let rendered = emit(
+            r#"
+extern "c" fn keep()
+
+fn main() -> Int {
+    let branch = true
+    let target = 42
+    let check = (value: Int) => value == target
+    var check_alias = check
+    let run = (value: Int) => value + target
+    var run_alias = run
+    defer {
+        let chosen_run = if branch { run_alias = run } else { run }
+        let chosen_check = match branch {
+            true => check_alias = check,
+            false => check,
+        }
+        chosen_run(1)
+        if chosen_check(42) {
+            keep()
+        }
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.matches("__closure").count() >= 2);
+        assert!(rendered.contains("call i64 @"));
+        assert!(rendered.contains("call i1 @"));
+        assert!(rendered.contains("br i1"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(
             !rendered
