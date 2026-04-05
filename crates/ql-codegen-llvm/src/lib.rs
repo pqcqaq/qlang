@@ -138,6 +138,8 @@ struct PreparedFunction {
     supported_matches: HashMap<mir::BasicBlockId, SupportedMatchLowering>,
     param_binding_locals: Vec<mir::LocalId>,
     direct_local_capturing_closures: HashMap<mir::LocalId, mir::ClosureId>,
+    ordinary_control_flow_capturing_closure_calls:
+        HashMap<(mir::BasicBlockId, mir::LocalId), SupportedOrdinaryCapturingClosureCall>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -298,6 +300,31 @@ struct SupportedGuardedIntegerMatchArm {
 enum SupportedIntegerMatchPattern {
     Literal(String),
     CatchAll,
+}
+
+#[derive(Clone, Debug)]
+enum SupportedOrdinaryCapturingClosureCall {
+    Branch {
+        condition: Operand,
+        then_closure: mir::ClosureId,
+        else_closure: mir::ClosureId,
+    },
+    BoolMatch {
+        scrutinee: Operand,
+        true_closure: mir::ClosureId,
+        false_closure: mir::ClosureId,
+    },
+    IntegerMatch {
+        scrutinee: Operand,
+        arms: Vec<SupportedOrdinaryIntegerCapturingClosureCallArm>,
+        fallback_closure: mir::ClosureId,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct SupportedOrdinaryIntegerCapturingClosureCallArm {
+    value: String,
+    closure_id: mir::ClosureId,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1334,11 +1361,16 @@ impl<'a> ModuleEmitter<'a> {
         &self,
         body: &mir::MirBody,
         local_types: &HashMap<mir::LocalId, Ty>,
+        supported_matches: &HashMap<mir::BasicBlockId, SupportedMatchLowering>,
         diagnostics: &mut Vec<Diagnostic>,
-    ) -> HashMap<mir::LocalId, mir::ClosureId> {
+    ) -> (
+        HashMap<mir::LocalId, mir::ClosureId>,
+        HashMap<(mir::BasicBlockId, mir::LocalId), SupportedOrdinaryCapturingClosureCall>,
+    ) {
         let mut staged = HashMap::new();
         let mut supported = HashMap::new();
         let mut closure_spans = HashMap::new();
+        let mut conflicting_temps = HashSet::new();
 
         for statement in body.statements() {
             let StatementKind::Assign { place, value } = &statement.kind else {
@@ -1401,6 +1433,7 @@ impl<'a> ModuleEmitter<'a> {
                     if supported.contains_key(&place.base)
                         && !matches!(value, Rvalue::Closure { .. })
                         && !same_supported_forwarded_closure
+                        && temp_forwarded_closure.is_none()
                     {
                         diagnostics.push(
                             self.capturing_closure_diagnostic(
@@ -1419,13 +1452,16 @@ impl<'a> ModuleEmitter<'a> {
                     if let Some((closure_id, closure_span)) = temp_forwarded_closure {
                         match supported.get(&place.base).copied() {
                             Some(current) if current != closure_id => {
-                                diagnostics.push(self.capturing_closure_diagnostic(closure_span));
+                                supported.remove(&place.base);
+                                conflicting_temps.insert(place.base);
+                                closure_spans.entry(place.base).or_insert(closure_span);
                             }
                             Some(_) => {}
-                            None => {
+                            None if !conflicting_temps.contains(&place.base) => {
                                 supported.insert(place.base, closure_id);
                                 closure_spans.insert(place.base, closure_span);
                             }
+                            None => {}
                         }
                         continue;
                     }
@@ -1529,7 +1565,24 @@ impl<'a> ModuleEmitter<'a> {
             }
         }
 
-        supported
+        let ordinary_control_flow_capturing_closure_calls = self
+            .collect_supported_ordinary_control_flow_capturing_closure_calls(
+                body,
+                supported_matches,
+                &staged,
+                &supported,
+                &closure_spans,
+                &conflicting_temps,
+            );
+        self.validate_ordinary_control_flow_capturing_closure_candidates(
+            body,
+            &ordinary_control_flow_capturing_closure_calls,
+            &conflicting_temps,
+            &closure_spans,
+            diagnostics,
+        );
+
+        (supported, ordinary_control_flow_capturing_closure_calls)
     }
 
     fn validate_direct_local_capturing_closure_rvalue(
@@ -1638,6 +1691,406 @@ impl<'a> ModuleEmitter<'a> {
                     index,
                     false,
                     supported,
+                    closure_spans,
+                    diagnostics,
+                );
+            }
+        }
+    }
+
+    fn collect_supported_ordinary_control_flow_capturing_closure_calls(
+        &self,
+        body: &mir::MirBody,
+        supported_matches: &HashMap<mir::BasicBlockId, SupportedMatchLowering>,
+        staged: &HashMap<mir::LocalId, mir::ClosureId>,
+        supported: &HashMap<mir::LocalId, mir::ClosureId>,
+        closure_spans: &HashMap<mir::LocalId, Span>,
+        conflicting_temps: &HashSet<mir::LocalId>,
+    ) -> HashMap<(mir::BasicBlockId, mir::LocalId), SupportedOrdinaryCapturingClosureCall> {
+        let mut ordinary_calls = HashMap::new();
+
+        for block_id in body.block_ids() {
+            let block = body.block(block_id);
+            match &block.terminator.kind {
+                TerminatorKind::Branch {
+                    condition,
+                    then_target,
+                    else_target,
+                } => {
+                    let Some((join_target, local, then_closure)) =
+                        control_flow_capturing_closure_block_assignment(
+                            body,
+                            *then_target,
+                            staged,
+                            supported,
+                            closure_spans,
+                        )
+                    else {
+                        continue;
+                    };
+                    let Some((other_join_target, other_local, else_closure)) =
+                        control_flow_capturing_closure_block_assignment(
+                            body,
+                            *else_target,
+                            staged,
+                            supported,
+                            closure_spans,
+                        )
+                    else {
+                        continue;
+                    };
+                    if join_target != other_join_target
+                        || local != other_local
+                        || !conflicting_temps.contains(&local)
+                    {
+                        continue;
+                    }
+                    ordinary_calls.insert(
+                        (join_target, local),
+                        SupportedOrdinaryCapturingClosureCall::Branch {
+                            condition: condition.clone(),
+                            then_closure,
+                            else_closure,
+                        },
+                    );
+                }
+                TerminatorKind::Match { scrutinee, .. } => {
+                    let Some(match_lowering) = supported_matches.get(&block_id) else {
+                        continue;
+                    };
+                    match match_lowering {
+                        SupportedMatchLowering::Bool {
+                            true_target,
+                            false_target,
+                        } => {
+                            let Some((join_target, local, true_closure)) =
+                                control_flow_capturing_closure_block_assignment(
+                                    body,
+                                    *true_target,
+                                    staged,
+                                    supported,
+                                    closure_spans,
+                                )
+                            else {
+                                continue;
+                            };
+                            let Some((other_join_target, other_local, false_closure)) =
+                                control_flow_capturing_closure_block_assignment(
+                                    body,
+                                    *false_target,
+                                    staged,
+                                    supported,
+                                    closure_spans,
+                                )
+                            else {
+                                continue;
+                            };
+                            if join_target != other_join_target
+                                || local != other_local
+                                || !conflicting_temps.contains(&local)
+                            {
+                                continue;
+                            }
+                            ordinary_calls.insert(
+                                (join_target, local),
+                                SupportedOrdinaryCapturingClosureCall::BoolMatch {
+                                    scrutinee: scrutinee.clone(),
+                                    true_closure,
+                                    false_closure,
+                                },
+                            );
+                        }
+                        SupportedMatchLowering::Integer {
+                            arms,
+                            fallback_target,
+                        } => {
+                            let Some((join_target, local, fallback_closure)) =
+                                control_flow_capturing_closure_block_assignment(
+                                    body,
+                                    *fallback_target,
+                                    staged,
+                                    supported,
+                                    closure_spans,
+                                )
+                            else {
+                                continue;
+                            };
+                            if !conflicting_temps.contains(&local) {
+                                continue;
+                            }
+
+                            let mut lowered_arms = Vec::with_capacity(arms.len());
+                            let mut supported_join = true;
+                            for arm in arms {
+                                let Some((arm_join_target, arm_local, arm_closure)) =
+                                    control_flow_capturing_closure_block_assignment(
+                                        body,
+                                        arm.target,
+                                        staged,
+                                        supported,
+                                        closure_spans,
+                                    )
+                                else {
+                                    supported_join = false;
+                                    break;
+                                };
+                                if arm_join_target != join_target || arm_local != local {
+                                    supported_join = false;
+                                    break;
+                                }
+                                lowered_arms.push(
+                                    SupportedOrdinaryIntegerCapturingClosureCallArm {
+                                        value: arm.value.clone(),
+                                        closure_id: arm_closure,
+                                    },
+                                );
+                            }
+                            if !supported_join {
+                                continue;
+                            }
+
+                            ordinary_calls.insert(
+                                (join_target, local),
+                                SupportedOrdinaryCapturingClosureCall::IntegerMatch {
+                                    scrutinee: scrutinee.clone(),
+                                    arms: lowered_arms,
+                                    fallback_closure,
+                                },
+                            );
+                        }
+                        SupportedMatchLowering::GuardOnly { .. }
+                        | SupportedMatchLowering::BoolGuarded { .. }
+                        | SupportedMatchLowering::IntegerGuarded { .. } => {}
+                    }
+                }
+                TerminatorKind::Goto { .. }
+                | TerminatorKind::Return
+                | TerminatorKind::Terminate
+                | TerminatorKind::ForLoop { .. } => {}
+            }
+        }
+
+        ordinary_calls
+    }
+
+    fn validate_ordinary_control_flow_capturing_closure_candidates(
+        &self,
+        body: &mir::MirBody,
+        ordinary_calls: &HashMap<
+            (mir::BasicBlockId, mir::LocalId),
+            SupportedOrdinaryCapturingClosureCall,
+        >,
+        conflicting_temps: &HashSet<mir::LocalId>,
+        closure_spans: &HashMap<mir::LocalId, Span>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        for block_id in body.block_ids() {
+            let block = body.block(block_id);
+            for statement_id in &block.statements {
+                let statement = body.statement(*statement_id);
+                match &statement.kind {
+                    StatementKind::Assign { value, .. } | StatementKind::Eval { value } => {
+                        self.validate_ordinary_control_flow_capturing_closure_rvalue(
+                            block_id,
+                            value,
+                            ordinary_calls,
+                            conflicting_temps,
+                            closure_spans,
+                            diagnostics,
+                        );
+                    }
+                    StatementKind::BindPattern { source, .. } => {
+                        self.validate_ordinary_control_flow_capturing_closure_operand(
+                            block_id,
+                            source,
+                            false,
+                            ordinary_calls,
+                            conflicting_temps,
+                            closure_spans,
+                            diagnostics,
+                        );
+                    }
+                    StatementKind::RegisterCleanup { .. }
+                    | StatementKind::RunCleanup { .. }
+                    | StatementKind::StorageLive { .. }
+                    | StatementKind::StorageDead { .. } => {}
+                }
+            }
+
+            match &block.terminator.kind {
+                TerminatorKind::Branch { condition, .. } => {
+                    self.validate_ordinary_control_flow_capturing_closure_operand(
+                        block_id,
+                        condition,
+                        false,
+                        ordinary_calls,
+                        conflicting_temps,
+                        closure_spans,
+                        diagnostics,
+                    );
+                }
+                TerminatorKind::Match { scrutinee, .. } => {
+                    self.validate_ordinary_control_flow_capturing_closure_operand(
+                        block_id,
+                        scrutinee,
+                        false,
+                        ordinary_calls,
+                        conflicting_temps,
+                        closure_spans,
+                        diagnostics,
+                    );
+                }
+                TerminatorKind::ForLoop { iterable, .. } => {
+                    self.validate_ordinary_control_flow_capturing_closure_operand(
+                        block_id,
+                        iterable,
+                        false,
+                        ordinary_calls,
+                        conflicting_temps,
+                        closure_spans,
+                        diagnostics,
+                    );
+                }
+                TerminatorKind::Goto { .. }
+                | TerminatorKind::Return
+                | TerminatorKind::Terminate => {}
+            }
+        }
+    }
+
+    fn validate_ordinary_control_flow_capturing_closure_rvalue(
+        &self,
+        block_id: mir::BasicBlockId,
+        value: &Rvalue,
+        ordinary_calls: &HashMap<
+            (mir::BasicBlockId, mir::LocalId),
+            SupportedOrdinaryCapturingClosureCall,
+        >,
+        conflicting_temps: &HashSet<mir::LocalId>,
+        closure_spans: &HashMap<mir::LocalId, Span>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        match value {
+            Rvalue::Use(operand) | Rvalue::Question(operand) | Rvalue::Unary { operand, .. } => {
+                self.validate_ordinary_control_flow_capturing_closure_operand(
+                    block_id,
+                    operand,
+                    false,
+                    ordinary_calls,
+                    conflicting_temps,
+                    closure_spans,
+                    diagnostics,
+                );
+            }
+            Rvalue::Tuple(items) | Rvalue::Array(items) => {
+                for item in items {
+                    self.validate_ordinary_control_flow_capturing_closure_operand(
+                        block_id,
+                        item,
+                        false,
+                        ordinary_calls,
+                        conflicting_temps,
+                        closure_spans,
+                        diagnostics,
+                    );
+                }
+            }
+            Rvalue::AggregateStruct { fields, .. } => {
+                for field in fields {
+                    self.validate_ordinary_control_flow_capturing_closure_operand(
+                        block_id,
+                        &field.value,
+                        false,
+                        ordinary_calls,
+                        conflicting_temps,
+                        closure_spans,
+                        diagnostics,
+                    );
+                }
+            }
+            Rvalue::Call { callee, args } => {
+                self.validate_ordinary_control_flow_capturing_closure_operand(
+                    block_id,
+                    callee,
+                    true,
+                    ordinary_calls,
+                    conflicting_temps,
+                    closure_spans,
+                    diagnostics,
+                );
+                for arg in args {
+                    self.validate_ordinary_control_flow_capturing_closure_operand(
+                        block_id,
+                        &arg.value,
+                        false,
+                        ordinary_calls,
+                        conflicting_temps,
+                        closure_spans,
+                        diagnostics,
+                    );
+                }
+            }
+            Rvalue::Binary { left, right, .. } => {
+                self.validate_ordinary_control_flow_capturing_closure_operand(
+                    block_id,
+                    left,
+                    false,
+                    ordinary_calls,
+                    conflicting_temps,
+                    closure_spans,
+                    diagnostics,
+                );
+                self.validate_ordinary_control_flow_capturing_closure_operand(
+                    block_id,
+                    right,
+                    false,
+                    ordinary_calls,
+                    conflicting_temps,
+                    closure_spans,
+                    diagnostics,
+                );
+            }
+            Rvalue::Closure { .. } | Rvalue::OpaqueExpr(_) => {}
+        }
+    }
+
+    fn validate_ordinary_control_flow_capturing_closure_operand(
+        &self,
+        block_id: mir::BasicBlockId,
+        operand: &Operand,
+        allow_direct_call_callee: bool,
+        ordinary_calls: &HashMap<
+            (mir::BasicBlockId, mir::LocalId),
+            SupportedOrdinaryCapturingClosureCall,
+        >,
+        conflicting_temps: &HashSet<mir::LocalId>,
+        closure_spans: &HashMap<mir::LocalId, Span>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        let Operand::Place(place) = operand else {
+            return;
+        };
+        if place.projections.is_empty() && conflicting_temps.contains(&place.base) {
+            let supported_direct_call =
+                allow_direct_call_callee && ordinary_calls.contains_key(&(block_id, place.base));
+            if !supported_direct_call {
+                diagnostics.push(
+                    self.capturing_closure_diagnostic(
+                        *closure_spans
+                            .get(&place.base)
+                            .expect("capturing closure local should preserve its span"),
+                    ),
+                );
+            }
+        }
+        for projection in &place.projections {
+            if let mir::ProjectionElem::Index(index) = projection {
+                self.validate_ordinary_control_flow_capturing_closure_operand(
+                    block_id,
+                    index,
+                    false,
+                    ordinary_calls,
+                    conflicting_temps,
                     closure_spans,
                     diagnostics,
                 );
@@ -2569,10 +3022,11 @@ impl<'a> ModuleEmitter<'a> {
             }
         }
 
-        let direct_local_capturing_closures = self
+        let (direct_local_capturing_closures, ordinary_control_flow_capturing_closure_calls) = self
             .collect_supported_direct_local_capturing_closures(
                 body,
                 &local_types,
+                &supported_matches,
                 &mut diagnostics,
             );
         let should_validate_local_types = diagnostics.is_empty();
@@ -2611,6 +3065,7 @@ impl<'a> ModuleEmitter<'a> {
                 supported_matches,
                 param_binding_locals: Vec::new(),
                 direct_local_capturing_closures,
+                ordinary_control_flow_capturing_closure_calls,
             })
         } else {
             Err(dedupe_diagnostics(diagnostics))
@@ -5882,7 +6337,7 @@ impl<'a> ModuleEmitter<'a> {
             let block = body.block(block_id);
             let _ = writeln!(output, "bb{}:", block_id.index());
             for statement_id in &block.statements {
-                renderer.render_statement(output, body.statement(*statement_id));
+                renderer.render_statement(output, block_id, body.statement(*statement_id));
             }
             renderer.render_terminator(output, block_id, &block.terminator);
         }
@@ -6195,14 +6650,23 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         Some((slot, value.ty))
     }
 
-    fn render_statement(&mut self, output: &mut String, statement: &mir::Statement) {
+    fn render_statement(
+        &mut self,
+        output: &mut String,
+        block_id: mir::BasicBlockId,
+        statement: &mir::Statement,
+    ) {
         match &statement.kind {
             StatementKind::Assign { place, value } => {
                 let expected_ty = self.prepared_place_type(place, statement.span);
                 let target_is_void = expected_ty.as_ref().is_some_and(is_void_ty);
-                if let Some(rendered) =
-                    self.render_rvalue(output, value, expected_ty.as_ref(), statement.span)
-                    && !target_is_void
+                if let Some(rendered) = self.render_rvalue(
+                    output,
+                    block_id,
+                    value,
+                    expected_ty.as_ref(),
+                    statement.span,
+                ) && !target_is_void
                     && !is_void_ty(&rendered.ty)
                 {
                     let target_ptr = if place.projections.is_empty() {
@@ -6231,7 +6695,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 _ => panic!("prepared patterns should only contain supported bind patterns"),
             },
             StatementKind::Eval { value } => {
-                let _ = self.render_rvalue(output, value, None, statement.span);
+                let _ = self.render_rvalue(output, block_id, value, None, statement.span);
             }
             StatementKind::StorageLive { .. } | StatementKind::StorageDead { .. } => {}
             StatementKind::RegisterCleanup { .. } => {}
@@ -8299,7 +8763,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             );
         }
 
-        panic!("supported cleanup lowering at {span:?} should only render supported cleanup call matches");
+        panic!(
+            "supported cleanup lowering at {span:?} should only render supported cleanup call matches"
+        );
     }
 
     fn render_cleanup_call_bool_match_expr(
@@ -8593,9 +9059,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         if let hir::ExprKind::Match { value, arms } = &self.emitter.input.hir.expr(callee_expr).kind
         {
             let return_ty = self.cleanup_call_callee_return_ty(callee_expr, span);
-            return self.render_cleanup_call_match_expr(
-                output, *value, arms, args, &return_ty, span,
-            );
+            return self
+                .render_cleanup_call_match_expr(output, *value, arms, args, &return_ty, span);
         }
 
         if let Some(function) = guard_direct_callee_function(
@@ -9818,9 +10283,312 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         }
     }
 
+    fn render_direct_local_capturing_closure_call(
+        &mut self,
+        output: &mut String,
+        closure_id: mir::ClosureId,
+        args: &[mir::CallArgument],
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let closure = self.body.closure(closure_id);
+        let closure_ty = self
+            .emitter
+            .input
+            .typeck
+            .expr_ty(closure.expr)
+            .cloned()
+            .expect("prepared direct local capturing-closure calls should preserve callable types");
+        let Ty::Callable { params, ret } = closure_ty else {
+            panic!(
+                "prepared direct local capturing-closure calls at {span:?} should only target callable values"
+            );
+        };
+        assert!(
+            args.iter().all(|arg| arg.name.is_none()) && args.len() == params.len(),
+            "prepared direct local capturing-closure calls at {span:?} should only contain positional arguments matching the callable arity"
+        );
+
+        let mut rendered_args = Vec::with_capacity(closure.captures.len() + args.len());
+        for capture in &closure.captures {
+            let value =
+                self.render_operand(output, &Operand::Place(Place::local(capture.local)), span);
+            rendered_args.push(format!("{} {}", value.llvm_ty, value.repr));
+        }
+        for (arg, param_ty) in args.iter().zip(params.iter()) {
+            let value = self.render_operand(output, &arg.value, span);
+            assert!(
+                param_ty.compatible_with(&value.ty),
+                "prepared direct local capturing-closure calls at {span:?} should preserve callable argument types"
+            );
+            rendered_args.push(format!("{} {}", value.llvm_ty, value.repr));
+        }
+
+        let rendered_args = rendered_args.join(", ");
+        let return_ty = ret.as_ref().clone();
+        let return_llvm_ty = self
+            .emitter
+            .lower_llvm_type(&return_ty, span, "call result")
+            .expect(
+                "prepared direct local capturing-closure calls should only produce lowered callable result types",
+            );
+        let callee_name = closure_llvm_name(&self.prepared.signature.llvm_name, closure_id);
+
+        if is_void_ty(&return_ty) {
+            let _ = writeln!(
+                output,
+                "  call {return_llvm_ty} @{callee_name}({rendered_args})"
+            );
+            None
+        } else {
+            let temp = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {temp} = call {return_llvm_ty} @{callee_name}({rendered_args})"
+            );
+            Some(LoweredValue {
+                ty: return_ty,
+                llvm_ty: return_llvm_ty,
+                repr: temp,
+            })
+        }
+    }
+
+    fn ordinary_control_flow_capturing_closure_call(
+        &self,
+        block_id: mir::BasicBlockId,
+        callee: &Operand,
+    ) -> Option<SupportedOrdinaryCapturingClosureCall> {
+        let Operand::Place(place) = callee else {
+            return None;
+        };
+        if !place.projections.is_empty() {
+            return None;
+        }
+        self.prepared
+            .ordinary_control_flow_capturing_closure_calls
+            .get(&(block_id, place.base))
+            .cloned()
+    }
+
+    fn direct_local_capturing_closure_call_return_ty(
+        &self,
+        closure_id: mir::ClosureId,
+        span: Span,
+    ) -> Ty {
+        let closure = self.body.closure(closure_id);
+        let closure_ty = self
+            .emitter
+            .input
+            .typeck
+            .expr_ty(closure.expr)
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "prepared direct local capturing-closure calls at {span:?} should preserve callable types"
+                )
+            });
+        let Ty::Callable { ret, .. } = closure_ty else {
+            panic!(
+                "prepared direct local capturing-closure calls at {span:?} should only target callable values"
+            );
+        };
+        ret.as_ref().clone()
+    }
+
+    fn render_ordinary_control_flow_capturing_closure_call(
+        &mut self,
+        output: &mut String,
+        lowering: &SupportedOrdinaryCapturingClosureCall,
+        args: &[mir::CallArgument],
+        span: Span,
+    ) -> Option<LoweredValue> {
+        match lowering {
+            SupportedOrdinaryCapturingClosureCall::Branch {
+                condition,
+                then_closure,
+                else_closure,
+            } => {
+                let condition = self.render_operand(output, condition, span);
+                assert!(
+                    condition.ty.is_bool(),
+                    "prepared ordinary capturing-closure control-flow calls at {span:?} should branch on `Bool` conditions"
+                );
+                let return_ty =
+                    self.direct_local_capturing_closure_call_return_ty(*then_closure, span);
+                let return_llvm_ty = (!is_void_ty(&return_ty)).then(|| {
+                    self.emitter
+                        .lower_llvm_type(&return_ty, span, "call result")
+                        .expect(
+                            "prepared ordinary capturing-closure control-flow calls should lower callable result types",
+                        )
+                });
+                let result_slot = return_llvm_ty.as_ref().map(|llvm_ty| {
+                    let slot = self.fresh_temp();
+                    let _ = writeln!(output, "  {slot} = alloca {llvm_ty}");
+                    slot
+                });
+                let then_label = self.fresh_label("ordinary_call_if_then");
+                let else_label = self.fresh_label("ordinary_call_if_else");
+                let end_label = self.fresh_label("ordinary_call_if_end");
+                let _ = writeln!(
+                    output,
+                    "  br i1 {}, label %{then_label}, label %{else_label}",
+                    condition.repr
+                );
+
+                let _ = writeln!(output, "{then_label}:");
+                if let Some(value) = self.render_direct_local_capturing_closure_call(
+                    output,
+                    *then_closure,
+                    args,
+                    span,
+                ) && let Some(result_slot) = result_slot.as_ref()
+                {
+                    let _ = writeln!(
+                        output,
+                        "  store {} {}, ptr {result_slot}",
+                        value.llvm_ty, value.repr
+                    );
+                }
+                let _ = writeln!(output, "  br label %{end_label}");
+
+                let _ = writeln!(output, "{else_label}:");
+                if let Some(value) = self.render_direct_local_capturing_closure_call(
+                    output,
+                    *else_closure,
+                    args,
+                    span,
+                ) && let Some(result_slot) = result_slot.as_ref()
+                {
+                    let _ = writeln!(
+                        output,
+                        "  store {} {}, ptr {result_slot}",
+                        value.llvm_ty, value.repr
+                    );
+                }
+                let _ = writeln!(output, "  br label %{end_label}");
+
+                let _ = writeln!(output, "{end_label}:");
+                result_slot.map(|slot| {
+                    self.render_loaded_pointer_value(output, slot, return_ty.clone(), span)
+                })
+            }
+            SupportedOrdinaryCapturingClosureCall::BoolMatch {
+                scrutinee,
+                true_closure,
+                false_closure,
+            } => self.render_ordinary_control_flow_capturing_closure_call(
+                output,
+                &SupportedOrdinaryCapturingClosureCall::Branch {
+                    condition: scrutinee.clone(),
+                    then_closure: *true_closure,
+                    else_closure: *false_closure,
+                },
+                args,
+                span,
+            ),
+            SupportedOrdinaryCapturingClosureCall::IntegerMatch {
+                scrutinee,
+                arms,
+                fallback_closure,
+            } => {
+                let scrutinee = self.render_operand(output, scrutinee, span);
+                let return_ty =
+                    self.direct_local_capturing_closure_call_return_ty(*fallback_closure, span);
+                let return_llvm_ty = (!is_void_ty(&return_ty)).then(|| {
+                    self.emitter
+                        .lower_llvm_type(&return_ty, span, "call result")
+                        .expect(
+                            "prepared ordinary capturing-closure control-flow calls should lower callable result types",
+                        )
+                });
+                let result_slot = return_llvm_ty.as_ref().map(|llvm_ty| {
+                    let slot = self.fresh_temp();
+                    let _ = writeln!(output, "  {slot} = alloca {llvm_ty}");
+                    slot
+                });
+                let end_label = self.fresh_label("ordinary_call_match_end");
+                let fallback_label = self.fresh_label("ordinary_call_match_fallback");
+                let dispatch_labels = (0..arms.len())
+                    .map(|_| self.fresh_label("ordinary_call_match_dispatch"))
+                    .collect::<Vec<_>>();
+                let arm_labels = (0..arms.len())
+                    .map(|_| self.fresh_label("ordinary_call_match_arm"))
+                    .collect::<Vec<_>>();
+                let opcode = compare_opcode(BinaryOp::EqEq, &scrutinee.ty);
+
+                if arms.is_empty() {
+                    let _ = writeln!(output, "  br label %{fallback_label}");
+                } else {
+                    for (index, arm) in arms.iter().enumerate() {
+                        if index > 0 {
+                            let _ = writeln!(output, "{}:", dispatch_labels[index]);
+                        }
+                        let compare = self.fresh_temp();
+                        let _ = writeln!(
+                            output,
+                            "  {compare} = {opcode} {} {}, {}",
+                            scrutinee.llvm_ty, scrutinee.repr, arm.value
+                        );
+                        let false_target = if index + 1 == arms.len() {
+                            fallback_label.clone()
+                        } else {
+                            dispatch_labels[index + 1].clone()
+                        };
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {compare}, label %{}, label %{false_target}",
+                            arm_labels[index]
+                        );
+                    }
+                }
+
+                for (arm, arm_label) in arms.iter().zip(arm_labels.iter()) {
+                    let _ = writeln!(output, "{arm_label}:");
+                    if let Some(value) = self.render_direct_local_capturing_closure_call(
+                        output,
+                        arm.closure_id,
+                        args,
+                        span,
+                    ) && let Some(result_slot) = result_slot.as_ref()
+                    {
+                        let _ = writeln!(
+                            output,
+                            "  store {} {}, ptr {result_slot}",
+                            value.llvm_ty, value.repr
+                        );
+                    }
+                    let _ = writeln!(output, "  br label %{end_label}");
+                }
+
+                let _ = writeln!(output, "{fallback_label}:");
+                if let Some(value) = self.render_direct_local_capturing_closure_call(
+                    output,
+                    *fallback_closure,
+                    args,
+                    span,
+                ) && let Some(result_slot) = result_slot.as_ref()
+                {
+                    let _ = writeln!(
+                        output,
+                        "  store {} {}, ptr {result_slot}",
+                        value.llvm_ty, value.repr
+                    );
+                }
+                let _ = writeln!(output, "  br label %{end_label}");
+
+                let _ = writeln!(output, "{end_label}:");
+                result_slot.map(|slot| {
+                    self.render_loaded_pointer_value(output, slot, return_ty.clone(), span)
+                })
+            }
+        }
+    }
+
     fn render_rvalue(
         &mut self,
         output: &mut String,
+        block_id: mir::BasicBlockId,
         value: &Rvalue,
         expected_ty: Option<&Ty>,
         span: Span,
@@ -9837,73 +10605,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         .get(&place.base)
                         .copied()
                 {
-                    let closure = self.body.closure(closure_id);
-                    let closure_ty = self
-                        .emitter
-                        .input
-                        .typeck
-                        .expr_ty(closure.expr)
-                        .cloned()
-                        .expect(
-                            "prepared direct local capturing-closure calls should preserve callable types",
-                        );
-                    let Ty::Callable { params, ret } = closure_ty else {
-                        panic!(
-                            "prepared direct local capturing-closure calls at {span:?} should only target callable values"
-                        );
-                    };
-                    assert!(
-                        args.iter().all(|arg| arg.name.is_none()) && args.len() == params.len(),
-                        "prepared direct local capturing-closure calls at {span:?} should only contain positional arguments matching the callable arity"
-                    );
-
-                    let mut rendered_args = Vec::with_capacity(closure.captures.len() + args.len());
-                    for capture in &closure.captures {
-                        let value = self.render_operand(
-                            output,
-                            &Operand::Place(Place::local(capture.local)),
-                            span,
-                        );
-                        rendered_args.push(format!("{} {}", value.llvm_ty, value.repr));
-                    }
-                    for (arg, param_ty) in args.iter().zip(params.iter()) {
-                        let value = self.render_operand(output, &arg.value, span);
-                        assert!(
-                            param_ty.compatible_with(&value.ty),
-                            "prepared direct local capturing-closure calls at {span:?} should preserve callable argument types"
-                        );
-                        rendered_args.push(format!("{} {}", value.llvm_ty, value.repr));
-                    }
-
-                    let rendered_args = rendered_args.join(", ");
-                    let return_ty = ret.as_ref().clone();
-                    let return_llvm_ty = self
-                        .emitter
-                        .lower_llvm_type(&return_ty, span, "call result")
-                        .expect(
-                            "prepared direct local capturing-closure calls should only produce lowered callable result types",
-                        );
-                    let callee_name =
-                        closure_llvm_name(&self.prepared.signature.llvm_name, closure_id);
-
-                    if is_void_ty(&return_ty) {
-                        let _ = writeln!(
-                            output,
-                            "  call {return_llvm_ty} @{callee_name}({rendered_args})"
-                        );
-                        None
-                    } else {
-                        let temp = self.fresh_temp();
-                        let _ = writeln!(
-                            output,
-                            "  {temp} = call {return_llvm_ty} @{callee_name}({rendered_args})"
-                        );
-                        Some(LoweredValue {
-                            ty: return_ty,
-                            llvm_ty: return_llvm_ty,
-                            repr: temp,
-                        })
-                    }
+                    self.render_direct_local_capturing_closure_call(output, closure_id, args, span)
+                } else if let Some(lowering) =
+                    self.ordinary_control_flow_capturing_closure_call(block_id, callee)
+                {
+                    self.render_ordinary_control_flow_capturing_closure_call(
+                        output, &lowering, args, span,
+                    )
                 } else if let Some(function) = self.emitter.resolve_direct_callee_function(callee) {
                     let signature = self
                         .emitter
@@ -11801,8 +12509,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     "prepared bool guard lowering at {span:?} should only render callable block guard expressions with tails"
                 )
             });
-        let value =
-            self.render_guard_expr_as_type(output, tail, expected_ty, span, guard_binding);
+        let value = self.render_guard_expr_as_type(output, tail, expected_ty, span, guard_binding);
         self.cleanup_bindings.truncate(binding_depth);
         self.cleanup_capturing_closure_bindings
             .truncate(closure_binding_depth);
@@ -12264,13 +12971,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         if let hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) =
             &self.emitter.input.hir.expr(callee_expr).kind
         {
-            return self.render_guard_call_block_expr(
-                output,
-                *block_id,
-                args,
-                span,
-                guard_binding,
-            );
+            return self.render_guard_call_block_expr(output, *block_id, args, span, guard_binding);
         }
 
         if let hir::ExprKind::If {
@@ -12783,7 +13484,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
 
             let _ = writeln!(output, "{body_label}:");
-            let arm_value = self.render_guard_call_value(output, arm.body, args, span, guard_binding);
+            let arm_value =
+                self.render_guard_call_value(output, arm.body, args, span, guard_binding);
             let _ = writeln!(
                 output,
                 "  store {} {}, ptr {result_slot}",
@@ -12895,7 +13597,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
 
             let _ = writeln!(output, "{body_label}:");
-            let arm_value = self.render_guard_call_value(output, arm.body, args, span, guard_binding);
+            let arm_value =
+                self.render_guard_call_value(output, arm.body, args, span, guard_binding);
             let _ = writeln!(
                 output,
                 "  store {} {}, ptr {result_slot}",
@@ -12911,9 +13614,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 let _ = writeln!(output, "{next_label}:");
             }
 
-            if matches!(pattern, SupportedIntegerMatchPattern::CatchAll)
-                && arm.guard.is_none()
-            {
+            if matches!(pattern, SupportedIntegerMatchPattern::CatchAll) && arm.guard.is_none() {
                 break;
             }
         }
@@ -15727,6 +16428,47 @@ fn direct_local_capturing_closure_assignment_source(
         .get(&source.base)
         .expect("capturing closure local should preserve its source span");
     Some((closure_id, closure_span))
+}
+
+fn control_flow_capturing_closure_block_assignment(
+    body: &mir::MirBody,
+    block_id: mir::BasicBlockId,
+    staged: &HashMap<mir::LocalId, mir::ClosureId>,
+    supported: &HashMap<mir::LocalId, mir::ClosureId>,
+    closure_spans: &HashMap<mir::LocalId, Span>,
+) -> Option<(mir::BasicBlockId, mir::LocalId, mir::ClosureId)> {
+    let block = body.block(block_id);
+    let TerminatorKind::Goto { target } = &block.terminator.kind else {
+        return None;
+    };
+
+    let mut assignment = None;
+    for statement_id in &block.statements {
+        let statement = body.statement(*statement_id);
+        match &statement.kind {
+            StatementKind::Assign { place, value } => {
+                if assignment.is_some() || !place.projections.is_empty() {
+                    return None;
+                }
+                let (closure_id, _) = direct_local_capturing_closure_assignment_source(
+                    value,
+                    staged,
+                    supported,
+                    closure_spans,
+                )?;
+                assignment = Some((place.base, closure_id));
+            }
+            StatementKind::BindPattern { .. }
+            | StatementKind::StorageLive { .. }
+            | StatementKind::StorageDead { .. } => {}
+            StatementKind::Eval { .. }
+            | StatementKind::RegisterCleanup { .. }
+            | StatementKind::RunCleanup { .. } => return None,
+        }
+    }
+
+    let (local, closure_id) = assignment?;
+    Some((*target, local, closure_id))
 }
 
 fn cleanup_same_target_capturing_closure_assignment(
@@ -20570,28 +21312,33 @@ fn main() -> Int {
     }
 
     #[test]
-    fn rejects_capturing_closure_values() {
-        let messages = emit_error(
+    fn emits_ordinary_different_closure_control_flow_capturing_closure_calls() {
+        let rendered = emit(
             r#"
 fn main() -> Int {
     let branch = true
-    let value = 1
-    let left = () => value
-    let right = () => value + 1
-    let chosen = if branch { left } else { right }
-    return chosen()
+    let target = 42
+    let left = (value: Int) => value + target
+    let right = (value: Int) => value + target + 1
+    return (if branch { left } else { right })(1)
+        + (match branch {
+            true => {
+                let alias = left
+                alias
+            },
+            false => right,
+        })(2)
 }
 "#,
         );
 
-        assert!(messages.iter().any(|message| {
-            message
-                == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through the current ordinary local/same-target callable roots plus the shipped cleanup/guard-call paths"
-        }));
-        assert!(messages.iter().all(|message| {
-            !message.contains("could not resolve LLVM type for local")
-                && !message.contains("could not infer LLVM type for MIR local")
-        }));
+        assert!(rendered.contains("ordinary_call_if_then"));
+        assert!(rendered.contains("@ql_0_main__closure0("));
+        assert!(rendered.contains("@ql_0_main__closure1("));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
     }
 
     #[test]

@@ -4917,8 +4917,7 @@ fn capturing_closure_cleanup_different_closure_call_roots_codegen_case_matches()
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_cleanup_different_closure_call_roots_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_cleanup_different_closure_call_roots_build.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_cleanup_different_closure_call_roots_build.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -4929,7 +4928,31 @@ fn capturing_closure_cleanup_different_closure_call_roots_codegen_case_matches()
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("capturing closure cleanup different-closure call-root build regression:\n\n{message}");
+        panic!(
+            "capturing closure cleanup different-closure call-root build regression:\n\n{message}"
+        );
+    }
+}
+
+#[test]
+fn capturing_closure_ordinary_different_closure_call_roots_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "capturing_closure_ordinary_different_closure_call_roots_build",
+        source_relative: "fixtures/codegen/pass/capturing_closure_ordinary_different_closure_call_roots_build.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!(
+            "capturing closure ordinary different-closure call-root build regression:\n\n{message}"
+        );
     }
 }
 
@@ -5002,8 +5025,7 @@ fn capturing_closure_match_guard_different_closure_block_alias_codegen_case_matc
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_match_guard_different_closure_block_alias_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_match_guard_different_closure_block_alias_build.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_match_guard_different_closure_block_alias_build.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
