@@ -6999,7 +6999,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     op: BinaryOp::Assign,
                     right,
                 } = &self.emitter.input.hir.expr(*expr).kind
-                    && let Some(binding) = cleanup_same_target_capturing_closure_assignment(
+                    && let Some(binding) = cleanup_capturing_closure_assignment(
                         self.emitter.input.hir,
                         self.emitter.input.resolution,
                         self.body,
@@ -16635,7 +16635,7 @@ fn supported_direct_local_capturing_closure_callee_block_closure(
                 else {
                     return None;
                 };
-                let binding = cleanup_same_target_capturing_closure_assignment(
+                let binding = cleanup_capturing_closure_assignment(
                     module,
                     resolution,
                     body,
@@ -16794,7 +16794,7 @@ fn ordinary_control_flow_capturing_closure_block_reassigns_local(
     })
 }
 
-fn cleanup_same_target_capturing_closure_assignment(
+fn cleanup_capturing_closure_assignment(
     module: &hir::Module,
     resolution: &ResolutionMap,
     body: &mir::MirBody,
@@ -16809,14 +16809,6 @@ fn cleanup_same_target_capturing_closure_assignment(
     let ValueResolution::Local(local) = resolution.expr_resolution(target_expr)? else {
         return None;
     };
-    let target_closure = direct_local_capturing_closure_for_expr(
-        module,
-        resolution,
-        body,
-        supported,
-        cleanup_aliases,
-        target_expr,
-    )?;
     let value_closure = direct_local_capturing_closure_for_expr(
         module,
         resolution,
@@ -16825,7 +16817,7 @@ fn cleanup_same_target_capturing_closure_assignment(
         cleanup_aliases,
         value_expr,
     )?;
-    (target_closure == value_closure).then_some(CleanupCapturingClosureBinding {
+    Some(CleanupCapturingClosureBinding {
         local: *local,
         closure_id: value_closure,
     })
@@ -16859,7 +16851,7 @@ fn cleanup_direct_capturing_closure_callee_expr(
         return None;
     };
 
-    cleanup_same_target_capturing_closure_assignment(
+    cleanup_capturing_closure_assignment(
         module,
         resolution,
         body,
@@ -17125,7 +17117,7 @@ fn cleanup_supported_capturing_closure_callee_block_expr(
                 else {
                     return false;
                 };
-                let Some(binding) = cleanup_same_target_capturing_closure_assignment(
+                let Some(binding) = cleanup_capturing_closure_assignment(
                     module,
                     resolution,
                     body,
@@ -17221,7 +17213,7 @@ fn cleanup_supported_capturing_closure_callee_block_closure(
                 else {
                     return None;
                 };
-                let binding = cleanup_same_target_capturing_closure_assignment(
+                let binding = cleanup_capturing_closure_assignment(
                     module,
                     resolution,
                     body,
@@ -17608,7 +17600,7 @@ fn cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_c
                     op: BinaryOp::Assign,
                     right,
                 } = &module.expr(*expr).kind
-                    && let Some(binding) = cleanup_same_target_capturing_closure_assignment(
+                    && let Some(binding) = cleanup_capturing_closure_assignment(
                         module,
                         resolution,
                         body,
