@@ -128,6 +128,7 @@ Qlang 仓库结构必须同时服务于四类工作：
 - `ql-mir` 的结构与 cleanup / CFG 回归也应留在 `crates/ql-mir/tests/`，避免把中间表示 snapshot 混回 CLI 黑盒层
 - `ql-borrowck` 的 moved-state / consume-event / merge 回归应留在 `crates/ql-borrowck/tests/`，锁定 ownership slice 的边界而不是把语义噪声塞进 CLI 黑盒
 - `ql-codegen-llvm` 的 IR 结构与 unsupported diagnostics 优先留在 crate 自己的测试里，避免 P4 一开始就把 backend 回归全部堆进黑盒 CLI 层
+- `ql-codegen-llvm` 的 crate-local unit tests 继续按 `crates/ql-codegen-llvm/src/tests/*.rs` 分模块维护；`src/lib.rs` 只保留实现与少量 test-only helper，避免再回到单文件混排上万行实现+回归的状态
 - `ql-driver` 的输出路径和产物落盘测试也应留在 crate-local tests，避免把 build orchestration 和参数解析耦死
 - `ql-driver` 的 exported C header 投影和类型映射回归也应留在 crate-local tests，避免把 FFI surface 逻辑塞回 CLI 层
 - 仓库根 `tests/` 保留给后续 CLI 黑盒、UI diagnostics、codegen、FFI 这类跨 crate 测试
