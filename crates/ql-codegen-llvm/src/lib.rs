@@ -165,6 +165,12 @@ struct CleanupCapturingClosureBinding {
     closure_id: mir::ClosureId,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum CleanupDirectCapturingClosureExpr {
+    Direct(mir::ClosureId),
+    Assignment(CleanupCapturingClosureBinding),
+}
+
 #[derive(Clone, Debug)]
 struct SupportedForLoopLowering {
     iterable_root: SupportedForLoopIterableRoot,
@@ -7747,6 +7753,20 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         )
     }
 
+    fn supported_direct_cleanup_capturing_closure_callee_for_expr(
+        &self,
+        expr_id: hir::ExprId,
+    ) -> Option<CleanupDirectCapturingClosureExpr> {
+        cleanup_direct_capturing_closure_callee_expr(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            self.body,
+            &self.prepared.direct_local_capturing_closures,
+            &self.cleanup_capturing_closure_bindings,
+            expr_id,
+        )
+    }
+
     fn render_cleanup_call(
         &mut self,
         output: &mut String,
@@ -7802,9 +7822,16 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             });
         }
 
-        if let Some(closure_id) =
-            self.supported_direct_local_capturing_closure_for_expr(callee_expr)
-        {
+        if let Some(callee) = self.supported_direct_cleanup_capturing_closure_callee_for_expr(
+            callee_expr,
+        ) {
+            let closure_id = match callee {
+                CleanupDirectCapturingClosureExpr::Direct(closure_id) => closure_id,
+                CleanupDirectCapturingClosureExpr::Assignment(binding) => {
+                    self.cleanup_capturing_closure_bindings.push(binding);
+                    binding.closure_id
+                }
+            };
             let closure = self.body.closure(closure_id);
             let closure_ty = self
                 .emitter
@@ -14004,6 +14031,46 @@ fn cleanup_same_target_capturing_closure_assignment(
     })
 }
 
+fn cleanup_direct_capturing_closure_callee_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    supported: &HashMap<mir::LocalId, mir::ClosureId>,
+    cleanup_aliases: &[CleanupCapturingClosureBinding],
+    expr_id: hir::ExprId,
+) -> Option<CleanupDirectCapturingClosureExpr> {
+    if let Some(closure_id) = direct_local_capturing_closure_for_expr(
+        module,
+        resolution,
+        body,
+        supported,
+        cleanup_aliases,
+        expr_id,
+    ) {
+        return Some(CleanupDirectCapturingClosureExpr::Direct(closure_id));
+    }
+
+    let hir::ExprKind::Binary {
+        left,
+        op: BinaryOp::Assign,
+        right,
+    } = &module.expr(expr_id).kind
+    else {
+        return None;
+    };
+
+    cleanup_same_target_capturing_closure_assignment(
+        module,
+        resolution,
+        body,
+        supported,
+        cleanup_aliases,
+        *left,
+        *right,
+    )
+    .map(CleanupDirectCapturingClosureExpr::Assignment)
+}
+
 fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -14126,7 +14193,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
         }
         hir::ExprKind::Call { callee, args } => {
             let callee_allowed = args.iter().all(|arg| matches!(arg, hir::CallArg::Positional(_)))
-                && direct_local_capturing_closure_for_expr(
+                && cleanup_direct_capturing_closure_callee_expr(
                     module,
                     resolution,
                     body,
@@ -17711,6 +17778,36 @@ fn main() -> Int {
         if alias_check(42) {
             keep()
         }
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.matches("__closure").count() >= 2);
+        assert!(rendered.contains("call i64 @"));
+        assert!(rendered.contains("call i1 @"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains(
+            "currently only supports a narrow non-`move` capturing-closure subset"
+        ));
+    }
+
+    #[test]
+    fn emits_cleanup_assignment_valued_capturing_closure_calls() {
+        let rendered = emit(
+            r#"
+extern "c" fn keep()
+
+fn main() -> Int {
+    let target = 42
+    let check = (value: Int) => value == target
+    var check_alias = check
+    let run = (value: Int) => value + target
+    var run_alias = run
+    defer (run_alias = run)(1)
+    defer if (check_alias = check)(42) {
+        keep()
     }
     return 0
 }
