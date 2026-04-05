@@ -13511,6 +13511,14 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
         guard_binding: Option<&GuardBindingValue>,
     ) -> LoweredValue {
+        if let Some(tail) = guard_callable_elided_block_tail_expr(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            block_id,
+        ) {
+            return self.render_guard_call_value(output, tail, args, span, guard_binding);
+        }
+
         let binding_depth = self.cleanup_bindings.len();
         let closure_binding_depth = self.cleanup_capturing_closure_bindings.len();
         let tail = self
@@ -17937,6 +17945,73 @@ fn supported_guard_value_expr_as_type(
     .is_some_and(|actual_ty| expected_ty.compatible_with(&actual_ty))
 }
 
+fn guard_callable_elided_block_tail_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    block_id: hir::BlockId,
+) -> Option<hir::ExprId> {
+    let block = module.block(block_id);
+    if block.statements.is_empty() {
+        return None;
+    }
+
+    let mut bindings = HashMap::new();
+    for statement_id in &block.statements {
+        let hir::StmtKind::Let { pattern, value, .. } = &module.stmt(*statement_id).kind else {
+            return None;
+        };
+        let PatternKind::Binding(local) = pattern_kind(module, *pattern) else {
+            return None;
+        };
+        if !guard_callable_binding_expr_is_elidable(module, resolution, &bindings, *value) {
+            return None;
+        }
+        bindings.insert(*local, *value);
+    }
+
+    resolve_guard_callable_binding_expr(module, resolution, &bindings, block.tail?)
+}
+
+fn guard_callable_binding_expr_is_elidable(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    bindings: &HashMap<hir::LocalId, hir::ExprId>,
+    expr_id: hir::ExprId,
+) -> bool {
+    resolve_guard_callable_binding_expr(module, resolution, bindings, expr_id).is_some()
+}
+
+fn resolve_guard_callable_binding_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    bindings: &HashMap<hir::LocalId, hir::ExprId>,
+    expr_id: hir::ExprId,
+) -> Option<hir::ExprId> {
+    let mut current = expr_id;
+    let mut visited = HashSet::new();
+
+    loop {
+        if !visited.insert(current) {
+            return None;
+        }
+
+        match &module.expr(current).kind {
+            hir::ExprKind::If { .. } | hir::ExprKind::Match { .. } => return Some(current),
+            hir::ExprKind::Name(_) => {
+                let ValueResolution::Local(local) = resolution.expr_resolution(current)? else {
+                    return None;
+                };
+                current = *bindings.get(local)?;
+            }
+            hir::ExprKind::Question(inner) => current = *inner,
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                current = guard_callable_elided_block_tail_expr(module, resolution, *block_id)?;
+            }
+            _ => return None,
+        }
+    }
+}
+
 fn supported_guard_callable_block_expr_as_type(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -17963,6 +18038,20 @@ fn supported_guard_callable_block_expr_as_type(
             )
             .is_some_and(|actual_ty| expected_ty.compatible_with(&actual_ty))
         });
+    }
+
+    if let Some(tail) = guard_callable_elided_block_tail_expr(module, resolution, block_id) {
+        return supported_guard_value_expr_as_type(
+            module,
+            resolution,
+            typeck,
+            signatures,
+            body,
+            local_types,
+            arm_pattern,
+            tail,
+            expected_ty,
+        );
     }
 
     let supported_direct_local_capturing_closures =

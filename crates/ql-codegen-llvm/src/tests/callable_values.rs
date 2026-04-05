@@ -1665,6 +1665,51 @@ return first + second
 }
 
 #[test]
+fn emits_match_guard_different_closure_block_binding_capturing_closure_calls() {
+    let rendered = emit(
+        r#"
+fn main() -> Int {
+let branch = true
+let target = 42
+let left = (value: Int) => value == target
+let right = (value: Int) => value + 1 == target + 1
+let first = match 42 {
+    current if ({
+        let chosen = if branch { left } else { right }
+        chosen
+    })(current) => 1,
+    _ => 0,
+}
+let second = match 42 {
+    current if ({
+        let chosen = match branch {
+            true => {
+                let alias = left
+                alias
+            },
+            false => right,
+        }
+        let alias = chosen
+        alias
+    })(current) => 2,
+    _ => 0,
+}
+return first + second
+}
+"#,
+    );
+
+    assert!(rendered.matches("__closure").count() >= 2);
+    assert!(rendered.contains("guard_call_if_then"));
+    assert!(rendered.contains("guard_call_match_arm"));
+    assert!(rendered.contains("call i1 @"));
+    assert!(!rendered.contains("does not support `match` lowering yet"));
+    assert!(
+        !rendered.contains("currently only supports a narrow non-`move` capturing-closure subset")
+    );
+}
+
+#[test]
 fn emits_ordinary_different_closure_control_flow_capturing_closure_calls() {
     let rendered = emit(
         r#"
