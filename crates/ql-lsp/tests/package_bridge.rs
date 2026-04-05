@@ -3,10 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_source};
+use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    completion_for_package_analysis, definition_for_package_analysis, hover_for_package_analysis,
-    references_for_package_analysis, span_to_range,
+    completion_for_dependency_imports, completion_for_package_analysis,
+    definition_for_package_analysis, hover_for_package_analysis, references_for_package_analysis,
+    span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
@@ -598,6 +599,71 @@ pub fn main() -> Int {
 
     assert!(items.iter().any(|item| item.label == "Buffer"));
     assert!(!items.iter().any(|item| item.label == "exported"));
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_import_completion_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-package-broken-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Buffer[T] {
+    value: T,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Bu
+
+pub fn main( -> Int {
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    assert!(analyze_source(source).is_err());
+
+    let Some(CompletionResponse::Array(items)) = completion_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "Bu", 1) + "Bu".len()),
+    ) else {
+        panic!("dependency completion should exist even without semantic analysis")
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "Buffer");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::STRUCT));
 }
 
 #[test]

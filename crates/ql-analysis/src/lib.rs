@@ -544,8 +544,30 @@ pub fn analyze_package(path: &Path) -> Result<PackageAnalysis, PackageAnalysisEr
         });
     }
 
+    let dependencies = load_package_dependencies(&manifest)?;
+
+    Ok(PackageAnalysis {
+        manifest,
+        modules,
+        dependencies,
+    })
+}
+
+pub fn analyze_package_dependencies(path: &Path) -> Result<PackageAnalysis, PackageAnalysisError> {
+    let manifest = load_project_manifest(path).map_err(PackageAnalysisError::Project)?;
+    let dependencies = load_package_dependencies(&manifest)?;
+    Ok(PackageAnalysis {
+        manifest,
+        modules: Vec::new(),
+        dependencies,
+    })
+}
+
+fn load_package_dependencies(
+    manifest: &ProjectManifest,
+) -> Result<Vec<DependencyInterface>, PackageAnalysisError> {
     let dependency_manifests =
-        load_reference_manifests(&manifest).map_err(PackageAnalysisError::Project)?;
+        load_reference_manifests(manifest).map_err(PackageAnalysisError::Project)?;
     let mut dependencies = Vec::with_capacity(dependency_manifests.len());
     for dependency_manifest in dependency_manifests {
         let interface_path =
@@ -575,12 +597,7 @@ pub fn analyze_package(path: &Path) -> Result<PackageAnalysis, PackageAnalysisEr
             symbols,
         });
     }
-
-    Ok(PackageAnalysis {
-        manifest,
-        modules,
-        dependencies,
-    })
+    Ok(dependencies)
 }
 
 fn index_dependency_symbols(artifact: &InterfaceArtifact) -> Vec<DependencySymbol> {

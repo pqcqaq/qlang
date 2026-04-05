@@ -1,4 +1,6 @@
-use ql_analysis::{Analysis, analyze_package, analyze_source};
+use ql_analysis::{
+    Analysis, PackageAnalysisError, analyze_package, analyze_package_dependencies, analyze_source,
+};
 use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
@@ -13,10 +15,10 @@ use tower_lsp::lsp_types::{
 use tower_lsp::{Client, LanguageServer};
 
 use crate::bridge::{
-    completion_for_analysis, completion_for_package_analysis, definition_for_package_analysis,
-    diagnostics_to_lsp, hover_for_package_analysis, prepare_rename_for_analysis,
-    references_for_analysis, references_for_package_analysis, rename_for_analysis,
-    semantic_tokens_for_analysis, semantic_tokens_legend,
+    completion_for_analysis, completion_for_dependency_imports, completion_for_package_analysis,
+    definition_for_package_analysis, diagnostics_to_lsp, hover_for_package_analysis,
+    prepare_rename_for_analysis, references_for_analysis, references_for_package_analysis,
+    rename_for_analysis, semantic_tokens_for_analysis, semantic_tokens_legend,
 };
 use crate::store::DocumentStore;
 
@@ -53,7 +55,13 @@ impl Backend {
 
     fn package_analysis_for_uri(&self, uri: &Url) -> Option<ql_analysis::PackageAnalysis> {
         let path = uri.to_file_path().ok()?;
-        analyze_package(&path).ok()
+        match analyze_package(&path) {
+            Ok(package) => Some(package),
+            Err(PackageAnalysisError::SourceDiagnostics { .. }) => {
+                analyze_package_dependencies(&path).ok()
+            }
+            Err(_) => None,
+        }
     }
 }
 
@@ -201,13 +209,25 @@ impl LanguageServer for Backend {
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
-        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        let package = self.package_analysis_for_uri(&uri);
+
+        if let Some(package) = package.as_ref() {
+            if let Some(completion) = completion_for_dependency_imports(&source, package, position)
+            {
+                return Ok(Some(completion));
+            }
+        }
+
+        let Ok(analysis) = analyze_source(&source) else {
             return Ok(None);
         };
 
-        if let Some(package) = self.package_analysis_for_uri(&uri) {
+        if let Some(package) = package.as_ref() {
             return Ok(completion_for_package_analysis(
-                &source, &analysis, &package, position,
+                &source, &analysis, package, position,
             ));
         }
 
