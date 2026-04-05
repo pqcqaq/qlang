@@ -136,6 +136,38 @@ return q_add(1, 2)
 }
 
 #[test]
+fn emits_string_literal_globals_and_string_value_transport() {
+    let rendered = emit_library(
+        r#"
+const GREETING: String = "hello"
+
+fn direct() -> String {
+let local = "hello"
+return local
+}
+
+fn from_const() -> String {
+return GREETING
+}
+"#,
+    );
+
+    assert_eq!(
+        rendered
+            .matches(r#"private unnamed_addr constant [6 x i8] c"\68\65\6C\6C\6F\00""#)
+            .count(),
+        1
+    );
+    assert!(rendered.contains("@ql_str_0 = private unnamed_addr constant [6 x i8]"));
+    assert!(rendered.contains("define { ptr, i64 } @ql_1_direct()"));
+    assert!(rendered.contains("define { ptr, i64 } @ql_2_from_const()"));
+    assert!(rendered.contains("getelementptr inbounds [6 x i8], ptr @ql_str_0, i32 0, i32 0"));
+    assert!(rendered.contains("insertvalue { ptr, i64 } undef, ptr"));
+    assert!(rendered.contains("insertvalue { ptr, i64 } %"));
+    assert!(rendered.contains("i64 5, 1"));
+}
+
+#[test]
 fn emits_runtime_hook_declarations_from_shared_abi_contract() {
     let runtime_hooks = collect_runtime_hook_signatures([
         RuntimeCapability::TaskSpawn,
@@ -361,7 +393,7 @@ return 0
 }
 
 #[test]
-fn builds_async_task_result_layouts_for_void_scalar_task_handle_tuple_and_array_results() {
+fn builds_async_task_result_layouts_for_void_scalar_string_task_handle_tuple_and_array_results() {
     let void_layout =
         build_async_task_result_layout(&Ty::Builtin(BuiltinType::Void), Span::new(0, 0))
             .expect("void async result layout should be supported");
@@ -382,6 +414,22 @@ fn builds_async_task_result_layouts_for_void_scalar_task_handle_tuple_and_array_
             assert_eq!(align, 8);
         }
         AsyncTaskResultLayout::Void => panic!("expected scalar layout for Int"),
+    }
+
+    let string_layout =
+        build_async_task_result_layout(&Ty::Builtin(BuiltinType::String), Span::new(0, 0))
+            .expect("string async result layout should be supported");
+    match string_layout {
+        AsyncTaskResultLayout::Loadable {
+            llvm_ty,
+            _size,
+            align,
+        } => {
+            assert_eq!(llvm_ty, "{ ptr, i64 }");
+            assert_eq!(_size, 16);
+            assert_eq!(align, 8);
+        }
+        AsyncTaskResultLayout::Void => panic!("expected loadable layout for String"),
     }
 
     let task_handle_layout = build_async_task_result_layout(

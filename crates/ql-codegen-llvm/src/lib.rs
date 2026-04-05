@@ -440,6 +440,12 @@ struct AsyncTaskHandleInfo {
     result_layout: AsyncTaskResultLayout,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct StringLiteralKey {
+    value: String,
+    is_format: bool,
+}
+
 #[derive(Clone, Debug)]
 enum ResolvedProjectionStep {
     Field { index: usize, ty: Ty },
@@ -468,6 +474,7 @@ struct ModuleEmitter<'a> {
     input: CodegenInput<'a>,
     signatures: HashMap<FunctionRef, FunctionSignature>,
     const_closure_llvm_names: HashMap<hir::ExprId, String>,
+    string_literal_llvm_names: HashMap<StringLiteralKey, String>,
 }
 
 impl<'a> ModuleEmitter<'a> {
@@ -476,6 +483,7 @@ impl<'a> ModuleEmitter<'a> {
             input,
             signatures: HashMap::new(),
             const_closure_llvm_names: HashMap::new(),
+            string_literal_llvm_names: HashMap::new(),
         }
     }
 
@@ -587,7 +595,221 @@ impl<'a> ModuleEmitter<'a> {
             return Err(CodegenError::new(dedupe_diagnostics(diagnostics)));
         }
 
+        self.string_literal_llvm_names = self.collect_string_literal_llvm_names();
+
         Ok(self.render_module(&reachable, &prepared, &prepared_closures, entry))
+    }
+
+    fn collect_string_literal_llvm_names(&self) -> HashMap<StringLiteralKey, String> {
+        let mut literals = HashMap::new();
+        let mut next_index = 0usize;
+
+        for &item_id in &self.input.hir.items {
+            self.collect_string_literals_in_item(item_id, &mut literals, &mut next_index);
+        }
+
+        literals
+    }
+
+    fn collect_string_literals_in_item(
+        &self,
+        item_id: ItemId,
+        literals: &mut HashMap<StringLiteralKey, String>,
+        next_index: &mut usize,
+    ) {
+        match &self.input.hir.item(item_id).kind {
+            ItemKind::Function(function) => {
+                self.collect_string_literals_in_function(function, literals, next_index);
+            }
+            ItemKind::Const(global) | ItemKind::Static(global) => {
+                self.collect_string_literals_in_expr(global.value, literals, next_index);
+            }
+            ItemKind::Struct(struct_decl) => {
+                for field in &struct_decl.fields {
+                    if let Some(default) = field.default {
+                        self.collect_string_literals_in_expr(default, literals, next_index);
+                    }
+                }
+            }
+            ItemKind::Enum(enum_decl) => {
+                for variant in &enum_decl.variants {
+                    let hir::VariantFields::Struct(fields) = &variant.fields else {
+                        continue;
+                    };
+                    for field in fields {
+                        if let Some(default) = field.default {
+                            self.collect_string_literals_in_expr(default, literals, next_index);
+                        }
+                    }
+                }
+            }
+            ItemKind::Trait(trait_decl) => {
+                for method in &trait_decl.methods {
+                    self.collect_string_literals_in_function(method, literals, next_index);
+                }
+            }
+            ItemKind::Impl(impl_decl) => {
+                for method in &impl_decl.methods {
+                    self.collect_string_literals_in_function(method, literals, next_index);
+                }
+            }
+            ItemKind::Extend(extend_decl) => {
+                for method in &extend_decl.methods {
+                    self.collect_string_literals_in_function(method, literals, next_index);
+                }
+            }
+            ItemKind::TypeAlias(_) | ItemKind::ExternBlock(_) => {}
+        }
+    }
+
+    fn collect_string_literals_in_function(
+        &self,
+        function: &hir::Function,
+        literals: &mut HashMap<StringLiteralKey, String>,
+        next_index: &mut usize,
+    ) {
+        let Some(body) = function.body else {
+            return;
+        };
+        self.collect_string_literals_in_block(body, literals, next_index);
+    }
+
+    fn collect_string_literals_in_block(
+        &self,
+        block_id: hir::BlockId,
+        literals: &mut HashMap<StringLiteralKey, String>,
+        next_index: &mut usize,
+    ) {
+        let block = self.input.hir.block(block_id);
+        for &statement_id in &block.statements {
+            self.collect_string_literals_in_stmt(statement_id, literals, next_index);
+        }
+        if let Some(tail) = block.tail {
+            self.collect_string_literals_in_expr(tail, literals, next_index);
+        }
+    }
+
+    fn collect_string_literals_in_stmt(
+        &self,
+        statement_id: hir::StmtId,
+        literals: &mut HashMap<StringLiteralKey, String>,
+        next_index: &mut usize,
+    ) {
+        match &self.input.hir.stmt(statement_id).kind {
+            hir::StmtKind::Let { value, .. } | hir::StmtKind::Defer(value) => {
+                self.collect_string_literals_in_expr(*value, literals, next_index);
+            }
+            hir::StmtKind::Return(value) => {
+                if let Some(value) = value {
+                    self.collect_string_literals_in_expr(*value, literals, next_index);
+                }
+            }
+            hir::StmtKind::While { condition, body } => {
+                self.collect_string_literals_in_expr(*condition, literals, next_index);
+                self.collect_string_literals_in_block(*body, literals, next_index);
+            }
+            hir::StmtKind::Loop { body } => {
+                self.collect_string_literals_in_block(*body, literals, next_index);
+            }
+            hir::StmtKind::For { iterable, body, .. } => {
+                self.collect_string_literals_in_expr(*iterable, literals, next_index);
+                self.collect_string_literals_in_block(*body, literals, next_index);
+            }
+            hir::StmtKind::Expr { expr, .. } => {
+                self.collect_string_literals_in_expr(*expr, literals, next_index);
+            }
+            hir::StmtKind::Break | hir::StmtKind::Continue => {}
+        }
+    }
+
+    fn collect_string_literals_in_expr(
+        &self,
+        expr_id: hir::ExprId,
+        literals: &mut HashMap<StringLiteralKey, String>,
+        next_index: &mut usize,
+    ) {
+        match &self.input.hir.expr(expr_id).kind {
+            hir::ExprKind::String { value, is_format } => {
+                let key = StringLiteralKey {
+                    value: value.clone(),
+                    is_format: *is_format,
+                };
+                literals.entry(key).or_insert_with(|| {
+                    let llvm_name = format!("ql_str_{}", *next_index);
+                    *next_index += 1;
+                    llvm_name
+                });
+            }
+            hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => {
+                for &item in items {
+                    self.collect_string_literals_in_expr(item, literals, next_index);
+                }
+            }
+            hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                self.collect_string_literals_in_block(*block_id, literals, next_index);
+            }
+            hir::ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.collect_string_literals_in_expr(*condition, literals, next_index);
+                self.collect_string_literals_in_block(*then_branch, literals, next_index);
+                if let Some(other) = else_branch {
+                    self.collect_string_literals_in_expr(*other, literals, next_index);
+                }
+            }
+            hir::ExprKind::Match { value, arms } => {
+                self.collect_string_literals_in_expr(*value, literals, next_index);
+                for arm in arms {
+                    if let Some(guard) = arm.guard {
+                        self.collect_string_literals_in_expr(guard, literals, next_index);
+                    }
+                    self.collect_string_literals_in_expr(arm.body, literals, next_index);
+                }
+            }
+            hir::ExprKind::Closure { body, .. } | hir::ExprKind::Question(body) => {
+                self.collect_string_literals_in_expr(*body, literals, next_index);
+            }
+            hir::ExprKind::Call { callee, args } => {
+                self.collect_string_literals_in_expr(*callee, literals, next_index);
+                for arg in args {
+                    match arg {
+                        hir::CallArg::Positional(value) => {
+                            self.collect_string_literals_in_expr(*value, literals, next_index);
+                        }
+                        hir::CallArg::Named { value, .. } => {
+                            self.collect_string_literals_in_expr(*value, literals, next_index);
+                        }
+                    }
+                }
+            }
+            hir::ExprKind::Member { object, .. } => {
+                self.collect_string_literals_in_expr(*object, literals, next_index);
+            }
+            hir::ExprKind::Bracket { target, items } => {
+                self.collect_string_literals_in_expr(*target, literals, next_index);
+                for &item in items {
+                    self.collect_string_literals_in_expr(item, literals, next_index);
+                }
+            }
+            hir::ExprKind::StructLiteral { fields, .. } => {
+                for field in fields {
+                    self.collect_string_literals_in_expr(field.value, literals, next_index);
+                }
+            }
+            hir::ExprKind::Binary { left, right, .. } => {
+                self.collect_string_literals_in_expr(*left, literals, next_index);
+                self.collect_string_literals_in_expr(*right, literals, next_index);
+            }
+            hir::ExprKind::Unary { expr, .. } => {
+                self.collect_string_literals_in_expr(*expr, literals, next_index);
+            }
+            hir::ExprKind::Name(_)
+            | hir::ExprKind::Integer(_)
+            | hir::ExprKind::Bool(_)
+            | hir::ExprKind::NoneLiteral => {}
+        }
     }
 
     fn find_entry_function(&self) -> Result<FunctionRef, CodegenError> {
@@ -5524,6 +5746,7 @@ impl<'a> ModuleEmitter<'a> {
             ),
             Operand::Constant(constant) => match constant {
                 Constant::Integer(_) => Some(Ty::Builtin(BuiltinType::Int)),
+                Constant::String { .. } => Some(Ty::Builtin(BuiltinType::String)),
                 Constant::Bool(_) => Some(Ty::Builtin(BuiltinType::Bool)),
                 Constant::Void => Some(void_ty()),
                 Constant::Function { function, .. } => {
@@ -5541,13 +5764,6 @@ impl<'a> ModuleEmitter<'a> {
                         None
                     }
                 },
-                Constant::String { .. } => {
-                    diagnostics.push(unsupported(
-                        span,
-                        "LLVM IR backend foundation does not support string literals yet",
-                    ));
-                    None
-                }
                 Constant::None => {
                     diagnostics.push(unsupported(
                         span,
@@ -6052,6 +6268,11 @@ impl<'a> ModuleEmitter<'a> {
             self.render_program_runtime_support(&mut output);
         }
 
+        if !self.string_literal_llvm_names.is_empty() {
+            output.push('\n');
+            self.render_string_literal_globals(&mut output);
+        }
+
         for function_ref in reachable {
             output.push('\n');
             if let Some(function) = functions
@@ -6086,6 +6307,20 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         output
+    }
+
+    fn render_string_literal_globals(&self, output: &mut String) {
+        let mut literals = self.string_literal_llvm_names.iter().collect::<Vec<_>>();
+        literals.sort_by(|left, right| left.1.cmp(right.1));
+
+        for (key, llvm_name) in literals {
+            let llvm_bytes = llvm_string_literal_bytes(&key.value);
+            let len = key.value.as_bytes().len() + 1;
+            let _ = writeln!(
+                output,
+                "@{llvm_name} = private unnamed_addr constant [{len} x i8] c\"{llvm_bytes}\""
+            );
+        }
     }
 
     fn render_host_entry_wrapper(&self, output: &mut String, entry: &PreparedFunction) {
@@ -6741,6 +6976,7 @@ impl<'a> ModuleEmitter<'a> {
                 let element_llvm_ty = self.lower_llvm_type(element, span, context)?;
                 Ok(format!("[{len} x {element_llvm_ty}]"))
             }
+            Ty::Builtin(BuiltinType::String) => Ok(llvm_string_aggregate_ty().to_owned()),
             Ty::Tuple(items) => {
                 if items.iter().any(is_void_ty) {
                     return Err(Diagnostic::error(format!(
@@ -6784,6 +7020,7 @@ impl<'a> ModuleEmitter<'a> {
                     align: element.align,
                 })
             }
+            Ty::Builtin(BuiltinType::String) => Ok(string_loadable_abi_layout()),
             Ty::Tuple(items) => {
                 if items.iter().any(is_void_ty) {
                     return Err(Diagnostic::error(format!(
@@ -12140,6 +12377,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 llvm_ty: "i64".to_owned(),
                 repr: value.clone(),
             },
+            hir::ExprKind::String { value, is_format } => {
+                self.render_string_literal_value(output, value, *is_format, span)
+            }
             hir::ExprKind::Bool(value) => LoweredValue {
                 ty: Ty::Builtin(BuiltinType::Bool),
                 llvm_ty: "i1".to_owned(),
@@ -12525,6 +12765,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     llvm_ty: "i64".to_owned(),
                     repr: value.clone(),
                 },
+                Constant::String { value, is_format } => {
+                    self.render_string_literal_value(output, value, *is_format, span)
+                }
                 Constant::Bool(value) => LoweredValue {
                     ty: Ty::Builtin(BuiltinType::Bool),
                     llvm_ty: "i1".to_owned(),
@@ -12549,7 +12792,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                         self.render_item_constant(output, *item, span)
                     }
                 }
-                Constant::String { .. } | Constant::None | Constant::UnresolvedName(_) => {
+                Constant::None | Constant::UnresolvedName(_) => {
                     panic!("prepared operands should not contain unsupported constants")
                 }
                 Constant::Import(path) => {
@@ -12580,6 +12823,51 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     }
                 }
             },
+        }
+    }
+
+    fn render_string_literal_value(
+        &mut self,
+        output: &mut String,
+        value: &str,
+        is_format: bool,
+        span: Span,
+    ) -> LoweredValue {
+        let key = StringLiteralKey {
+            value: value.to_owned(),
+            is_format,
+        };
+        let llvm_name = self
+            .emitter
+            .string_literal_llvm_names
+            .get(&key)
+            .unwrap_or_else(|| {
+                panic!(
+                    "prepared string literal lowering at {span:?} should predeclare the module string global"
+                )
+            });
+        let bytes_len = value.as_bytes().len();
+        let llvm_ty = llvm_string_aggregate_ty().to_owned();
+        let ptr = self.fresh_temp();
+        let with_ptr = self.fresh_temp();
+        let with_len = self.fresh_temp();
+        let _ = writeln!(
+            output,
+            "  {ptr} = getelementptr inbounds [{} x i8], ptr @{llvm_name}, i32 0, i32 0",
+            bytes_len + 1
+        );
+        let _ = writeln!(
+            output,
+            "  {with_ptr} = insertvalue {llvm_ty} undef, ptr {ptr}, 0"
+        );
+        let _ = writeln!(
+            output,
+            "  {with_len} = insertvalue {llvm_ty} {with_ptr}, i64 {bytes_len}, 1"
+        );
+        LoweredValue {
+            ty: Ty::Builtin(BuiltinType::String),
+            llvm_ty,
+            repr: with_len,
         }
     }
 
@@ -19697,12 +19985,30 @@ fn guard_call_arg_expr(arg: &hir::CallArg) -> hir::ExprId {
     }
 }
 
+fn llvm_string_aggregate_ty() -> &'static str {
+    "{ ptr, i64 }"
+}
+
+fn string_loadable_abi_layout() -> LoadableAbiLayout {
+    LoadableAbiLayout { size: 16, align: 8 }
+}
+
+fn llvm_string_literal_bytes(value: &str) -> String {
+    let mut escaped = String::new();
+    for byte in value.as_bytes() {
+        let _ = write!(escaped, "\\{byte:02X}");
+    }
+    escaped.push_str("\\00");
+    escaped
+}
+
 fn lower_llvm_type(ty: &Ty, span: Span, context: &str) -> Result<String, Diagnostic> {
     match ty {
         Ty::Array { element, len } => {
             let element_llvm_ty = lower_llvm_type(element, span, context)?;
             Ok(format!("[{len} x {element_llvm_ty}]"))
         }
+        Ty::Builtin(BuiltinType::String) => Ok(llvm_string_aggregate_ty().to_owned()),
         Ty::Builtin(BuiltinType::Bool) => Ok("i1".to_owned()),
         Ty::Builtin(BuiltinType::Void) => Ok("void".to_owned()),
         Ty::Builtin(BuiltinType::Int) | Ty::Builtin(BuiltinType::I64) => Ok("i64".to_owned()),
@@ -19769,6 +20075,7 @@ fn loadable_abi_layout(
                 align: element.align,
             })
         }
+        Ty::Builtin(BuiltinType::String) => Ok(string_loadable_abi_layout()),
         Ty::Tuple(items) => {
             if items.iter().any(is_void_ty) {
                 return Err(Diagnostic::error(format!(
@@ -19819,6 +20126,7 @@ fn scalar_abi_layout(ty: &Ty, span: Span, context: &str) -> Result<ScalarAbiLayo
         | Ty::Builtin(BuiltinType::USize)
         | Ty::Builtin(BuiltinType::F64)
         | Ty::TaskHandle(_) => Ok(ScalarAbiLayout { size: 8, align: 8 }),
+        Ty::Builtin(BuiltinType::String) => Ok(ScalarAbiLayout { size: 16, align: 8 }),
         _ => Err(Diagnostic::error(format!(
             "LLVM IR backend foundation does not support {context} `{ty}` yet"
         ))
