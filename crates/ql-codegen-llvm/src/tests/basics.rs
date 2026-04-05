@@ -168,6 +168,30 @@ return GREETING
 }
 
 #[test]
+fn emits_string_equality_lowering_via_length_check_and_memcmp() {
+    let rendered = emit_library(
+        r#"
+fn same(left: String, right: String) -> Bool {
+return left == right
+}
+
+fn different() -> Bool {
+return "alpha" != "beta"
+}
+"#,
+    );
+
+    assert!(rendered.contains("declare i32 @memcmp(ptr, ptr, i64)"));
+    assert!(rendered.matches("extractvalue { ptr, i64 }").count() >= 4);
+    assert!(rendered.contains("icmp eq i64"));
+    assert!(rendered.contains("call i32 @memcmp(ptr"));
+    assert!(rendered.contains("icmp eq i32"));
+    assert!(rendered.contains("icmp ne i32"));
+    assert!(rendered.contains("phi i1 [ false"));
+    assert!(rendered.contains("phi i1 [ true"));
+}
+
+#[test]
 fn emits_runtime_hook_declarations_from_shared_abi_contract() {
     let runtime_hooks = collect_runtime_hook_signatures([
         RuntimeCapability::TaskSpawn,

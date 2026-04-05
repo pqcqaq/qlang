@@ -6075,18 +6075,25 @@ impl<'a> ModuleEmitter<'a> {
                     None
                 }
             }
-            BinaryOp::EqEq
-            | BinaryOp::BangEq
-            | BinaryOp::Gt
-            | BinaryOp::GtEq
-            | BinaryOp::Lt
-            | BinaryOp::LtEq => {
+            BinaryOp::EqEq | BinaryOp::BangEq => {
+                if is_comparable_ty(left_ty) || matches!(left_ty, Ty::Builtin(BuiltinType::String))
+                {
+                    Some(Ty::Builtin(BuiltinType::Bool))
+                } else {
+                    diagnostics.push(unsupported(
+                        span,
+                        "LLVM IR backend foundation only supports integer, float, bool, or string equality comparisons",
+                    ));
+                    None
+                }
+            }
+            BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Lt | BinaryOp::LtEq => {
                 if is_comparable_ty(left_ty) {
                     Some(Ty::Builtin(BuiltinType::Bool))
                 } else {
                     diagnostics.push(unsupported(
                         span,
-                        "LLVM IR backend foundation only supports integer, float, or bool comparisons",
+                        "LLVM IR backend foundation only supports integer, float, or bool ordered comparisons",
                     ));
                     None
                 }
@@ -6260,6 +6267,8 @@ impl<'a> ModuleEmitter<'a> {
             self.input.module_name
         );
         let _ = writeln!(output, "target triple = \"{}\"", default_target_triple());
+        output.push('\n');
+        output.push_str("declare i32 @memcmp(ptr, ptr, i64)\n");
 
         if !self.input.runtime_hooks.is_empty() {
             output.push('\n');
@@ -12299,13 +12308,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         left: LoweredValue,
         right: LoweredValue,
     ) -> Option<LoweredValue> {
-        let temp = self.fresh_temp();
-
         match op {
             BinaryOp::OrOr | BinaryOp::AndAnd => {
                 panic!("short-circuit boolean operators should lower structurally in MIR")
             }
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
+                let temp = self.fresh_temp();
                 let opcode = arithmetic_opcode(op, &left.ty);
                 let _ = writeln!(
                     output,
@@ -12324,6 +12332,11 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             | BinaryOp::GtEq
             | BinaryOp::Lt
             | BinaryOp::LtEq => {
+                if matches!(left.ty, Ty::Builtin(BuiltinType::String)) {
+                    return self.render_string_binary_comparison(output, op, left, right);
+                }
+
+                let temp = self.fresh_temp();
                 let opcode = compare_opcode(op, &left.ty);
                 let _ = writeln!(
                     output,
@@ -12340,6 +12353,88 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 panic!("prepared functions should not contain assignment expressions")
             }
         }
+    }
+
+    fn render_string_binary_comparison(
+        &mut self,
+        output: &mut String,
+        op: BinaryOp,
+        left: LoweredValue,
+        right: LoweredValue,
+    ) -> Option<LoweredValue> {
+        debug_assert!(matches!(left.ty, Ty::Builtin(BuiltinType::String)));
+        debug_assert!(matches!(op, BinaryOp::EqEq | BinaryOp::BangEq));
+
+        let left_ptr = self.fresh_temp();
+        let left_len = self.fresh_temp();
+        let right_ptr = self.fresh_temp();
+        let right_len = self.fresh_temp();
+        let len_eq = self.fresh_temp();
+        let memcmp_label = self.fresh_label("string_cmp_memcmp");
+        let mismatch_label = self.fresh_label("string_cmp_mismatch");
+        let end_label = self.fresh_label("string_cmp_end");
+        let memcmp_result = self.fresh_temp();
+        let bytes_compare = self.fresh_temp();
+        let temp = self.fresh_temp();
+        let mismatch_value = match op {
+            BinaryOp::EqEq => "false",
+            BinaryOp::BangEq => "true",
+            _ => unreachable!("validated string comparisons should only use == or !="),
+        };
+        let memcmp_opcode = match op {
+            BinaryOp::EqEq => "icmp eq",
+            BinaryOp::BangEq => "icmp ne",
+            _ => unreachable!("validated string comparisons should only use == or !="),
+        };
+
+        let _ = writeln!(
+            output,
+            "  {left_ptr} = extractvalue {} {}, 0",
+            left.llvm_ty, left.repr
+        );
+        let _ = writeln!(
+            output,
+            "  {left_len} = extractvalue {} {}, 1",
+            left.llvm_ty, left.repr
+        );
+        let _ = writeln!(
+            output,
+            "  {right_ptr} = extractvalue {} {}, 0",
+            right.llvm_ty, right.repr
+        );
+        let _ = writeln!(
+            output,
+            "  {right_len} = extractvalue {} {}, 1",
+            right.llvm_ty, right.repr
+        );
+        let _ = writeln!(output, "  {len_eq} = icmp eq i64 {left_len}, {right_len}");
+        let _ = writeln!(
+            output,
+            "  br i1 {len_eq}, label %{memcmp_label}, label %{mismatch_label}"
+        );
+        let _ = writeln!(output, "{memcmp_label}:");
+        let _ = writeln!(
+            output,
+            "  {memcmp_result} = call i32 @memcmp(ptr {left_ptr}, ptr {right_ptr}, i64 {left_len})"
+        );
+        let _ = writeln!(
+            output,
+            "  {bytes_compare} = {memcmp_opcode} i32 {memcmp_result}, 0"
+        );
+        let _ = writeln!(output, "  br label %{end_label}");
+        let _ = writeln!(output, "{mismatch_label}:");
+        let _ = writeln!(output, "  br label %{end_label}");
+        let _ = writeln!(output, "{end_label}:");
+        let _ = writeln!(
+            output,
+            "  {temp} = phi i1 [ {mismatch_value}, %{mismatch_label} ], [ {bytes_compare}, %{memcmp_label} ]"
+        );
+
+        Some(LoweredValue {
+            ty: Ty::Builtin(BuiltinType::Bool),
+            llvm_ty: "i1".to_owned(),
+            repr: temp,
+        })
     }
 
     fn render_item_constant(
