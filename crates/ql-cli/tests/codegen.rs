@@ -4753,6 +4753,26 @@ fn capturing_closure_same_target_control_flow_codegen_case_matches() {
 }
 
 #[test]
+fn capturing_closure_ordinary_extended_call_roots_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "capturing_closure_ordinary_extended_call_roots_build",
+        source_relative: "fixtures/codegen/pass/capturing_closure_ordinary_extended_call_roots_build.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("capturing closure ordinary extended call-root build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn callable_const_static_value_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {

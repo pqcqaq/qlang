@@ -1326,7 +1326,7 @@ impl<'a> ModuleEmitter<'a> {
     fn capturing_closure_diagnostic(&self, span: Span) -> Diagnostic {
         unsupported(
             span,
-            "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through direct/local-alias calls plus the current direct cleanup/guard-call paths",
+            "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through the current ordinary local/same-target callable roots plus the shipped cleanup/guard-call paths",
         )
     }
 
@@ -18604,6 +18604,44 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_extended_ordinary_capturing_closure_call_roots() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let branch = true
+    let target = 42
+    let run = (value: Int) => value + target
+    var alias = run
+    let direct_assignment = (alias = run)(1)
+    let direct_control_flow_assignment = (if branch { alias = run } else { run })(2)
+    let direct_block_local = (match branch {
+        true => {
+            var local = run
+            local = run;
+            local
+        },
+        false => run,
+    })(3)
+    let chosen = if branch {
+        let local = run
+        local
+    } else {
+        run
+    }
+    return direct_assignment + direct_control_flow_assignment + direct_block_local + chosen(4)
+}
+"#,
+        );
+
+        assert!(rendered.matches("@ql_0_main__closure0(").count() >= 4);
+        assert!(rendered.contains("call i64 @ql_0_main__closure0("));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
+    }
+
+    #[test]
     fn emits_callable_const_and_static_item_calls() {
         let rendered = emit(
             r#"
@@ -19286,7 +19324,7 @@ fn main() -> Int {
 
         assert!(messages.iter().any(|message| {
             message
-                == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through direct/local-alias calls plus the current direct cleanup/guard-call paths"
+                == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through the current ordinary local/same-target callable roots plus the shipped cleanup/guard-call paths"
         }));
         assert!(messages.iter().all(|message| {
             !message.contains("could not resolve LLVM type for local")
@@ -25323,7 +25361,7 @@ fn main() -> Int {
                 .iter()
                 .filter(|message| {
                     message.as_str()
-                        == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through direct/local-alias calls plus the current direct cleanup/guard-call paths"
+                        == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through the current ordinary local/same-target callable roots plus the shipped cleanup/guard-call paths"
                 })
                 .count(),
             1
