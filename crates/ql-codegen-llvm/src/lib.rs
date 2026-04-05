@@ -1579,6 +1579,8 @@ impl<'a> ModuleEmitter<'a> {
         self.propagate_supported_ordinary_control_flow_capturing_closure_calls(
             body,
             &mut ordinary_control_flow_capturing_closure_calls,
+            &mut conflicting_temps,
+            &mut closure_spans,
         );
         self.validate_ordinary_control_flow_capturing_closure_candidates(
             body,
@@ -2058,18 +2060,20 @@ impl<'a> ModuleEmitter<'a> {
             (mir::BasicBlockId, mir::LocalId),
             SupportedOrdinaryCapturingClosureCall,
         >,
+        conflicting_temps: &mut HashSet<mir::LocalId>,
+        closure_spans: &mut HashMap<mir::LocalId, Span>,
     ) {
         let predecessors = ordinary_control_flow_capturing_closure_predecessors(body);
-        let locals = ordinary_calls
-            .keys()
-            .map(|(_, local)| *local)
-            .collect::<HashSet<_>>();
-        if locals.is_empty() {
+        if ordinary_calls.is_empty() {
             return;
         }
 
         loop {
             let mut changed = false;
+            let locals = ordinary_calls
+                .keys()
+                .map(|(_, local)| *local)
+                .collect::<HashSet<_>>();
             for block_id in body.block_ids() {
                 let Some(block_predecessors) = predecessors.get(&block_id) else {
                     continue;
@@ -2110,10 +2114,78 @@ impl<'a> ModuleEmitter<'a> {
                 }
             }
 
+            for block_id in body.block_ids() {
+                if self.propagate_supported_ordinary_control_flow_capturing_closure_block_bindings(
+                    body,
+                    block_id,
+                    ordinary_calls,
+                    conflicting_temps,
+                    closure_spans,
+                ) {
+                    changed = true;
+                }
+            }
+
             if !changed {
                 break;
             }
         }
+    }
+
+    fn propagate_supported_ordinary_control_flow_capturing_closure_block_bindings(
+        &self,
+        body: &mir::MirBody,
+        block_id: mir::BasicBlockId,
+        ordinary_calls: &mut HashMap<
+            (mir::BasicBlockId, mir::LocalId),
+            SupportedOrdinaryCapturingClosureCall,
+        >,
+        conflicting_temps: &mut HashSet<mir::LocalId>,
+        closure_spans: &mut HashMap<mir::LocalId, Span>,
+    ) -> bool {
+        let mut changed = false;
+
+        loop {
+            let mut block_changed = false;
+            for statement_id in &body.block(block_id).statements {
+                let statement = body.statement(*statement_id);
+                let StatementKind::BindPattern {
+                    pattern, source, ..
+                } = &statement.kind
+                else {
+                    continue;
+                };
+                let Operand::Place(place) = source else {
+                    continue;
+                };
+                if !place.projections.is_empty() {
+                    continue;
+                }
+                let Some(lowering) = ordinary_calls.get(&(block_id, place.base)).cloned() else {
+                    continue;
+                };
+                let Some(binding_local) = self.binding_local_for_pattern(body, *pattern) else {
+                    continue;
+                };
+                if ordinary_calls.contains_key(&(block_id, binding_local)) {
+                    continue;
+                }
+
+                ordinary_calls.insert((block_id, binding_local), lowering);
+                conflicting_temps.insert(binding_local);
+                if let Some(closure_span) = closure_spans.get(&place.base).copied() {
+                    closure_spans.insert(binding_local, closure_span);
+                }
+                block_changed = true;
+                changed = true;
+            }
+
+            if !block_changed {
+                break;
+            }
+        }
+
+        changed
     }
 
     fn validate_ordinary_control_flow_capturing_closure_rvalue(

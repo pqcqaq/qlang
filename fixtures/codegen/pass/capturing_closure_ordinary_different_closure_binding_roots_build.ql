@@ -11,5 +11,7 @@ fn main() -> Int {
         },
         false => right,
     }
-    return chosen_if(1) + chosen_match(2)
+    let alias_if = chosen_if
+    let alias_match = chosen_match
+    return alias_if(1) + alias_match(2)
 }
