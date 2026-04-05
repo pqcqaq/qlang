@@ -2812,6 +2812,43 @@ impl<'a> ModuleEmitter<'a> {
         }
     }
 
+    fn supports_cleanup_match_catch_all_pattern(
+        &self,
+        pattern: hir::PatternId,
+        scrutinee_ty: &Ty,
+    ) -> bool {
+        match pattern_kind(self.input.hir, pattern) {
+            PatternKind::Binding(_) | PatternKind::Wildcard => true,
+            PatternKind::Tuple(items) => {
+                let Ty::Tuple(item_tys) = scrutinee_ty else {
+                    return false;
+                };
+                items.len() == item_tys.len()
+                    && items.iter().zip(item_tys.iter()).all(|(item, item_ty)| {
+                        self.supports_cleanup_match_catch_all_pattern(*item, item_ty)
+                    })
+            }
+            PatternKind::Struct { fields, .. } => {
+                let Ok(field_layouts) = self.struct_field_lowerings(
+                    scrutinee_ty,
+                    Span::default(),
+                    "cleanup match pattern",
+                ) else {
+                    return false;
+                };
+                fields.iter().all(|field| {
+                    field_layouts
+                        .iter()
+                        .find(|layout| layout.name == field.name)
+                        .is_some_and(|layout| {
+                            self.supports_cleanup_match_catch_all_pattern(field.pattern, &layout.ty)
+                        })
+                })
+            }
+            _ => false,
+        }
+    }
+
     fn supports_destructuring_bind_pattern(&self, pattern: hir::PatternId) -> bool {
         match pattern_kind(self.input.hir, pattern) {
             PatternKind::Binding(_) | PatternKind::Wildcard => true,
@@ -2916,12 +2953,10 @@ impl<'a> ModuleEmitter<'a> {
 
         self.supports_cleanup_value_expr(value_expr, scrutinee_ty, body, local_types)
             && arms.iter().all(|arm| {
-                matches!(
-                    pattern_kind(self.input.hir, arm.pattern),
-                    PatternKind::Binding(_) | PatternKind::Wildcard
-                ) && arm
-                    .guard
-                    .is_none_or(|guard| self.supports_cleanup_bool_expr(guard, body, local_types))
+                self.supports_cleanup_match_catch_all_pattern(arm.pattern, scrutinee_ty)
+                    && arm.guard.is_none_or(|guard| {
+                        self.supports_cleanup_bool_expr(guard, body, local_types)
+                    })
                     && self.supports_cleanup_expr_with_loop(
                         arm.body,
                         in_cleanup_loop,
@@ -3210,17 +3245,16 @@ impl<'a> ModuleEmitter<'a> {
 
                 return self.supports_cleanup_value_expr(*value, scrutinee_ty, body, local_types)
                     && arms.iter().all(|arm| {
-                        matches!(
-                            pattern_kind(self.input.hir, arm.pattern),
-                            PatternKind::Binding(_) | PatternKind::Wildcard
-                        ) && arm.guard.is_none_or(|guard| {
-                            self.supports_cleanup_bool_expr(guard, body, local_types)
-                        }) && self.supports_cleanup_value_expr(
-                            arm.body,
-                            expected_ty,
-                            body,
-                            local_types,
-                        )
+                        self.supports_cleanup_match_catch_all_pattern(arm.pattern, scrutinee_ty)
+                            && arm.guard.is_none_or(|guard| {
+                                self.supports_cleanup_bool_expr(guard, body, local_types)
+                            })
+                            && self.supports_cleanup_value_expr(
+                                arm.body,
+                                expected_ty,
+                                body,
+                                local_types,
+                            )
                     });
             }
             hir::ExprKind::Tuple(items) => {
@@ -6556,22 +6590,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             } else {
                 self.fresh_label("cleanup_match_next")
             };
-            let binding_local = match pattern_kind(self.emitter.input.hir, arm.pattern) {
-                PatternKind::Binding(local) => Some(*local),
-                PatternKind::Wildcard => None,
-                _ => {
-                    panic!(
-                        "supported cleanup lowering at {span:?} should only render binding or wildcard cleanup catch-all patterns"
-                    )
-                }
-            };
-
-            if let Some(local) = binding_local {
-                self.cleanup_bindings.push(GuardBindingValue {
-                    local,
-                    value: scrutinee.clone(),
-                });
-            }
+            let binding_depth = self.cleanup_bindings.len();
+            self.bind_cleanup_pattern(output, arm.pattern, scrutinee.clone(), span);
 
             if let Some(guard) = arm.guard {
                 let guard = self.render_bool_guard_expr(output, guard, span, None);
@@ -6591,9 +6611,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 let _ = writeln!(output, "  br label %{end_label}");
             }
 
-            if binding_local.is_some() {
-                self.cleanup_bindings.pop();
-            }
+            self.cleanup_bindings.truncate(binding_depth);
 
             if next_label != end_label {
                 let _ = writeln!(output, "{next_label}:");
@@ -6631,22 +6649,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             } else {
                 self.fresh_label("cleanup_match_next")
             };
-            let binding_local = match pattern_kind(self.emitter.input.hir, arm.pattern) {
-                PatternKind::Binding(local) => Some(*local),
-                PatternKind::Wildcard => None,
-                _ => {
-                    panic!(
-                        "supported cleanup lowering at {span:?} should only render binding or wildcard cleanup catch-all patterns"
-                    )
-                }
-            };
-
-            if let Some(local) = binding_local {
-                self.cleanup_bindings.push(GuardBindingValue {
-                    local,
-                    value: scrutinee.clone(),
-                });
-            }
+            let binding_depth = self.cleanup_bindings.len();
+            self.bind_cleanup_pattern(output, arm.pattern, scrutinee.clone(), span);
 
             if let Some(guard) = arm.guard {
                 let guard = self.render_bool_guard_expr(output, guard, span, None);
@@ -6668,9 +6672,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             );
             let _ = writeln!(output, "  br label %{end_label}");
 
-            if binding_local.is_some() {
-                self.cleanup_bindings.pop();
-            }
+            self.cleanup_bindings.truncate(binding_depth);
 
             if next_label != end_label {
                 let _ = writeln!(output, "{next_label}:");
@@ -20524,6 +20526,68 @@ async fn main() -> Int {
         assert!(rendered.contains("getelementptr inbounds { { i1, i64 } }"));
         assert!(rendered.contains("getelementptr inbounds { i64, i64 }"));
         assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
+        assert!(rendered.contains("cleanup_match_end"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn emits_cleanup_awaited_aggregate_destructuring_scrutinees() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use load_state as state_alias
+use load_pair as pair_alias
+use LOAD_STATE as state_const_alias
+use LOAD_PAIR as pair_const_alias
+
+struct Slot {
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+}
+
+extern "c" fn sink(value: Int)
+
+async fn load_state(value: Int) -> State {
+    return State { slot: Slot { value: value } }
+}
+
+async fn load_pair(value: Int) -> (Int, Int) {
+    return (value, value + 1)
+}
+
+const LOAD_STATE: (Int) -> Task[State] = load_state
+const LOAD_PAIR: (Int) -> Task[(Int, Int)] = load_pair
+
+async fn main() -> Int {
+    let branch = true
+    defer {
+        sink(match await (if branch { pair_alias } else { pair_const_alias })(20) {
+            (left, right) => left + right,
+        });
+    }
+    defer match await (match branch { true => state_const_alias, false => state_alias })(13) {
+        State { slot: Slot { value } } if value == 13 => sink(value),
+        _ => sink(0),
+    }
+    return 0
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(rendered.matches("call ptr %t").count() >= 2);
+        assert!(rendered.contains("extractvalue { i64, i64 }"));
+        assert!(rendered.contains("extractvalue { { i64 } }"));
+        assert!(rendered.contains("icmp eq i64"));
         assert!(rendered.contains("cleanup_match_end"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
     }
