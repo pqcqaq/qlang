@@ -14584,6 +14584,9 @@ fn supported_direct_local_capturing_closure_locals_for_guard(
                 else {
                     continue;
                 };
+                let Some(closure_span) = closure_spans.get(&place.base).copied() else {
+                    continue;
+                };
                 let PatternKind::Binding(local) = pattern_kind(module, *pattern) else {
                     continue;
                 };
@@ -14591,6 +14594,7 @@ fn supported_direct_local_capturing_closure_locals_for_guard(
                     continue;
                 };
                 supported.entry(binding_local).or_insert(closure_id);
+                closure_spans.entry(binding_local).or_insert(closure_span);
             }
             StatementKind::Eval { .. }
             | StatementKind::RegisterCleanup { .. }
@@ -19125,6 +19129,47 @@ fn main() -> Int {
         } else {
             check
         })(current) => 2,
+        _ => 0,
+    }
+    return first + second
+}
+"#,
+        );
+
+        assert!(rendered.matches("__closure0(").count() >= 3);
+        assert!(rendered.contains("call i1 @"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
+    }
+
+    #[test]
+    fn emits_match_guard_bound_control_flow_capturing_closure_calls() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let branch = true
+    let target = 42
+    let check = (value: Int) => value == target
+    var alias = check
+    let chosen = if branch {
+        let local = check
+        local
+    } else {
+        check
+    }
+    let rebound = match branch {
+        true => alias = check,
+        false => check,
+    }
+    let first = match 42 {
+        current if chosen(current) => 1,
+        _ => 0,
+    }
+    let second = match 42 {
+        current if rebound(current) => 2,
         _ => 0,
     }
     return first + second
