@@ -256,6 +256,85 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn package_bridge_surfaces_dependency_import_path_segment_completion() {
+    let temp = TempDir::new("ql-lsp-package-path-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Buffer[T] {
+    value: T,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.d
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let completion_offset = nth_offset(source, "demo.d", 1) + "demo.d".len();
+
+    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, completion_offset),
+    ) else {
+        panic!("dependency path completion should exist")
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "dep");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::MODULE));
+    assert_eq!(items[0].detail.as_deref(), Some("package demo.dep"));
+    assert_eq!(
+        items[0].text_edit,
+        Some(CompletionTextEdit::Edit(TextEdit::new(
+            span_to_range(
+                source,
+                Span::new(
+                    nth_offset(source, "demo.d", 1) + "demo.".len(),
+                    nth_offset(source, "demo.d", 1) + "demo.d".len(),
+                ),
+            ),
+            "dep".to_owned(),
+        ))),
+    );
+}
+
+#[test]
 fn package_bridge_surfaces_dependency_references() {
     let temp = TempDir::new("ql-lsp-package-refs");
     let app_root = temp.path().join("workspace").join("app");

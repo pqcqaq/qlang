@@ -149,6 +149,33 @@ impl DependencyInterface {
             .collect()
     }
 
+    fn import_path_variants(&self) -> Vec<Vec<String>> {
+        let mut variants = self
+            .artifact
+            .modules
+            .iter()
+            .filter_map(|module| {
+                module
+                    .syntax
+                    .package
+                    .as_ref()
+                    .map(|package| package.path.segments.clone())
+            })
+            .collect::<Vec<_>>();
+
+        if let Some(package) = &self.manifest.package {
+            variants.push(vec![package.name.clone()]);
+        }
+
+        if variants.is_empty() {
+            variants.push(vec![self.artifact.package_name.clone()]);
+        }
+
+        variants.sort();
+        variants.dedup();
+        variants
+    }
+
     fn artifact_span_for(&self, symbol: &DependencySymbol) -> Option<Span> {
         let source = fs::read_to_string(&self.interface_path)
             .ok()?
@@ -210,17 +237,7 @@ impl PackageAnalysis {
         let mut items = self
             .dependencies
             .iter()
-            .filter(|dependency| {
-                dependency_matches_prefix_segments(dependency, &context.prefix_segments)
-            })
-            .flat_map(|dependency| dependency.symbols())
-            .map(|symbol| CompletionItem {
-                label: symbol.name.clone(),
-                insert_text: symbol.name.clone(),
-                kind: symbol.kind,
-                detail: symbol.detail.clone(),
-                ty: None,
-            })
+            .flat_map(|dependency| dependency_completion_items(dependency, &context))
             .collect::<Vec<_>>();
 
         items.sort_by(|left, right| {
@@ -743,49 +760,82 @@ fn dependency_matches_import(dependency: &DependencyInterface, binding: &ImportB
         return true;
     }
 
-    let manifest_name = dependency
-        .manifest
-        .package
-        .as_ref()
-        .map(|package| package.name.as_str());
-    dependency_matches_prefix_segments_impl(
-        dependency.artifact.package_name.as_str(),
-        manifest_name,
-        prefix_segments.iter().map(String::as_str),
-    )
-}
-
-fn dependency_matches_prefix_segments(
-    dependency: &DependencyInterface,
-    prefix_segments: &[String],
-) -> bool {
-    let manifest_name = dependency
-        .manifest
-        .package
-        .as_ref()
-        .map(|package| package.name.as_str());
-    dependency_matches_prefix_segments_impl(
-        dependency.artifact.package_name.as_str(),
-        manifest_name,
-        prefix_segments.iter().map(String::as_str),
-    )
-}
-
-fn dependency_matches_prefix_segments_impl<'a>(
-    artifact_package_name: &str,
-    manifest_name: Option<&str>,
-    prefix_segments: impl IntoIterator<Item = &'a str>,
-) -> bool {
-    let prefix_segments = prefix_segments.into_iter().collect::<Vec<_>>();
-    prefix_segments
+    dependency
+        .import_path_variants()
         .iter()
-        .any(|segment| *segment == artifact_package_name)
-        || manifest_name.is_some_and(|name| prefix_segments.iter().any(|segment| *segment == name))
+        .any(|segments| dependency_import_path_match(segments, prefix_segments).is_exact())
+}
+
+fn dependency_completion_items(
+    dependency: &DependencyInterface,
+    context: &DependencyImportCompletionContext,
+) -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+    for segments in dependency.import_path_variants() {
+        match dependency_import_path_match(&segments, &context.completed_segments) {
+            DependencyImportPathMatch::None => {}
+            DependencyImportPathMatch::PathPrefix(next_segment) => {
+                items.push(CompletionItem {
+                    label: next_segment.to_owned(),
+                    insert_text: next_segment.to_owned(),
+                    kind: SymbolKind::Import,
+                    detail: format!("package {}", segments.join(".")),
+                    ty: None,
+                });
+            }
+            DependencyImportPathMatch::Exact => {
+                items.extend(dependency.symbols().iter().map(|symbol| CompletionItem {
+                    label: symbol.name.clone(),
+                    insert_text: symbol.name.clone(),
+                    kind: symbol.kind,
+                    detail: symbol.detail.clone(),
+                    ty: None,
+                }));
+            }
+        }
+    }
+    items
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DependencyImportPathMatch<'a> {
+    None,
+    PathPrefix(&'a str),
+    Exact,
+}
+
+impl DependencyImportPathMatch<'_> {
+    const fn is_exact(self) -> bool {
+        matches!(self, Self::Exact)
+    }
+}
+
+fn dependency_import_path_match<'a>(
+    path_segments: &'a [String],
+    completed_segments: &[String],
+) -> DependencyImportPathMatch<'a> {
+    if completed_segments.len() > path_segments.len() {
+        return DependencyImportPathMatch::None;
+    }
+
+    if !completed_segments
+        .iter()
+        .zip(path_segments.iter())
+        .all(|(left, right)| left == right)
+    {
+        return DependencyImportPathMatch::None;
+    }
+
+    if completed_segments.len() == path_segments.len() {
+        DependencyImportPathMatch::Exact
+    } else {
+        DependencyImportPathMatch::PathPrefix(path_segments[completed_segments.len()].as_str())
+    }
 }
 
 #[derive(Debug)]
 struct DependencyImportCompletionContext {
-    prefix_segments: Vec<String>,
+    completed_segments: Vec<String>,
 }
 
 fn dependency_import_completion_context(
@@ -823,18 +873,12 @@ fn dependency_import_completion_context(
         .filter(|segment| !segment.is_empty())
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
-    if !path_prefix.contains('.') {
-        return None;
-    }
     if !path_prefix.ends_with('.') {
         segments.pop();
     }
-    if segments.is_empty() {
-        return None;
-    }
 
     Some(DependencyImportCompletionContext {
-        prefix_segments: segments,
+        completed_segments: segments,
     })
 }
 

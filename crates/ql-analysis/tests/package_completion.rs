@@ -112,3 +112,60 @@ pub fn main() -> Int {
             && item.detail == "const DEFAULT_PORT: Int"
     }));
 }
+
+#[test]
+fn package_analysis_surfaces_dependency_import_path_segment_completions() {
+    let temp = TempDir::new("ql-analysis-package-path-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Buffer[T] {
+    value: T,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.d
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let completions = package
+        .dependency_completions_at(source, nth_offset(source, "demo.d", 1) + "demo.d".len())
+        .expect("dependency path completions should exist");
+
+    assert!(completions.iter().any(|item| {
+        item.label == "dep" && item.kind == SymbolKind::Import && item.detail == "package demo.dep"
+    }));
+}
