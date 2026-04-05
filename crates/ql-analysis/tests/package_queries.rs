@@ -194,3 +194,84 @@ pub fn main() -> Int {
         .expect("definition span should slice artifact text");
     assert_eq!(snippet.trim(), "fn exported(value: Int) -> Int");
 }
+
+#[test]
+fn package_analysis_exposes_dependency_variant_hover_and_definition() {
+    let temp = TempDir::new("ql-analysis-package-variant-queries");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+
+pub fn main() -> Int {
+    let value = Cmd.Retry(1)
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let hover = package
+        .dependency_variant_hover_at(&analysis, source, nth_offset(source, "Retry", 1))
+        .expect("dependency variant hover should exist");
+    assert_eq!(hover.kind, SymbolKind::Variant);
+    assert_eq!(hover.name, "Retry");
+    assert_eq!(hover.detail, "variant Command.Retry(Int)");
+    assert_eq!(
+        source
+            .get(hover.span.start..hover.span.end)
+            .expect("hover span should slice source"),
+        "Retry",
+    );
+
+    let definition = package
+        .dependency_variant_definition_at(&analysis, source, nth_offset(source, "Retry", 1))
+        .expect("dependency variant definition should exist");
+    assert_eq!(definition.kind, SymbolKind::Variant);
+    assert_eq!(definition.name, "Retry");
+    assert!(definition.path.ends_with("dep.qi"));
+
+    let artifact = fs::read_to_string(&definition.path)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = artifact
+        .get(definition.span.start..definition.span.end)
+        .expect("definition span should slice artifact text");
+    assert_eq!(snippet.trim(), "Retry");
+}

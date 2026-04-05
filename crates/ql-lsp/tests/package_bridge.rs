@@ -739,6 +739,112 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn package_bridge_surfaces_dependency_variant_hover_and_definition() {
+    let temp = TempDir::new("ql-lsp-package-variant-query");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+
+pub fn main() -> Int {
+    let value = Cmd.Retry(1)
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let hover = hover_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "Retry", 1)),
+    )
+    .expect("dependency variant hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**variant** `Retry`"));
+    assert!(markup.value.contains("variant Command.Retry(Int)"));
+
+    let definition = definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "Retry", 1)),
+    )
+    .expect("dependency variant definition should exist");
+    let GotoDefinitionResponse::Scalar(Location { uri, range }) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        uri.to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = "Retry";
+    let start = artifact
+        .find(snippet)
+        .expect("variant name should exist in dependency artifact");
+    assert_eq!(
+        range,
+        span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
+}
+
+#[test]
 fn package_bridge_surfaces_dependency_references() {
     let temp = TempDir::new("ql-lsp-package-refs");
     let app_root = temp.path().join("workspace").join("app");

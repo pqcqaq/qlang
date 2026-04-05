@@ -189,6 +189,10 @@ impl DependencyInterface {
     }
 
     fn artifact_span_for(&self, symbol: &DependencySymbol) -> Option<Span> {
+        self.artifact_source_span(&symbol.source_path, symbol.span)
+    }
+
+    fn artifact_source_span(&self, source_path: &str, span: Span) -> Option<Span> {
         let source = fs::read_to_string(&self.interface_path)
             .ok()?
             .replace("\r\n", "\n");
@@ -201,10 +205,10 @@ impl DependencyInterface {
                 .get(body_search_start..)?
                 .find(&module.contents)
                 .map(|offset| body_search_start + offset)?;
-            if module.source_path == symbol.source_path {
+            if module.source_path == source_path {
                 return Some(Span::new(
-                    module_index + symbol.span.start,
-                    module_index + symbol.span.end,
+                    module_index + span.start,
+                    module_index + span.end,
                 ));
             }
             search_start = module_index + module.contents.len();
@@ -217,22 +221,7 @@ impl DependencyInterface {
             return None;
         }
 
-        let enum_decl = self
-            .artifact
-            .modules
-            .iter()
-            .find_map(|module| {
-                (module.source_path == symbol.source_path).then_some(&module.syntax.items)
-            })?
-            .iter()
-            .find_map(|item| match &item.kind {
-                AstItemKind::Enum(enum_decl)
-                    if is_public(&enum_decl.visibility) && enum_decl.name == symbol.name =>
-                {
-                    Some(enum_decl)
-                }
-                _ => None,
-            })?;
+        let enum_decl = self.enum_decl_for(symbol)?;
 
         let mut items = enum_decl
             .variants
@@ -251,6 +240,40 @@ impl DependencyInterface {
                 .then_with(|| left.detail.cmp(&right.detail))
         });
         Some(items)
+    }
+
+    fn variant_for<'a>(
+        &'a self,
+        symbol: &DependencySymbol,
+        variant_name: &str,
+    ) -> Option<&'a ql_ast::EnumVariant> {
+        let enum_decl = self.enum_decl_for(symbol)?;
+        enum_decl
+            .variants
+            .iter()
+            .find(|variant| variant.name == variant_name)
+    }
+
+    fn enum_decl_for<'a>(&'a self, symbol: &DependencySymbol) -> Option<&'a ql_ast::EnumDecl> {
+        if symbol.kind != SymbolKind::Enum {
+            return None;
+        }
+
+        self.artifact
+            .modules
+            .iter()
+            .find(|module| module.source_path == symbol.source_path)?
+            .syntax
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                AstItemKind::Enum(enum_decl)
+                    if is_public(&enum_decl.visibility) && enum_decl.name == symbol.name =>
+                {
+                    Some(enum_decl)
+                }
+                _ => None,
+            })
     }
 }
 
@@ -314,6 +337,40 @@ impl PackageAnalysis {
         let (binding, _) = analysis.import_binding_at(root_offset)?;
         let (dependency, symbol) = self.resolve_dependency_import_binding(&binding)?;
         dependency.variant_completions_for(symbol)
+    }
+
+    pub fn dependency_variant_hover_at(
+        &self,
+        analysis: &Analysis,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyHoverInfo> {
+        let target = self.dependency_variant_target_at(analysis, source, offset)?;
+        Some(DependencyHoverInfo {
+            span: target.reference_span,
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Variant,
+            name: target.name,
+            detail: target.detail,
+        })
+    }
+
+    pub fn dependency_variant_definition_at(
+        &self,
+        analysis: &Analysis,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let target = self.dependency_variant_target_at(analysis, source, offset)?;
+        Some(DependencyDefinitionTarget {
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Variant,
+            name: target.name,
+            path: target.path,
+            span: target.definition_span,
+        })
     }
 
     pub fn dependency_hover_at(
@@ -390,6 +447,41 @@ impl PackageAnalysis {
         }
         matches.pop()
     }
+
+    fn dependency_variant_target_at(
+        &self,
+        analysis: &Analysis,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyVariantTarget> {
+        let (root_offset, reference_span, variant_name) =
+            dependency_variant_reference_at(source, offset)?;
+        let (binding, _) = analysis.import_binding_at(root_offset)?;
+        let (dependency, symbol) = self.resolve_dependency_import_binding(&binding)?;
+        let variant = dependency.variant_for(symbol, &variant_name)?;
+        let definition_span =
+            dependency.artifact_source_span(&symbol.source_path, variant.name_span)?;
+        Some(DependencyVariantTarget {
+            reference_span,
+            package_name: dependency.artifact.package_name.clone(),
+            source_path: symbol.source_path.clone(),
+            name: variant.name.clone(),
+            detail: dependency_variant_detail(&symbol.name, variant),
+            path: dependency.interface_path.clone(),
+            definition_span,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencyVariantTarget {
+    reference_span: Span,
+    package_name: String,
+    source_path: String,
+    name: String,
+    detail: String,
+    path: PathBuf,
+    definition_span: Span,
 }
 
 impl Analysis {
@@ -1044,22 +1136,7 @@ fn dependency_group_item_name(item: &str) -> Option<String> {
 }
 
 fn dependency_variant_completion_root_offset(source: &str, offset: usize) -> Option<usize> {
-    let offset = offset.min(source.len());
-    let member_start = dependency_identifier_start(source, offset);
-    if member_start == 0 || source.as_bytes().get(member_start - 1) != Some(&b'.') {
-        return None;
-    }
-
-    let root_end = member_start - 1;
-    let root_start = dependency_identifier_start(source, root_end);
-    if root_start == root_end {
-        return None;
-    }
-    if root_start > 0 && source.as_bytes().get(root_start - 1) == Some(&b'.') {
-        return None;
-    }
-
-    Some(root_start)
+    dependency_variant_reference_at(source, offset).map(|(root_offset, _, _)| root_offset)
 }
 
 fn dependency_identifier_start(source: &str, end: usize) -> usize {
@@ -1073,6 +1150,43 @@ fn dependency_identifier_start(source: &str, end: usize) -> usize {
 
 fn is_dependency_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'`'
+}
+
+fn dependency_identifier_end(source: &str, start: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut end = start.min(bytes.len());
+    while end < bytes.len() && is_dependency_identifier_byte(bytes[end]) {
+        end += 1;
+    }
+    end
+}
+
+fn dependency_variant_reference_at(source: &str, offset: usize) -> Option<(usize, Span, String)> {
+    let offset = offset.min(source.len());
+    let member_start = dependency_identifier_start(source, offset);
+    let member_end = dependency_identifier_end(source, member_start);
+    if member_start == member_end {
+        return None;
+    }
+    if member_start == 0 || source.as_bytes().get(member_start - 1) != Some(&b'.') {
+        return None;
+    }
+
+    let root_end = member_start - 1;
+    let root_start = dependency_identifier_start(source, root_end);
+    if root_start == root_end {
+        return None;
+    }
+    if root_start > 0 && source.as_bytes().get(root_start - 1) == Some(&b'.') {
+        return None;
+    }
+
+    let variant_name = source.get(member_start..member_end)?.to_owned();
+    Some((
+        root_start,
+        Span::new(member_start, member_end),
+        variant_name,
+    ))
 }
 
 fn dependency_variant_detail(enum_name: &str, variant: &ql_ast::EnumVariant) -> String {
