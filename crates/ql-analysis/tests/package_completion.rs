@@ -229,3 +229,60 @@ pub fn main() -> Int {
             && item.detail.starts_with("struct Buffer[T] {")
     }));
 }
+
+#[test]
+fn package_analysis_grouped_dependency_completion_skips_existing_items() {
+    let temp = TempDir::new("ql-analysis-grouped-package-dedup");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported(value: Int) -> Int
+pub struct Buffer[T] {
+    value: T,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{exported, }
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let completions = package
+        .dependency_completions_at(source, nth_offset(source, ", }", 1) + 2)
+        .expect("grouped dependency completions should exist");
+
+    assert!(completions.iter().any(|item| item.label == "Buffer"));
+    assert!(!completions.iter().any(|item| item.label == "exported"));
+}

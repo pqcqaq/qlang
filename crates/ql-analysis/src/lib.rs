@@ -775,6 +775,13 @@ fn dependency_completion_items(
         match dependency_import_path_match(&segments, &context.completed_segments) {
             DependencyImportPathMatch::None => {}
             DependencyImportPathMatch::PathPrefix(next_segment) => {
+                if context
+                    .excluded_item_names
+                    .iter()
+                    .any(|name| name == next_segment)
+                {
+                    continue;
+                }
                 items.push(CompletionItem {
                     label: next_segment.to_owned(),
                     insert_text: next_segment.to_owned(),
@@ -784,13 +791,24 @@ fn dependency_completion_items(
                 });
             }
             DependencyImportPathMatch::Exact => {
-                items.extend(dependency.symbols().iter().map(|symbol| CompletionItem {
-                    label: symbol.name.clone(),
-                    insert_text: symbol.name.clone(),
-                    kind: symbol.kind,
-                    detail: symbol.detail.clone(),
-                    ty: None,
-                }));
+                items.extend(
+                    dependency
+                        .symbols()
+                        .iter()
+                        .filter(|symbol| {
+                            !context
+                                .excluded_item_names
+                                .iter()
+                                .any(|name| name == &symbol.name)
+                        })
+                        .map(|symbol| CompletionItem {
+                            label: symbol.name.clone(),
+                            insert_text: symbol.name.clone(),
+                            kind: symbol.kind,
+                            detail: symbol.detail.clone(),
+                            ty: None,
+                        }),
+                );
             }
         }
     }
@@ -836,6 +854,7 @@ fn dependency_import_path_match<'a>(
 #[derive(Debug)]
 struct DependencyImportCompletionContext {
     completed_segments: Vec<String>,
+    excluded_item_names: Vec<String>,
 }
 
 fn dependency_import_completion_context(
@@ -867,6 +886,7 @@ fn dependency_import_completion_context(
             return None;
         }
         let (group_prefix, group_items_prefix) = path_prefix.split_once('{')?;
+        let group_items = group_items_prefix.split(',').collect::<Vec<_>>();
         let current_item_prefix = group_items_prefix
             .rsplit(',')
             .next()
@@ -880,6 +900,11 @@ fn dependency_import_completion_context(
                 group_prefix.trim().trim_end_matches('.'),
                 false,
             ),
+            excluded_item_names: group_items
+                .iter()
+                .take(group_items.len().saturating_sub(1))
+                .filter_map(|item| dependency_group_item_name(item))
+                .collect(),
         });
     }
 
@@ -888,6 +913,7 @@ fn dependency_import_completion_context(
             path_prefix,
             !path_prefix.ends_with('.'),
         ),
+        excluded_item_names: Vec::new(),
     })
 }
 
@@ -902,6 +928,22 @@ fn dependency_import_path_segments(path_prefix: &str, drop_last_segment: bool) -
         segments.pop();
     }
     segments
+}
+
+fn dependency_group_item_name(item: &str) -> Option<String> {
+    let item = item.trim();
+    if item.is_empty() {
+        return None;
+    }
+
+    item.split_once(" as ")
+        .map(|(name, _)| name)
+        .unwrap_or(item)
+        .split('.')
+        .next_back()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 pub fn parse_errors_to_diagnostics(errors: Vec<ParseError>) -> Vec<Diagnostic> {

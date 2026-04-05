@@ -60,7 +60,7 @@
 - dependency `.qi` 当前已进入 syntax-aware load：每个 `// source: ...` section 会通过 interface-mode parser 解析为 AST，支持 bodyless `fn` / `impl` / `extend` 声明，以及无值的 `const` / `static` 接口声明
 - `ql-analysis::analyze_package` 当前已把 dependency `.qi` 的公开符号索引进 `PackageAnalysis`：覆盖 top-level `fn` / `const` / `static` / `struct` / `enum` / `trait` / `type`，以及 public trait / `impl` / `extend` methods；索引当前保留 package name、source section path、symbol kind、name、detail 与 interface span
 - `ql-analysis` / `ql-lsp` 当前已开放 imported dependency symbol 的最小 cross-file hover / definition / references：当当前文件里的 import binding 能唯一映射到 dependency `.qi` public symbol 时，hover 会显示 dependency declaration，go to definition 会跳到 dependency `.qi` artifact 内的 declaration 位置，references 会在需要时把 dependency `.qi` declaration 与当前文件 import/use 位置一起返回
-- `ql-analysis` / `ql-lsp` 当前也已开放 `use ...` 导入路径位置上的 dependency completion：例如 `use demo.d` 可补全到 `dep`，`use demo.dep.Bu` 与 `use demo.dep.{Bu}` 都可补全到 `.qi` 里的 `Buffer`；该能力当前只覆盖导入路径，不代表更广义 symbol-space cross-file completion 已完成
+- `ql-analysis` / `ql-lsp` 当前也已开放 `use ...` 导入路径位置上的 dependency completion：例如 `use demo.d` 可补全到 `dep`，`use demo.dep.Bu` 与 `use demo.dep.{Bu}` 都可补全到 `.qi` 里的 `Buffer`；grouped import 空补全位当前也会跳过已经写过的项，避免重复提示；该能力当前只覆盖导入路径，不代表更广义 symbol-space cross-file completion 已完成
 
 当前仍未开放：
 

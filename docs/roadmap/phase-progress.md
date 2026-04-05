@@ -72,7 +72,7 @@
 - `ql project graph [file-or-dir]` 已可向上发现 manifest 并输出当前 package/workspace/reference graph。
 - `ql project emit-interface [file-or-dir] [-o <output>]` 已可对 package manifest 的 `src/**/*.ql` 做逐文件分析，并输出 text-based `.qi` public interface artifact。
 - `ql-analysis::analyze_package` 与 package-aware `ql check <package-dir>` 现已开始加载 `[references].packages` 指向的 dependency `.qi` artifact，并在 interface 缺失时显式失败。
-- 当前 dependency `.qi` load 已推进到 syntax-aware section parse：每个 `// source: ...` module section 都会进入 interface-mode AST，支持 bodyless `fn` / `impl` / `extend` 声明以及无值 `const` / `static` 接口声明；`ql-analysis::analyze_package` 现也已把公开 dependency symbols 收进 package 级 truth surface，并接通 imported dependency symbol 的 cross-file hover / definition / references 到 `.qi` declaration，以及 `use ...` 导入路径和平铺 / grouped import 位置里的 dependency package path segment / public symbol completion；rename、更广义 completion 与真实 dependency build graph 仍未开放。
+- 当前 dependency `.qi` load 已推进到 syntax-aware section parse：每个 `// source: ...` module section 都会进入 interface-mode AST，支持 bodyless `fn` / `impl` / `extend` 声明以及无值 `const` / `static` 接口声明；`ql-analysis::analyze_package` 现也已把公开 dependency symbols 收进 package 级 truth surface，并接通 imported dependency symbol 的 cross-file hover / definition / references 到 `.qi` declaration，以及 `use ...` 导入路径和平铺 / grouped import 位置里的 dependency package path segment / public symbol completion；grouped import 的空补全位当前还会过滤已写过的 dependency item，减少重复提示；rename、更广义 completion 与真实 dependency build graph 仍未开放。
 
 ## 当前进度对账
 

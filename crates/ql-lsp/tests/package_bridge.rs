@@ -413,6 +413,70 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn package_bridge_grouped_dependency_completion_skips_existing_items() {
+    let temp = TempDir::new("ql-lsp-grouped-package-dedup");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported(value: Int) -> Int
+pub struct Buffer[T] {
+    value: T,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{exported, }
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, ", }", 1) + 2),
+    ) else {
+        panic!("grouped dependency completion should exist")
+    };
+
+    assert!(items.iter().any(|item| item.label == "Buffer"));
+    assert!(!items.iter().any(|item| item.label == "exported"));
+}
+
+#[test]
 fn package_bridge_surfaces_dependency_references() {
     let temp = TempDir::new("ql-lsp-package-refs");
     let app_root = temp.path().join("workspace").join("app");
