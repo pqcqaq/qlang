@@ -2,6 +2,12 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ql_ast::{
+    EnumDecl, ExtendBlock, ExternBlock, FunctionDecl, GenericParam, GlobalDecl, ImplBlock, Item,
+    ItemKind, Module, Param, Path as AstPath, ReceiverKind, StructDecl, TraitDecl, TypeAliasDecl,
+    TypeExpr, TypeExprKind, UseDecl, VariantFields, Visibility, WherePredicate,
+};
+use ql_lexer::is_keyword as lexer_is_keyword;
 use toml::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,6 +138,52 @@ pub fn render_project_graph(manifest: &ProjectManifest) -> String {
     }
 
     output
+}
+
+pub fn render_module_interface(module: &Module) -> Option<String> {
+    let rendered_items = module
+        .items
+        .iter()
+        .filter_map(render_item_interface)
+        .collect::<Vec<_>>();
+    if rendered_items.is_empty() {
+        return None;
+    }
+
+    let mut out = String::new();
+
+    if let Some(package) = &module.package {
+        out.push_str("package ");
+        format_path(&package.path, &mut out);
+        out.push('\n');
+    }
+
+    if !module.uses.is_empty() {
+        if module.package.is_some() {
+            out.push('\n');
+        }
+        for use_decl in &module.uses {
+            render_use_decl(use_decl, &mut out);
+            out.push('\n');
+        }
+    }
+
+    if module.package.is_some() || !module.uses.is_empty() {
+        out.push('\n');
+    }
+
+    for (index, item) in rendered_items.iter().enumerate() {
+        if index > 0 {
+            out.push_str("\n\n");
+        }
+        out.push_str(item);
+    }
+
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+
+    Some(out)
 }
 
 fn find_manifest_path(path: &Path) -> Result<PathBuf, ProjectError> {
@@ -274,6 +326,460 @@ fn parse_string_array(
         values.push(item.to_owned());
     }
     Ok(Some(values))
+}
+
+fn render_item_interface(item: &Item) -> Option<String> {
+    let mut out = String::new();
+    let rendered = match &item.kind {
+        ItemKind::Function(function) if is_public(&function.visibility) => {
+            render_function_signature(function, 0, true, &mut out);
+            true
+        }
+        ItemKind::Const(global) if is_public(&global.visibility) => {
+            render_global_signature("const", global, 0, &mut out);
+            true
+        }
+        ItemKind::Static(global) if is_public(&global.visibility) => {
+            render_global_signature("static", global, 0, &mut out);
+            true
+        }
+        ItemKind::Struct(struct_decl) if is_public(&struct_decl.visibility) => {
+            render_struct_signature(struct_decl, 0, &mut out);
+            true
+        }
+        ItemKind::Enum(enum_decl) if is_public(&enum_decl.visibility) => {
+            render_enum_signature(enum_decl, 0, &mut out);
+            true
+        }
+        ItemKind::Trait(trait_decl) if is_public(&trait_decl.visibility) => {
+            render_trait_signature(trait_decl, 0, &mut out);
+            true
+        }
+        ItemKind::Impl(impl_block) => render_impl_signature(impl_block, 0, &mut out),
+        ItemKind::Extend(extend_block) => render_extend_signature(extend_block, 0, &mut out),
+        ItemKind::TypeAlias(type_alias) if is_public(&type_alias.visibility) => {
+            render_type_alias_signature(type_alias, 0, &mut out);
+            true
+        }
+        ItemKind::ExternBlock(extern_block) if is_public(&extern_block.visibility) => {
+            render_extern_block_signature(extern_block, 0, &mut out);
+            true
+        }
+        _ => false,
+    };
+
+    rendered.then_some(out)
+}
+
+fn render_use_decl(use_decl: &UseDecl, out: &mut String) {
+    out.push_str("use ");
+    format_path(&use_decl.prefix, out);
+    if let Some(group) = &use_decl.group {
+        out.push_str(".{");
+        for (index, item) in group.iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            format_ident(&item.name, out);
+            if let Some(alias) = &item.alias {
+                out.push_str(" as ");
+                format_ident(alias, out);
+            }
+        }
+        out.push('}');
+    }
+    if let Some(alias) = &use_decl.alias {
+        out.push_str(" as ");
+        format_ident(alias, out);
+    }
+}
+
+fn render_global_signature(keyword: &str, global: &GlobalDecl, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    format_visibility(&global.visibility, out);
+    out.push_str(keyword);
+    out.push(' ');
+    format_ident(&global.name, out);
+    out.push_str(": ");
+    format_type(&global.ty, out);
+}
+
+fn render_struct_signature(struct_decl: &StructDecl, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    format_visibility(&struct_decl.visibility, out);
+    if struct_decl.is_data {
+        out.push_str("data ");
+    }
+    out.push_str("struct ");
+    format_ident(&struct_decl.name, out);
+    format_generic_params(&struct_decl.generics, out);
+    out.push_str(" {\n");
+    for field in &struct_decl.fields {
+        write_indent(indent + 1, out);
+        format_ident(&field.name, out);
+        out.push_str(": ");
+        format_type(&field.ty, out);
+        out.push_str(",\n");
+    }
+    write_indent(indent, out);
+    out.push('}');
+}
+
+fn render_enum_signature(enum_decl: &EnumDecl, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    format_visibility(&enum_decl.visibility, out);
+    out.push_str("enum ");
+    format_ident(&enum_decl.name, out);
+    format_generic_params(&enum_decl.generics, out);
+    out.push_str(" {\n");
+    for variant in &enum_decl.variants {
+        write_indent(indent + 1, out);
+        format_ident(&variant.name, out);
+        match &variant.fields {
+            VariantFields::Unit => {}
+            VariantFields::Tuple(types) => {
+                out.push('(');
+                for (index, ty) in types.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    format_type(ty, out);
+                }
+                out.push(')');
+            }
+            VariantFields::Struct(fields) => {
+                out.push_str(" {\n");
+                for field in fields {
+                    write_indent(indent + 2, out);
+                    format_ident(&field.name, out);
+                    out.push_str(": ");
+                    format_type(&field.ty, out);
+                    out.push_str(",\n");
+                }
+                write_indent(indent + 1, out);
+                out.push('}');
+            }
+        }
+        out.push_str(",\n");
+    }
+    write_indent(indent, out);
+    out.push('}');
+}
+
+fn render_trait_signature(trait_decl: &TraitDecl, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    format_visibility(&trait_decl.visibility, out);
+    out.push_str("trait ");
+    format_ident(&trait_decl.name, out);
+    format_generic_params(&trait_decl.generics, out);
+    out.push_str(" {\n");
+    for method in &trait_decl.methods {
+        render_function_signature(method, indent + 1, false, out);
+        out.push('\n');
+    }
+    write_indent(indent, out);
+    out.push('}');
+}
+
+fn render_impl_signature(impl_block: &ImplBlock, indent: usize, out: &mut String) -> bool {
+    let public_methods = impl_block
+        .methods
+        .iter()
+        .filter(|method| is_public(&method.visibility))
+        .collect::<Vec<_>>();
+    if public_methods.is_empty() {
+        return false;
+    }
+
+    write_indent(indent, out);
+    out.push_str("impl");
+    format_generic_params(&impl_block.generics, out);
+    out.push(' ');
+    if let Some(trait_ty) = &impl_block.trait_ty {
+        format_type(trait_ty, out);
+        out.push_str(" for ");
+    }
+    format_type(&impl_block.target, out);
+    format_where_clause(&impl_block.where_clause, indent, out);
+    if impl_block.where_clause.is_empty() {
+        out.push_str(" {\n");
+    } else {
+        write_indent(indent, out);
+        out.push_str("{\n");
+    }
+
+    for (index, method) in public_methods.iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        render_function_signature(method, indent + 1, false, out);
+        out.push('\n');
+    }
+
+    write_indent(indent, out);
+    out.push('}');
+    true
+}
+
+fn render_extend_signature(extend_block: &ExtendBlock, indent: usize, out: &mut String) -> bool {
+    let public_methods = extend_block
+        .methods
+        .iter()
+        .filter(|method| is_public(&method.visibility))
+        .collect::<Vec<_>>();
+    if public_methods.is_empty() {
+        return false;
+    }
+
+    write_indent(indent, out);
+    out.push_str("extend ");
+    format_type(&extend_block.target, out);
+    out.push_str(" {\n");
+    for (index, method) in public_methods.iter().enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        render_function_signature(method, indent + 1, false, out);
+        out.push('\n');
+    }
+    write_indent(indent, out);
+    out.push('}');
+    true
+}
+
+fn render_type_alias_signature(type_alias: &TypeAliasDecl, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    format_visibility(&type_alias.visibility, out);
+    if type_alias.is_opaque {
+        out.push_str("opaque ");
+    }
+    out.push_str("type ");
+    format_ident(&type_alias.name, out);
+    format_generic_params(&type_alias.generics, out);
+    out.push_str(" = ");
+    format_type(&type_alias.ty, out);
+}
+
+fn render_extern_block_signature(extern_block: &ExternBlock, indent: usize, out: &mut String) {
+    write_indent(indent, out);
+    format_visibility(&extern_block.visibility, out);
+    out.push_str("extern ");
+    out.push('"');
+    out.push_str(&extern_block.abi);
+    out.push('"');
+    out.push_str(" {\n");
+    for function in &extern_block.functions {
+        render_function_signature(function, indent + 1, false, out);
+        out.push('\n');
+    }
+    write_indent(indent, out);
+    out.push('}');
+}
+
+fn render_function_signature(
+    function: &FunctionDecl,
+    indent: usize,
+    show_abi: bool,
+    out: &mut String,
+) {
+    write_indent(indent, out);
+    if show_abi && let Some(abi) = &function.abi {
+        out.push_str("extern ");
+        out.push('"');
+        out.push_str(abi);
+        out.push('"');
+        out.push(' ');
+    }
+    format_visibility(&function.visibility, out);
+    if function.is_unsafe {
+        out.push_str("unsafe ");
+    }
+    if function.is_async {
+        out.push_str("async ");
+    }
+    out.push_str("fn ");
+    format_ident(&function.name, out);
+    format_generic_params(&function.generics, out);
+    out.push('(');
+    for (index, param) in function.params.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        match param {
+            Param::Regular { name, ty, .. } => {
+                format_ident(name, out);
+                out.push_str(": ");
+                format_type(ty, out);
+            }
+            Param::Receiver { kind, .. } => match kind {
+                ReceiverKind::ReadOnly => out.push_str("self"),
+                ReceiverKind::Mutable => out.push_str("var self"),
+                ReceiverKind::Move => out.push_str("move self"),
+            },
+        }
+    }
+    out.push(')');
+    if let Some(ty) = &function.return_type {
+        out.push_str(" -> ");
+        format_type(ty, out);
+    }
+    format_where_clause(&function.where_clause, indent, out);
+}
+
+fn format_generic_params(params: &[GenericParam], out: &mut String) {
+    if params.is_empty() {
+        return;
+    }
+
+    out.push('[');
+    for (index, param) in params.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        format_ident(&param.name, out);
+        if !param.bounds.is_empty() {
+            out.push_str(": ");
+            for (bound_index, bound) in param.bounds.iter().enumerate() {
+                if bound_index > 0 {
+                    out.push_str(" + ");
+                }
+                format_path(bound, out);
+            }
+        }
+    }
+    out.push(']');
+}
+
+fn format_where_clause(predicates: &[WherePredicate], indent: usize, out: &mut String) {
+    if predicates.is_empty() {
+        return;
+    }
+
+    out.push('\n');
+    write_indent(indent, out);
+    out.push_str("where\n");
+    for (index, predicate) in predicates.iter().enumerate() {
+        write_indent(indent + 1, out);
+        format_type(&predicate.target, out);
+        out.push_str(": ");
+        for (bound_index, bound) in predicate.bounds.iter().enumerate() {
+            if bound_index > 0 {
+                out.push_str(" + ");
+            }
+            format_path(bound, out);
+        }
+        if index + 1 != predicates.len() {
+            out.push_str(",\n");
+        } else {
+            out.push('\n');
+        }
+    }
+}
+
+fn format_visibility(visibility: &Visibility, out: &mut String) {
+    if is_public(visibility) {
+        out.push_str("pub ");
+    }
+}
+
+fn format_type(ty: &TypeExpr, out: &mut String) {
+    match &ty.kind {
+        TypeExprKind::Pointer { is_const, inner } => {
+            out.push('*');
+            if *is_const {
+                out.push_str("const ");
+            }
+            format_type(inner, out);
+        }
+        TypeExprKind::Array { element, len } => {
+            out.push('[');
+            format_type(element, out);
+            out.push_str("; ");
+            out.push_str(len);
+            out.push(']');
+        }
+        TypeExprKind::Named { path, args } => {
+            format_path(path, out);
+            if !args.is_empty() {
+                out.push('[');
+                for (index, arg) in args.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    format_type(arg, out);
+                }
+                out.push(']');
+            }
+        }
+        TypeExprKind::Tuple(items) => {
+            out.push('(');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                format_type(item, out);
+            }
+            if items.len() == 1 {
+                out.push(',');
+            }
+            out.push(')');
+        }
+        TypeExprKind::Callable { params, ret } => {
+            out.push('(');
+            for (index, param) in params.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                format_type(param, out);
+            }
+            out.push_str(") -> ");
+            format_type(ret, out);
+        }
+    }
+}
+
+fn format_path(path: &AstPath, out: &mut String) {
+    for (index, segment) in path.segments.iter().enumerate() {
+        if index > 0 {
+            out.push('.');
+        }
+        format_ident(segment, out);
+    }
+}
+
+fn format_ident(name: &str, out: &mut String) {
+    if needs_identifier_escape(name) {
+        out.push('`');
+        out.push_str(name);
+        out.push('`');
+    } else {
+        out.push_str(name);
+    }
+}
+
+fn needs_identifier_escape(name: &str) -> bool {
+    lexer_is_keyword(name)
+        || name.is_empty()
+        || !name.chars().next().is_some_and(is_ident_start)
+        || !name.chars().all(is_ident_continue)
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch == '_' || ch.is_alphabetic()
+}
+
+fn is_ident_continue(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
+fn write_indent(indent: usize, out: &mut String) {
+    for _ in 0..indent {
+        out.push_str("    ");
+    }
+}
+
+fn is_public(visibility: &Visibility) -> bool {
+    matches!(visibility, Visibility::Public)
 }
 
 fn parse_error(manifest_path: &Path, message: impl Into<String>) -> ProjectError {

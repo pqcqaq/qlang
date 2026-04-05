@@ -6,4 +6,6 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+ql-ast.workspace = true
+ql-lexer.workspace = true
 toml = "1.1.2"

@@ -10,7 +10,7 @@ use ql_driver::{
     CHeaderOptions, CHeaderSurface, build_file, emit_c_header,
 };
 use ql_fmt::format_source;
-use ql_project::{load_project_manifest, render_project_graph};
+use ql_project::{load_project_manifest, render_module_interface, render_project_graph};
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 
 fn main() -> ExitCode {
@@ -180,6 +180,49 @@ fn run() -> Result<(), u8> {
                         return Err(1);
                     }
                     project_graph_path(&path)
+                }
+                "emit-interface" => {
+                    let remaining = args.collect::<Vec<_>>();
+                    let mut path = None;
+                    let mut output = None;
+                    let mut index = 0;
+
+                    while index < remaining.len() {
+                        match remaining[index].as_str() {
+                            "-o" | "--output" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project emit-interface --output` expects a file path"
+                                    );
+                                    return Err(1);
+                                };
+                                output = Some(PathBuf::from(value));
+                            }
+                            other if other.starts_with('-') => {
+                                eprintln!(
+                                    "error: unknown `ql project emit-interface` option `{other}`"
+                                );
+                                return Err(1);
+                            }
+                            other => {
+                                if path.is_some() {
+                                    eprintln!(
+                                        "error: unknown `ql project emit-interface` argument `{other}`"
+                                    );
+                                    return Err(1);
+                                }
+                                path = Some(PathBuf::from(other));
+                            }
+                        }
+
+                        index += 1;
+                    }
+
+                    let path = path
+                        .or_else(|| env::current_dir().ok())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    project_emit_interface_path(&path, output.as_deref())
                 }
                 other => {
                     eprintln!("error: unknown `ql project` subcommand `{other}`");
@@ -463,6 +506,83 @@ fn project_graph_path(path: &Path) -> Result<(), u8> {
     Ok(())
 }
 
+fn project_emit_interface_path(path: &Path, output: Option<&Path>) -> Result<(), u8> {
+    let manifest = load_project_manifest(path).map_err(|error| {
+        eprintln!("error: {error}");
+        1
+    })?;
+    let Some(package) = &manifest.package else {
+        eprintln!("error: `ql project emit-interface` currently requires `[package].name`");
+        return Err(1);
+    };
+    let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let source_root = manifest_dir.join("src");
+    if !source_root.is_dir() {
+        eprintln!(
+            "error: package source directory `{}` does not exist",
+            source_root.display()
+        );
+        return Err(1);
+    }
+
+    let files = collect_ql_files(&source_root).map_err(|error| {
+        eprintln!(
+            "error: failed to enumerate package sources under `{}`: {error}",
+            source_root.display()
+        );
+        1
+    })?;
+
+    let mut rendered_modules = Vec::new();
+    for file in files {
+        let source = fs::read_to_string(&file).map_err(|error| {
+            eprintln!("error: failed to read `{}`: {error}", file.display());
+            1
+        })?;
+        let analysis = match analyze_semantics(&source) {
+            Ok(analysis) => analysis,
+            Err(diagnostics) => {
+                print_diagnostics(&file, &source, &diagnostics);
+                return Err(1);
+            }
+        };
+        if analysis.has_errors() {
+            print_diagnostics(&file, &source, analysis.diagnostics());
+            return Err(1);
+        }
+        if let Some(rendered) = render_module_interface(analysis.ast()) {
+            let relative = file.strip_prefix(manifest_dir).unwrap_or(&file);
+            rendered_modules.push((normalize_path(relative), rendered));
+        }
+    }
+
+    let output_path = output
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| manifest_dir.join(format!("{}.qi", package.name)));
+    if let Some(parent) = output_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|error| {
+            eprintln!(
+                "error: failed to create interface output directory `{}`: {error}",
+                parent.display()
+            );
+            1
+        })?;
+    }
+
+    let rendered = render_interface_artifact(&package.name, &rendered_modules);
+    fs::write(&output_path, rendered).map_err(|error| {
+        eprintln!(
+            "error: failed to write interface `{}`: {error}",
+            output_path.display()
+        );
+        1
+    })?;
+    println!("wrote interface: {}", output_path.display());
+    Ok(())
+}
+
 fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
     let analysis = analyze_semantics(source)?;
     if analysis.has_errors() {
@@ -599,6 +719,28 @@ fn component_name(component: Component<'_>) -> Option<&str> {
     }
 }
 
+fn normalize_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn render_interface_artifact(package_name: &str, modules: &[(String, String)]) -> String {
+    let mut rendered = String::new();
+    rendered.push_str("// qlang interface v1\n");
+    rendered.push_str(&format!("// package: {package_name}\n"));
+    if modules.is_empty() {
+        rendered.push('\n');
+        return rendered;
+    }
+
+    for (path, module) in modules {
+        rendered.push('\n');
+        rendered.push_str(&format!("// source: {path}\n"));
+        rendered.push_str(module);
+    }
+
+    rendered
+}
+
 fn print_diagnostics(path: &Path, source: &str, diagnostics: &[Diagnostic]) {
     eprint!("{}", render_diagnostics(path, source, diagnostics));
 }
@@ -611,6 +753,7 @@ fn print_usage() {
         "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
     );
     eprintln!("  ql project graph [file-or-dir]");
+    eprintln!("  ql project emit-interface [file-or-dir] [-o <output>]");
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
     eprintln!("  ql mir <file>");

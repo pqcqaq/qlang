@@ -96,6 +96,13 @@ LSP V1 继续关闭：
 
 先打通最小 public interface emit，不碰更深的 cross-package const/static 语义。
 
+已完成（2026-04-05）：
+
+- `ql project emit-interface [file-or-dir] [-o <output>]` 已落地
+- 当前仅支持 package manifest，默认扫描 `src/**/*.ql`
+- emit 前逐文件走 `ql-analysis`，有 diagnostics 就失败
+- `.qi` 当前输出 text-based public surface section，保留 public declaration 形状，去掉 body / value / field default
+
 交付目标：
 
 - `ql build` 或独立子命令能产出 `.qi`
@@ -137,7 +144,7 @@ LSP V1 继续关闭：
 按当前顺序，最适合的下一个实现切片是：
 
 1. 固定 `qlang.toml` 的 workspace / project reference 最小合同
-2. 设计并落地 `.qi` V1 文本格式与 emit
-3. 再进入 `ql-analysis` / `ql-lsp` 的 cross-file 消费路径
+2. `ql-analysis` 扩成可消费依赖 `.qi` 的 package loader
+3. 再进入 `ql-lsp` 的 cross-file 消费路径
 
 这条顺序能保证 Qlang 做的是“语言与工具链一体化”，而不是先拼一个看起来能跳转的 LSP，再回头重做编译接口层。

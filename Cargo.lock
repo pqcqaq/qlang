@@ -556,6 +556,8 @@ dependencies = [
 name = "ql-project"
 version = "0.1.0"
 dependencies = [
+ "ql-ast",
+ "ql-lexer",
  "toml",
 ]
 
