@@ -235,13 +235,34 @@ pub fn completion_for_analysis(
     position: Position,
 ) -> Option<CompletionResponse> {
     let offset = position_to_offset(source, position)?;
+    completion_response(source, offset, analysis.completions_at(offset)?)
+}
+
+pub fn completion_for_package_analysis(
+    source: &str,
+    analysis: &Analysis,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<CompletionResponse> {
+    let offset = position_to_offset(source, position)?;
+    if let Some(items) = package.dependency_completions_at(source, offset) {
+        return completion_response(source, offset, items);
+    }
+
+    completion_response(source, offset, analysis.completions_at(offset)?)
+}
+
+fn completion_response(
+    source: &str,
+    offset: usize,
+    items: Vec<ql_analysis::CompletionItem>,
+) -> Option<CompletionResponse> {
     let replace_span = completion_replace_span(source, offset);
     let prefix = source
         .get(replace_span.start..offset)
         .unwrap_or_default()
         .to_owned();
-    let items = analysis
-        .completions_at(offset)?
+    let items = items
         .into_iter()
         .filter(|item| completion_matches_prefix(&item.label, &item.insert_text, &prefix))
         .map(|item| LspCompletionItem {

@@ -201,6 +201,39 @@ impl PackageAnalysis {
             .collect()
     }
 
+    pub fn dependency_completions_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<CompletionItem>> {
+        let context = dependency_import_completion_context(source, offset)?;
+        let mut items = self
+            .dependencies
+            .iter()
+            .filter(|dependency| {
+                dependency_matches_prefix_segments(dependency, &context.prefix_segments)
+            })
+            .flat_map(|dependency| dependency.symbols())
+            .map(|symbol| CompletionItem {
+                label: symbol.name.clone(),
+                insert_text: symbol.name.clone(),
+                kind: symbol.kind,
+                detail: symbol.detail.clone(),
+                ty: None,
+            })
+            .collect::<Vec<_>>();
+
+        items.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| left.detail.cmp(&right.detail))
+        });
+        items.dedup_by(|left, right| {
+            left.label == right.label && left.detail == right.detail && left.kind == right.kind
+        });
+        Some(items)
+    }
+
     pub fn dependency_hover_at(
         &self,
         analysis: &Analysis,
@@ -715,10 +748,94 @@ fn dependency_matches_import(dependency: &DependencyInterface, binding: &ImportB
         .package
         .as_ref()
         .map(|package| package.name.as_str());
+    dependency_matches_prefix_segments_impl(
+        dependency.artifact.package_name.as_str(),
+        manifest_name,
+        prefix_segments.iter().map(String::as_str),
+    )
+}
+
+fn dependency_matches_prefix_segments(
+    dependency: &DependencyInterface,
+    prefix_segments: &[String],
+) -> bool {
+    let manifest_name = dependency
+        .manifest
+        .package
+        .as_ref()
+        .map(|package| package.name.as_str());
+    dependency_matches_prefix_segments_impl(
+        dependency.artifact.package_name.as_str(),
+        manifest_name,
+        prefix_segments.iter().map(String::as_str),
+    )
+}
+
+fn dependency_matches_prefix_segments_impl<'a>(
+    artifact_package_name: &str,
+    manifest_name: Option<&str>,
+    prefix_segments: impl IntoIterator<Item = &'a str>,
+) -> bool {
+    let prefix_segments = prefix_segments.into_iter().collect::<Vec<_>>();
     prefix_segments
         .iter()
-        .any(|segment| segment == &dependency.artifact.package_name)
-        || manifest_name.is_some_and(|name| prefix_segments.iter().any(|segment| segment == name))
+        .any(|segment| *segment == artifact_package_name)
+        || manifest_name.is_some_and(|name| prefix_segments.iter().any(|segment| *segment == name))
+}
+
+#[derive(Debug)]
+struct DependencyImportCompletionContext {
+    prefix_segments: Vec<String>,
+}
+
+fn dependency_import_completion_context(
+    source: &str,
+    offset: usize,
+) -> Option<DependencyImportCompletionContext> {
+    let offset = offset.min(source.len());
+    let line_start = source[..offset]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let line_end = source[offset..]
+        .find('\n')
+        .map(|index| offset + index)
+        .unwrap_or(source.len());
+    let line_prefix = source.get(line_start..offset)?;
+    let line_suffix = source.get(offset..line_end)?;
+    let trimmed_prefix = line_prefix.trim_start();
+    let path_prefix = trimmed_prefix.strip_prefix("use ")?;
+    if path_prefix.contains('{') || path_prefix.contains('}') || path_prefix.contains(" as ") {
+        return None;
+    }
+
+    let alias_slice = line_suffix
+        .find(" as ")
+        .map(|index| &line_suffix[..index])
+        .unwrap_or(line_suffix);
+    if alias_slice.trim_start().starts_with("as ") {
+        return None;
+    }
+
+    let mut segments = path_prefix
+        .split('.')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if !path_prefix.contains('.') {
+        return None;
+    }
+    if !path_prefix.ends_with('.') {
+        segments.pop();
+    }
+    if segments.is_empty() {
+        return None;
+    }
+
+    Some(DependencyImportCompletionContext {
+        prefix_segments: segments,
+    })
 }
 
 pub fn parse_errors_to_diagnostics(errors: Vec<ParseError>) -> Vec<Diagnostic> {

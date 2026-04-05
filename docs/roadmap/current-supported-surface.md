@@ -22,7 +22,7 @@
 
 - Phase 1 到 Phase 6 地基已经落地：lexer、parser、formatter、diagnostics、HIR、resolve、typeck、MIR、borrowck、LLVM backend、driver、CLI、same-file LSP/query、FFI header projection 都已进入真实工程主干。
 - 当前活跃主线是保守推进的 Phase 7：async/runtime/task-handle lowering、library/program build surface、Rust interop。
-- Phase 8 的前三条入口切片已继续向前推进：仓库现已具备最小 `qlang.toml` manifest graph loader、`ql project graph` 调试入口、`.qi` V1 emit 入口 `ql project emit-interface`，以及 package-aware `ql check <package-dir>` 对引用 `.qi` 的 syntax-aware 加载；`ql-analysis::analyze_package` 现也已把 dependency `.qi` 的公开符号收进 package 级查询面，并接通 imported dependency symbol 的最小 cross-file hover / definition / references，但真实 dependency build graph 与更完整 cross-file LSP 仍未开放。
+- Phase 8 的前三条入口切片已继续向前推进：仓库现已具备最小 `qlang.toml` manifest graph loader、`ql project graph` 调试入口、`.qi` V1 emit 入口 `ql project emit-interface`，以及 package-aware `ql check <package-dir>` 对引用 `.qi` 的 syntax-aware 加载；`ql-analysis::analyze_package` 现也已把 dependency `.qi` 的公开符号收进 package 级查询面，并接通 imported dependency symbol 的最小 cross-file hover / definition / references，以及 dependency public symbol 在 `use ...` 导入路径位置上的 completion；真实 dependency build graph 与更广义 cross-file LSP 仍未开放。
 - 外部稳定互操作边界仍是 C ABI；Rust 继续走 `build.rs + staticlib + header` 路线。
 - async 已经不是“只有语法”，而是有真实 build、真实样例和真实回归的受控子集；但 broader async ABI、broader runtime semantics 仍然刻意关闭。
 - sync backend 的首个 `String` build 子集现已进入真实 build surface：UTF-8 string literal 现可 lowering 为 `{ ptr, i64 }`，并经过 local binding、const/static materialization、普通参数传递、返回值、`==` / `!=` 比较与 fixed-shape aggregate transport 进入当前 LLVM/object build；string ordering compare、string-pattern match lowering 与 C header `String` 导出仍保持保守关闭。
@@ -60,10 +60,11 @@
 - dependency `.qi` 当前已进入 syntax-aware load：每个 `// source: ...` section 会通过 interface-mode parser 解析为 AST，支持 bodyless `fn` / `impl` / `extend` 声明，以及无值的 `const` / `static` 接口声明
 - `ql-analysis::analyze_package` 当前已把 dependency `.qi` 的公开符号索引进 `PackageAnalysis`：覆盖 top-level `fn` / `const` / `static` / `struct` / `enum` / `trait` / `type`，以及 public trait / `impl` / `extend` methods；索引当前保留 package name、source section path、symbol kind、name、detail 与 interface span
 - `ql-analysis` / `ql-lsp` 当前已开放 imported dependency symbol 的最小 cross-file hover / definition / references：当当前文件里的 import binding 能唯一映射到 dependency `.qi` public symbol 时，hover 会显示 dependency declaration，go to definition 会跳到 dependency `.qi` artifact 内的 declaration 位置，references 会在需要时把 dependency `.qi` declaration 与当前文件 import/use 位置一起返回
+- `ql-analysis` / `ql-lsp` 当前也已开放 dependency public symbol 在 `use ...` 导入路径位置上的 completion：例如 `use demo.dep.Bu` 可补全到 `.qi` 里的 `Buffer`；该能力当前只覆盖导入路径，不代表更广义 symbol-space cross-file completion 已完成
 
 当前仍未开放：
 
-- dependency `.qi` 到 completion / rename 的 cross-file 消费
+- dependency `.qi` 到 rename 与非导入路径 completion 的 cross-file 消费
 - 真实 package build graph
 - dependency invalidation
 - 更广义的 cross-file query / rename / completion

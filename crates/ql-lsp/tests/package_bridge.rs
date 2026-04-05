@@ -5,11 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{analyze_package, analyze_source};
 use ql_lsp::bridge::{
-    definition_for_package_analysis, hover_for_package_analysis, references_for_package_analysis,
-    span_to_range,
+    completion_for_package_analysis, definition_for_package_analysis, hover_for_package_analysis,
+    references_for_package_analysis, span_to_range,
 };
 use ql_span::Span;
-use tower_lsp::lsp_types::{GotoDefinitionResponse, HoverContents, Location, Position, Url};
+use tower_lsp::lsp_types::{
+    CompletionItemKind, CompletionResponse, CompletionTextEdit, GotoDefinitionResponse,
+    HoverContents, Location, Position, TextEdit, Url,
+};
 
 struct TempDir {
     path: PathBuf,
@@ -165,6 +168,90 @@ pub fn main(value: Buf[Int]) -> Int {
     assert_eq!(
         range,
         span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_import_completion() {
+    let temp = TempDir::new("ql-lsp-package-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Buffer[T] {
+    value: T,
+}
+pub const DEFAULT_PORT: Int
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Bu
+
+pub fn main() -> Int {
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "Bu", 1) + "Bu".len()),
+    ) else {
+        panic!("dependency completion should exist")
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "Buffer");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::STRUCT));
+    assert!(
+        items[0]
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.starts_with("struct Buffer[T] {"))
+    );
+    assert_eq!(
+        items[0].text_edit,
+        Some(CompletionTextEdit::Edit(TextEdit::new(
+            span_to_range(
+                source,
+                Span::new(
+                    nth_offset(source, "Bu", 1),
+                    nth_offset(source, "Bu", 1) + "Bu".len(),
+                ),
+            ),
+            "Buffer".to_owned(),
+        ))),
     );
 }
 
