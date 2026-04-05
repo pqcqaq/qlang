@@ -302,7 +302,7 @@ enum SupportedIntegerMatchPattern {
     CatchAll,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum SupportedOrdinaryCapturingClosureCall {
     Branch {
         condition: Operand,
@@ -321,7 +321,7 @@ enum SupportedOrdinaryCapturingClosureCall {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct SupportedOrdinaryIntegerCapturingClosureCallArm {
     value: String,
     closure_id: mir::ClosureId,
@@ -1574,6 +1574,12 @@ impl<'a> ModuleEmitter<'a> {
                 &mut closure_spans,
                 &mut conflicting_temps,
             );
+        let mut ordinary_control_flow_capturing_closure_calls =
+            ordinary_control_flow_capturing_closure_calls;
+        self.propagate_supported_ordinary_control_flow_capturing_closure_calls(
+            body,
+            &mut ordinary_control_flow_capturing_closure_calls,
+        );
         self.validate_ordinary_control_flow_capturing_closure_candidates(
             body,
             &ordinary_control_flow_capturing_closure_calls,
@@ -2041,6 +2047,71 @@ impl<'a> ModuleEmitter<'a> {
                 TerminatorKind::Goto { .. }
                 | TerminatorKind::Return
                 | TerminatorKind::Terminate => {}
+            }
+        }
+    }
+
+    fn propagate_supported_ordinary_control_flow_capturing_closure_calls(
+        &self,
+        body: &mir::MirBody,
+        ordinary_calls: &mut HashMap<
+            (mir::BasicBlockId, mir::LocalId),
+            SupportedOrdinaryCapturingClosureCall,
+        >,
+    ) {
+        let predecessors = ordinary_control_flow_capturing_closure_predecessors(body);
+        let locals = ordinary_calls
+            .keys()
+            .map(|(_, local)| *local)
+            .collect::<HashSet<_>>();
+        if locals.is_empty() {
+            return;
+        }
+
+        loop {
+            let mut changed = false;
+            for block_id in body.block_ids() {
+                let Some(block_predecessors) = predecessors.get(&block_id) else {
+                    continue;
+                };
+                if block_predecessors.is_empty() {
+                    continue;
+                }
+
+                for local in &locals {
+                    if ordinary_calls.contains_key(&(block_id, *local))
+                        || ordinary_control_flow_capturing_closure_block_reassigns_local(
+                            self, body, block_id, *local,
+                        )
+                    {
+                        continue;
+                    }
+
+                    let mut propagated = None;
+                    for predecessor in block_predecessors {
+                        let Some(lowering) = ordinary_calls.get(&(*predecessor, *local)) else {
+                            propagated = None;
+                            break;
+                        };
+                        match &propagated {
+                            Some(current) if current != lowering => {
+                                propagated = None;
+                                break;
+                            }
+                            Some(_) => {}
+                            None => propagated = Some(lowering.clone()),
+                        }
+                    }
+
+                    if let Some(lowering) = propagated {
+                        ordinary_calls.insert((block_id, *local), lowering);
+                        changed = true;
+                    }
+                }
+            }
+
+            if !changed {
+                break;
             }
         }
     }
@@ -16556,6 +16627,74 @@ fn control_flow_capturing_closure_block_assignment(
 
     let (local, closure_id) = assignment?;
     Some((*target, local, closure_id))
+}
+
+fn ordinary_control_flow_capturing_closure_predecessors(
+    body: &mir::MirBody,
+) -> HashMap<mir::BasicBlockId, Vec<mir::BasicBlockId>> {
+    let mut predecessors = body
+        .block_ids()
+        .map(|block_id| (block_id, Vec::new()))
+        .collect::<HashMap<_, _>>();
+
+    for block_id in body.block_ids() {
+        for successor in ordinary_control_flow_capturing_closure_successors(body, block_id) {
+            predecessors.entry(successor).or_default().push(block_id);
+        }
+    }
+
+    predecessors
+}
+
+fn ordinary_control_flow_capturing_closure_successors(
+    body: &mir::MirBody,
+    block_id: mir::BasicBlockId,
+) -> Vec<mir::BasicBlockId> {
+    match &body.block(block_id).terminator.kind {
+        TerminatorKind::Goto { target } => vec![*target],
+        TerminatorKind::Branch {
+            then_target,
+            else_target,
+            ..
+        } => vec![*then_target, *else_target],
+        TerminatorKind::Match {
+            arms, else_target, ..
+        } => {
+            let mut successors = arms.iter().map(|arm| arm.target).collect::<Vec<_>>();
+            successors.push(*else_target);
+            successors
+        }
+        TerminatorKind::ForLoop {
+            body_target,
+            exit_target,
+            ..
+        } => vec![*body_target, *exit_target],
+        TerminatorKind::Return | TerminatorKind::Terminate => Vec::new(),
+    }
+}
+
+fn ordinary_control_flow_capturing_closure_block_reassigns_local(
+    emitter: &ModuleEmitter<'_>,
+    body: &mir::MirBody,
+    block_id: mir::BasicBlockId,
+    local: mir::LocalId,
+) -> bool {
+    body.block(block_id).statements.iter().any(|statement_id| {
+        let statement = body.statement(*statement_id);
+        match &statement.kind {
+            StatementKind::Assign { place, .. } => {
+                place.projections.is_empty() && place.base == local
+            }
+            StatementKind::BindPattern { pattern, .. } => emitter
+                .binding_local_for_pattern(body, *pattern)
+                .is_some_and(|binding_local| binding_local == local),
+            StatementKind::Eval { .. }
+            | StatementKind::RegisterCleanup { .. }
+            | StatementKind::RunCleanup { .. }
+            | StatementKind::StorageLive { .. }
+            | StatementKind::StorageDead { .. } => false,
+        }
+    })
 }
 
 fn cleanup_same_target_capturing_closure_assignment(
