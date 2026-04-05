@@ -169,6 +169,10 @@ enum CleanupCapturingClosureBindingValue {
         then_closure: mir::ClosureId,
         else_closure: mir::ClosureId,
     },
+    TaggedMatch {
+        tag: Option<LoweredValue>,
+        closures: Vec<mir::ClosureId>,
+    },
     BoolMatch {
         scrutinee: Option<LoweredValue>,
         true_closure: mir::ClosureId,
@@ -185,7 +189,10 @@ impl CleanupCapturingClosureBindingValue {
     fn direct_closure_id(&self) -> Option<mir::ClosureId> {
         match self {
             Self::Direct(closure_id) => Some(*closure_id),
-            Self::IfBranch { .. } | Self::BoolMatch { .. } | Self::IntegerMatch { .. } => None,
+            Self::IfBranch { .. }
+            | Self::TaggedMatch { .. }
+            | Self::BoolMatch { .. }
+            | Self::IntegerMatch { .. } => None,
         }
     }
 }
@@ -229,6 +236,11 @@ struct SupportedCleanupSharedLocalIfBinding {
 
 #[derive(Clone, Debug)]
 enum SupportedCleanupSharedLocalMatchBinding {
+    Tagged {
+        target_local: hir::LocalId,
+        expr_id: hir::ExprId,
+        closures: Vec<mir::ClosureId>,
+    },
     Bool {
         target_local: hir::LocalId,
         expr_id: hir::ExprId,
@@ -7203,7 +7215,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 value,
             ) {
                 let target_local = match &binding {
-                    SupportedCleanupSharedLocalMatchBinding::Bool { target_local, .. }
+                    SupportedCleanupSharedLocalMatchBinding::Tagged { target_local, .. }
+                    | SupportedCleanupSharedLocalMatchBinding::Bool { target_local, .. }
                     | SupportedCleanupSharedLocalMatchBinding::Integer { target_local, .. } => {
                         *target_local
                     }
@@ -7312,6 +7325,36 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
     ) -> CleanupCapturingClosureBindingValue {
         match binding {
+            SupportedCleanupSharedLocalMatchBinding::Tagged {
+                expr_id, closures, ..
+            } => {
+                let tag_ty = Ty::Builtin(BuiltinType::Int);
+                let tag_llvm_ty = self
+                    .emitter
+                    .lower_llvm_type(&tag_ty, span, "cleanup match tag")
+                    .expect("supported cleanup lowering should lower cleanup match tags");
+                let tag_slot = self.fresh_temp();
+                let _ = writeln!(output, "  {tag_slot} = alloca {tag_llvm_ty}");
+                let hir::ExprKind::Match { value, arms } =
+                    &self.emitter.input.hir.expr(*expr_id).kind
+                else {
+                    panic!(
+                        "supported cleanup lowering at {span:?} should preserve tagged match binding shape"
+                    )
+                };
+                self.render_cleanup_capturing_closure_binding_match_expr(
+                    output,
+                    *value,
+                    arms,
+                    span,
+                    Some(&tag_slot),
+                );
+                let tag = self.render_loaded_pointer_value(output, tag_slot, tag_ty, span);
+                CleanupCapturingClosureBindingValue::TaggedMatch {
+                    tag: Some(tag),
+                    closures: closures.clone(),
+                }
+            }
             SupportedCleanupSharedLocalMatchBinding::Bool {
                 expr_id,
                 true_closure,
@@ -7336,6 +7379,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     scrutinee.clone(),
                     arms,
                     span,
+                    None,
                 );
                 CleanupCapturingClosureBindingValue::BoolMatch {
                     scrutinee: Some(scrutinee),
@@ -7369,6 +7413,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     scrutinee.clone(),
                     match_arms,
                     span,
+                    None,
                 );
                 CleanupCapturingClosureBindingValue::IntegerMatch {
                     scrutinee: Some(scrutinee),
@@ -7436,7 +7481,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             hir::ExprKind::Match { value, arms } => {
                 self.render_cleanup_capturing_closure_binding_match_expr(
-                    output, *value, arms, span,
+                    output, *value, arms, span, None,
                 );
             }
             _ => {}
@@ -7449,6 +7494,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         value_expr: hir::ExprId,
         arms: &[hir::MatchArm],
         span: Span,
+        match_tag_slot: Option<&str>,
     ) {
         let Some(scrutinee_ty) = self.emitter.input.typeck.expr_ty(value_expr) else {
             panic!(
@@ -7464,7 +7510,11 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 span,
             );
             self.render_cleanup_capturing_closure_binding_bool_match_expr(
-                output, scrutinee, arms, span,
+                output,
+                scrutinee,
+                arms,
+                span,
+                match_tag_slot,
             );
             return;
         }
@@ -7477,14 +7527,22 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 span,
             );
             self.render_cleanup_capturing_closure_binding_integer_match_expr(
-                output, scrutinee, arms, span,
+                output,
+                scrutinee,
+                arms,
+                span,
+                match_tag_slot,
             );
             return;
         }
 
         let scrutinee = self.render_cleanup_value_expr(output, value_expr, scrutinee_ty, span);
         self.render_cleanup_capturing_closure_binding_guard_only_match_expr(
-            output, scrutinee, arms, span,
+            output,
+            scrutinee,
+            arms,
+            span,
+            match_tag_slot,
         );
     }
 
@@ -7494,6 +7552,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         scrutinee: LoweredValue,
         arms: &[hir::MatchArm],
         span: Span,
+        match_tag_slot: Option<&str>,
     ) {
         let end_label = self.fresh_label("cleanup_match_end");
 
@@ -7565,6 +7624,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
 
             let _ = writeln!(output, "{body_label}:");
             self.cleanup_path_open = true;
+            if let Some(tag_slot) = match_tag_slot {
+                let _ = writeln!(output, "  store i64 {index}, ptr {tag_slot}");
+            }
             self.render_cleanup_capturing_closure_binding_expr(output, arm.body, span);
             let _ = writeln!(output, "  br label %{end_label}");
 
@@ -7587,6 +7649,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         scrutinee: LoweredValue,
         arms: &[hir::MatchArm],
         span: Span,
+        match_tag_slot: Option<&str>,
     ) {
         let end_label = self.fresh_label("cleanup_match_end");
 
@@ -7651,6 +7714,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
 
             let _ = writeln!(output, "{body_label}:");
             self.cleanup_path_open = true;
+            if let Some(tag_slot) = match_tag_slot {
+                let _ = writeln!(output, "  store i64 {index}, ptr {tag_slot}");
+            }
             self.render_cleanup_capturing_closure_binding_expr(output, arm.body, span);
             let _ = writeln!(output, "  br label %{end_label}");
 
@@ -7673,6 +7739,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         scrutinee: LoweredValue,
         arms: &[hir::MatchArm],
         span: Span,
+        match_tag_slot: Option<&str>,
     ) {
         let end_label = self.fresh_label("cleanup_match_end");
 
@@ -7700,6 +7767,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
 
             let _ = writeln!(output, "{body_label}:");
             self.cleanup_path_open = true;
+            if let Some(tag_slot) = match_tag_slot {
+                let _ = writeln!(output, "  store i64 {index}, ptr {tag_slot}");
+            }
             self.render_cleanup_capturing_closure_binding_expr(output, arm.body, span);
             let _ = writeln!(output, "  br label %{end_label}");
 
@@ -9784,6 +9854,107 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         result_slot.map(|slot| self.render_loaded_pointer_value(output, slot, return_ty, span))
     }
 
+    fn render_cleanup_bound_tagged_match_capturing_closure_call(
+        &mut self,
+        output: &mut String,
+        tag: LoweredValue,
+        closures: &[mir::ClosureId],
+        args: &[hir::CallArg],
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let fallback_closure = *closures
+            .last()
+            .expect("supported cleanup tagged match bindings should preserve at least one arm");
+        let return_ty = self
+            .emitter
+            .input
+            .typeck
+            .expr_ty(self.body.closure(fallback_closure).expr)
+            .and_then(|ty| match ty {
+                Ty::Callable { ret, .. } => Some(ret.as_ref().clone()),
+                _ => None,
+            })
+            .expect(
+                "supported cleanup lowering should preserve callable return types for tagged match bindings",
+            );
+        let return_llvm_ty = (!is_void_ty(&return_ty)).then(|| {
+            self.emitter
+                .lower_llvm_type(&return_ty, span, "cleanup call result")
+                .expect("supported cleanup lowering should lower cleanup call results")
+        });
+        let result_slot = return_llvm_ty.as_ref().map(|llvm_ty| {
+            let slot = self.fresh_temp();
+            let _ = writeln!(output, "  {slot} = alloca {llvm_ty}");
+            slot
+        });
+        let end_label = self.fresh_label("cleanup_call_match_end");
+        let fallback_label = self.fresh_label("cleanup_call_match_fallback");
+        let dispatch_labels = (0..closures.len())
+            .map(|_| self.fresh_label("cleanup_call_match_dispatch"))
+            .collect::<Vec<_>>();
+        let arm_labels = (0..closures.len())
+            .map(|_| self.fresh_label("cleanup_call_match_arm"))
+            .collect::<Vec<_>>();
+        let opcode = compare_opcode(BinaryOp::EqEq, &tag.ty);
+
+        if closures.is_empty() {
+            let _ = writeln!(output, "  br label %{fallback_label}");
+        } else {
+            for index in 0..closures.len() {
+                if index > 0 {
+                    let _ = writeln!(output, "{}:", dispatch_labels[index]);
+                }
+                let compare = self.fresh_temp();
+                let _ = writeln!(
+                    output,
+                    "  {compare} = {opcode} {} {}, {}",
+                    tag.llvm_ty, tag.repr, index
+                );
+                let false_target = if index + 1 == closures.len() {
+                    fallback_label.clone()
+                } else {
+                    dispatch_labels[index + 1].clone()
+                };
+                let _ = writeln!(
+                    output,
+                    "  br i1 {compare}, label %{}, label %{false_target}",
+                    arm_labels[index]
+                );
+            }
+        }
+
+        for (closure_id, arm_label) in closures.iter().zip(arm_labels.iter()) {
+            let _ = writeln!(output, "{arm_label}:");
+            if let Some(value) =
+                self.render_cleanup_direct_capturing_closure_call(output, *closure_id, args, span)
+                && let Some(result_slot) = result_slot.as_ref()
+            {
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {result_slot}",
+                    value.llvm_ty, value.repr
+                );
+            }
+            let _ = writeln!(output, "  br label %{end_label}");
+        }
+
+        let _ = writeln!(output, "{fallback_label}:");
+        if let Some(value) =
+            self.render_cleanup_direct_capturing_closure_call(output, fallback_closure, args, span)
+            && let Some(result_slot) = result_slot.as_ref()
+        {
+            let _ = writeln!(
+                output,
+                "  store {} {}, ptr {result_slot}",
+                value.llvm_ty, value.repr
+            );
+        }
+        let _ = writeln!(output, "  br label %{end_label}");
+
+        let _ = writeln!(output, "{end_label}:");
+        result_slot.map(|slot| self.render_loaded_pointer_value(output, slot, return_ty, span))
+    }
+
     fn render_cleanup_call(
         &mut self,
         output: &mut String,
@@ -9791,6 +9962,20 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         args: &[hir::CallArg],
         span: Span,
     ) -> Option<LoweredValue> {
+        if let Some(CleanupCapturingClosureBindingValue::TaggedMatch {
+            tag: Some(tag),
+            closures,
+        }) = cleanup_bound_capturing_closure_value_for_expr(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            &self.cleanup_capturing_closure_bindings,
+            callee_expr,
+        ) {
+            return self.render_cleanup_bound_tagged_match_capturing_closure_call(
+                output, tag, &closures, args, span,
+            );
+        }
+
         if let Some(CleanupCapturingClosureBindingValue::BoolMatch {
             scrutinee: Some(scrutinee),
             true_closure,
@@ -13886,6 +14071,108 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         self.render_loaded_pointer_value(output, result_slot, return_ty, span)
     }
 
+    fn render_guard_bound_tagged_match_capturing_closure_call(
+        &mut self,
+        output: &mut String,
+        tag: LoweredValue,
+        closures: &[mir::ClosureId],
+        args: &[hir::CallArg],
+        span: Span,
+        guard_binding: Option<&GuardBindingValue>,
+    ) -> LoweredValue {
+        let fallback_closure = *closures
+            .last()
+            .expect("supported cleanup tagged match bindings should preserve at least one arm");
+        let return_ty = self
+            .emitter
+            .input
+            .typeck
+            .expr_ty(self.body.closure(fallback_closure).expr)
+            .and_then(|ty| match ty {
+                Ty::Callable { ret, .. } => Some(ret.as_ref().clone()),
+                _ => None,
+            })
+            .expect(
+                "prepared bool guard lowering should preserve callable return types for tagged match bindings",
+            );
+        let return_llvm_ty = self
+            .emitter
+            .lower_llvm_type(&return_ty, span, "guard call result")
+            .expect("prepared bool guard lowering should only emit lowered guard call results");
+        let result_slot = self.fresh_temp();
+        let _ = writeln!(output, "  {result_slot} = alloca {return_llvm_ty}");
+        let end_label = self.fresh_label("guard_call_match_end");
+        let fallback_label = self.fresh_label("guard_call_match_fallback");
+        let dispatch_labels = (0..closures.len())
+            .map(|_| self.fresh_label("guard_call_match_dispatch"))
+            .collect::<Vec<_>>();
+        let arm_labels = (0..closures.len())
+            .map(|_| self.fresh_label("guard_call_match_arm"))
+            .collect::<Vec<_>>();
+        let opcode = compare_opcode(BinaryOp::EqEq, &tag.ty);
+
+        if closures.is_empty() {
+            let _ = writeln!(output, "  br label %{fallback_label}");
+        } else {
+            for index in 0..closures.len() {
+                if index > 0 {
+                    let _ = writeln!(output, "{}:", dispatch_labels[index]);
+                }
+                let compare = self.fresh_temp();
+                let _ = writeln!(
+                    output,
+                    "  {compare} = {opcode} {} {}, {}",
+                    tag.llvm_ty, tag.repr, index
+                );
+                let false_target = if index + 1 == closures.len() {
+                    fallback_label.clone()
+                } else {
+                    dispatch_labels[index + 1].clone()
+                };
+                let _ = writeln!(
+                    output,
+                    "  br i1 {compare}, label %{}, label %{false_target}",
+                    arm_labels[index]
+                );
+            }
+        }
+
+        for (closure_id, arm_label) in closures.iter().zip(arm_labels.iter()) {
+            let _ = writeln!(output, "{arm_label}:");
+            let value = self.render_guard_direct_capturing_closure_call(
+                output,
+                *closure_id,
+                args,
+                span,
+                guard_binding,
+            );
+            let _ = writeln!(
+                output,
+                "  store {} {}, ptr {result_slot}",
+                value.llvm_ty, value.repr
+            );
+            let _ = writeln!(output, "  br label %{end_label}");
+        }
+
+        let _ = writeln!(output, "{fallback_label}:");
+        let value = self.render_guard_direct_capturing_closure_call(
+            output,
+            fallback_closure,
+            args,
+            span,
+            guard_binding,
+        );
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {result_slot}",
+            value.llvm_ty, value.repr
+        );
+        let _ = writeln!(output, "  br label %{end_label}");
+
+        let _ = writeln!(output, "{end_label}:");
+        self.render_loaded_pointer_value(output, result_slot, return_ty, span)
+    }
+
     fn render_guard_call_value(
         &mut self,
         output: &mut String,
@@ -13894,6 +14181,25 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
         guard_binding: Option<&GuardBindingValue>,
     ) -> LoweredValue {
+        if let Some(CleanupCapturingClosureBindingValue::TaggedMatch {
+            tag: Some(tag),
+            closures,
+        }) = cleanup_bound_capturing_closure_value_for_expr(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            &self.cleanup_capturing_closure_bindings,
+            callee_expr,
+        ) {
+            return self.render_guard_bound_tagged_match_capturing_closure_call(
+                output,
+                tag,
+                &closures,
+                args,
+                span,
+                guard_binding,
+            );
+        }
+
         if let Some(CleanupCapturingClosureBindingValue::BoolMatch {
             scrutinee: Some(scrutinee),
             true_closure,
@@ -17649,7 +17955,8 @@ fn cleanup_shared_local_match_binding_target_local(
     binding: &SupportedCleanupSharedLocalMatchBinding,
 ) -> hir::LocalId {
     match binding {
-        SupportedCleanupSharedLocalMatchBinding::Bool { target_local, .. }
+        SupportedCleanupSharedLocalMatchBinding::Tagged { target_local, .. }
+        | SupportedCleanupSharedLocalMatchBinding::Bool { target_local, .. }
         | SupportedCleanupSharedLocalMatchBinding::Integer { target_local, .. } => *target_local,
     }
 }
@@ -17658,6 +17965,12 @@ fn cleanup_shared_local_match_binding_value(
     binding: &SupportedCleanupSharedLocalMatchBinding,
 ) -> CleanupCapturingClosureBindingValue {
     match binding {
+        SupportedCleanupSharedLocalMatchBinding::Tagged { closures, .. } => {
+            CleanupCapturingClosureBindingValue::TaggedMatch {
+                tag: None,
+                closures: closures.clone(),
+            }
+        }
         SupportedCleanupSharedLocalMatchBinding::Bool {
             true_closure,
             false_closure,
@@ -17690,9 +18003,6 @@ fn cleanup_supported_shared_local_match_capturing_closure_binding(
     let hir::ExprKind::Match { value: _, arms } = &module.expr(expr_id).kind else {
         return None;
     };
-    if arms.iter().any(|arm| arm.guard.is_some()) {
-        return None;
-    }
 
     let mut normalized_arms = Vec::with_capacity(arms.len());
     let mut target_local = None;
@@ -17734,6 +18044,14 @@ fn cleanup_supported_shared_local_match_capturing_closure_binding(
         .into_iter()
         .map(normalize)
         .collect::<Option<Vec<_>>>()?;
+
+    if arms.iter().any(|arm| arm.guard.is_some()) {
+        return Some(SupportedCleanupSharedLocalMatchBinding::Tagged {
+            target_local,
+            expr_id,
+            closures: arm_closures,
+        });
+    }
 
     let bool_patterns = arms
         .iter()

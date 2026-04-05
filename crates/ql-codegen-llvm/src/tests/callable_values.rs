@@ -1643,6 +1643,81 @@ return 0
 }
 
 #[test]
+fn emits_cleanup_guarded_match_shared_local_control_flow_capturing_closure_alias_chain() {
+    let rendered = emit(
+        r#"
+extern "c" fn choose() -> Bool
+extern "c" fn guard() -> Bool
+
+fn main() -> Int {
+let target = 42
+let left = (value: Int) => value + target
+let right = (value: Int) => value + target + 1
+var alias = left
+defer {
+    let chosen = match choose() {
+        true if guard() => alias = right,
+        false => left,
+        _ => left,
+    }
+    let rebound = chosen
+    rebound(1)
+}
+return 0
+}
+"#,
+    );
+
+    assert!(rendered.matches("__closure").count() >= 2);
+    assert!(rendered.contains("cleanup_match_guard"));
+    assert!(rendered.contains("cleanup_call_match_arm"));
+    assert_eq!(rendered.matches("call i1 @guard()").count(), 1);
+    assert!(!rendered.contains("does not support cleanup lowering yet"));
+    assert!(
+        !rendered.contains("currently only supports a narrow non-`move` capturing-closure subset")
+    );
+}
+
+#[test]
+fn emits_cleanup_guarded_match_shared_local_control_flow_capturing_closure_guard_alias_chain() {
+    let rendered = emit(
+        r#"
+extern "c" fn choose() -> Bool
+extern "c" fn guard() -> Bool
+extern "c" fn keep()
+
+fn main() -> Int {
+let target = 42
+let left = (value: Int) => value == target
+let right = (value: Int) => value + 1 == target + 1
+var alias = left
+defer {
+    let chosen = match choose() {
+        true if guard() => alias = right,
+        false => left,
+        _ => left,
+    }
+    let rebound = chosen
+    if rebound(42) {
+        keep()
+    }
+}
+return 0
+}
+"#,
+    );
+
+    assert!(rendered.matches("__closure").count() >= 2);
+    assert!(rendered.contains("cleanup_match_guard"));
+    assert!(rendered.contains("guard_call_match_arm"));
+    assert_eq!(rendered.matches("call i1 @guard()").count(), 1);
+    assert!(!rendered.contains("does not support cleanup lowering yet"));
+    assert!(
+        !rendered.contains("currently only supports a narrow non-`move` capturing-closure subset")
+    );
+}
+
+#[test]
 fn emits_cleanup_block_control_flow_local_alias_capturing_closure_bindings() {
     let rendered = emit(
         r#"
