@@ -1598,17 +1598,13 @@ impl<'a> ModuleEmitter<'a> {
                 _ => None,
             })
             .collect::<HashSet<_>>();
-        expr_mentions_any_binding_local(
-            self.input.hir,
-            self.input.resolution,
-            expr_id,
-            &body_binding_locals,
-        ) && !cleanup_expr_is_supported_direct_local_capturing_closure_call(
+        cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
             self.input.hir,
             self.input.resolution,
             body,
             supported,
             expr_id,
+            &body_binding_locals,
         )
     }
 
@@ -13719,91 +13715,6 @@ fn const_expr_sync_closure_target(
     }
 }
 
-fn expr_mentions_any_binding_local(
-    module: &hir::Module,
-    resolution: &ResolutionMap,
-    expr_id: hir::ExprId,
-    binding_locals: &HashSet<hir::LocalId>,
-) -> bool {
-    match &module.expr(expr_id).kind {
-        hir::ExprKind::Name(_) => matches!(
-            resolution.expr_resolution(expr_id),
-            Some(ValueResolution::Local(local_id)) if binding_locals.contains(local_id)
-        ),
-        hir::ExprKind::Integer(_)
-        | hir::ExprKind::String { .. }
-        | hir::ExprKind::Bool(_)
-        | hir::ExprKind::NoneLiteral => false,
-        hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => items
-            .iter()
-            .any(|item| expr_mentions_any_binding_local(module, resolution, *item, binding_locals)),
-        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-            block_mentions_any_binding_local(module, resolution, *block_id, binding_locals)
-        }
-        hir::ExprKind::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            expr_mentions_any_binding_local(module, resolution, *condition, binding_locals)
-                || block_mentions_any_binding_local(
-                    module,
-                    resolution,
-                    *then_branch,
-                    binding_locals,
-                )
-                || else_branch.is_some_and(|expr_id| {
-                    expr_mentions_any_binding_local(module, resolution, expr_id, binding_locals)
-                })
-        }
-        hir::ExprKind::Match { value, arms } => {
-            expr_mentions_any_binding_local(module, resolution, *value, binding_locals)
-                || arms.iter().any(|arm| {
-                    arm.guard.is_some_and(|guard| {
-                        expr_mentions_any_binding_local(module, resolution, guard, binding_locals)
-                    }) || expr_mentions_any_binding_local(
-                        module,
-                        resolution,
-                        arm.body,
-                        binding_locals,
-                    )
-                })
-        }
-        hir::ExprKind::Closure { body, .. } => {
-            expr_mentions_any_binding_local(module, resolution, *body, binding_locals)
-        }
-        hir::ExprKind::Call { callee, args } => {
-            expr_mentions_any_binding_local(module, resolution, *callee, binding_locals)
-                || args.iter().any(|arg| {
-                    let value = match arg {
-                        hir::CallArg::Positional(expr_id) => *expr_id,
-                        hir::CallArg::Named { value, .. } => *value,
-                    };
-                    expr_mentions_any_binding_local(module, resolution, value, binding_locals)
-                })
-        }
-        hir::ExprKind::Member { object, .. } => {
-            expr_mentions_any_binding_local(module, resolution, *object, binding_locals)
-        }
-        hir::ExprKind::Bracket { target, items } => {
-            expr_mentions_any_binding_local(module, resolution, *target, binding_locals)
-                || items.iter().any(|item| {
-                    expr_mentions_any_binding_local(module, resolution, *item, binding_locals)
-                })
-        }
-        hir::ExprKind::StructLiteral { fields, .. } => fields.iter().any(|field| {
-            expr_mentions_any_binding_local(module, resolution, field.value, binding_locals)
-        }),
-        hir::ExprKind::Binary { left, right, .. } => {
-            expr_mentions_any_binding_local(module, resolution, *left, binding_locals)
-                || expr_mentions_any_binding_local(module, resolution, *right, binding_locals)
-        }
-        hir::ExprKind::Unary { expr, .. } | hir::ExprKind::Question(expr) => {
-            expr_mentions_any_binding_local(module, resolution, *expr, binding_locals)
-        }
-    }
-}
-
 fn direct_local_capturing_closure_for_expr(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -13839,34 +13750,225 @@ fn direct_local_capturing_closure_for_expr(
     }
 }
 
-fn cleanup_expr_is_supported_direct_local_capturing_closure_call(
+fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
     module: &hir::Module,
     resolution: &ResolutionMap,
     body: &mir::MirBody,
     supported: &HashMap<mir::LocalId, mir::ClosureId>,
     expr_id: hir::ExprId,
+    binding_locals: &HashSet<hir::LocalId>,
 ) -> bool {
     match &module.expr(expr_id).kind {
+        hir::ExprKind::Name(_) => matches!(
+            resolution.expr_resolution(expr_id),
+            Some(ValueResolution::Local(local_id)) if binding_locals.contains(local_id)
+        ),
+        hir::ExprKind::Integer(_)
+        | hir::ExprKind::String { .. }
+        | hir::ExprKind::Bool(_)
+        | hir::ExprKind::NoneLiteral => false,
+        hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => items.iter().any(|item| {
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *item,
+                binding_locals,
+            )
+        }),
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+            cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *block_id,
+                binding_locals,
+            )
+        }
+        hir::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *condition,
+                binding_locals,
+            ) || cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *then_branch,
+                binding_locals,
+            ) || else_branch.is_some_and(|expr_id| {
+                cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    expr_id,
+                    binding_locals,
+                )
+            })
+        }
+        hir::ExprKind::Match { value, arms } => {
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *value,
+                binding_locals,
+            ) || arms.iter().any(|arm| {
+                arm.guard.is_some_and(|guard| {
+                    cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                        module,
+                        resolution,
+                        body,
+                        supported,
+                        guard,
+                        binding_locals,
+                    )
+                }) || cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    arm.body,
+                    binding_locals,
+                )
+            })
+        }
+        hir::ExprKind::Closure { body: closure_body, .. } => {
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *closure_body,
+                binding_locals,
+            )
+        }
         hir::ExprKind::Call { callee, args } => {
-            args.iter()
-                .all(|arg| matches!(arg, hir::CallArg::Positional(_)))
+            let callee_allowed = args.iter().all(|arg| matches!(arg, hir::CallArg::Positional(_)))
                 && direct_local_capturing_closure_for_expr(
                     module, resolution, body, supported, *callee,
                 )
-                .is_some()
+                .is_some();
+            (!callee_allowed
+                && cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    *callee,
+                    binding_locals,
+                ))
+                || args.iter().any(|arg| {
+                    let value = match arg {
+                        hir::CallArg::Positional(expr_id) => *expr_id,
+                        hir::CallArg::Named { value, .. } => *value,
+                    };
+                    cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                        module,
+                        resolution,
+                        body,
+                        supported,
+                        value,
+                        binding_locals,
+                    )
+                })
         }
-        hir::ExprKind::Question(inner) => {
-            cleanup_expr_is_supported_direct_local_capturing_closure_call(
-                module, resolution, body, supported, *inner,
+        hir::ExprKind::Member { object, .. } => {
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *object,
+                binding_locals,
             )
         }
-        _ => false,
+        hir::ExprKind::Bracket { target, items } => {
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *target,
+                binding_locals,
+            ) || items.iter().any(|item| {
+                cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    *item,
+                    binding_locals,
+                )
+            })
+        }
+        hir::ExprKind::StructLiteral { fields, .. } => fields.iter().any(|field| {
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                field.value,
+                binding_locals,
+            )
+        }),
+        hir::ExprKind::Binary { left, right, .. } => {
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *left,
+                binding_locals,
+            ) || cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *right,
+                binding_locals,
+            )
+        }
+        hir::ExprKind::Question(inner) => {
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *inner,
+                binding_locals,
+            )
+        }
+        hir::ExprKind::Unary { expr, .. } => {
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *expr,
+                binding_locals,
+            )
+        }
     }
 }
 
-fn block_mentions_any_binding_local(
+fn cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
     module: &hir::Module,
     resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    supported: &HashMap<mir::LocalId, mir::ClosureId>,
     block_id: hir::BlockId,
     binding_locals: &HashSet<hir::LocalId>,
 ) -> bool {
@@ -13876,29 +13978,95 @@ fn block_mentions_any_binding_local(
         .iter()
         .any(|statement_id| match &module.stmt(*statement_id).kind {
             hir::StmtKind::Let { value, .. } => {
-                expr_mentions_any_binding_local(module, resolution, *value, binding_locals)
+                cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    *value,
+                    binding_locals,
+                )
             }
             hir::StmtKind::Return(expr) => expr.is_some_and(|expr_id| {
-                expr_mentions_any_binding_local(module, resolution, expr_id, binding_locals)
+                cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    expr_id,
+                    binding_locals,
+                )
             }),
             hir::StmtKind::Defer(expr) | hir::StmtKind::Expr { expr, .. } => {
-                expr_mentions_any_binding_local(module, resolution, *expr, binding_locals)
+                cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    *expr,
+                    binding_locals,
+                )
             }
-            hir::StmtKind::While { condition, body } => {
-                expr_mentions_any_binding_local(module, resolution, *condition, binding_locals)
-                    || block_mentions_any_binding_local(module, resolution, *body, binding_locals)
+            hir::StmtKind::While {
+                condition,
+                body: loop_body,
+            } => cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *condition,
+                binding_locals,
+            )
+                || cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    *loop_body,
+                    binding_locals,
+                ),
+            hir::StmtKind::Loop { body: loop_body } => {
+                cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    *loop_body,
+                    binding_locals,
+                )
             }
-            hir::StmtKind::Loop { body } => {
-                block_mentions_any_binding_local(module, resolution, *body, binding_locals)
-            }
-            hir::StmtKind::For { iterable, body, .. } => {
-                expr_mentions_any_binding_local(module, resolution, *iterable, binding_locals)
-                    || block_mentions_any_binding_local(module, resolution, *body, binding_locals)
-            }
+            hir::StmtKind::For {
+                iterable,
+                body: loop_body,
+                ..
+            } => cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                *iterable,
+                binding_locals,
+            )
+                || cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    *loop_body,
+                    binding_locals,
+                ),
             hir::StmtKind::Break | hir::StmtKind::Continue => false,
         })
         || block.tail.is_some_and(|expr_id| {
-            expr_mentions_any_binding_local(module, resolution, expr_id, binding_locals)
+            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                module,
+                resolution,
+                body,
+                supported,
+                expr_id,
+                binding_locals,
+            )
         })
 }
 
@@ -17029,6 +17197,34 @@ fn main() -> Int {
         assert!(rendered.contains("call i64 @ql_0_main__closure1("));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(!rendered.contains(
+            "currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
+        ));
+    }
+
+    #[test]
+    fn emits_local_capturing_closures_in_cleanup_if_and_match_guards() {
+        let rendered = emit(
+            r#"
+extern "c" fn keep()
+
+fn main() -> Int {
+    let target = 42
+    let check = (value: Int) => value == target
+    defer if check(42) {
+        keep()
+    }
+    defer match 42 {
+        current if check(current) => keep(),
+        _ => keep(),
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.matches("__closure0(").count() >= 3);
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains(
             "currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
         ));
