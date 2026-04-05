@@ -232,7 +232,7 @@ enum SupportedMatchLowering {
 
 #[derive(Clone, Debug)]
 struct SupportedGuardOnlyMatchArm {
-    binding_local: Option<hir::LocalId>,
+    pattern: hir::PatternId,
     guard: SupportedBoolGuard,
     target: mir::BasicBlockId,
 }
@@ -1923,7 +1923,7 @@ impl<'a> ModuleEmitter<'a> {
                                 None
                             }
                         }
-                        Some(_) => {
+                        Some(scrutinee_ty) => {
                             let mut ordered_arms = Vec::new();
                             let mut fallback_target = *else_target;
                             let mut supported = true;
@@ -1957,33 +1957,20 @@ impl<'a> ModuleEmitter<'a> {
                                     },
                                 };
 
-                                match pattern_kind(self.input.hir, arm.pattern) {
-                                    PatternKind::Binding(local) => {
-                                        if matches!(guard, SupportedBoolGuard::Always) {
-                                            fallback_target = arm.target;
-                                            break;
-                                        }
-                                        ordered_arms.push(SupportedGuardOnlyMatchArm {
-                                            binding_local: Some(*local),
-                                            guard,
-                                            target: arm.target,
-                                        });
-                                    }
-                                    PatternKind::Wildcard => {
-                                        if matches!(guard, SupportedBoolGuard::Always) {
-                                            fallback_target = arm.target;
-                                            break;
-                                        }
-                                        ordered_arms.push(SupportedGuardOnlyMatchArm {
-                                            binding_local: None,
-                                            guard,
-                                            target: arm.target,
-                                        });
-                                    }
-                                    _ => {
-                                        supported = false;
+                                if self.supports_match_catch_all_pattern(arm.pattern, &scrutinee_ty)
+                                {
+                                    if matches!(guard, SupportedBoolGuard::Always) {
+                                        fallback_target = arm.target;
                                         break;
                                     }
+                                    ordered_arms.push(SupportedGuardOnlyMatchArm {
+                                        pattern: arm.pattern,
+                                        guard,
+                                        target: arm.target,
+                                    });
+                                } else {
+                                    supported = false;
+                                    break;
                                 }
                             }
 
@@ -2812,11 +2799,7 @@ impl<'a> ModuleEmitter<'a> {
         }
     }
 
-    fn supports_cleanup_match_catch_all_pattern(
-        &self,
-        pattern: hir::PatternId,
-        scrutinee_ty: &Ty,
-    ) -> bool {
+    fn supports_match_catch_all_pattern(&self, pattern: hir::PatternId, scrutinee_ty: &Ty) -> bool {
         match pattern_kind(self.input.hir, pattern) {
             PatternKind::Binding(_) | PatternKind::Wildcard => true,
             PatternKind::Tuple(items) => {
@@ -2825,7 +2808,7 @@ impl<'a> ModuleEmitter<'a> {
                 };
                 items.len() == item_tys.len()
                     && items.iter().zip(item_tys.iter()).all(|(item, item_ty)| {
-                        self.supports_cleanup_match_catch_all_pattern(*item, item_ty)
+                        self.supports_match_catch_all_pattern(*item, item_ty)
                     })
             }
             PatternKind::Struct { fields, .. } => {
@@ -2841,7 +2824,7 @@ impl<'a> ModuleEmitter<'a> {
                         .iter()
                         .find(|layout| layout.name == field.name)
                         .is_some_and(|layout| {
-                            self.supports_cleanup_match_catch_all_pattern(field.pattern, &layout.ty)
+                            self.supports_match_catch_all_pattern(field.pattern, &layout.ty)
                         })
                 })
             }
@@ -2953,7 +2936,7 @@ impl<'a> ModuleEmitter<'a> {
 
         self.supports_cleanup_value_expr(value_expr, scrutinee_ty, body, local_types)
             && arms.iter().all(|arm| {
-                self.supports_cleanup_match_catch_all_pattern(arm.pattern, scrutinee_ty)
+                self.supports_match_catch_all_pattern(arm.pattern, scrutinee_ty)
                     && arm.guard.is_none_or(|guard| {
                         self.supports_cleanup_bool_expr(guard, body, local_types)
                     })
@@ -3245,7 +3228,7 @@ impl<'a> ModuleEmitter<'a> {
 
                 return self.supports_cleanup_value_expr(*value, scrutinee_ty, body, local_types)
                     && arms.iter().all(|arm| {
-                        self.supports_cleanup_match_catch_all_pattern(arm.pattern, scrutinee_ty)
+                        self.supports_match_catch_all_pattern(arm.pattern, scrutinee_ty)
                             && arm.guard.is_none_or(|guard| {
                                 self.supports_cleanup_bool_expr(guard, body, local_types)
                             })
@@ -8054,28 +8037,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                                         integer_match_guard_block_name(block_id, index);
                                     let _ = writeln!(output, "  br label %{guard_target}");
                                     let _ = writeln!(output, "{guard_target}:");
-                                    let guard_binding =
-                                        arm.binding_local.map(|local| GuardBindingValue {
-                                            local,
-                                            value: rendered.clone(),
-                                        });
-                                    if let Some(binding) = guard_binding.as_ref()
-                                        && let Some(local) =
-                                            mir_local_for_hir_local(self.body, binding.local)
-                                    {
-                                        let _ = writeln!(
-                                            output,
-                                            "  store {} {}, ptr {}",
-                                            binding.value.llvm_ty,
-                                            binding.value.repr,
-                                            llvm_slot_name(self.body, local)
-                                        );
-                                    }
+                                    self.bind_pattern_value(
+                                        output,
+                                        arm.pattern,
+                                        rendered.clone(),
+                                        terminator.span,
+                                    );
                                     let condition = self.render_bool_guard_expr(
                                         output,
                                         expr_id,
                                         terminator.span,
-                                        guard_binding.as_ref(),
+                                        None,
                                     );
                                     let _ = writeln!(
                                         output,
@@ -16486,6 +16458,74 @@ fn main() -> Int {
         assert!(rendered.contains("getelementptr inbounds { { i1, i64 } }"));
         assert!(rendered.contains("getelementptr inbounds { i64, i64 }"));
         assert!(rendered.contains("getelementptr inbounds [3 x i64]"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
+    fn emits_match_destructuring_catch_all_lowering_for_aggregate_scrutinees() {
+        let runtime_hooks = collect_runtime_hook_signatures([
+            RuntimeCapability::AsyncFunctionBodies,
+            RuntimeCapability::TaskSpawn,
+            RuntimeCapability::TaskAwait,
+        ]);
+        let rendered = emit_with_runtime_hooks(
+            r#"
+use load_state as state_alias
+use load_pair as pair_alias
+use LOAD_STATE as state_const_alias
+use LOAD_PAIR as pair_const_alias
+
+struct Slot {
+    ready: Bool,
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+}
+
+extern "c" fn sink(value: Int)
+
+fn pair_value() -> (Int, Int) {
+    return (3, 4)
+}
+
+async fn load_state(value: Int) -> State {
+    return State { slot: Slot { ready: true, value: value } }
+}
+
+async fn load_pair(value: Int) -> (Int, Int) {
+    return (value, value + 1)
+}
+
+const LOAD_STATE: (Int) -> Task[State] = load_state
+const LOAD_PAIR: (Int) -> Task[(Int, Int)] = load_pair
+
+async fn main() -> Int {
+    let branch = true
+    let direct = match pair_value() {
+        (left, right) if left < right => left + right,
+        _ => 0,
+    }
+    match await (if branch { pair_alias } else { pair_const_alias })(20) {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+    match await (match branch { true => state_const_alias, false => state_alias })(13) {
+        State { slot: Slot { value } } if value == 13 => sink(value),
+        _ => sink(0),
+    }
+    return direct
+}
+"#,
+            CodegenMode::Program,
+            &runtime_hooks,
+        );
+
+        assert!(rendered.matches("extractvalue { i64, i64 }").count() >= 2);
+        assert!(rendered.contains("extractvalue { { i1, i64 } }"));
+        assert!(rendered.contains("icmp slt i64"));
+        assert!(rendered.contains("icmp eq i64"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
     }
 
