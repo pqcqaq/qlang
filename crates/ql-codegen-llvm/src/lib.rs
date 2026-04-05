@@ -1354,8 +1354,25 @@ impl<'a> ModuleEmitter<'a> {
         for statement in body.statements() {
             match &statement.kind {
                 StatementKind::Assign { place, value } => {
+                    let temp_forwarded_closure = if place.projections.is_empty()
+                        && matches!(body.local(place.base).origin, LocalOrigin::Temp { .. })
+                    {
+                        direct_local_capturing_closure_assignment_source(
+                            value,
+                            &staged,
+                            &supported,
+                            &closure_spans,
+                        )
+                    } else {
+                        None
+                    };
                     if supported.contains_key(&place.base)
                         && !matches!(value, Rvalue::Closure { .. })
+                        && !matches!(
+                            temp_forwarded_closure,
+                            Some((closure_id, _))
+                                if supported.get(&place.base).is_some_and(|current| *current == closure_id)
+                        )
                     {
                         diagnostics.push(
                             self.capturing_closure_diagnostic(
@@ -1364,6 +1381,19 @@ impl<'a> ModuleEmitter<'a> {
                                     .expect("capturing closure local should preserve its span"),
                             ),
                         );
+                    }
+                    if let Some((closure_id, closure_span)) = temp_forwarded_closure {
+                        match supported.get(&place.base).copied() {
+                            Some(current) if current != closure_id => {
+                                diagnostics.push(self.capturing_closure_diagnostic(closure_span));
+                            }
+                            Some(_) => {}
+                            None => {
+                                supported.insert(place.base, closure_id);
+                                closure_spans.insert(place.base, closure_span);
+                            }
+                        }
+                        continue;
                     }
                     self.validate_direct_local_capturing_closure_rvalue(
                         value,
@@ -13742,8 +13772,63 @@ fn direct_local_capturing_closure_for_expr(
                 block.tail?,
             )
         }
+        hir::ExprKind::If {
+            then_branch,
+            else_branch: Some(other),
+            ..
+        } => {
+            let block = module.block(*then_branch);
+            if !block.statements.is_empty() {
+                return None;
+            }
+            let then_closure = direct_local_capturing_closure_for_expr(
+                module,
+                resolution,
+                body,
+                supported,
+                block.tail?,
+            )?;
+            let other_closure =
+                direct_local_capturing_closure_for_expr(module, resolution, body, supported, *other)?;
+            (then_closure == other_closure).then_some(then_closure)
+        }
+        hir::ExprKind::Match { arms, .. } => {
+            let mut closure_id = None;
+            for arm in arms {
+                let current =
+                    direct_local_capturing_closure_for_expr(module, resolution, body, supported, arm.body)?;
+                match closure_id {
+                    Some(existing) if existing != current => return None,
+                    Some(_) => {}
+                    None => closure_id = Some(current),
+                }
+            }
+            closure_id
+        }
         _ => None,
     }
+}
+
+fn direct_local_capturing_closure_assignment_source(
+    value: &Rvalue,
+    staged: &HashMap<mir::LocalId, mir::ClosureId>,
+    supported: &HashMap<mir::LocalId, mir::ClosureId>,
+    closure_spans: &HashMap<mir::LocalId, Span>,
+) -> Option<(mir::ClosureId, Span)> {
+    let Rvalue::Use(Operand::Place(source)) = value else {
+        return None;
+    };
+    if !source.projections.is_empty() {
+        return None;
+    }
+    let closure_id = staged
+        .get(&source.base)
+        .copied()
+        .or_else(|| supported.get(&source.base).copied())?;
+    let closure_span = *closure_spans
+        .get(&source.base)
+        .expect("capturing closure local should preserve its source span");
+    Some((closure_id, closure_span))
 }
 
 fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
@@ -17004,6 +17089,31 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_same_target_control_flow_capturing_closure_calls() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let branch = true
+    let value = 1
+    let capture = () => value
+    let alias = capture
+    let chosen_if = if branch { capture } else { alias }
+    let chosen_match = match branch {
+        true => alias,
+        false => capture,
+    }
+    return chosen_if() + chosen_match()
+}
+"#,
+        );
+
+        assert!(rendered.matches("@ql_0_main__closure0(").count() >= 2);
+        assert!(!rendered.contains(
+            "currently only supports a narrow non-`move` capturing-closure subset"
+        ));
+    }
+
+    #[test]
     fn emits_callable_const_and_static_item_calls() {
         let rendered = emit(
             r#"
@@ -17252,17 +17362,19 @@ fn main() -> Int {
         let messages = emit_error(
             r#"
 fn main() -> Int {
+    let branch = true
     let value = 1
-    let capture = () => value
-    var alias = capture
-    return alias()
+    let left = () => value
+    let right = () => value + 1
+    let chosen = if branch { left } else { right }
+    return chosen()
 }
 "#,
         );
 
         assert!(messages.iter().any(|message| {
             message
-                == "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
+                == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through direct/local-alias calls plus the current direct cleanup/guard-call paths"
         }));
         assert!(messages.iter().all(|message| {
             !message.contains("could not resolve LLVM type for local")
