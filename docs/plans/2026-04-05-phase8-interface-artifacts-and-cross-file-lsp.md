@@ -119,7 +119,7 @@ LSP V1 继续关闭：
 - package-aware `ql check <package-dir>` 现已通过该入口分析当前包源码，并加载 `[references].packages` 指向的 dependency `.qi`
 - 当前 dependency `.qi` 已推进到 syntax-aware section parse：每个 interface module section 会进入 interface-mode AST
 - `ql-analysis::analyze_package` 现已把 dependency `.qi` 的公开符号索引进 package-level truth surface：当前覆盖 top-level `fn` / `const` / `static` / `struct` / `enum` / `trait` / `type`，以及 public trait / `impl` / `extend` methods
-- 当前已接通第一条消费链路：imported dependency symbol 的 hover / definition / references 现已可通过 package-level truth surface 落到 dependency `.qi` declaration
+- 当前已接通第一条消费链路：imported dependency symbol 的 hover / definition / references 现已可通过 package-level truth surface 落到 dependency `.qi` declaration，且 grouped import alias 形态也已显式落进同一条 target resolution 合同
 - 当前也已接通首个 completion 消费切片：`use ...` 导入路径和平铺 / grouped import 位置现已既能补 dependency package path segment，也能继续补到 `.qi` 里的公开声明；grouped import 空补全位还会跳过已经写过的 item
 - 更广义的 cross-file completion 仍未接上这些 indexed dependency symbols
 

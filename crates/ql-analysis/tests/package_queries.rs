@@ -124,3 +124,73 @@ pub fn main(value: Buf[Int]) -> Int {
         .expect("definition span should slice artifact text");
     assert_eq!(snippet.trim(), "fn exported(value: Int) -> Int");
 }
+
+#[test]
+fn package_analysis_exposes_grouped_dependency_target_through_imports() {
+    let temp = TempDir::new("ql-analysis-grouped-package-queries");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported(value: Int) -> Int
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{exported as run}
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let target = package
+        .dependency_target_at(&analysis, nth_offset(source, "run", 1))
+        .expect("grouped dependency target should exist");
+    assert_eq!(target.kind, SymbolKind::Function);
+    assert_eq!(target.name, "exported");
+    assert_eq!(target.detail, "fn exported(value: Int) -> Int");
+    assert_eq!(
+        source
+            .get(target.import_span.start..target.import_span.end)
+            .expect("import span should slice source"),
+        "run",
+    );
+
+    let artifact = fs::read_to_string(&target.path)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = artifact
+        .get(target.definition_span.start..target.definition_span.end)
+        .expect("definition span should slice artifact text");
+    assert_eq!(snippet.trim(), "fn exported(value: Int) -> Int");
+}

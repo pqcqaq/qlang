@@ -205,14 +205,14 @@ pub fn references_for_package_analysis(
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
     let offset = position_to_offset(source, position)?;
-    if let Some(target) = package.dependency_definition_at(analysis, offset) {
+    if let Some(target) = package.dependency_target_at(analysis, offset) {
         let mut locations = Vec::new();
         if include_declaration {
             let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
             let target_uri = Url::from_file_path(&target.path).ok()?;
             locations.push(Location::new(
                 target_uri,
-                span_to_range(&target_source, target.span),
+                span_to_range(&target_source, target.definition_span),
             ));
         }
 

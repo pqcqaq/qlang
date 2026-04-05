@@ -93,6 +93,18 @@ pub struct DependencyDefinitionTarget {
     pub span: Span,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyResolvedTarget {
+    pub import_span: Span,
+    pub package_name: String,
+    pub source_path: String,
+    pub kind: SymbolKind,
+    pub name: String,
+    pub detail: String,
+    pub path: PathBuf,
+    pub definition_span: Span,
+}
+
 #[derive(Debug)]
 pub enum PackageAnalysisError {
     Project(ProjectError),
@@ -256,15 +268,14 @@ impl PackageAnalysis {
         analysis: &Analysis,
         offset: usize,
     ) -> Option<DependencyHoverInfo> {
-        let (dependency, symbol, import_span) =
-            self.resolve_dependency_import_target(analysis, offset)?;
+        let target = self.dependency_target_at(analysis, offset)?;
         Some(DependencyHoverInfo {
-            span: import_span,
-            package_name: dependency.artifact.package_name.clone(),
-            source_path: symbol.source_path.clone(),
-            kind: symbol.kind,
-            name: symbol.name.clone(),
-            detail: symbol.detail.clone(),
+            span: target.import_span,
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: target.kind,
+            name: target.name,
+            detail: target.detail,
         })
     }
 
@@ -273,15 +284,34 @@ impl PackageAnalysis {
         analysis: &Analysis,
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
-        let (dependency, symbol, _) = self.resolve_dependency_import_target(analysis, offset)?;
-        let span = dependency.artifact_span_for(symbol)?;
+        let target = self.dependency_target_at(analysis, offset)?;
         Some(DependencyDefinitionTarget {
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: target.kind,
+            name: target.name,
+            path: target.path,
+            span: target.definition_span,
+        })
+    }
+
+    pub fn dependency_target_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<DependencyResolvedTarget> {
+        let (dependency, symbol, import_span) =
+            self.resolve_dependency_import_target(analysis, offset)?;
+        let definition_span = dependency.artifact_span_for(symbol)?;
+        Some(DependencyResolvedTarget {
+            import_span,
             package_name: dependency.artifact.package_name.clone(),
             source_path: symbol.source_path.clone(),
             kind: symbol.kind,
             name: symbol.name.clone(),
+            detail: symbol.detail.clone(),
             path: dependency.interface_path.clone(),
-            span,
+            definition_span,
         })
     }
 

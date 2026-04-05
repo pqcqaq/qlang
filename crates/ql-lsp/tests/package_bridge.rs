@@ -172,6 +172,130 @@ pub fn main(value: Buf[Int]) -> Int {
 }
 
 #[test]
+fn package_bridge_surfaces_grouped_dependency_hover_definition_and_references() {
+    let temp = TempDir::new("ql-lsp-grouped-package-bridge");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported(value: Int) -> Int
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{exported as run}
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let hover = hover_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "run", 1)),
+    )
+    .expect("grouped dependency hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**function** `exported`"));
+    assert!(markup.value.contains("fn exported(value: Int) -> Int"));
+
+    let definition = definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "run", 1)),
+    )
+    .expect("grouped dependency definition should exist");
+    let GotoDefinitionResponse::Scalar(Location { uri, range }) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        uri.to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = "fn exported(value: Int) -> Int";
+    let start = artifact
+        .find(snippet)
+        .expect("exported signature should exist");
+    assert_eq!(
+        range,
+        span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
+
+    let references = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "run", 1)),
+        true,
+    )
+    .expect("grouped dependency references should exist");
+    assert_eq!(references.len(), 3);
+    assert_eq!(
+        references[0]
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+}
+
+#[test]
 fn package_bridge_surfaces_dependency_import_completion() {
     let temp = TempDir::new("ql-lsp-package-completion");
     let app_root = temp.path().join("workspace").join("app");
