@@ -15,7 +15,8 @@ use tower_lsp::{Client, LanguageServer};
 use crate::bridge::{
     completion_for_analysis, definition_for_package_analysis, diagnostics_to_lsp,
     hover_for_package_analysis, prepare_rename_for_analysis, references_for_analysis,
-    rename_for_analysis, semantic_tokens_for_analysis, semantic_tokens_legend,
+    references_for_package_analysis, rename_for_analysis, semantic_tokens_for_analysis,
+    semantic_tokens_legend,
 };
 use crate::store::DocumentStore;
 
@@ -176,6 +177,17 @@ impl LanguageServer for Backend {
         let Some((source, analysis)) = self.analyzed_document(&uri).await else {
             return Ok(None);
         };
+
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            return Ok(references_for_package_analysis(
+                &uri,
+                &source,
+                &analysis,
+                &package,
+                position,
+                params.context.include_declaration,
+            ));
+        }
 
         Ok(references_for_analysis(
             &uri,

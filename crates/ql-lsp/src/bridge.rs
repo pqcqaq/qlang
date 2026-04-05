@@ -196,6 +196,39 @@ pub fn references_for_analysis(
     )
 }
 
+pub fn references_for_package_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &PackageAnalysis,
+    position: Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    let offset = position_to_offset(source, position)?;
+    if let Some(target) = package.dependency_definition_at(analysis, offset) {
+        let mut locations = Vec::new();
+        if include_declaration {
+            let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
+            let target_uri = Url::from_file_path(&target.path).ok()?;
+            locations.push(Location::new(
+                target_uri,
+                span_to_range(&target_source, target.span),
+            ));
+        }
+
+        let local_references = analysis.references_at(offset).unwrap_or_default();
+        locations.extend(
+            local_references
+                .into_iter()
+                .filter(|reference| include_declaration || !reference.is_definition)
+                .map(|reference| Location::new(uri.clone(), span_to_range(source, reference.span))),
+        );
+        return Some(locations);
+    }
+
+    references_for_analysis(uri, source, analysis, position, include_declaration)
+}
+
 pub fn completion_for_analysis(
     source: &str,
     analysis: &Analysis,
