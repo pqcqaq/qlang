@@ -6354,15 +6354,29 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         value: hir::ExprId,
         span: Span,
     ) {
-        if let PatternKind::Binding(local) = pattern_kind(self.emitter.input.hir, pattern)
-            && let Some(closure_id) = self.supported_direct_local_capturing_closure_for_expr(value)
-        {
-            self.cleanup_capturing_closure_bindings
-                .push(CleanupCapturingClosureBinding {
-                    local: *local,
-                    closure_id,
-                });
-            return;
+        if let PatternKind::Binding(local) = pattern_kind(self.emitter.input.hir, pattern) {
+            if let Some(callee) =
+                self.supported_direct_cleanup_capturing_closure_callee_for_expr(value)
+            {
+                if let CleanupDirectCapturingClosureExpr::Assignment(binding) = callee {
+                    self.cleanup_capturing_closure_bindings.push(binding);
+                }
+                self.cleanup_capturing_closure_bindings
+                    .push(CleanupCapturingClosureBinding {
+                        local: *local,
+                        closure_id: callee.closure_id(),
+                    });
+                return;
+            }
+            if let Some(closure_id) = self.supported_direct_local_capturing_closure_for_expr(value)
+            {
+                self.cleanup_capturing_closure_bindings
+                    .push(CleanupCapturingClosureBinding {
+                        local: *local,
+                        closure_id,
+                    });
+                return;
+            }
         }
         let expected_ty = self
             .emitter
@@ -14426,18 +14440,39 @@ fn cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_c
         match &module.stmt(*statement_id).kind {
             hir::StmtKind::Let { pattern, value, .. } => {
                 let alias_binding = match pattern_kind(module, *pattern) {
-                    PatternKind::Binding(local) => direct_local_capturing_closure_for_expr(
-                        module,
-                        resolution,
-                        body,
-                        supported,
-                        &scoped_aliases,
-                        *value,
-                    )
-                    .map(|closure_id| CleanupCapturingClosureBinding {
-                        local: *local,
-                        closure_id,
-                    }),
+                    PatternKind::Binding(local) => {
+                        if let Some(expr) = cleanup_direct_capturing_closure_callee_expr(
+                            module,
+                            resolution,
+                            body,
+                            supported,
+                            &scoped_aliases,
+                            *value,
+                        ) {
+                            if let CleanupDirectCapturingClosureExpr::Assignment(binding) = expr {
+                                scoped_aliases.push(binding);
+                            }
+                            Some(CleanupCapturingClosureBinding {
+                                local: *local,
+                                closure_id: expr.closure_id(),
+                            })
+                        } else {
+                            direct_local_capturing_closure_for_expr(
+                                module,
+                                resolution,
+                                body,
+                                supported,
+                                &scoped_aliases,
+                                *value,
+                            )
+                            .map(|closure_id| {
+                                CleanupCapturingClosureBinding {
+                                    local: *local,
+                                    closure_id,
+                                }
+                            })
+                        }
+                    }
                     _ => None,
                 };
                 if let Some(binding) = alias_binding {
@@ -17955,6 +17990,41 @@ fn main() -> Int {
         assert!(rendered.matches("__closure").count() >= 2);
         assert!(rendered.contains("call i64 %t"));
         assert!(rendered.contains("call i1 %t"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
+    }
+
+    #[test]
+    fn emits_cleanup_block_assignment_valued_capturing_closure_bindings() {
+        let rendered = emit(
+            r#"
+extern "c" fn keep()
+
+fn main() -> Int {
+    let target = 42
+    let check = (value: Int) => value == target
+    var check_alias = check
+    let run = (value: Int) => value + target
+    var run_alias = run
+    defer {
+        let chosen_run = run_alias = run
+        let chosen_check = check_alias = check
+        chosen_run(1)
+        if chosen_check(42) {
+            keep()
+        }
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.matches("__closure").count() >= 2);
+        assert!(rendered.contains("call i64 @"));
+        assert!(rendered.contains("call i1 @"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(
             !rendered
