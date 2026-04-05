@@ -5301,6 +5301,27 @@ fn cleanup_block_capturing_closure_alias_codegen_case_matches() {
 }
 
 #[test]
+fn cleanup_block_mutable_capturing_closure_reassign_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "cleanup_block_mutable_capturing_closure_reassign_build",
+        source_relative:
+            "fixtures/codegen/pass/cleanup_block_mutable_capturing_closure_reassign_build.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("cleanup block mutable capturing-closure reassign build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn cleanup_block_let_destructuring_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {

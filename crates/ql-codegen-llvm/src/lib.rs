@@ -3105,6 +3105,15 @@ impl<'a> ModuleEmitter<'a> {
                         })
             }
             hir::StmtKind::Expr { expr, .. } => {
+                if let hir::ExprKind::Binary {
+                    left,
+                    op: BinaryOp::Assign,
+                    right,
+                } = &self.input.hir.expr(*expr).kind
+                    && self.supports_cleanup_callable_assignment_expr(*left, *right)
+                {
+                    return true;
+                }
                 self.supports_cleanup_expr_with_loop(*expr, in_cleanup_loop, body, local_types)
             }
             hir::StmtKind::While {
@@ -3154,6 +3163,23 @@ impl<'a> ModuleEmitter<'a> {
             hir::StmtKind::Break | hir::StmtKind::Continue => in_cleanup_loop,
             hir::StmtKind::Return(_) | hir::StmtKind::Defer(_) => false,
         }
+    }
+
+    fn supports_cleanup_callable_assignment_expr(
+        &self,
+        target_expr: hir::ExprId,
+        value_expr: hir::ExprId,
+    ) -> bool {
+        let Some(target_ty) = self.input.typeck.expr_ty(target_expr) else {
+            return false;
+        };
+        if is_void_ty(target_ty) || !matches!(target_ty, Ty::Callable { .. }) {
+            return false;
+        }
+        self.input
+            .typeck
+            .expr_ty(value_expr)
+            .is_some_and(|value_ty| target_ty.compatible_with(value_ty))
     }
 
     fn supports_cleanup_let_pattern(&self, pattern: hir::PatternId) -> bool {
@@ -6251,7 +6277,27 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             hir::StmtKind::Let { pattern, value, .. } => {
                 self.render_cleanup_let(output, *pattern, *value, span)
             }
-            hir::StmtKind::Expr { expr, .. } => self.render_cleanup_expr(output, *expr, span),
+            hir::StmtKind::Expr { expr, .. } => {
+                if let hir::ExprKind::Binary {
+                    left,
+                    op: BinaryOp::Assign,
+                    right,
+                } = &self.emitter.input.hir.expr(*expr).kind
+                    && let Some(binding) = cleanup_same_target_capturing_closure_assignment(
+                        self.emitter.input.hir,
+                        self.emitter.input.resolution,
+                        self.body,
+                        &self.prepared.direct_local_capturing_closures,
+                        &self.cleanup_capturing_closure_bindings,
+                        *left,
+                        *right,
+                    )
+                {
+                    self.cleanup_capturing_closure_bindings.push(binding);
+                    return;
+                }
+                self.render_cleanup_expr(output, *expr, span)
+            }
             hir::StmtKind::While { condition, body } => {
                 self.render_cleanup_while(output, *condition, *body, span)
             }
@@ -13921,6 +13967,43 @@ fn direct_local_capturing_closure_assignment_source(
     Some((closure_id, closure_span))
 }
 
+fn cleanup_same_target_capturing_closure_assignment(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    supported: &HashMap<mir::LocalId, mir::ClosureId>,
+    cleanup_aliases: &[CleanupCapturingClosureBinding],
+    target_expr: hir::ExprId,
+    value_expr: hir::ExprId,
+) -> Option<CleanupCapturingClosureBinding> {
+    let hir::ExprKind::Name(_) = &module.expr(target_expr).kind else {
+        return None;
+    };
+    let ValueResolution::Local(local) = resolution.expr_resolution(target_expr)? else {
+        return None;
+    };
+    let target_closure = direct_local_capturing_closure_for_expr(
+        module,
+        resolution,
+        body,
+        supported,
+        cleanup_aliases,
+        target_expr,
+    )?;
+    let value_closure = direct_local_capturing_closure_for_expr(
+        module,
+        resolution,
+        body,
+        supported,
+        cleanup_aliases,
+        value_expr,
+    )?;
+    (target_closure == value_closure).then_some(CleanupCapturingClosureBinding {
+        local: *local,
+        closure_id: value_closure,
+    })
+}
+
 fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -14225,7 +14308,38 @@ fn cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_c
                     return true;
                 }
             }
-            hir::StmtKind::Defer(expr) | hir::StmtKind::Expr { expr, .. } => {
+            hir::StmtKind::Expr { expr, .. } => {
+                if let hir::ExprKind::Binary {
+                    left,
+                    op: BinaryOp::Assign,
+                    right,
+                } = &module.expr(*expr).kind
+                    && let Some(binding) = cleanup_same_target_capturing_closure_assignment(
+                        module,
+                        resolution,
+                        body,
+                        supported,
+                        &scoped_aliases,
+                        *left,
+                        *right,
+                    )
+                {
+                    scoped_aliases.push(binding);
+                    continue;
+                }
+                if cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    *expr,
+                    binding_locals,
+                    &scoped_aliases,
+                ) {
+                    return true;
+                }
+            }
+            hir::StmtKind::Defer(expr) => {
                 if cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
                     module,
                     resolution,
@@ -17559,6 +17673,41 @@ fn main() -> Int {
         let alias_run = run
         let alias_check = check
         alias_run(1)
+        if alias_check(42) {
+            keep()
+        }
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.matches("__closure").count() >= 2);
+        assert!(rendered.contains("call i64 @"));
+        assert!(rendered.contains("call i1 @"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains(
+            "currently only supports a narrow non-`move` capturing-closure subset"
+        ));
+    }
+
+    #[test]
+    fn emits_cleanup_block_local_mutable_capturing_closure_reassign_calls() {
+        let rendered = emit(
+            r#"
+extern "c" fn keep()
+
+fn main() -> Int {
+    let target = 42
+    let check = (value: Int) => value == target
+    let base = 40
+    let run = (value: Int) => value + base + 1
+    defer {
+        var alias_run = run
+        alias_run = run;
+        alias_run(1)
+        var alias_check = check
+        alias_check = check;
         if alias_check(42) {
             keep()
         }
