@@ -4693,6 +4693,26 @@ fn capturing_closure_immutable_alias_call_codegen_case_matches() {
 }
 
 #[test]
+fn capturing_closure_mutable_alias_reassign_call_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "capturing_closure_mutable_alias_reassign_call_build",
+        source_relative: "fixtures/codegen/pass/capturing_closure_mutable_alias_reassign_call_build.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("capturing closure mutable alias reassign build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn capturing_closure_mutable_alias_cleanup_guard_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {
@@ -5257,6 +5277,26 @@ fn cleanup_block_let_binding_codegen_case_matches() {
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
         panic!("cleanup block let binding build regression:\n\n{message}");
+    }
+}
+
+#[test]
+fn cleanup_block_capturing_closure_alias_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "cleanup_block_capturing_closure_alias_build",
+        source_relative: "fixtures/codegen/pass/cleanup_block_capturing_closure_alias_build.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("cleanup block capturing-closure alias build regression:\n\n{message}");
     }
 }
 

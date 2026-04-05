@@ -159,6 +159,12 @@ struct GuardBindingValue {
     value: LoweredValue,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CleanupCapturingClosureBinding {
+    local: hir::LocalId,
+    closure_id: mir::ClosureId,
+}
+
 #[derive(Clone, Debug)]
 struct SupportedForLoopLowering {
     iterable_root: SupportedForLoopIterableRoot,
@@ -1354,9 +1360,7 @@ impl<'a> ModuleEmitter<'a> {
         for statement in body.statements() {
             match &statement.kind {
                 StatementKind::Assign { place, value } => {
-                    let temp_forwarded_closure = if place.projections.is_empty()
-                        && matches!(body.local(place.base).origin, LocalOrigin::Temp { .. })
-                    {
+                    let forwarded_closure = if place.projections.is_empty() {
                         direct_local_capturing_closure_assignment_source(
                             value,
                             &staged,
@@ -1366,13 +1370,24 @@ impl<'a> ModuleEmitter<'a> {
                     } else {
                         None
                     };
+                    let temp_forwarded_closure = if matches!(
+                        body.local(place.base).origin,
+                        LocalOrigin::Temp { .. }
+                    ) {
+                        forwarded_closure
+                    } else {
+                        None
+                    };
+                    let same_supported_forwarded_closure = matches!(
+                        forwarded_closure,
+                        Some((closure_id, _))
+                            if supported
+                                .get(&place.base)
+                                .is_some_and(|current| *current == closure_id)
+                    );
                     if supported.contains_key(&place.base)
                         && !matches!(value, Rvalue::Closure { .. })
-                        && !matches!(
-                            temp_forwarded_closure,
-                            Some((closure_id, _))
-                                if supported.get(&place.base).is_some_and(|current| *current == closure_id)
-                        )
+                        && !same_supported_forwarded_closure
                     {
                         diagnostics.push(
                             self.capturing_closure_diagnostic(
@@ -1381,6 +1396,12 @@ impl<'a> ModuleEmitter<'a> {
                                     .expect("capturing closure local should preserve its span"),
                             ),
                         );
+                        if forwarded_closure.is_some() {
+                            continue;
+                        }
+                    }
+                    if same_supported_forwarded_closure {
+                        continue;
                     }
                     if let Some((closure_id, closure_span)) = temp_forwarded_closure {
                         match supported.get(&place.base).copied() {
@@ -1631,6 +1652,7 @@ impl<'a> ModuleEmitter<'a> {
             supported,
             expr_id,
             &body_binding_locals,
+            &[],
         )
     }
 
@@ -5801,6 +5823,7 @@ impl<'a> ModuleEmitter<'a> {
             cleanup_loop_labels: Vec::new(),
             cleanup_path_open: true,
             cleanup_bindings: Vec::new(),
+            cleanup_capturing_closure_bindings: Vec::new(),
         };
         for block_id in body.block_ids() {
             let Some(loop_lowering) = renderer
@@ -6100,6 +6123,7 @@ struct FunctionRenderer<'a, 'b> {
     cleanup_loop_labels: Vec<CleanupLoopLabels>,
     cleanup_path_open: bool,
     cleanup_bindings: Vec<GuardBindingValue>,
+    cleanup_capturing_closure_bindings: Vec<CleanupCapturingClosureBinding>,
 }
 
 struct CleanupLoopLabels {
@@ -6208,10 +6232,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
 
     fn render_cleanup_block(&mut self, output: &mut String, block_id: hir::BlockId, span: Span) {
         let binding_depth = self.cleanup_bindings.len();
+        let closure_binding_depth = self.cleanup_capturing_closure_bindings.len();
         if let Some(tail) = self.render_cleanup_block_prefix(output, block_id, span) {
             self.render_cleanup_expr(output, tail, span);
         }
         self.cleanup_bindings.truncate(binding_depth);
+        self.cleanup_capturing_closure_bindings
+            .truncate(closure_binding_depth);
     }
 
     fn render_cleanup_statement(
@@ -6268,6 +6295,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         value: hir::ExprId,
         span: Span,
     ) {
+        if let PatternKind::Binding(local) = pattern_kind(self.emitter.input.hir, pattern)
+            && let Some(closure_id) =
+                self.supported_direct_local_capturing_closure_for_expr(value)
+        {
+            self.cleanup_capturing_closure_bindings
+                .push(CleanupCapturingClosureBinding {
+                    local: *local,
+                    closure_id,
+                });
+            return;
+        }
         let expected_ty = self
             .emitter
             .cleanup_let_expected_ty(pattern, value)
@@ -6782,9 +6820,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             break_label,
         });
         self.cleanup_path_open = true;
+        let closure_binding_depth = self.cleanup_capturing_closure_bindings.len();
         self.render_cleanup_block(output, body, span);
         self.cleanup_loop_labels.pop();
         self.cleanup_bindings.truncate(binding_depth);
+        self.cleanup_capturing_closure_bindings
+            .truncate(closure_binding_depth);
     }
 
     fn render_cleanup_expr(&mut self, output: &mut String, expr_id: hir::ExprId, span: Span) {
@@ -6943,6 +6984,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 self.fresh_label("cleanup_match_next")
             };
             let binding_depth = self.cleanup_bindings.len();
+            let closure_binding_depth = self.cleanup_capturing_closure_bindings.len();
             self.bind_cleanup_pattern(output, arm.pattern, scrutinee.clone(), span);
 
             if let Some(guard) = arm.guard {
@@ -6964,6 +7006,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
 
             self.cleanup_bindings.truncate(binding_depth);
+            self.cleanup_capturing_closure_bindings
+                .truncate(closure_binding_depth);
 
             if next_label != end_label {
                 let _ = writeln!(output, "{next_label}:");
@@ -7002,6 +7046,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 self.fresh_label("cleanup_match_next")
             };
             let binding_depth = self.cleanup_bindings.len();
+            let closure_binding_depth = self.cleanup_capturing_closure_bindings.len();
             self.bind_cleanup_pattern(output, arm.pattern, scrutinee.clone(), span);
 
             if let Some(guard) = arm.guard {
@@ -7025,6 +7070,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             let _ = writeln!(output, "  br label %{end_label}");
 
             self.cleanup_bindings.truncate(binding_depth);
+            self.cleanup_capturing_closure_bindings
+                .truncate(closure_binding_depth);
 
             if next_label != end_label {
                 let _ = writeln!(output, "{next_label}:");
@@ -7068,6 +7115,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         let _ = writeln!(output, "{then_label}:");
         self.cleanup_path_open = true;
         let binding_depth = self.cleanup_bindings.len();
+        let closure_binding_depth = self.cleanup_capturing_closure_bindings.len();
         let then_tail = self
             .render_cleanup_block_prefix(output, then_branch, span)
             .unwrap_or_else(|| {
@@ -7077,6 +7125,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             });
         let then_value = self.render_cleanup_value_expr(output, then_tail, expected_ty, span);
         self.cleanup_bindings.truncate(binding_depth);
+        self.cleanup_capturing_closure_bindings
+            .truncate(closure_binding_depth);
         let _ = writeln!(
             output,
             "  store {} {}, ptr {result_slot}",
@@ -7646,6 +7696,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             self.emitter.input.resolution,
             self.body,
             &self.prepared.direct_local_capturing_closures,
+            &self.cleanup_capturing_closure_bindings,
             expr_id,
         )
     }
@@ -8236,10 +8287,13 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
                 let binding_depth = self.cleanup_bindings.len();
+                let closure_binding_depth = self.cleanup_capturing_closure_bindings.len();
                 let projected = self
                     .render_cleanup_block_prefix(output, *block_id, span)
                     .and_then(|tail| self.render_cleanup_projection_pointer(output, tail, span));
                 self.cleanup_bindings.truncate(binding_depth);
+                self.cleanup_capturing_closure_bindings
+                    .truncate(closure_binding_depth);
                 projected
             }
             hir::ExprKind::Question(inner) => {
@@ -8273,6 +8327,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
                 let binding_depth = self.cleanup_bindings.len();
+                let closure_binding_depth = self.cleanup_capturing_closure_bindings.len();
                 let tail = self
                     .render_cleanup_block_prefix(output, *block_id, span)
                     .unwrap_or_else(|| {
@@ -8282,6 +8337,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 });
                 let rendered = self.render_cleanup_value_expr(output, tail, expected_ty, span);
                 self.cleanup_bindings.truncate(binding_depth);
+                self.cleanup_capturing_closure_bindings
+                    .truncate(closure_binding_depth);
                 rendered
             }
             hir::ExprKind::Question(inner) => {
@@ -10777,6 +10834,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
 
         let _ = writeln!(output, "{then_label}:");
         let binding_depth = self.cleanup_bindings.len();
+        let closure_binding_depth = self.cleanup_capturing_closure_bindings.len();
         let then_tail = self
             .render_cleanup_block_prefix(output, then_branch, span)
             .unwrap_or_else(|| {
@@ -10787,6 +10845,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         let then_value =
             self.render_guard_expr_as_type(output, then_tail, expected_ty, span, guard_binding);
         self.cleanup_bindings.truncate(binding_depth);
+        self.cleanup_capturing_closure_bindings
+            .truncate(closure_binding_depth);
         let _ = writeln!(
             output,
             "  store {} {}, ptr {result_slot}",
@@ -13746,6 +13806,7 @@ fn direct_local_capturing_closure_for_expr(
     resolution: &ResolutionMap,
     body: &mir::MirBody,
     supported: &HashMap<mir::LocalId, mir::ClosureId>,
+    cleanup_aliases: &[CleanupCapturingClosureBinding],
     expr_id: hir::ExprId,
 ) -> Option<mir::ClosureId> {
     match &module.expr(expr_id).kind {
@@ -13753,11 +13814,26 @@ fn direct_local_capturing_closure_for_expr(
             let ValueResolution::Local(local_id) = resolution.expr_resolution(expr_id)? else {
                 return None;
             };
+            if let Some(closure_id) = cleanup_aliases
+                .iter()
+                .rev()
+                .find(|binding| binding.local == *local_id)
+                .map(|binding| binding.closure_id)
+            {
+                return Some(closure_id);
+            }
             let local = mir_local_for_hir_local(body, *local_id)?;
             supported.get(&local).copied()
         }
         hir::ExprKind::Question(inner) => {
-            direct_local_capturing_closure_for_expr(module, resolution, body, supported, *inner)
+            direct_local_capturing_closure_for_expr(
+                module,
+                resolution,
+                body,
+                supported,
+                cleanup_aliases,
+                *inner,
+            )
         }
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
             let block = module.block(*block_id);
@@ -13769,6 +13845,7 @@ fn direct_local_capturing_closure_for_expr(
                 resolution,
                 body,
                 supported,
+                cleanup_aliases,
                 block.tail?,
             )
         }
@@ -13786,17 +13863,30 @@ fn direct_local_capturing_closure_for_expr(
                 resolution,
                 body,
                 supported,
+                cleanup_aliases,
                 block.tail?,
             )?;
-            let other_closure =
-                direct_local_capturing_closure_for_expr(module, resolution, body, supported, *other)?;
+            let other_closure = direct_local_capturing_closure_for_expr(
+                module,
+                resolution,
+                body,
+                supported,
+                cleanup_aliases,
+                *other,
+            )?;
             (then_closure == other_closure).then_some(then_closure)
         }
         hir::ExprKind::Match { arms, .. } => {
             let mut closure_id = None;
             for arm in arms {
-                let current =
-                    direct_local_capturing_closure_for_expr(module, resolution, body, supported, arm.body)?;
+                let current = direct_local_capturing_closure_for_expr(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    cleanup_aliases,
+                    arm.body,
+                )?;
                 match closure_id {
                     Some(existing) if existing != current => return None,
                     Some(_) => {}
@@ -13838,11 +13928,17 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
     supported: &HashMap<mir::LocalId, mir::ClosureId>,
     expr_id: hir::ExprId,
     binding_locals: &HashSet<hir::LocalId>,
+    cleanup_aliases: &[CleanupCapturingClosureBinding],
 ) -> bool {
     match &module.expr(expr_id).kind {
         hir::ExprKind::Name(_) => matches!(
             resolution.expr_resolution(expr_id),
-            Some(ValueResolution::Local(local_id)) if binding_locals.contains(local_id)
+            Some(ValueResolution::Local(local_id))
+                if binding_locals.contains(local_id)
+                    || cleanup_aliases
+                        .iter()
+                        .rev()
+                        .any(|binding| binding.local == *local_id)
         ),
         hir::ExprKind::Integer(_)
         | hir::ExprKind::String { .. }
@@ -13856,6 +13952,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *item,
                 binding_locals,
+                cleanup_aliases,
             )
         }),
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
@@ -13866,6 +13963,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *block_id,
                 binding_locals,
+                cleanup_aliases,
             )
         }
         hir::ExprKind::If {
@@ -13880,6 +13978,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *condition,
                 binding_locals,
+                cleanup_aliases,
             ) || cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
                 module,
                 resolution,
@@ -13887,6 +13986,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *then_branch,
                 binding_locals,
+                cleanup_aliases,
             ) || else_branch.is_some_and(|expr_id| {
                 cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
                     module,
@@ -13895,6 +13995,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                     supported,
                     expr_id,
                     binding_locals,
+                    cleanup_aliases,
                 )
             })
         }
@@ -13906,6 +14007,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *value,
                 binding_locals,
+                cleanup_aliases,
             ) || arms.iter().any(|arm| {
                 arm.guard.is_some_and(|guard| {
                     cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
@@ -13915,6 +14017,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                         supported,
                         guard,
                         binding_locals,
+                        cleanup_aliases,
                     )
                 }) || cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
                     module,
@@ -13923,6 +14026,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                     supported,
                     arm.body,
                     binding_locals,
+                    cleanup_aliases,
                 )
             })
         }
@@ -13934,12 +14038,18 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *closure_body,
                 binding_locals,
+                cleanup_aliases,
             )
         }
         hir::ExprKind::Call { callee, args } => {
             let callee_allowed = args.iter().all(|arg| matches!(arg, hir::CallArg::Positional(_)))
                 && direct_local_capturing_closure_for_expr(
-                    module, resolution, body, supported, *callee,
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    cleanup_aliases,
+                    *callee,
                 )
                 .is_some();
             (!callee_allowed
@@ -13950,6 +14060,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                     supported,
                     *callee,
                     binding_locals,
+                    cleanup_aliases,
                 ))
                 || args.iter().any(|arg| {
                     let value = match arg {
@@ -13963,6 +14074,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                         supported,
                         value,
                         binding_locals,
+                        cleanup_aliases,
                     )
                 })
         }
@@ -13974,6 +14086,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *object,
                 binding_locals,
+                cleanup_aliases,
             )
         }
         hir::ExprKind::Bracket { target, items } => {
@@ -13984,6 +14097,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *target,
                 binding_locals,
+                cleanup_aliases,
             ) || items.iter().any(|item| {
                 cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
                     module,
@@ -13992,6 +14106,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                     supported,
                     *item,
                     binding_locals,
+                    cleanup_aliases,
                 )
             })
         }
@@ -14003,6 +14118,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 field.value,
                 binding_locals,
+                cleanup_aliases,
             )
         }),
         hir::ExprKind::Binary { left, right, .. } => {
@@ -14013,6 +14129,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *left,
                 binding_locals,
+                cleanup_aliases,
             ) || cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
                 module,
                 resolution,
@@ -14020,6 +14137,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *right,
                 binding_locals,
+                cleanup_aliases,
             )
         }
         hir::ExprKind::Question(inner) => {
@@ -14030,6 +14148,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *inner,
                 binding_locals,
+                cleanup_aliases,
             )
         }
         hir::ExprKind::Unary { expr, .. } => {
@@ -14040,6 +14159,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
                 supported,
                 *expr,
                 binding_locals,
+                cleanup_aliases,
             )
         }
     }
@@ -14052,103 +14172,148 @@ fn cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_c
     supported: &HashMap<mir::LocalId, mir::ClosureId>,
     block_id: hir::BlockId,
     binding_locals: &HashSet<hir::LocalId>,
+    cleanup_aliases: &[CleanupCapturingClosureBinding],
 ) -> bool {
     let block = module.block(block_id);
-    block
-        .statements
-        .iter()
-        .any(|statement_id| match &module.stmt(*statement_id).kind {
-            hir::StmtKind::Let { value, .. } => {
-                cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+    let mut scoped_aliases = cleanup_aliases.to_vec();
+    for statement_id in &block.statements {
+        match &module.stmt(*statement_id).kind {
+            hir::StmtKind::Let { pattern, value, .. } => {
+                let alias_binding = match pattern_kind(module, *pattern) {
+                    PatternKind::Binding(local) => direct_local_capturing_closure_for_expr(
+                        module,
+                        resolution,
+                        body,
+                        supported,
+                        &scoped_aliases,
+                        *value,
+                    )
+                    .map(|closure_id| CleanupCapturingClosureBinding {
+                        local: *local,
+                        closure_id,
+                    }),
+                    _ => None,
+                };
+                if let Some(binding) = alias_binding {
+                    scoped_aliases.push(binding);
+                    continue;
+                }
+                if cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
                     module,
                     resolution,
                     body,
                     supported,
                     *value,
                     binding_locals,
-                )
+                    &scoped_aliases,
+                ) {
+                    return true;
+                }
             }
-            hir::StmtKind::Return(expr) => expr.is_some_and(|expr_id| {
-                cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
-                    module,
-                    resolution,
-                    body,
-                    supported,
-                    expr_id,
-                    binding_locals,
-                )
-            }),
+            hir::StmtKind::Return(expr) => {
+                if expr.is_some_and(|expr_id| {
+                    cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                        module,
+                        resolution,
+                        body,
+                        supported,
+                        expr_id,
+                        binding_locals,
+                        &scoped_aliases,
+                    )
+                }) {
+                    return true;
+                }
+            }
             hir::StmtKind::Defer(expr) | hir::StmtKind::Expr { expr, .. } => {
-                cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                if cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
                     module,
                     resolution,
                     body,
                     supported,
                     *expr,
                     binding_locals,
-                )
+                    &scoped_aliases,
+                ) {
+                    return true;
+                }
             }
             hir::StmtKind::While {
                 condition,
                 body: loop_body,
-            } => cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
-                module,
-                resolution,
-                body,
-                supported,
-                *condition,
-                binding_locals,
-            )
-                || cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
+            } => {
+                if cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    *condition,
+                    binding_locals,
+                    &scoped_aliases,
+                ) || cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
                     module,
                     resolution,
                     body,
                     supported,
                     *loop_body,
                     binding_locals,
-                ),
+                    &scoped_aliases,
+                ) {
+                    return true;
+                }
+            }
             hir::StmtKind::Loop { body: loop_body } => {
-                cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                if cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
                     module,
                     resolution,
                     body,
                     supported,
                     *loop_body,
                     binding_locals,
-                )
+                    &scoped_aliases,
+                ) {
+                    return true;
+                }
             }
             hir::StmtKind::For {
                 iterable,
                 body: loop_body,
                 ..
-            } => cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
-                module,
-                resolution,
-                body,
-                supported,
-                *iterable,
-                binding_locals,
-            )
-                || cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
+            } => {
+                if cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    *iterable,
+                    binding_locals,
+                    &scoped_aliases,
+                ) || cleanup_block_mentions_binding_local_outside_direct_local_capturing_closure_call(
                     module,
                     resolution,
                     body,
                     supported,
                     *loop_body,
                     binding_locals,
-                ),
-            hir::StmtKind::Break | hir::StmtKind::Continue => false,
-        })
-        || block.tail.is_some_and(|expr_id| {
-            cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
-                module,
-                resolution,
-                body,
-                supported,
-                expr_id,
-                binding_locals,
-            )
-        })
+                    &scoped_aliases,
+                ) {
+                    return true;
+                }
+            }
+            hir::StmtKind::Break | hir::StmtKind::Continue => {}
+        }
+    }
+    block.tail.is_some_and(|expr_id| {
+        cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
+            module,
+            resolution,
+            body,
+            supported,
+            expr_id,
+            binding_locals,
+            &scoped_aliases,
+        )
+    })
 }
 
 fn guard_direct_callee_function(
@@ -17089,6 +17254,28 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_same_target_reassigned_mutable_alias_capturing_closure_calls() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let base = 41
+    let capture = () => base + 1
+    var alias = capture
+    alias = capture
+    return alias()
+}
+"#,
+        );
+
+        assert!(rendered.contains("store ptr null"));
+        assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
+        assert!(rendered.contains("call i64 @ql_0_main__closure0("));
+        assert!(!rendered.contains(
+            "currently only supports a narrow non-`move` capturing-closure subset"
+        ));
+    }
+
+    #[test]
     fn emits_same_target_control_flow_capturing_closure_calls() {
         let rendered = emit(
             r#"
@@ -17354,6 +17541,39 @@ fn main() -> Int {
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains(
             "currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
+        ));
+    }
+
+    #[test]
+    fn emits_cleanup_block_local_capturing_closure_alias_calls() {
+        let rendered = emit(
+            r#"
+extern "c" fn keep()
+
+fn main() -> Int {
+    let target = 42
+    let check = (value: Int) => value == target
+    let base = 40
+    let run = (value: Int) => value + base + 1
+    defer {
+        let alias_run = run
+        let alias_check = check
+        alias_run(1)
+        if alias_check(42) {
+            keep()
+        }
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.matches("__closure").count() >= 2);
+        assert!(rendered.contains("call i64 @"));
+        assert!(rendered.contains("call i1 @"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains(
+            "currently only supports a narrow non-`move` capturing-closure subset"
         ));
     }
 
@@ -23385,9 +23605,12 @@ extern "c" fn first()
 
 fn main() -> Int {
     defer first()
-    let value = 1
-    let capture = () => value
-    let alias = capture
+    let first_value = 1
+    let next_value = 2
+    let capture_first = () => first_value
+    let capture_next = () => next_value
+    var alias = capture_first
+    alias = capture_next
     return alias()
 }
 "#,
@@ -23408,7 +23631,7 @@ fn main() -> Int {
                 .iter()
                 .filter(|message| {
                     message.as_str()
-                        == "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
+                        == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through direct/local-alias calls plus the current direct cleanup/guard-call paths"
                 })
                 .count(),
             1

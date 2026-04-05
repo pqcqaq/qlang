@@ -1,7 +1,9 @@
 fn main() -> Int {
-    let value = 1
-    let capture = () => value
-    var alias = capture
-    alias = capture
+    let first = 1
+    let second = 2
+    let capture_first = () => first
+    let capture_second = () => second
+    var alias = capture_first
+    alias = capture_second
     return alias()
 }

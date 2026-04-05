@@ -5273,9 +5273,12 @@ fn add_one(value: Int) -> Int {
             "unsupported.ql",
             r#"
 fn main() -> Int {
-    let value = 1
-    let capture = () => value
-    var alias = capture
+    let first = 1
+    let second = 2
+    let capture_first = () => first
+    let capture_second = () => second
+    var alias = capture_first
+    alias = capture_second
     return alias()
 }
 "#,
@@ -5288,7 +5291,7 @@ fn main() -> Int {
 
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message
-                == "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
+                == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through direct/local-alias calls plus the current direct cleanup/guard-call paths"
         }));
         assert!(diagnostics.iter().all(|diagnostic| {
             !diagnostic
@@ -9243,9 +9246,12 @@ extern "c" fn first()
 
 fn main() -> Int {
     defer first()
-    let value = 1
-    let capture = () => value
-    var alias = capture
+    let base = 1
+    let next = 2
+    let capture_base = () => base
+    let capture_next = () => next
+    var alias = capture_base
+    alias = capture_next
     return alias()
 }
 "#,
@@ -9271,7 +9277,7 @@ fn main() -> Int {
                 .iter()
                 .filter(|diagnostic| {
                     diagnostic.message
-                        == "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
+                        == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through direct/local-alias calls plus the current direct cleanup/guard-call paths"
                 })
                 .count(),
             1
