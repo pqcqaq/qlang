@@ -853,7 +853,7 @@ return alias()
 }
 
 #[test]
-fn emits_cleanup_block_different_target_mutable_alias_capturing_closure_calls() {
+fn emits_cleanup_different_target_mutable_alias_capturing_closure_calls() {
     let rendered = emit(
         r#"
 extern "c" fn keep()
@@ -864,6 +864,18 @@ let left_run = (value: Int) => value + target
 let right_run = (value: Int) => value + target + 1
 let left_check = (value: Int) => value == target
 let right_check = (value: Int) => value + 1 == target + 1
+defer ({
+    var alias = left_run
+    alias = right_run;
+    alias
+})(1)
+defer if ({
+    var alias = left_check
+    alias = right_check;
+    alias
+})(42) {
+    keep()
+}
 defer {
     var inner_run = left_run
     inner_run = right_run;
@@ -880,8 +892,8 @@ return 0
     );
 
     assert!(rendered.matches("__closure").count() >= 4);
-    assert!(rendered.matches("call i64 @").count() >= 1);
-    assert!(rendered.matches("call i1 @").count() >= 1);
+    assert!(rendered.matches("call i64 @").count() >= 2);
+    assert!(rendered.matches("call i1 @").count() >= 2);
     assert!(!rendered.contains("does not support cleanup lowering yet"));
     assert!(
         !rendered.contains("currently only supports a narrow non-`move` capturing-closure subset")
