@@ -1,6 +1,6 @@
 fn main() -> Int {
     let value = 1
     let capture = () => value
-    let alias = capture
+    var alias = capture
     return alias()
 }

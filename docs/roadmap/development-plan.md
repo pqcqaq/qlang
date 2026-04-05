@@ -40,7 +40,7 @@
 - cleanup runtime task-backed item value flow 现也已进入 current LLVM build surface：same-file task-producing `const` / `static` item 与 same-file alias，当前也可经过 cleanup local binding、sync helper 参数/返回值，以及 runtime `if` / `match` 选值后继续进入 projected `await` / cleanup `for await`
 - cleanup branch body 现也应按真实 build 面理解：cleanup `if` / `match` 分支已经不再只限 call-backed expr，而是可以承载当前已开放的 cleanup block 语句子集，包括 local binding 与 async `for await`
 - runtime callable value flow 现也应按真实 build 面理解：ordinary / cleanup value path 里的 runtime `if` / `match` 已不再只限挑选 scalar / aggregate value；当前 same-file function item / alias、callable `const` / `static` / alias，以及 closure-backed callable `const` / `static` / alias，也可以作为 typed callable value 被选出并继续间接调用；对应的 same-file async function item / alias 与 async callable `const` / `static` / alias，也可以继续进入 local `await` 与 cleanup value-path `await`
-- sync closure value flow 现也应按真实 build 面理解：当前不再只剩 non-capturing 形态，首个 capturing 子集已经进入 LLVM build surface；但边界仍刻意收窄在 non-`move`、immutable same-function scalar binding capture、原局部 direct ordinary call，不开放 alias/escape/cleanup 路径
+- sync closure value flow 现也应按真实 build 面理解：当前不再只剩 non-capturing 形态，首个 capturing 子集已经进入 LLVM build surface；但边界仍刻意收窄在 non-`move`、immutable same-function scalar binding capture、原局部 direct ordinary call 与 immutable local alias ordinary call，不开放 mutable alias、control-flow 选值、cleanup 和其他 escape 路径
 
 ## 总体原则
 
@@ -325,7 +325,7 @@
 
 2. **Task 4：继续扩 callable / cleanup 的最小真实 blocker**
    - 状态：次优先级，但优先于 coverage-only matrix。
-   - Why：最小 sync function value 已继续扩到 function-item-backed callable const/static 与 non-capturing sync closure-backed callable const/static 子集，non-capturing sync closure value 也已接入 ordinary positional indirect-call，并继续补上 explicit typed-parameter、statement-level local callable annotation，以及 call-site positional argument 驱动的 parameterized local / immutable-alias 子集；当前还补上了 capturing sync closure 的 direct-local ordinary-call 首个受控子集；same-file async function item / alias / callable `const` / `static` 也已接入 `async fn` 内 ordinary local indirect-call + `await`；cleanup / guard-call 的 direct closure-backed callable global 与 direct local non-capturing closure 公开回归也已补齐；question-mark blocker 也已消掉；当前最直接的用户可见缺口重新收敛到更广 cleanup control flow，以及剩余 callable value（capturing closure 的 alias/escape/cleanup flow、cleanup 内更广 async control-flow）。
+   - Why：最小 sync function value 已继续扩到 function-item-backed callable const/static 与 non-capturing sync closure-backed callable const/static 子集，non-capturing sync closure value 也已接入 ordinary positional indirect-call，并继续补上 explicit typed-parameter、statement-level local callable annotation，以及 call-site positional argument 驱动的 parameterized local / immutable-alias 子集；当前又把 capturing sync closure 的 ordinary-call 子集继续推进到 immutable local alias；same-file async function item / alias / callable `const` / `static` 也已接入 `async fn` 内 ordinary local indirect-call + `await`；cleanup / guard-call 的 direct closure-backed callable global 与 direct local non-capturing closure 公开回归也已补齐；question-mark blocker 也已消掉；当前最直接的用户可见缺口重新收敛到更广 cleanup control flow，以及剩余 callable value（capturing closure 的 mutable alias/control-flow/cleanup/escape flow、cleanup 内更广 async control-flow）。
    - Deliverables：
       - 优先继续选择“不引入新 runtime ABI”的窄切片。
       - 只补与新 lowering 直接对应的最小回归。

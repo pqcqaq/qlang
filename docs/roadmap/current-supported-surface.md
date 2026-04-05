@@ -25,7 +25,7 @@
 - async 已经不是“只有语法”，而是有真实 build、真实样例和真实回归的受控子集；但 broader async ABI、broader runtime semantics 仍然刻意关闭。
 - cleanup lowering 已不再是“全量关闭”：首个 `defer` + cleanup branch/match + 透明 `?` wrapper lowering 子集已进入真实 build 回归，并已接通 callable-value cleanup callee 与 cleanup guard-call 子路径的最小间接调用；broader cleanup control flow 仍保持保守拒绝。
 - 普通 `?` lowering 已接入当前 codegen 路径，并已流入当前 shipped cleanup 子集；当前 user-facing build blocker 不再包含 `return helper()?` 或 `defer helper()?` 这类透明 question-mark 表达式。
-- sync closure value surface 已从“仅 non-capturing”推进到首个 capturing 子集：当前只开放 non-`move`、捕获 immutable same-function scalar binding、并在原局部上直接 ordinary call 的形态；更广义的别名/逃逸路径仍关闭。
+- sync closure value surface 已从“仅 non-capturing”推进到首个 capturing 子集：当前开放 non-`move`、捕获 immutable same-function scalar binding，并允许原局部 direct ordinary call 与 immutable local alias ordinary call；mutable alias、control-flow 选值、cleanup 与其他逃逸路径仍关闭。
 
 ## 当前已开放的构建表面
 
@@ -57,7 +57,7 @@
   - transparently resolve 到 same-file sync function item 的 callable `const` / `static`，以及它们的 same-file `use ... as ...` alias
   - non-capturing sync closure-backed callable `const` / `static`，以及它们的 same-file `use ... as ...` alias；当前 public regression 先锁定 ordinary positional indirect call 子集
   - non-capturing sync closure value；当前 public regression 已锁定 ordinary positional indirect call 的最小子集：zero-arg 形态、显式 typed closure parameter 形态、由 statement-level local callable type annotation 驱动的 parameterized local 形态，以及由 call-site positional argument 反推参数类型的 parameterized local/immutable-alias 形态；当前 shipped cleanup / guard-call 子路径也已显式锁定 direct local non-capturing closure 的最小子集
-  - capturing sync closure value 的首个受控子集：当前只开放 non-`move` + immutable same-function scalar binding capture + direct local ordinary call；closure value 经过 alias、typed control-flow 选值、cleanup callee / guard-call 或其他 broader callable-value flow 的路径仍保持关闭
+  - capturing sync closure value 的首个受控子集：当前只开放 non-`move` + immutable same-function scalar binding capture + direct local ordinary call，以及 immutable local alias ordinary call；mutable alias、typed control-flow 选值、cleanup callee / guard-call 或其他 broader callable-value flow 的路径仍保持关闭
   - runtime `if` / `match` callable value 子集：当前 ordinary local binding 与 cleanup value path 也可从 same-file function item / alias、function-item-backed callable `const` / `static` / alias，以及 closure-backed callable `const` / `static` / alias 里选出 indirect callee
   - ordinary call 可 direct call，或先绑定到 local 后再做 positional indirect call
   - ordinary `match` guard，以及当前 shipped cleanup call / guard-call 子路径，也可通过 function-item-backed callable local / callable `const` / `static` / same-file alias 进入 positional indirect call；当前 public regression 也已显式锁定 direct closure-backed callable `const` guard + closure-backed callable `static` cleanup，以及 direct local non-capturing closure cleanup + guard 的最小子集
@@ -291,7 +291,7 @@
 - generalized `for await`，超出 fixed-array / homogeneous tuple 之外的 iterable
 - 更广义的 runtime const/static/item-backed aggregate lowering，超出当前 async ordinary/cleanup value path 已锁定的 same-file task-backed item root、projected item-root，以及 local/helper/control-flow 传递子集之外仍未开放；当前 const item lowering 仍不会把 `worker(...)` 这类 runtime task-producing initializer 普遍提升为通用常量值
 - broader cleanup lowering / cleanup codegen，超出当前 direct / call-backed `defer` + `if` / `match` + 透明 `?` wrapper cleanup 子集之外
-- broader callable value lowering，超出当前 same-file sync function item / same-file alias / function-item-backed callable `const` / `static` 子集、closure-backed callable `const` / `static` 的 ordinary positional indirect-call 最小子集与 direct cleanup/guard item 子集、non-capturing sync closure value 的 ordinary positional indirect-call 最小子集与 direct local cleanup/guard 子集（zero-arg + explicit typed-parameter shape + statement-level local callable type-annotation shape + call-site positional-arg-inferred parameterized local/immutable-alias shape）、capturing sync closure value 的 direct-local ordinary-call 首个受控子集（non-`move` + immutable same-function scalar binding capture），以及 same-file async function item / alias / callable `const` / `static` / same-file alias 的 ordinary local indirect-call + `await` 子集之外；capturing closure alias/escape flow 与 cleanup 内更广义的 async control-flow 仍未开放
+- broader callable value lowering，超出当前 same-file sync function item / same-file alias / function-item-backed callable `const` / `static` 子集、closure-backed callable `const` / `static` 的 ordinary positional indirect-call 最小子集与 direct cleanup/guard item 子集、non-capturing sync closure value 的 ordinary positional indirect-call 最小子集与 direct local cleanup/guard 子集（zero-arg + explicit typed-parameter shape + statement-level local callable type-annotation shape + call-site positional-arg-inferred parameterized local/immutable-alias shape）、capturing sync closure value 的 direct ordinary-call 首个受控子集（non-`move` + immutable same-function scalar binding capture + immutable local alias），以及 same-file async function item / alias / callable `const` / `static` / same-file alias 的 ordinary local indirect-call + `await` 子集之外；capturing closure 的 mutable alias/control-flow/cleanup/escape flow 与 cleanup 内更广义的 async control-flow 仍未开放
 - cancellation / polling / drop semantics
 - generic async ABI / layout substitution
 - arbitrary dynamic overlap precision

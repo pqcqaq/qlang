@@ -1378,34 +1378,31 @@ impl<'a> ModuleEmitter<'a> {
                     if let Operand::Place(place) = source
                         && place.projections.is_empty()
                     {
-                        let Some(closure_id) = staged.get(&place.base).copied() else {
-                            self.validate_direct_local_capturing_closure_operand(
-                                source,
-                                false,
-                                &supported,
-                                &closure_spans,
-                                diagnostics,
-                            );
-                            continue;
-                        };
-                        let closure_span = *closure_spans
+                        if let Some(closure_id) = staged
                             .get(&place.base)
-                            .expect("capturing closure temp should preserve its source span");
-                        let Some(binding_local) = self.binding_local_for_pattern(body, *pattern)
-                        else {
-                            diagnostics.push(self.capturing_closure_diagnostic(closure_span));
-                            continue;
-                        };
-                        if body.local(binding_local).mutable {
-                            diagnostics.push(self.capturing_closure_diagnostic(closure_span));
+                            .copied()
+                            .or_else(|| supported.get(&place.base).copied())
+                        {
+                            let closure_span = *closure_spans.get(&place.base).expect(
+                                "capturing closure source local should preserve its source span",
+                            );
+                            let Some(binding_local) =
+                                self.binding_local_for_pattern(body, *pattern)
+                            else {
+                                diagnostics.push(self.capturing_closure_diagnostic(closure_span));
+                                continue;
+                            };
+                            if body.local(binding_local).mutable {
+                                diagnostics.push(self.capturing_closure_diagnostic(closure_span));
+                                continue;
+                            }
+                            if supported.insert(binding_local, closure_id).is_some() {
+                                diagnostics.push(self.capturing_closure_diagnostic(closure_span));
+                            } else {
+                                closure_spans.insert(binding_local, closure_span);
+                            }
                             continue;
                         }
-                        if supported.insert(binding_local, closure_id).is_some() {
-                            diagnostics.push(self.capturing_closure_diagnostic(closure_span));
-                        } else {
-                            closure_spans.insert(binding_local, closure_span);
-                        }
-                        continue;
                     }
                     self.validate_direct_local_capturing_closure_operand(
                         source,
@@ -16579,6 +16576,27 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_immutable_alias_direct_local_capturing_closure_calls() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let base = 41
+    let capture = () => base + 1
+    let alias = capture
+    return alias()
+}
+"#,
+        );
+
+        assert!(rendered.contains("store ptr null"));
+        assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
+        assert!(rendered.contains("call i64 @ql_0_main__closure0("));
+        assert!(!rendered.contains(
+            "currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
+        ));
+    }
+
+    #[test]
     fn emits_callable_const_and_static_item_calls() {
         let rendered = emit(
             r#"
@@ -16774,7 +16792,7 @@ fn main() -> Int {
 fn main() -> Int {
     let value = 1
     let capture = () => value
-    let alias = capture
+    var alias = capture
     return alias()
 }
 "#,

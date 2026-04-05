@@ -5275,7 +5275,7 @@ fn add_one(value: Int) -> Int {
 fn main() -> Int {
     let value = 1
     let capture = () => value
-    let alias = capture
+    var alias = capture
     return alias()
 }
 "#,
@@ -9245,7 +9245,7 @@ fn main() -> Int {
     defer first()
     let value = 1
     let capture = () => value
-    let alias = capture
+    var alias = capture
     return alias()
 }
 "#,
