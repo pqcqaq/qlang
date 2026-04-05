@@ -1305,7 +1305,7 @@ impl<'a> ModuleEmitter<'a> {
     fn capturing_closure_diagnostic(&self, span: Span) -> Diagnostic {
         unsupported(
             span,
-            "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings",
+            "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through direct/local-alias calls plus the current direct cleanup/guard-call paths",
         )
     }
 
@@ -1392,10 +1392,6 @@ impl<'a> ModuleEmitter<'a> {
                                 diagnostics.push(self.capturing_closure_diagnostic(closure_span));
                                 continue;
                             };
-                            if body.local(binding_local).mutable {
-                                diagnostics.push(self.capturing_closure_diagnostic(closure_span));
-                                continue;
-                            }
                             if supported.insert(binding_local, closure_id).is_some() {
                                 diagnostics.push(self.capturing_closure_diagnostic(closure_span));
                             } else {
@@ -16961,7 +16957,7 @@ fn main() -> Int {
         assert!(rendered.contains("call i64 @ql_0_main__closure0("));
         assert!(!rendered.contains("load ptr, ptr %l2_run"));
         assert!(!rendered.contains(
-            "currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
+            "currently only supports a narrow non-`move` capturing-closure subset"
         ));
     }
 
@@ -16982,7 +16978,28 @@ fn main() -> Int {
         assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
         assert!(rendered.contains("call i64 @ql_0_main__closure0("));
         assert!(!rendered.contains(
-            "currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
+            "currently only supports a narrow non-`move` capturing-closure subset"
+        ));
+    }
+
+    #[test]
+    fn emits_mutable_alias_direct_local_capturing_closure_calls() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let base = 41
+    let capture = () => base + 1
+    var alias = capture
+    return alias()
+}
+"#,
+        );
+
+        assert!(rendered.contains("store ptr null"));
+        assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
+        assert!(rendered.contains("call i64 @ql_0_main__closure0("));
+        assert!(!rendered.contains(
+            "currently only supports a narrow non-`move` capturing-closure subset"
         ));
     }
 

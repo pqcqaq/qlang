@@ -4693,6 +4693,26 @@ fn capturing_closure_immutable_alias_call_codegen_case_matches() {
 }
 
 #[test]
+fn capturing_closure_mutable_alias_cleanup_guard_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "capturing_closure_mutable_alias_cleanup_guard_build",
+        source_relative: "fixtures/codegen/pass/capturing_closure_mutable_alias_cleanup_guard_build.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("capturing closure mutable alias cleanup/guard build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn callable_const_static_value_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {
