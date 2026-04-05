@@ -1,6 +1,6 @@
-# P1-P7 阶段总览
+# P1-P8 阶段总览
 
-> 最后同步：2026-04-04
+> 最后同步：2026-04-05
 
 这页只保留阶段级结论、当前已核对的数量和继续推进的方向。
 逐轮切片记录、旧版长文和本轮入口整理记录已归档到 [路线图归档](/roadmap/archive/index)。
@@ -9,6 +9,7 @@
 
 - P1 到 P6 已完成，并且已经形成可持续扩展的工程主干。
 - P7 正在进行，但主线不是“重新设计 async”，而是在既有 compiler/runtime/build 真相源上保守扩面。
+- P8 已开始进入第一条工程入口切片：最小 `qlang.toml` manifest graph 与 `ql project graph` 已落地，但 `.qi` 与 cross-file editor semantics 仍未开始实现。
 - 当前最重要的治理要求仍然是三者一致：
   - 代码里的真实实现
   - 测试里的真实合同
@@ -25,6 +26,7 @@
 | P5 | 已完成 | 最小 C ABI 闭环、header projection、C/Rust host examples、FFI 集成回归 |
 | P6 | 已完成 | same-file hover / definition / references / rename / completion / semantic tokens / LSP parity |
 | P7 | 进行中 | 受控 async/runtime/task-handle lowering、library/program build 子集、Rust interop 扩展 |
+| P8 | 启动中 | 最小 `qlang.toml` manifest graph、`ql project graph`、后续 `.qi` / cross-file LSP 入口 |
 
 ## 各阶段一句话总结
 
@@ -63,6 +65,13 @@
 - sync ordinary executable surface 已覆盖 fixed-shape `for`、assignment-expression、dynamic non-`Task[...]` array assignment、same-file foldable `const` / `static` item value materialization，以及当前受控 `match` guard family。
 - 更广义的 async ABI、cleanup codegen、generalized iterable、broader `dylib` / program bootstrap，以及更广 projection-sensitive ownership precision 仍然刻意关闭。
 
+### P8 项目级工具链与 cross-file editor 入口
+
+- `ql-project` 现已提供最小 `qlang.toml` manifest loader。
+- 当前真实 contract 已锁定在 `[package].name`、`[workspace].members`、`[references].packages`。
+- `ql project graph [file-or-dir]` 已可向上发现 manifest 并输出当前 package/workspace/reference graph。
+- `.qi` 接口产物、真实 dependency build graph，以及 cross-file query / references / rename / completion 仍未开放。
+
 ## 当前进度对账
 
 本轮已按代码和测试重新核对当前入口文档，结果如下：
@@ -76,7 +85,7 @@
 
 1. 继续沿已开放的 async executable / library 子集扩真实用户可写 surface，而不是另开 ABI 或 runtime 设计。
 2. 继续让 task-handle、dynamic path、`for await`、awaited `match` 这几条线共享同一份 truth source。
-3. 每次扩面都先补 executable example、driver 回归、CLI pass matrix 与文档，不再让入口页堆逐轮流水账。
+3. 按已固定顺序继续推进 Phase 8：先 `.qi`，再 `ql-analysis` / `ql-lsp` 的 cross-file 消费，不直接跳到 cross-file rename。
 
 ## 归档入口
 

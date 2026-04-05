@@ -15,4 +15,5 @@ ql-diagnostics.workspace = true
 ql-driver.workspace = true
 ql-fmt.workspace = true
 ql-parser.workspace = true
+ql-project.workspace = true
 ql-runtime.workspace = true

@@ -10,6 +10,7 @@ use ql_driver::{
     CHeaderOptions, CHeaderSurface, build_file, emit_c_header,
 };
 use ql_fmt::format_source;
+use ql_project::{load_project_manifest, render_project_graph};
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 
 fn main() -> ExitCode {
@@ -160,6 +161,32 @@ fn run() -> Result<(), u8> {
             }
 
             build_path(Path::new(&path), &options)
+        }
+        "project" => {
+            let Some(subcommand) = args.next() else {
+                eprintln!("error: `ql project` expects a subcommand");
+                return Err(1);
+            };
+
+            match subcommand.as_str() {
+                "graph" => {
+                    let path = args
+                        .next()
+                        .map(PathBuf::from)
+                        .or_else(|| env::current_dir().ok())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    if let Some(extra) = args.next() {
+                        eprintln!("error: unknown `ql project graph` argument `{extra}`");
+                        return Err(1);
+                    }
+                    project_graph_path(&path)
+                }
+                other => {
+                    eprintln!("error: unknown `ql project` subcommand `{other}`");
+                    print_usage();
+                    Err(1)
+                }
+            }
         }
         "ffi" => {
             let Some(subcommand) = args.next() else {
@@ -427,6 +454,15 @@ fn emit_c_header_path(path: &Path, options: &CHeaderOptions) -> Result<(), u8> {
     }
 }
 
+fn project_graph_path(path: &Path) -> Result<(), u8> {
+    let manifest = load_project_manifest(path).map_err(|error| {
+        eprintln!("error: {error}");
+        1
+    })?;
+    print!("{}", render_project_graph(&manifest));
+    Ok(())
+}
+
 fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
     let analysis = analyze_semantics(source)?;
     if analysis.has_errors() {
@@ -574,6 +610,7 @@ fn print_usage() {
     eprintln!(
         "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
     );
+    eprintln!("  ql project graph [file-or-dir]");
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
     eprintln!("  ql mir <file>");

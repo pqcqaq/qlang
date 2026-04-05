@@ -12,6 +12,7 @@
 - 实现：`crates/*`
 - executable 真运行矩阵：`crates/ql-cli/tests/executable_examples.rs`
 - library build / codegen pass 矩阵：`crates/ql-cli/tests/codegen.rs`、`crates/ql-cli/tests/string_codegen.rs`、`crates/ql-cli/tests/string_compare_codegen.rs`
+- project/workspace graph 矩阵：`crates/ql-cli/tests/project_graph.rs`
 - sync 样例：`ramdon_tests/executable_examples/`
 - async 样例：`ramdon_tests/async_program_surface_examples/`
 
@@ -21,6 +22,7 @@
 
 - Phase 1 到 Phase 6 地基已经落地：lexer、parser、formatter、diagnostics、HIR、resolve、typeck、MIR、borrowck、LLVM backend、driver、CLI、same-file LSP/query、FFI header projection 都已进入真实工程主干。
 - 当前活跃主线是保守推进的 Phase 7：async/runtime/task-handle lowering、library/program build surface、Rust interop。
+- Phase 8 的第一条入口切片也已落地：仓库现已具备最小 `qlang.toml` manifest graph loader，以及 `ql project graph` 调试入口，但 `.qi` emit、真实 build graph 与 cross-file LSP 仍未开放。
 - 外部稳定互操作边界仍是 C ABI；Rust 继续走 `build.rs + staticlib + header` 路线。
 - async 已经不是“只有语法”，而是有真实 build、真实样例和真实回归的受控子集；但 broader async ABI、broader runtime semantics 仍然刻意关闭。
 - sync backend 的首个 `String` build 子集现已进入真实 build surface：UTF-8 string literal 现可 lowering 为 `{ ptr, i64 }`，并经过 local binding、const/static materialization、普通参数传递、返回值、`==` / `!=` 比较与 fixed-shape aggregate transport 进入当前 LLVM/object build；string ordering compare、string-pattern match lowering 与 C header `String` 导出仍保持保守关闭。
@@ -38,7 +40,25 @@
 - `ql fmt`
 - `ql mir`
 - `ql ownership`
+- `ql project graph [file-or-dir]`
 - `ql runtime`
+
+### 最小 manifest / workspace 子集
+
+当前 Phase 8 已开放的最小工程面：
+
+- `qlang.toml` upward discovery
+- `[package].name`
+- `[workspace].members`
+- `[references].packages`
+- `ql project graph [file-or-dir]` 文本输出当前 manifest graph
+
+当前仍未开放：
+
+- `.qi` 接口产物 emit / load
+- 真实 package build graph
+- dependency invalidation
+- cross-file query / references / rename / completion
 
 ### sync build 子集
 

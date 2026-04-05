@@ -1,0 +1,9 @@
+[package]
+name = "ql-project"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+toml = "1.1.2"
