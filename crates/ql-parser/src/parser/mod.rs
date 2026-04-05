@@ -11,6 +11,15 @@ use crate::ParseError;
 
 /// Parse a source file into the current AST module representation.
 pub fn parse_source(source: &str) -> Result<Module, Vec<ParseError>> {
+    parse_with_mode(source, ParseMode::Source)
+}
+
+/// Parse a `.qi` interface module into the current AST representation.
+pub fn parse_interface_source(source: &str) -> Result<Module, Vec<ParseError>> {
+    parse_with_mode(source, ParseMode::Interface)
+}
+
+fn parse_with_mode(source: &str, mode: ParseMode) -> Result<Module, Vec<ParseError>> {
     let (tokens, lex_errors) = lex(source);
     if !lex_errors.is_empty() {
         return Err(lex_errors
@@ -22,22 +31,34 @@ pub fn parse_source(source: &str) -> Result<Module, Vec<ParseError>> {
             .collect());
     }
 
-    Parser::new(tokens).parse_module()
+    Parser::new(tokens, mode).parse_module()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParseMode {
+    Source,
+    Interface,
 }
 
 struct Parser {
     tokens: Vec<Token>,
+    mode: ParseMode,
     idx: usize,
     errors: Vec<ParseError>,
 }
 
 impl Parser {
-    fn new(tokens: Vec<Token>) -> Self {
+    fn new(tokens: Vec<Token>, mode: ParseMode) -> Self {
         Self {
             tokens,
+            mode,
             idx: 0,
             errors: Vec::new(),
         }
+    }
+
+    fn is_interface_mode(&self) -> bool {
+        matches!(self.mode, ParseMode::Interface)
     }
 
     fn parse_module(mut self) -> Result<Module, Vec<ParseError>> {

@@ -8,4 +8,5 @@ license.workspace = true
 [dependencies]
 ql-ast.workspace = true
 ql-lexer.workspace = true
+ql-parser.workspace = true
 toml = "1.1.2"

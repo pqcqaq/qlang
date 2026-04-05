@@ -8,6 +8,7 @@ use ql_ast::{
     TypeExpr, TypeExprKind, UseDecl, VariantFields, Visibility, WherePredicate,
 };
 use ql_lexer::is_keyword as lexer_is_keyword;
+use ql_parser::parse_interface_source;
 use toml::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,13 +34,14 @@ pub struct ProjectManifest {
     pub references: ReferencesManifest,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct InterfaceModule {
     pub source_path: String,
     pub contents: String,
+    pub syntax: Module,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct InterfaceArtifact {
     pub package_name: String,
     pub modules: Vec<InterfaceModule>,
@@ -359,9 +361,12 @@ fn parse_interface_artifact(
         index += 1;
         if let Some(source_path) = line.strip_prefix("// source: ") {
             if let Some(source_path) = current_source.take() {
+                let contents = finalize_interface_module(&current_lines);
+                let syntax = parse_interface_module(path, &source_path, &contents)?;
                 modules.push(InterfaceModule {
                     source_path,
-                    contents: finalize_interface_module(&current_lines),
+                    syntax,
+                    contents,
                 });
                 current_lines.clear();
             }
@@ -383,9 +388,12 @@ fn parse_interface_artifact(
     }
 
     if let Some(source_path) = current_source {
+        let contents = finalize_interface_module(&current_lines);
+        let syntax = parse_interface_module(path, &source_path, &contents)?;
         modules.push(InterfaceModule {
             source_path,
-            contents: finalize_interface_module(&current_lines),
+            syntax,
+            contents,
         });
     }
 
@@ -409,6 +417,24 @@ fn next_nonempty_line<'a>(lines: &'a [&str], index: &mut usize) -> Option<&'a st
 fn finalize_interface_module(lines: &[&str]) -> String {
     let joined = lines.join("\n");
     joined.trim_start_matches('\n').trim().to_owned()
+}
+
+fn parse_interface_module(
+    path: &Path,
+    source_path: &str,
+    contents: &str,
+) -> Result<Module, InterfaceError> {
+    parse_interface_source(contents).map_err(|errors| InterfaceError::Parse {
+        path: path.to_path_buf(),
+        message: format!(
+            "failed to parse interface section `{source_path}`: {}",
+            errors
+                .into_iter()
+                .map(|error| format!("{} @ {}", error.message, error.span))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+    })
 }
 
 fn find_manifest_path(path: &Path) -> Result<PathBuf, ProjectError> {

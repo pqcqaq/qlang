@@ -9,7 +9,7 @@
 
 - P1 到 P6 已完成，并且已经形成可持续扩展的工程主干。
 - P7 正在进行，但主线不是“重新设计 async”，而是在既有 compiler/runtime/build 真相源上保守扩面。
-- P8 已进入前三条工程入口切片：最小 `qlang.toml` manifest graph、`ql project graph`、`.qi` V1 emit 与 package-aware dependency `.qi` load 已落地，但依赖符号 query 与 cross-file editor semantics 仍未开始实现。
+- P8 已进入前三条工程入口切片：最小 `qlang.toml` manifest graph、`ql project graph`、`.qi` V1 emit 与 package-aware dependency `.qi` syntax-load 已落地，但依赖符号 query 与 cross-file editor semantics 仍未开始实现。
 - 当前最重要的治理要求仍然是三者一致：
   - 代码里的真实实现
   - 测试里的真实合同
@@ -72,7 +72,7 @@
 - `ql project graph [file-or-dir]` 已可向上发现 manifest 并输出当前 package/workspace/reference graph。
 - `ql project emit-interface [file-or-dir] [-o <output>]` 已可对 package manifest 的 `src/**/*.ql` 做逐文件分析，并输出 text-based `.qi` public interface artifact。
 - `ql-analysis::analyze_package` 与 package-aware `ql check <package-dir>` 现已开始加载 `[references].packages` 指向的 dependency `.qi` artifact，并在 interface 缺失时显式失败。
-- 当前 dependency `.qi` load 仍停在 artifact-level section 消费：保留 package header 与 `// source: ...` module section，尚未进入 dependency symbol identity、query truth surface、真实 dependency build graph，以及 cross-file query / references / rename / completion。
+- 当前 dependency `.qi` load 已推进到 syntax-aware section parse：每个 `// source: ...` module section 都会进入 interface-mode AST，支持 bodyless `fn` / `impl` / `extend` 声明以及无值 `const` / `static` 接口声明；但依赖符号 identity、query truth surface、真实 dependency build graph，以及 cross-file query / references / rename / completion 仍未开放。
 
 ## 当前进度对账
 
@@ -87,7 +87,7 @@
 
 1. 继续沿已开放的 async executable / library 子集扩真实用户可写 surface，而不是另开 ABI 或 runtime 设计。
 2. 继续让 task-handle、dynamic path、`for await`、awaited `match` 这几条线共享同一份 truth source。
-3. 按已固定顺序继续推进 Phase 8：dependency `.qi` 的最小 load 已落地，下一步进入 dependency symbol identity 与 `ql-analysis` query truth surface，而不是直接跳到 cross-file rename。
+3. 按已固定顺序继续推进 Phase 8：dependency `.qi` 的 syntax-aware load 已落地，下一步进入 dependency symbol identity 与 `ql-analysis` query truth surface，而不是直接跳到 cross-file rename。
 
 ## 归档入口
 

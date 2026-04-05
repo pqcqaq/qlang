@@ -36,7 +36,11 @@ impl Parser {
                     is_async,
                     is_unsafe,
                     None,
-                    FunctionBodyMode::Required,
+                    if self.is_interface_mode() {
+                        FunctionBodyMode::Optional
+                    } else {
+                        FunctionBodyMode::Required
+                    },
                 )
                 .ok()
                 .map(ItemKind::Function)
@@ -137,8 +141,14 @@ impl Parser {
         let name = self.expect_ident_token("expected global name")?;
         self.expect(TokenKind::Colon, "expected `:` after global name")?;
         let ty = self.parse_type()?;
-        self.expect(TokenKind::Eq, "expected `=` after global type")?;
-        let value = self.parse_expr()?;
+        let value = if self.eat(TokenKind::Eq) {
+            self.parse_expr()?
+        } else if self.is_interface_mode() {
+            self.interface_placeholder_expr()
+        } else {
+            self.error_here("expected `=` after global type");
+            return Err(());
+        };
         self.eat(TokenKind::Semi);
 
         Ok(GlobalDecl {
@@ -297,7 +307,11 @@ impl Parser {
                 is_async,
                 is_unsafe,
                 None,
-                FunctionBodyMode::Required,
+                if self.is_interface_mode() {
+                    FunctionBodyMode::Optional
+                } else {
+                    FunctionBodyMode::Required
+                },
             )?);
         }
 
@@ -331,7 +345,11 @@ impl Parser {
                 is_async,
                 is_unsafe,
                 None,
-                FunctionBodyMode::Required,
+                if self.is_interface_mode() {
+                    FunctionBodyMode::Optional
+                } else {
+                    FunctionBodyMode::Required
+                },
             )?);
         }
 
@@ -445,6 +463,14 @@ impl Parser {
             where_clause,
             body,
         })
+    }
+
+    fn interface_placeholder_expr(&self) -> ql_ast::Expr {
+        let span = self.current().span;
+        ql_ast::Expr::new(
+            span,
+            ql_ast::ExprKind::Name("__ql_interface_placeholder".to_owned()),
+        )
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>, ()> {

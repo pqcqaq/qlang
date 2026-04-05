@@ -117,7 +117,8 @@ LSP V1 继续关闭：
 
 - `ql-analysis::analyze_package` 已落地
 - package-aware `ql check <package-dir>` 现已通过该入口分析当前包源码，并加载 `[references].packages` 指向的 dependency `.qi`
-- 当前 dependency `.qi` 仍停在 artifact-level section load，不做 dependency symbol query / cross-file semantic index
+- 当前 dependency `.qi` 已推进到 syntax-aware section parse：每个 interface module section 会进入 interface-mode AST
+- 依赖符号 query / cross-file semantic index 仍未开放
 
 交付目标：
 

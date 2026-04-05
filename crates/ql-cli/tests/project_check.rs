@@ -31,7 +31,22 @@ name = "dep"
 // source: src/lib.ql
 package demo.dep
 
+pub const DEFAULT_PORT: Int
+pub static BUILD_ID: Int
+
 pub fn exported() -> Int
+
+pub struct Buffer[T] {
+    value: T,
+}
+
+impl Buffer[Int] {
+    pub fn len(self) -> Int
+}
+
+extend Buffer[Int] {
+    pub fn twice(self) -> Int
+}
 "#,
     );
     temp.write(
