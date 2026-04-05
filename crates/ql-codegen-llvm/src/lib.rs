@@ -14505,6 +14505,104 @@ fn direct_local_capturing_closure_for_expr(
     }
 }
 
+fn supported_direct_local_capturing_closure_locals_for_guard(
+    module: &hir::Module,
+    body: &mir::MirBody,
+    local_types: &HashMap<mir::LocalId, Ty>,
+) -> HashMap<mir::LocalId, mir::ClosureId> {
+    let mut staged = HashMap::new();
+    let mut supported = HashMap::new();
+    let mut closure_spans = HashMap::new();
+
+    for statement in body.statements() {
+        let StatementKind::Assign { place, value } = &statement.kind else {
+            continue;
+        };
+        if !place.projections.is_empty() {
+            continue;
+        }
+        let Rvalue::Closure { closure } = value else {
+            continue;
+        };
+        let closure_decl = body.closure(*closure);
+        if closure_decl.capture_binding_locals.is_empty() {
+            continue;
+        }
+
+        let closure_supported = closure_decl.captures.iter().all(|capture| {
+            local_types
+                .get(&capture.local)
+                .is_some_and(is_scalar_capture_ty)
+        });
+        if !closure_supported || staged.contains_key(&place.base) {
+            continue;
+        }
+        staged.insert(place.base, *closure);
+        closure_spans.insert(place.base, closure_decl.span);
+    }
+
+    for statement in body.statements() {
+        match &statement.kind {
+            StatementKind::Assign { place, value } => {
+                if !place.projections.is_empty()
+                    || !matches!(body.local(place.base).origin, LocalOrigin::Temp { .. })
+                {
+                    continue;
+                }
+                let Some((closure_id, closure_span)) =
+                    direct_local_capturing_closure_assignment_source(
+                        value,
+                        &staged,
+                        &supported,
+                        &closure_spans,
+                    )
+                else {
+                    continue;
+                };
+                match supported.get(&place.base).copied() {
+                    Some(current) if current != closure_id => {}
+                    Some(_) => {}
+                    None => {
+                        supported.insert(place.base, closure_id);
+                        closure_spans.insert(place.base, closure_span);
+                    }
+                }
+            }
+            StatementKind::BindPattern {
+                pattern, source, ..
+            } => {
+                let Operand::Place(place) = source else {
+                    continue;
+                };
+                if !place.projections.is_empty() {
+                    continue;
+                }
+                let Some(closure_id) = staged
+                    .get(&place.base)
+                    .copied()
+                    .or_else(|| supported.get(&place.base).copied())
+                else {
+                    continue;
+                };
+                let PatternKind::Binding(local) = pattern_kind(module, *pattern) else {
+                    continue;
+                };
+                let Some(binding_local) = mir_local_for_hir_local(body, *local) else {
+                    continue;
+                };
+                supported.entry(binding_local).or_insert(closure_id);
+            }
+            StatementKind::Eval { .. }
+            | StatementKind::RegisterCleanup { .. }
+            | StatementKind::RunCleanup { .. }
+            | StatementKind::StorageLive { .. }
+            | StatementKind::StorageDead { .. } => {}
+        }
+    }
+
+    supported
+}
+
 fn supported_direct_local_capturing_closure_callee_closure(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -15638,6 +15736,9 @@ fn supported_guard_call<'a>(
     callee_expr: hir::ExprId,
     args: &'a [hir::CallArg],
 ) -> Option<(Vec<Ty>, Ty)> {
+    let supported_direct_local_capturing_closures =
+        supported_direct_local_capturing_closure_locals_for_guard(module, body, local_types);
+
     if let Some(function) = guard_direct_callee_function(module, resolution, callee_expr) {
         let signature = signatures.get(&function)?;
         let ordered_args = ordered_guard_call_args(args, signature)?;
@@ -15681,6 +15782,59 @@ fn supported_guard_call<'a>(
                 .collect(),
             signature.return_ty.clone(),
         ));
+    }
+
+    if let Some(closure_id) = supported_direct_local_capturing_closure_callee_closure(
+        module,
+        resolution,
+        body,
+        &supported_direct_local_capturing_closures,
+        &[],
+        callee_expr,
+    ) {
+        let closure = body.closure(closure_id);
+        let closure_ty = typeck.expr_ty(closure.expr)?.clone();
+        let Ty::Callable { params, ret } = &closure_ty else {
+            return None;
+        };
+        if args.len() != params.len()
+            || args
+                .iter()
+                .any(|arg| matches!(arg, hir::CallArg::Named { .. }))
+        {
+            return None;
+        }
+        for (arg, param_ty) in args.iter().zip(params.iter()) {
+            let expr_id = guard_call_arg_expr(arg);
+            if let Some(expected_kind) = guard_scalar_kind_for_ty(param_ty) {
+                let actual_kind = supported_guard_scalar_expr(
+                    module,
+                    resolution,
+                    typeck,
+                    signatures,
+                    body,
+                    local_types,
+                    arm_pattern,
+                    expr_id,
+                )?;
+                if actual_kind != expected_kind {
+                    return None;
+                }
+            } else if !supported_guard_value_expr_as_type(
+                module,
+                resolution,
+                typeck,
+                signatures,
+                body,
+                local_types,
+                arm_pattern,
+                expr_id,
+                param_ty,
+            ) {
+                return None;
+            }
+        }
+        return Some((params.clone(), ret.as_ref().clone()));
     }
 
     let callee_ty = typeck.expr_ty(callee_expr).cloned()?;
@@ -18939,6 +19093,48 @@ fn main() -> Int {
         assert!(rendered.contains("call i1 @"));
         assert!(rendered.contains("br i1"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
+    }
+
+    #[test]
+    fn emits_match_guard_control_flow_local_alias_capturing_closure_call_roots() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let branch = true
+    let target = 42
+    let check = (value: Int) => value == target
+    let first = match 42 {
+        current if (match branch {
+            true => {
+                let alias = check
+                alias
+            },
+            false => check,
+        })(current) => 1,
+        _ => 0,
+    }
+    let second = match 42 {
+        current if (if branch {
+            var alias = check
+            alias = check;
+            alias
+        } else {
+            check
+        })(current) => 2,
+        _ => 0,
+    }
+    return first + second
+}
+"#,
+        );
+
+        assert!(rendered.matches("__closure0(").count() >= 3);
+        assert!(rendered.contains("call i1 @"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
         assert!(
             !rendered
                 .contains("currently only supports a narrow non-`move` capturing-closure subset")
