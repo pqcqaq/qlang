@@ -852,34 +852,56 @@ fn dependency_import_completion_context(
         .map(|index| offset + index)
         .unwrap_or(source.len());
     let line_prefix = source.get(line_start..offset)?;
-    let line_suffix = source.get(offset..line_end)?;
     let trimmed_prefix = line_prefix.trim_start();
     let path_prefix = trimmed_prefix.strip_prefix("use ")?;
-    if path_prefix.contains('{') || path_prefix.contains('}') || path_prefix.contains(" as ") {
+    let line_suffix = source.get(offset..line_end)?;
+    if path_prefix.contains('}') {
+        return None;
+    }
+    if line_suffix.trim_start().starts_with("as ") {
         return None;
     }
 
-    let alias_slice = line_suffix
-        .find(" as ")
-        .map(|index| &line_suffix[..index])
-        .unwrap_or(line_suffix);
-    if alias_slice.trim_start().starts_with("as ") {
-        return None;
+    if path_prefix.contains('{') {
+        if path_prefix.matches('{').count() != 1 {
+            return None;
+        }
+        let (group_prefix, group_items_prefix) = path_prefix.split_once('{')?;
+        let current_item_prefix = group_items_prefix
+            .rsplit(',')
+            .next()
+            .map(str::trim)
+            .unwrap_or_default();
+        if current_item_prefix.starts_with("as ") || current_item_prefix.contains(" as ") {
+            return None;
+        }
+        return Some(DependencyImportCompletionContext {
+            completed_segments: dependency_import_path_segments(
+                group_prefix.trim().trim_end_matches('.'),
+                false,
+            ),
+        });
     }
 
+    Some(DependencyImportCompletionContext {
+        completed_segments: dependency_import_path_segments(
+            path_prefix,
+            !path_prefix.ends_with('.'),
+        ),
+    })
+}
+
+fn dependency_import_path_segments(path_prefix: &str, drop_last_segment: bool) -> Vec<String> {
     let mut segments = path_prefix
         .split('.')
         .map(str::trim)
         .filter(|segment| !segment.is_empty())
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
-    if !path_prefix.ends_with('.') {
+    if drop_last_segment {
         segments.pop();
     }
-
-    Some(DependencyImportCompletionContext {
-        completed_segments: segments,
-    })
+    segments
 }
 
 pub fn parse_errors_to_diagnostics(errors: Vec<ParseError>) -> Vec<Diagnostic> {
