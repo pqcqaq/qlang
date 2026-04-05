@@ -1571,8 +1571,8 @@ impl<'a> ModuleEmitter<'a> {
                 supported_matches,
                 &staged,
                 &supported,
-                &closure_spans,
-                &conflicting_temps,
+                &mut closure_spans,
+                &mut conflicting_temps,
             );
         self.validate_ordinary_control_flow_capturing_closure_candidates(
             body,
@@ -1704,8 +1704,8 @@ impl<'a> ModuleEmitter<'a> {
         supported_matches: &HashMap<mir::BasicBlockId, SupportedMatchLowering>,
         staged: &HashMap<mir::LocalId, mir::ClosureId>,
         supported: &HashMap<mir::LocalId, mir::ClosureId>,
-        closure_spans: &HashMap<mir::LocalId, Span>,
-        conflicting_temps: &HashSet<mir::LocalId>,
+        closure_spans: &mut HashMap<mir::LocalId, Span>,
+        conflicting_temps: &mut HashSet<mir::LocalId>,
     ) -> HashMap<(mir::BasicBlockId, mir::LocalId), SupportedOrdinaryCapturingClosureCall> {
         let mut ordinary_calls = HashMap::new();
 
@@ -1745,13 +1745,18 @@ impl<'a> ModuleEmitter<'a> {
                     {
                         continue;
                     }
-                    ordinary_calls.insert(
-                        (join_target, local),
+                    self.record_supported_ordinary_control_flow_capturing_closure_call(
+                        body,
+                        join_target,
+                        local,
                         SupportedOrdinaryCapturingClosureCall::Branch {
                             condition: condition.clone(),
                             then_closure,
                             else_closure,
                         },
+                        &mut ordinary_calls,
+                        conflicting_temps,
+                        closure_spans,
                     );
                 }
                 TerminatorKind::Match { scrutinee, .. } => {
@@ -1791,13 +1796,18 @@ impl<'a> ModuleEmitter<'a> {
                             {
                                 continue;
                             }
-                            ordinary_calls.insert(
-                                (join_target, local),
+                            self.record_supported_ordinary_control_flow_capturing_closure_call(
+                                body,
+                                join_target,
+                                local,
                                 SupportedOrdinaryCapturingClosureCall::BoolMatch {
                                     scrutinee: scrutinee.clone(),
                                     true_closure,
                                     false_closure,
                                 },
+                                &mut ordinary_calls,
+                                conflicting_temps,
+                                closure_spans,
                             );
                         }
                         SupportedMatchLowering::Integer {
@@ -1849,13 +1859,18 @@ impl<'a> ModuleEmitter<'a> {
                                 continue;
                             }
 
-                            ordinary_calls.insert(
-                                (join_target, local),
+                            self.record_supported_ordinary_control_flow_capturing_closure_call(
+                                body,
+                                join_target,
+                                local,
                                 SupportedOrdinaryCapturingClosureCall::IntegerMatch {
                                     scrutinee: scrutinee.clone(),
                                     arms: lowered_arms,
                                     fallback_closure,
                                 },
+                                &mut ordinary_calls,
+                                conflicting_temps,
+                                closure_spans,
                             );
                         }
                         SupportedMatchLowering::GuardOnly { .. }
@@ -1871,6 +1886,62 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         ordinary_calls
+    }
+
+    fn record_supported_ordinary_control_flow_capturing_closure_call(
+        &self,
+        body: &mir::MirBody,
+        join_target: mir::BasicBlockId,
+        local: mir::LocalId,
+        lowering: SupportedOrdinaryCapturingClosureCall,
+        ordinary_calls: &mut HashMap<
+            (mir::BasicBlockId, mir::LocalId),
+            SupportedOrdinaryCapturingClosureCall,
+        >,
+        conflicting_temps: &mut HashSet<mir::LocalId>,
+        closure_spans: &mut HashMap<mir::LocalId, Span>,
+    ) {
+        ordinary_calls.insert((join_target, local), lowering.clone());
+
+        let Some(closure_span) = closure_spans.get(&local).copied() else {
+            return;
+        };
+        for binding_local in
+            self.ordinary_control_flow_capturing_closure_binding_locals(body, join_target, local)
+        {
+            ordinary_calls.insert((join_target, binding_local), lowering.clone());
+            conflicting_temps.insert(binding_local);
+            closure_spans.insert(binding_local, closure_span);
+        }
+    }
+
+    fn ordinary_control_flow_capturing_closure_binding_locals(
+        &self,
+        body: &mir::MirBody,
+        block_id: mir::BasicBlockId,
+        source_local: mir::LocalId,
+    ) -> Vec<mir::LocalId> {
+        let mut binding_locals = Vec::new();
+        for statement_id in &body.block(block_id).statements {
+            let statement = body.statement(*statement_id);
+            let StatementKind::BindPattern {
+                pattern, source, ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+            let Operand::Place(place) = source else {
+                continue;
+            };
+            if !place.projections.is_empty() || place.base != source_local {
+                continue;
+            }
+            let Some(binding_local) = self.binding_local_for_pattern(body, *pattern) else {
+                continue;
+            };
+            binding_locals.push(binding_local);
+        }
+        binding_locals
     }
 
     fn validate_ordinary_control_flow_capturing_closure_candidates(
@@ -1899,7 +1970,23 @@ impl<'a> ModuleEmitter<'a> {
                             diagnostics,
                         );
                     }
-                    StatementKind::BindPattern { source, .. } => {
+                    StatementKind::BindPattern {
+                        pattern, source, ..
+                    } => {
+                        let supported_binding = if let Operand::Place(place) = source {
+                            place.projections.is_empty()
+                                && conflicting_temps.contains(&place.base)
+                                && self.binding_local_for_pattern(body, *pattern).is_some_and(
+                                    |binding_local| {
+                                        ordinary_calls.contains_key(&(block_id, binding_local))
+                                    },
+                                )
+                        } else {
+                            false
+                        };
+                        if supported_binding {
+                            continue;
+                        }
                         self.validate_ordinary_control_flow_capturing_closure_operand(
                             block_id,
                             source,

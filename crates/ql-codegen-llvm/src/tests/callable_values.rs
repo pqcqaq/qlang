@@ -1692,3 +1692,46 @@ return (if branch { left } else { right })(1)
         !rendered.contains("currently only supports a narrow non-`move` capturing-closure subset")
     );
 }
+
+#[test]
+fn emits_ordinary_different_closure_control_flow_binding_root_calls() {
+    let rendered = emit(
+        r#"
+fn run_if() -> Int {
+let branch = true
+let target = 42
+let left = (value: Int) => value + target
+let right = (value: Int) => value + target + 1
+let chosen = if branch { left } else { right }
+return chosen(1)
+}
+
+fn run_match() -> Int {
+let branch = true
+let target = 42
+let left = (value: Int) => value + target
+let right = (value: Int) => value + target + 1
+let chosen = match branch {
+    true => {
+        let alias = left
+        alias
+    },
+    false => right,
+}
+return chosen(2)
+}
+
+fn main() -> Int {
+return run_if() + run_match()
+}
+"#,
+    );
+
+    assert!(rendered.matches("ordinary_call_if_then").count() >= 2);
+    assert!(rendered.contains("@ql_0_run_if__closure0("));
+    assert!(rendered.contains("@ql_1_run_match__closure0("));
+    assert!(rendered.contains("@ql_1_run_match__closure1("));
+    assert!(
+        !rendered.contains("currently only supports a narrow non-`move` capturing-closure subset")
+    );
+}
