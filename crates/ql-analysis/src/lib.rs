@@ -4,6 +4,7 @@ mod runtime;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ql_ast::{Item as AstItem, ItemKind as AstItemKind, Visibility as AstVisibility};
 use ql_borrowck::{
     BorrowckResult, analyze_module as analyze_borrowck, render_result as render_borrowck_result,
 };
@@ -12,11 +13,12 @@ use ql_hir::{ExprId, LocalId, PatternId, lower_module};
 use ql_mir::{MirModule, lower_module as lower_mir, render_module as render_mir_module};
 use ql_parser::{ParseError, parse_source};
 use ql_project::{
-    InterfaceArtifact, InterfaceError, ProjectError, ProjectManifest, collect_package_sources,
-    default_interface_path, load_interface_artifact, load_project_manifest,
-    load_reference_manifests,
+    InterfaceArtifact, InterfaceError, InterfaceModule, ProjectError, ProjectManifest,
+    collect_package_sources, default_interface_path, load_interface_artifact,
+    load_project_manifest, load_reference_manifests,
 };
 use ql_resolve::{ResolutionMap, resolve_module};
+use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
 use query::QueryIndex;
 pub use query::{
@@ -51,6 +53,7 @@ pub struct DependencyInterface {
     manifest: ProjectManifest,
     interface_path: PathBuf,
     artifact: InterfaceArtifact,
+    symbols: Vec<DependencySymbol>,
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +61,16 @@ pub struct PackageAnalysis {
     manifest: ProjectManifest,
     modules: Vec<PackageModuleAnalysis>,
     dependencies: Vec<DependencyInterface>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencySymbol {
+    pub package_name: String,
+    pub source_path: String,
+    pub kind: SymbolKind,
+    pub name: String,
+    pub detail: String,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -104,6 +117,17 @@ impl DependencyInterface {
     pub fn artifact(&self) -> &InterfaceArtifact {
         &self.artifact
     }
+
+    pub fn symbols(&self) -> &[DependencySymbol] {
+        &self.symbols
+    }
+
+    pub fn symbols_named(&self, name: &str) -> Vec<&DependencySymbol> {
+        self.symbols
+            .iter()
+            .filter(|symbol| symbol.name == name)
+            .collect()
+    }
 }
 
 impl PackageAnalysis {
@@ -117,6 +141,20 @@ impl PackageAnalysis {
 
     pub fn dependencies(&self) -> &[DependencyInterface] {
         &self.dependencies
+    }
+
+    pub fn dependency_symbols(&self) -> Vec<&DependencySymbol> {
+        self.dependencies
+            .iter()
+            .flat_map(|dependency| dependency.symbols())
+            .collect()
+    }
+
+    pub fn dependency_symbols_named(&self, name: &str) -> Vec<&DependencySymbol> {
+        self.dependencies
+            .iter()
+            .flat_map(|dependency| dependency.symbols_named(name))
+            .collect()
     }
 }
 
@@ -341,10 +379,12 @@ pub fn analyze_package(path: &Path) -> Result<PackageAnalysis, PackageAnalysisEr
                 PackageAnalysisError::InterfaceParse { path, message }
             }
         })?;
+        let symbols = index_dependency_symbols(&artifact);
         dependencies.push(DependencyInterface {
             manifest: dependency_manifest,
             interface_path,
             artifact,
+            symbols,
         });
     }
 
@@ -353,6 +393,202 @@ pub fn analyze_package(path: &Path) -> Result<PackageAnalysis, PackageAnalysisEr
         modules,
         dependencies,
     })
+}
+
+fn index_dependency_symbols(artifact: &InterfaceArtifact) -> Vec<DependencySymbol> {
+    let mut symbols = Vec::new();
+    for module in &artifact.modules {
+        index_interface_module_symbols(&artifact.package_name, module, &mut symbols);
+    }
+    symbols
+}
+
+fn index_interface_module_symbols(
+    package_name: &str,
+    module: &InterfaceModule,
+    symbols: &mut Vec<DependencySymbol>,
+) {
+    for item in &module.syntax.items {
+        index_interface_item_symbols(package_name, module, item, symbols);
+    }
+}
+
+fn index_interface_item_symbols(
+    package_name: &str,
+    module: &InterfaceModule,
+    item: &AstItem,
+    symbols: &mut Vec<DependencySymbol>,
+) {
+    match &item.kind {
+        AstItemKind::Function(function) if is_public(&function.visibility) => {
+            push_dependency_symbol(
+                package_name,
+                &module.source_path,
+                SymbolKind::Function,
+                &function.name,
+                function.name_span,
+                interface_detail_text(&module.contents, function.span, &function.name),
+                symbols,
+            )
+        }
+        AstItemKind::Const(global) if is_public(&global.visibility) => push_dependency_symbol(
+            package_name,
+            &module.source_path,
+            SymbolKind::Const,
+            &global.name,
+            global.name_span,
+            interface_detail_text(&module.contents, item.span, &global.name),
+            symbols,
+        ),
+        AstItemKind::Static(global) if is_public(&global.visibility) => push_dependency_symbol(
+            package_name,
+            &module.source_path,
+            SymbolKind::Static,
+            &global.name,
+            global.name_span,
+            interface_detail_text(&module.contents, item.span, &global.name),
+            symbols,
+        ),
+        AstItemKind::Struct(struct_decl) if is_public(&struct_decl.visibility) => {
+            push_dependency_symbol(
+                package_name,
+                &module.source_path,
+                SymbolKind::Struct,
+                &struct_decl.name,
+                struct_decl.name_span,
+                interface_detail_text(&module.contents, item.span, &struct_decl.name),
+                symbols,
+            );
+        }
+        AstItemKind::Enum(enum_decl) if is_public(&enum_decl.visibility) => {
+            push_dependency_symbol(
+                package_name,
+                &module.source_path,
+                SymbolKind::Enum,
+                &enum_decl.name,
+                enum_decl.name_span,
+                interface_detail_text(&module.contents, item.span, &enum_decl.name),
+                symbols,
+            );
+        }
+        AstItemKind::Trait(trait_decl) if is_public(&trait_decl.visibility) => {
+            push_dependency_symbol(
+                package_name,
+                &module.source_path,
+                SymbolKind::Trait,
+                &trait_decl.name,
+                trait_decl.name_span,
+                interface_detail_text(&module.contents, item.span, &trait_decl.name),
+                symbols,
+            );
+            for method in &trait_decl.methods {
+                push_dependency_symbol(
+                    package_name,
+                    &module.source_path,
+                    SymbolKind::Method,
+                    &method.name,
+                    method.name_span,
+                    interface_detail_text(&module.contents, method.span, &method.name),
+                    symbols,
+                );
+            }
+        }
+        AstItemKind::Impl(impl_block) => {
+            for method in impl_block
+                .methods
+                .iter()
+                .filter(|method| is_public(&method.visibility))
+            {
+                push_dependency_symbol(
+                    package_name,
+                    &module.source_path,
+                    SymbolKind::Method,
+                    &method.name,
+                    method.name_span,
+                    interface_detail_text(&module.contents, method.span, &method.name),
+                    symbols,
+                );
+            }
+        }
+        AstItemKind::Extend(extend_block) => {
+            for method in extend_block
+                .methods
+                .iter()
+                .filter(|method| is_public(&method.visibility))
+            {
+                push_dependency_symbol(
+                    package_name,
+                    &module.source_path,
+                    SymbolKind::Method,
+                    &method.name,
+                    method.name_span,
+                    interface_detail_text(&module.contents, method.span, &method.name),
+                    symbols,
+                );
+            }
+        }
+        AstItemKind::TypeAlias(type_alias) if is_public(&type_alias.visibility) => {
+            push_dependency_symbol(
+                package_name,
+                &module.source_path,
+                SymbolKind::TypeAlias,
+                &type_alias.name,
+                type_alias.name_span,
+                interface_detail_text(&module.contents, item.span, &type_alias.name),
+                symbols,
+            );
+        }
+        AstItemKind::ExternBlock(extern_block) if is_public(&extern_block.visibility) => {
+            for function in &extern_block.functions {
+                push_dependency_symbol(
+                    package_name,
+                    &module.source_path,
+                    SymbolKind::Function,
+                    &function.name,
+                    function.name_span,
+                    interface_detail_text(&module.contents, function.span, &function.name),
+                    symbols,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_dependency_symbol(
+    package_name: &str,
+    source_path: &str,
+    kind: SymbolKind,
+    name: &str,
+    span: Span,
+    detail: String,
+    symbols: &mut Vec<DependencySymbol>,
+) {
+    symbols.push(DependencySymbol {
+        package_name: package_name.to_owned(),
+        source_path: source_path.to_owned(),
+        kind,
+        name: name.to_owned(),
+        detail,
+        span,
+    });
+}
+
+fn interface_detail_text(source: &str, span: Span, fallback_name: &str) -> String {
+    let detail = source
+        .get(span.start..span.end)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or(fallback_name);
+    detail
+        .strip_prefix("pub ")
+        .unwrap_or(detail)
+        .trim()
+        .to_owned()
+}
+
+fn is_public(visibility: &AstVisibility) -> bool {
+    matches!(visibility, AstVisibility::Public)
 }
 
 pub fn parse_errors_to_diagnostics(errors: Vec<ParseError>) -> Vec<Diagnostic> {

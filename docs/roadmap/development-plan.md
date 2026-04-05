@@ -22,7 +22,7 @@
 
 ## 当前判断
 
-截至 2026-04-05，Qlang 已经不是“只有语言设计文档的预研空壳”，而是一个真实的语言与工具链仓库；当前主编译器实现使用 Rust，但这不应倒置为“语言设计向 Rust 靠拢”：
+截至 2026-04-06，Qlang 已经不是“只有语言设计文档的预研空壳”，而是一个真实的语言与工具链仓库；当前主编译器实现使用 Rust，但这不应倒置为“语言设计向 Rust 靠拢”：
 
 - Phase 1 到 Phase 6 的基础设施已经在仓库中落地
 - 当前主线工作是保守的 Phase 7：async/runtime/library-build/program-build/Rust interop
@@ -373,8 +373,8 @@
 - 当前不建议直接从 Phase 6 的 same-file LSP 跳到 cross-file rename / 全量 workspace IDE。
 - 推荐顺序已经固定为：`package/workspace graph -> .qi 接口产物 -> ql-analysis 消费依赖 .qi -> ql-lsp cross-file hover/definition/completion/references -> cross-file rename`。
 - `.qi` 应优先被设计成 compiler-facing 的文本接口产物，而不是 LSP 私有缓存；语法风格应保持 Qlang 自身表面，不应漂向 Rust/JSON 专用内部格式。
-- 这条顺序的前三个最小实现切片已开始落地：仓库现已开放 `ql project graph [file-or-dir]`、`ql project emit-interface [file-or-dir] [-o <output>]`，以及 package-aware `ql check <package-dir>` 对 `[references].packages` 的最小 `.qi` artifact load。
-- 当前真实已支持的工程 contract 仍刻意收窄在 `[package].name`、`[workspace].members`、`[references].packages`、`.qi` V1 emit，以及 `ql-analysis::analyze_package` 对 dependency `.qi` 的 syntax-aware interface AST load；依赖符号 identity、dependency semantic query、真实 build graph 与 cross-file LSP 还没有开。
+- 这条顺序的前三个最小实现切片已开始落地：仓库现已开放 `ql project graph [file-or-dir]`、`ql project emit-interface [file-or-dir] [-o <output>]`、package-aware `ql check <package-dir>` 对 `[references].packages` 的最小 `.qi` artifact load，以及 `ql-analysis::analyze_package` 的 dependency public symbol index。
+- 当前真实已支持的工程 contract 仍刻意收窄在 `[package].name`、`[workspace].members`、`[references].packages`、`.qi` V1 emit、dependency `.qi` 的 syntax-aware interface AST load，以及 package 级 dependency public symbol index；cross-file hover/definition/completion/references、真实 build graph 与 rename 还没有开。
 - cross-file rename、code actions、call hierarchy 继续后置，等 dependency symbol identity 与 workspace edit graph 稳定后再开。
 - 这条顺序的入口设计稿见：[2026-04-05 Phase 8：`.qi` 接口产物与 Cross-File LSP 设计入口](/plans/2026-04-05-phase8-interface-artifacts-and-cross-file-lsp)。
 
