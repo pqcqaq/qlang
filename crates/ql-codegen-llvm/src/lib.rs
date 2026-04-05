@@ -1430,10 +1430,16 @@ impl<'a> ModuleEmitter<'a> {
                                 .get(&place.base)
                                 .is_some_and(|current| *current == closure_id)
                     );
+                    let supported_forwarded_closure = if temp_forwarded_closure.is_none() {
+                        forwarded_closure.filter(|_| supported.contains_key(&place.base))
+                    } else {
+                        None
+                    };
                     if supported.contains_key(&place.base)
                         && !matches!(value, Rvalue::Closure { .. })
                         && !same_supported_forwarded_closure
                         && temp_forwarded_closure.is_none()
+                        && supported_forwarded_closure.is_none()
                     {
                         diagnostics.push(
                             self.capturing_closure_diagnostic(
@@ -1442,9 +1448,6 @@ impl<'a> ModuleEmitter<'a> {
                                     .expect("capturing closure local should preserve its span"),
                             ),
                         );
-                        if forwarded_closure.is_some() {
-                            continue;
-                        }
                     }
                     if same_supported_forwarded_closure {
                         continue;
@@ -1463,6 +1466,11 @@ impl<'a> ModuleEmitter<'a> {
                             }
                             None => {}
                         }
+                        continue;
+                    }
+                    if let Some((closure_id, closure_span)) = supported_forwarded_closure {
+                        supported.insert(place.base, closure_id);
+                        closure_spans.insert(place.base, closure_span);
                         continue;
                     }
                     self.validate_direct_local_capturing_closure_rvalue(

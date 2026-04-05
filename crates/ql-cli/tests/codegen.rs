@@ -4733,7 +4733,7 @@ fn capturing_closure_mutable_alias_cleanup_guard_codegen_case_matches() {
 }
 
 #[test]
-fn cleanup_block_different_target_mutable_capturing_closure_reassign_codegen_case_matches() {
+fn different_target_mutable_capturing_closure_reassign_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "cleanup_block_different_target_mutable_capturing_closure_reassign_build",
@@ -4749,7 +4749,7 @@ fn cleanup_block_different_target_mutable_capturing_closure_reassign_codegen_cas
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
         panic!(
-            "cleanup block different-target mutable capturing-closure reassign build regression:\n\n{message}"
+            "different-target mutable capturing-closure reassign build regression:\n\n{message}"
         );
     }
 }
