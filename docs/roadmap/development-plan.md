@@ -29,6 +29,7 @@
 - 现阶段最重要的目标不是盲目扩语法，而是沿着现有边界持续扩展，不推翻已有真相源
 - 文档、测试、实现必须继续保持同一事实面，否则项目会重新退化成“代码和路线图各说各话”
 - 当前 Phase 8 的 editor 侧策略继续保持保守：优先补导入链路上真正阻塞编辑体验的 `.qi` 消费与回退路径，例如当前文档临时报错时的 dependency import completion，而不是提前扩写 full workspace rename / code action
+- 当前 Phase 8 的 cross-file completion 扩面也继续遵守同一原则：优先补 imported dependency root 上真正可消费的 public surface，例如 public enum variant completion，而不是直接承诺完整 dependency member/type-space completion
 - sync backend 的首个 `String` 闭环现已扩到真实 build 面：UTF-8 string literal 现可 lowering 为 `{ ptr, i64 }` 并经过 local/const/static/param/return/`==`/`!=`/aggregate transport 进入 LLVM/object build；后续关于 `String` 的推进应优先放在 string `match`、runtime/ABI 与更完整数据模型等真实语言能力，而不是继续扩写 cleanup coverage-only 变体
 - sync backend 的普通 bind-pattern lowering 现也已进入真实扩容：ordinary `let` 与 fixed-shape `for` 的 tuple / struct destructuring 已接入当前 LLVM build surface，后续继续沿这类“前端已存在、后端仍保守拒绝”的缺口推进
 - ordinary fixed-shape loop root 现也应按真实 build 面理解：普通 `for` 与 `for await` 已不再只限 direct/projected/call-root 的最早子集，projected block/assignment/runtime `if`/`match` roots 也已进入当前 LLVM build surface

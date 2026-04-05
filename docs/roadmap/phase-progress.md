@@ -74,6 +74,7 @@
 - `ql-analysis::analyze_package` 与 package-aware `ql check <package-dir>` 现已开始加载 `[references].packages` 指向的 dependency `.qi` artifact，并在 interface 缺失时显式失败。
 - 当前 dependency `.qi` load 已推进到 syntax-aware section parse：每个 `// source: ...` module section 都会进入 interface-mode AST，支持 bodyless `fn` / `impl` / `extend` 声明以及无值 `const` / `static` 接口声明；`ql-analysis::analyze_package` 现也已把公开 dependency symbols 收进 package 级 truth surface，并接通 imported dependency symbol 的 cross-file hover / definition / references 到 `.qi` declaration；这条查询链当前也已显式覆盖 grouped import alias 形态。与此同时，`use ...` 导入路径和平铺 / grouped import 位置里的 dependency package path segment / public symbol completion 也已打通，且 grouped import 的空补全位会过滤已写过的 dependency item，减少重复提示；rename、更广义 completion 与真实 dependency build graph 仍未开放。
 - dependency import completion 现在还带有最小编辑期容错：当当前文档自身暂时分析失败时，LSP 仍会走 dependency-only package load 回退，继续提供 `use ...` 导入路径上的 dependency path segment / public symbol completion；该回退当前不扩大到 hover / definition / references 或其它同文件补全。
+- dependency enum import alias root 的首个 non-import-path completion 也已落地：当 `use demo.dep.Command as Cmd` 这类 alias 能唯一映射到 dependency public enum 时，`Cmd.Re` 现可通过 `.qi` public surface 继续补全到 `Retry` 等 variants；struct field / broader member completion 仍未开放。
 
 ## 当前进度对账
 

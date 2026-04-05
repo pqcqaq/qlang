@@ -211,6 +211,47 @@ impl DependencyInterface {
         }
         None
     }
+
+    fn variant_completions_for(&self, symbol: &DependencySymbol) -> Option<Vec<CompletionItem>> {
+        if symbol.kind != SymbolKind::Enum {
+            return None;
+        }
+
+        let enum_decl = self
+            .artifact
+            .modules
+            .iter()
+            .find_map(|module| {
+                (module.source_path == symbol.source_path).then_some(&module.syntax.items)
+            })?
+            .iter()
+            .find_map(|item| match &item.kind {
+                AstItemKind::Enum(enum_decl)
+                    if is_public(&enum_decl.visibility) && enum_decl.name == symbol.name =>
+                {
+                    Some(enum_decl)
+                }
+                _ => None,
+            })?;
+
+        let mut items = enum_decl
+            .variants
+            .iter()
+            .map(|variant| CompletionItem {
+                label: variant.name.clone(),
+                insert_text: variant.name.clone(),
+                kind: SymbolKind::Variant,
+                detail: dependency_variant_detail(&enum_decl.name, variant),
+                ty: Some(enum_decl.name.clone()),
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| left.detail.cmp(&right.detail))
+        });
+        Some(items)
+    }
 }
 
 impl PackageAnalysis {
@@ -263,6 +304,18 @@ impl PackageAnalysis {
         Some(items)
     }
 
+    pub fn dependency_variant_completions_at(
+        &self,
+        analysis: &Analysis,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<CompletionItem>> {
+        let root_offset = dependency_variant_completion_root_offset(source, offset)?;
+        let (binding, _) = analysis.import_binding_at(root_offset)?;
+        let (dependency, symbol) = self.resolve_dependency_import_binding(&binding)?;
+        dependency.variant_completions_for(symbol)
+    }
+
     pub fn dependency_hover_at(
         &self,
         analysis: &Analysis,
@@ -300,8 +353,8 @@ impl PackageAnalysis {
         analysis: &Analysis,
         offset: usize,
     ) -> Option<DependencyResolvedTarget> {
-        let (dependency, symbol, import_span) =
-            self.resolve_dependency_import_target(analysis, offset)?;
+        let (binding, import_span) = analysis.import_binding_at(offset)?;
+        let (dependency, symbol) = self.resolve_dependency_import_binding(&binding)?;
         let definition_span = dependency.artifact_span_for(symbol)?;
         Some(DependencyResolvedTarget {
             import_span,
@@ -315,17 +368,15 @@ impl PackageAnalysis {
         })
     }
 
-    fn resolve_dependency_import_target<'a>(
+    fn resolve_dependency_import_binding<'a>(
         &'a self,
-        analysis: &Analysis,
-        offset: usize,
-    ) -> Option<(&'a DependencyInterface, &'a DependencySymbol, Span)> {
-        let (binding, import_span) = analysis.import_binding_at(offset)?;
+        binding: &ImportBinding,
+    ) -> Option<(&'a DependencyInterface, &'a DependencySymbol)> {
         let imported_name = binding.path.segments.last()?;
         let mut matches = self
             .dependencies
             .iter()
-            .filter(|dependency| dependency_matches_import(dependency, &binding))
+            .filter(|dependency| dependency_matches_import(dependency, binding))
             .flat_map(|dependency| {
                 dependency
                     .symbols()
@@ -337,8 +388,7 @@ impl PackageAnalysis {
         if matches.len() != 1 {
             return None;
         }
-        let (dependency, symbol) = matches.pop()?;
-        Some((dependency, symbol, import_span))
+        matches.pop()
     }
 }
 
@@ -991,6 +1041,115 @@ fn dependency_group_item_name(item: &str) -> Option<String> {
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn dependency_variant_completion_root_offset(source: &str, offset: usize) -> Option<usize> {
+    let offset = offset.min(source.len());
+    let member_start = dependency_identifier_start(source, offset);
+    if member_start == 0 || source.as_bytes().get(member_start - 1) != Some(&b'.') {
+        return None;
+    }
+
+    let root_end = member_start - 1;
+    let root_start = dependency_identifier_start(source, root_end);
+    if root_start == root_end {
+        return None;
+    }
+    if root_start > 0 && source.as_bytes().get(root_start - 1) == Some(&b'.') {
+        return None;
+    }
+
+    Some(root_start)
+}
+
+fn dependency_identifier_start(source: &str, end: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut start = end.min(bytes.len());
+    while start > 0 && is_dependency_identifier_byte(bytes[start - 1]) {
+        start -= 1;
+    }
+    start
+}
+
+fn is_dependency_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'`'
+}
+
+fn dependency_variant_detail(enum_name: &str, variant: &ql_ast::EnumVariant) -> String {
+    match &variant.fields {
+        ql_ast::VariantFields::Unit => format!("variant {}.{}", enum_name, variant.name),
+        ql_ast::VariantFields::Tuple(items) => format!(
+            "variant {}.{}({})",
+            enum_name,
+            variant.name,
+            items
+                .iter()
+                .map(render_dependency_type_expr)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ql_ast::VariantFields::Struct(fields) => format!(
+            "variant {}.{} {{ {} }}",
+            enum_name,
+            variant.name,
+            fields
+                .iter()
+                .map(|field| format!("{}: {}", field.name, render_dependency_type_expr(&field.ty)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn render_dependency_type_expr(ty: &ql_ast::TypeExpr) -> String {
+    match &ty.kind {
+        ql_ast::TypeExprKind::Pointer { is_const, inner } => {
+            let qualifier = if *is_const { "const " } else { "" };
+            format!("*{}{}", qualifier, render_dependency_type_expr(inner))
+        }
+        ql_ast::TypeExprKind::Array { element, len } => {
+            format!("[{}; {}]", render_dependency_type_expr(element), len)
+        }
+        ql_ast::TypeExprKind::Named { path, args } => {
+            let mut rendered = path.segments.join(".");
+            if !args.is_empty() {
+                rendered.push('[');
+                rendered.push_str(
+                    &args
+                        .iter()
+                        .map(render_dependency_type_expr)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                rendered.push(']');
+            }
+            rendered
+        }
+        ql_ast::TypeExprKind::Tuple(items) => {
+            let mut rendered = String::from("(");
+            rendered.push_str(
+                &items
+                    .iter()
+                    .map(render_dependency_type_expr)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            if items.len() == 1 {
+                rendered.push(',');
+            }
+            rendered.push(')');
+            rendered
+        }
+        ql_ast::TypeExprKind::Callable { params, ret } => format!(
+            "({}) -> {}",
+            params
+                .iter()
+                .map(render_dependency_type_expr)
+                .collect::<Vec<_>>()
+                .join(", "),
+            render_dependency_type_expr(ret)
+        ),
+    }
 }
 
 pub fn parse_errors_to_diagnostics(errors: Vec<ParseError>) -> Vec<Diagnostic> {

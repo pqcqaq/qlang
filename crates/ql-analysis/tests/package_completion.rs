@@ -286,3 +286,76 @@ pub fn main() -> Int {
     assert!(completions.iter().any(|item| item.label == "Buffer"));
     assert!(!completions.iter().any(|item| item.label == "exported"));
 }
+
+#[test]
+fn package_analysis_surfaces_dependency_variant_completions_through_import_alias() {
+    let temp = TempDir::new("ql-analysis-package-variant-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+
+pub fn main() -> Int {
+    return Cmd.Re()
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = ql_analysis::analyze_source(source).expect("source should analyze");
+    let completions = package
+        .dependency_variant_completions_at(&analysis, source, nth_offset(source, ".Re", 1) + 3)
+        .expect("dependency variant completions should exist");
+
+    assert_eq!(
+        completions
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Retry", "Stop"]
+    );
+    assert!(
+        completions
+            .iter()
+            .all(|item| item.kind == SymbolKind::Variant)
+    );
+    assert!(
+        completions
+            .iter()
+            .any(|item| { item.label == "Retry" && item.detail == "variant Command.Retry(Int)" })
+    );
+}

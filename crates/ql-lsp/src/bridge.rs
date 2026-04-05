@@ -259,6 +259,10 @@ pub fn completion_for_package_analysis(
     }
 
     let offset = position_to_offset(source, position)?;
+    if let Some(items) = package.dependency_variant_completions_at(analysis, source, offset) {
+        return completion_response(source, offset, items);
+    }
+
     completion_response(source, offset, analysis.completions_at(offset)?)
 }
 

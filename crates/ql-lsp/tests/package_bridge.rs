@@ -667,6 +667,78 @@ pub fn main( -> Int {
 }
 
 #[test]
+fn package_bridge_surfaces_dependency_variant_completion_through_import_alias() {
+    let temp = TempDir::new("ql-lsp-package-variant-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+
+pub fn main() -> Int {
+    return Cmd.Re()
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, ".Re", 1) + 3),
+    ) else {
+        panic!("dependency variant completion should exist")
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "Retry");
+    assert!(
+        items
+            .iter()
+            .all(|item| item.kind == Some(CompletionItemKind::ENUM_MEMBER))
+    );
+    assert!(items.iter().any(|item| {
+        item.label == "Retry" && item.detail.as_deref() == Some("variant Command.Retry(Int)")
+    }));
+}
+
+#[test]
 fn package_bridge_surfaces_dependency_references() {
     let temp = TempDir::new("ql-lsp-package-refs");
     let app_root = temp.path().join("workspace").join("app");
