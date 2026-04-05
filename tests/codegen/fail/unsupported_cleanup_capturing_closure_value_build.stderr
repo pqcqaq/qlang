@@ -1,3 +1,3 @@
-error: tests/codegen/fail/unsupported_cleanup_capturing_closure_value_build.ql:6:19: LLVM IR backend foundation currently only supports non-capturing sync closure values
+error: tests/codegen/fail/unsupported_cleanup_capturing_closure_value_build.ql:6:19: LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings
       let capture = () => value
                     ^^^^^^^^

@@ -137,6 +137,7 @@ struct PreparedFunction {
     supported_for_loops: HashMap<mir::BasicBlockId, SupportedForLoopLowering>,
     supported_matches: HashMap<mir::BasicBlockId, SupportedMatchLowering>,
     param_binding_locals: Vec<mir::LocalId>,
+    direct_local_capturing_closures: HashMap<mir::LocalId, mir::ClosureId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -389,7 +390,7 @@ impl<'a> ModuleEmitter<'a> {
             self.collect_prepared_closures(
                 function.signature.function_ref,
                 &function.signature.llvm_name,
-                &function.body,
+                function,
                 &mut prepared_closures,
                 &mut diagnostics,
             );
@@ -424,7 +425,7 @@ impl<'a> ModuleEmitter<'a> {
                     self.collect_prepared_closures(
                         FunctionRef::Item(item_id),
                         &prepared_const_closure.signature.llvm_name,
-                        &prepared_const_closure.body,
+                        &prepared_const_closure,
                         &mut prepared_closures,
                         &mut diagnostics,
                     );
@@ -1057,13 +1058,14 @@ impl<'a> ModuleEmitter<'a> {
         &self,
         root_function_ref: FunctionRef,
         parent_llvm_name: &str,
+        parent: &PreparedFunction,
         closure_id: mir::ClosureId,
         closure: &mir::ClosureDecl,
     ) -> Result<PreparedFunction, Vec<Diagnostic>> {
         let body = closure.lowered_body.as_deref().ok_or_else(|| {
             vec![unsupported(
                 closure.span,
-                "LLVM IR backend foundation currently only supports non-capturing sync closure values",
+                "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings",
             )]
         })?;
         let closure_ty = self
@@ -1096,7 +1098,30 @@ impl<'a> ModuleEmitter<'a> {
                 Ok(llvm_ty) => llvm_ty,
                 Err(error) => return Err(vec![error]),
             };
-        let mut param_signatures = Vec::with_capacity(params.len());
+        let mut param_signatures =
+            Vec::with_capacity(closure.capture_binding_locals.len() + params.len());
+        for (capture_local, hir_local) in closure
+            .captures
+            .iter()
+            .zip(closure.capture_binding_locals.iter())
+        {
+            let Some(ty) = parent.local_types.get(&capture_local.local) else {
+                return Err(vec![unsupported(
+                    closure.span,
+                    "LLVM IR backend foundation could not resolve a captured local type for this closure value",
+                )]);
+            };
+            let local = self.input.hir.local(*hir_local);
+            let llvm_ty = match self.lower_llvm_type(ty, local.span, "closure capture type") {
+                Ok(llvm_ty) => llvm_ty,
+                Err(error) => return Err(vec![error]),
+            };
+            param_signatures.push(ParamSignature {
+                name: format!("capture_{}", local.name),
+                ty: ty.clone(),
+                llvm_ty,
+            });
+        }
         for (local_id, ty) in closure.param_locals.iter().zip(params.iter()) {
             let local = self.input.hir.local(*local_id);
             let llvm_ty = match self.lower_llvm_type(ty, local.span, "closure parameter type") {
@@ -1130,8 +1155,9 @@ impl<'a> ModuleEmitter<'a> {
             body,
         )?;
         prepared.param_binding_locals = closure
-            .param_locals
+            .capture_binding_locals
             .iter()
+            .chain(closure.param_locals.iter())
             .filter_map(|local_id| mir_local_for_hir_local(&prepared.body, *local_id))
             .collect();
         Ok(prepared)
@@ -1245,21 +1271,27 @@ impl<'a> ModuleEmitter<'a> {
         &self,
         root_function_ref: FunctionRef,
         parent_llvm_name: &str,
-        body: &mir::MirBody,
+        parent: &PreparedFunction,
         prepared: &mut Vec<PreparedFunction>,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
-        for closure_id in body.closure_ids() {
-            let closure = body.closure(closure_id);
+        for closure_id in parent.body.closure_ids() {
+            let closure = parent.body.closure(closure_id);
             let Some(_) = closure.lowered_body.as_ref() else {
                 continue;
             };
-            match self.prepare_closure(root_function_ref, parent_llvm_name, closure_id, closure) {
+            match self.prepare_closure(
+                root_function_ref,
+                parent_llvm_name,
+                parent,
+                closure_id,
+                closure,
+            ) {
                 Ok(prepared_closure) => {
                     self.collect_prepared_closures(
                         root_function_ref,
                         &prepared_closure.signature.llvm_name,
-                        &prepared_closure.body,
+                        &prepared_closure,
                         prepared,
                         diagnostics,
                     );
@@ -1268,6 +1300,313 @@ impl<'a> ModuleEmitter<'a> {
                 Err(mut errors) => diagnostics.append(&mut errors),
             }
         }
+    }
+
+    fn capturing_closure_diagnostic(&self, span: Span) -> Diagnostic {
+        unsupported(
+            span,
+            "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings",
+        )
+    }
+
+    fn collect_supported_direct_local_capturing_closures(
+        &self,
+        body: &mir::MirBody,
+        local_types: &HashMap<mir::LocalId, Ty>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) -> HashMap<mir::LocalId, mir::ClosureId> {
+        let mut staged = HashMap::new();
+        let mut supported = HashMap::new();
+        let mut closure_spans = HashMap::new();
+
+        for statement in body.statements() {
+            let StatementKind::Assign { place, value } = &statement.kind else {
+                continue;
+            };
+            if !place.projections.is_empty() {
+                continue;
+            }
+            let Rvalue::Closure { closure } = value else {
+                continue;
+            };
+            let closure_decl = body.closure(*closure);
+            if closure_decl.capture_binding_locals.is_empty() {
+                continue;
+            }
+
+            let closure_supported = closure_decl.captures.iter().all(|capture| {
+                local_types
+                    .get(&capture.local)
+                    .is_some_and(is_scalar_capture_ty)
+            });
+            if !closure_supported {
+                diagnostics.push(self.capturing_closure_diagnostic(closure_decl.span));
+                continue;
+            }
+
+            if staged.insert(place.base, *closure).is_some() {
+                diagnostics.push(self.capturing_closure_diagnostic(closure_decl.span));
+                continue;
+            }
+            closure_spans.insert(place.base, closure_decl.span);
+        }
+
+        for statement in body.statements() {
+            match &statement.kind {
+                StatementKind::Assign { place, value } => {
+                    if supported.contains_key(&place.base)
+                        && !matches!(value, Rvalue::Closure { .. })
+                    {
+                        diagnostics.push(
+                            self.capturing_closure_diagnostic(
+                                *closure_spans
+                                    .get(&place.base)
+                                    .expect("capturing closure local should preserve its span"),
+                            ),
+                        );
+                    }
+                    self.validate_direct_local_capturing_closure_rvalue(
+                        value,
+                        &supported,
+                        &closure_spans,
+                        diagnostics,
+                    );
+                }
+                StatementKind::BindPattern {
+                    pattern, source, ..
+                } => {
+                    if let Operand::Place(place) = source
+                        && place.projections.is_empty()
+                    {
+                        let Some(closure_id) = staged.get(&place.base).copied() else {
+                            self.validate_direct_local_capturing_closure_operand(
+                                source,
+                                false,
+                                &supported,
+                                &closure_spans,
+                                diagnostics,
+                            );
+                            continue;
+                        };
+                        let closure_span = *closure_spans
+                            .get(&place.base)
+                            .expect("capturing closure temp should preserve its source span");
+                        let Some(binding_local) = self.binding_local_for_pattern(body, *pattern)
+                        else {
+                            diagnostics.push(self.capturing_closure_diagnostic(closure_span));
+                            continue;
+                        };
+                        if body.local(binding_local).mutable {
+                            diagnostics.push(self.capturing_closure_diagnostic(closure_span));
+                            continue;
+                        }
+                        if supported.insert(binding_local, closure_id).is_some() {
+                            diagnostics.push(self.capturing_closure_diagnostic(closure_span));
+                        } else {
+                            closure_spans.insert(binding_local, closure_span);
+                        }
+                        continue;
+                    }
+                    self.validate_direct_local_capturing_closure_operand(
+                        source,
+                        false,
+                        &supported,
+                        &closure_spans,
+                        diagnostics,
+                    );
+                }
+                StatementKind::Eval { value } => {
+                    self.validate_direct_local_capturing_closure_rvalue(
+                        value,
+                        &supported,
+                        &closure_spans,
+                        diagnostics,
+                    );
+                }
+                StatementKind::RegisterCleanup { cleanup }
+                | StatementKind::RunCleanup { cleanup } => {
+                    let mir::CleanupKind::Defer { expr } = &body.cleanup(*cleanup).kind;
+                    if self.cleanup_expr_mentions_supported_capturing_closure_local(
+                        *expr, body, &supported,
+                    ) {
+                        diagnostics
+                            .push(self.capturing_closure_diagnostic(body.cleanup(*cleanup).span));
+                    }
+                }
+                StatementKind::StorageLive { .. } | StatementKind::StorageDead { .. } => {}
+            }
+        }
+
+        for block in body.blocks() {
+            match &block.terminator.kind {
+                TerminatorKind::Branch { condition, .. } => {
+                    self.validate_direct_local_capturing_closure_operand(
+                        condition,
+                        false,
+                        &supported,
+                        &closure_spans,
+                        diagnostics,
+                    );
+                }
+                TerminatorKind::Match { scrutinee, .. } => {
+                    self.validate_direct_local_capturing_closure_operand(
+                        scrutinee,
+                        false,
+                        &supported,
+                        &closure_spans,
+                        diagnostics,
+                    );
+                }
+                TerminatorKind::ForLoop { iterable, .. } => {
+                    self.validate_direct_local_capturing_closure_operand(
+                        iterable,
+                        false,
+                        &supported,
+                        &closure_spans,
+                        diagnostics,
+                    );
+                }
+                TerminatorKind::Goto { .. }
+                | TerminatorKind::Return
+                | TerminatorKind::Terminate => {}
+            }
+        }
+
+        supported
+    }
+
+    fn validate_direct_local_capturing_closure_rvalue(
+        &self,
+        value: &Rvalue,
+        supported: &HashMap<mir::LocalId, mir::ClosureId>,
+        closure_spans: &HashMap<mir::LocalId, Span>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        match value {
+            Rvalue::Use(operand) | Rvalue::Question(operand) | Rvalue::Unary { operand, .. } => {
+                self.validate_direct_local_capturing_closure_operand(
+                    operand,
+                    false,
+                    supported,
+                    closure_spans,
+                    diagnostics,
+                );
+            }
+            Rvalue::Tuple(items) | Rvalue::Array(items) => {
+                for item in items {
+                    self.validate_direct_local_capturing_closure_operand(
+                        item,
+                        false,
+                        supported,
+                        closure_spans,
+                        diagnostics,
+                    );
+                }
+            }
+            Rvalue::AggregateStruct { fields, .. } => {
+                for field in fields {
+                    self.validate_direct_local_capturing_closure_operand(
+                        &field.value,
+                        false,
+                        supported,
+                        closure_spans,
+                        diagnostics,
+                    );
+                }
+            }
+            Rvalue::Call { callee, args } => {
+                self.validate_direct_local_capturing_closure_operand(
+                    callee,
+                    true,
+                    supported,
+                    closure_spans,
+                    diagnostics,
+                );
+                for arg in args {
+                    self.validate_direct_local_capturing_closure_operand(
+                        &arg.value,
+                        false,
+                        supported,
+                        closure_spans,
+                        diagnostics,
+                    );
+                }
+            }
+            Rvalue::Binary { left, right, .. } => {
+                self.validate_direct_local_capturing_closure_operand(
+                    left,
+                    false,
+                    supported,
+                    closure_spans,
+                    diagnostics,
+                );
+                self.validate_direct_local_capturing_closure_operand(
+                    right,
+                    false,
+                    supported,
+                    closure_spans,
+                    diagnostics,
+                );
+            }
+            Rvalue::Closure { .. } | Rvalue::OpaqueExpr(_) => {}
+        }
+    }
+
+    fn validate_direct_local_capturing_closure_operand(
+        &self,
+        operand: &Operand,
+        allow_direct_call_callee: bool,
+        supported: &HashMap<mir::LocalId, mir::ClosureId>,
+        closure_spans: &HashMap<mir::LocalId, Span>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        let Operand::Place(place) = operand else {
+            return;
+        };
+        if place.projections.is_empty()
+            && supported.contains_key(&place.base)
+            && !allow_direct_call_callee
+        {
+            diagnostics.push(
+                self.capturing_closure_diagnostic(
+                    *closure_spans
+                        .get(&place.base)
+                        .expect("capturing closure local should preserve its span"),
+                ),
+            );
+        }
+        for projection in &place.projections {
+            if let mir::ProjectionElem::Index(index) = projection {
+                self.validate_direct_local_capturing_closure_operand(
+                    index,
+                    false,
+                    supported,
+                    closure_spans,
+                    diagnostics,
+                );
+            }
+        }
+    }
+
+    fn cleanup_expr_mentions_supported_capturing_closure_local(
+        &self,
+        expr_id: hir::ExprId,
+        body: &mir::MirBody,
+        supported: &HashMap<mir::LocalId, mir::ClosureId>,
+    ) -> bool {
+        let body_binding_locals = supported
+            .keys()
+            .filter_map(|local_id| match body.local(*local_id).origin {
+                LocalOrigin::Binding(hir_local) => Some(hir_local),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        expr_mentions_any_binding_local(
+            self.input.hir,
+            self.input.resolution,
+            expr_id,
+            &body_binding_locals,
+        )
     }
 
     fn collect_const_closure_targets_in_body(
@@ -2170,6 +2509,12 @@ impl<'a> ModuleEmitter<'a> {
             }
         }
 
+        let direct_local_capturing_closures = self
+            .collect_supported_direct_local_capturing_closures(
+                body,
+                &local_types,
+                &mut diagnostics,
+            );
         let should_validate_local_types = diagnostics.is_empty();
         for local_id in body.local_ids() {
             if async_task_handles.contains_key(&local_id) {
@@ -2205,6 +2550,7 @@ impl<'a> ModuleEmitter<'a> {
                 supported_for_loops,
                 supported_matches,
                 param_binding_locals: Vec::new(),
+                direct_local_capturing_closures,
             })
         } else {
             Err(dedupe_diagnostics(diagnostics))
@@ -4127,11 +4473,9 @@ impl<'a> ModuleEmitter<'a> {
             }
             Rvalue::Closure { closure } => {
                 let closure = ctx.body.closure(*closure);
-                if !closure.captures.is_empty() || closure.lowered_body.is_none() {
-                    ctx.diagnostics.push(unsupported(
-                        span,
-                        "LLVM IR backend foundation currently only supports non-capturing sync closure values",
-                    ));
+                if closure.lowered_body.is_none() {
+                    ctx.diagnostics
+                        .push(self.capturing_closure_diagnostic(closure.span));
                     None
                 } else {
                     self.input.typeck.expr_ty(closure.expr).cloned()
@@ -8336,7 +8680,82 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             Rvalue::Use(operand) => Some(self.render_operand(output, operand, span)),
             Rvalue::Question(operand) => Some(self.render_operand(output, operand, span)),
             Rvalue::Call { callee, args } => {
-                if let Some(function) = self.emitter.resolve_direct_callee_function(callee) {
+                if let Operand::Place(place) = callee
+                    && place.projections.is_empty()
+                    && let Some(closure_id) = self
+                        .prepared
+                        .direct_local_capturing_closures
+                        .get(&place.base)
+                        .copied()
+                {
+                    let closure = self.body.closure(closure_id);
+                    let closure_ty = self
+                        .emitter
+                        .input
+                        .typeck
+                        .expr_ty(closure.expr)
+                        .cloned()
+                        .expect(
+                            "prepared direct local capturing-closure calls should preserve callable types",
+                        );
+                    let Ty::Callable { params, ret } = closure_ty else {
+                        panic!(
+                            "prepared direct local capturing-closure calls at {span:?} should only target callable values"
+                        );
+                    };
+                    assert!(
+                        args.iter().all(|arg| arg.name.is_none()) && args.len() == params.len(),
+                        "prepared direct local capturing-closure calls at {span:?} should only contain positional arguments matching the callable arity"
+                    );
+
+                    let mut rendered_args = Vec::with_capacity(closure.captures.len() + args.len());
+                    for capture in &closure.captures {
+                        let value = self.render_operand(
+                            output,
+                            &Operand::Place(Place::local(capture.local)),
+                            span,
+                        );
+                        rendered_args.push(format!("{} {}", value.llvm_ty, value.repr));
+                    }
+                    for (arg, param_ty) in args.iter().zip(params.iter()) {
+                        let value = self.render_operand(output, &arg.value, span);
+                        assert!(
+                            param_ty.compatible_with(&value.ty),
+                            "prepared direct local capturing-closure calls at {span:?} should preserve callable argument types"
+                        );
+                        rendered_args.push(format!("{} {}", value.llvm_ty, value.repr));
+                    }
+
+                    let rendered_args = rendered_args.join(", ");
+                    let return_ty = ret.as_ref().clone();
+                    let return_llvm_ty = self
+                        .emitter
+                        .lower_llvm_type(&return_ty, span, "call result")
+                        .expect(
+                            "prepared direct local capturing-closure calls should only produce lowered callable result types",
+                        );
+                    let callee_name =
+                        closure_llvm_name(&self.prepared.signature.llvm_name, closure_id);
+
+                    if is_void_ty(&return_ty) {
+                        let _ = writeln!(
+                            output,
+                            "  call {return_llvm_ty} @{callee_name}({rendered_args})"
+                        );
+                        None
+                    } else {
+                        let temp = self.fresh_temp();
+                        let _ = writeln!(
+                            output,
+                            "  {temp} = call {return_llvm_ty} @{callee_name}({rendered_args})"
+                        );
+                        Some(LoweredValue {
+                            ty: return_ty,
+                            llvm_ty: return_llvm_ty,
+                            repr: temp,
+                        })
+                    }
+                } else if let Some(function) = self.emitter.resolve_direct_callee_function(callee) {
                     let signature = self
                         .emitter
                         .signatures
@@ -8515,8 +8934,8 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 let closure_id = *closure;
                 let closure = self.body.closure(closure_id);
                 assert!(
-                    closure.captures.is_empty() && closure.lowered_body.is_some(),
-                    "prepared functions should only contain supported non-capturing closure values"
+                    closure.lowered_body.is_some(),
+                    "prepared functions should only contain supported closure values"
                 );
                 let ty = self
                     .emitter
@@ -8528,10 +8947,14 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 Some(LoweredValue {
                     ty,
                     llvm_ty: "ptr".to_owned(),
-                    repr: format!(
-                        "@{}",
-                        closure_llvm_name(&self.prepared.signature.llvm_name, closure_id)
-                    ),
+                    repr: if closure.capture_binding_locals.is_empty() {
+                        format!(
+                            "@{}",
+                            closure_llvm_name(&self.prepared.signature.llvm_name, closure_id)
+                        )
+                    } else {
+                        "null".to_owned()
+                    },
                 })
             }
             Rvalue::OpaqueExpr(_) => {
@@ -13137,6 +13560,129 @@ fn const_expr_sync_closure_target(
     }
 }
 
+fn expr_mentions_any_binding_local(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    expr_id: hir::ExprId,
+    binding_locals: &HashSet<hir::LocalId>,
+) -> bool {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Name(_) => matches!(
+            resolution.expr_resolution(expr_id),
+            Some(ValueResolution::Local(local_id)) if binding_locals.contains(local_id)
+        ),
+        hir::ExprKind::Integer(_)
+        | hir::ExprKind::String { .. }
+        | hir::ExprKind::Bool(_)
+        | hir::ExprKind::NoneLiteral => false,
+        hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => items
+            .iter()
+            .any(|item| expr_mentions_any_binding_local(module, resolution, *item, binding_locals)),
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+            block_mentions_any_binding_local(module, resolution, *block_id, binding_locals)
+        }
+        hir::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_mentions_any_binding_local(module, resolution, *condition, binding_locals)
+                || block_mentions_any_binding_local(
+                    module,
+                    resolution,
+                    *then_branch,
+                    binding_locals,
+                )
+                || else_branch.is_some_and(|expr_id| {
+                    expr_mentions_any_binding_local(module, resolution, expr_id, binding_locals)
+                })
+        }
+        hir::ExprKind::Match { value, arms } => {
+            expr_mentions_any_binding_local(module, resolution, *value, binding_locals)
+                || arms.iter().any(|arm| {
+                    arm.guard.is_some_and(|guard| {
+                        expr_mentions_any_binding_local(module, resolution, guard, binding_locals)
+                    }) || expr_mentions_any_binding_local(
+                        module,
+                        resolution,
+                        arm.body,
+                        binding_locals,
+                    )
+                })
+        }
+        hir::ExprKind::Closure { body, .. } => {
+            expr_mentions_any_binding_local(module, resolution, *body, binding_locals)
+        }
+        hir::ExprKind::Call { callee, args } => {
+            expr_mentions_any_binding_local(module, resolution, *callee, binding_locals)
+                || args.iter().any(|arg| {
+                    let value = match arg {
+                        hir::CallArg::Positional(expr_id) => *expr_id,
+                        hir::CallArg::Named { value, .. } => *value,
+                    };
+                    expr_mentions_any_binding_local(module, resolution, value, binding_locals)
+                })
+        }
+        hir::ExprKind::Member { object, .. } => {
+            expr_mentions_any_binding_local(module, resolution, *object, binding_locals)
+        }
+        hir::ExprKind::Bracket { target, items } => {
+            expr_mentions_any_binding_local(module, resolution, *target, binding_locals)
+                || items.iter().any(|item| {
+                    expr_mentions_any_binding_local(module, resolution, *item, binding_locals)
+                })
+        }
+        hir::ExprKind::StructLiteral { fields, .. } => fields.iter().any(|field| {
+            expr_mentions_any_binding_local(module, resolution, field.value, binding_locals)
+        }),
+        hir::ExprKind::Binary { left, right, .. } => {
+            expr_mentions_any_binding_local(module, resolution, *left, binding_locals)
+                || expr_mentions_any_binding_local(module, resolution, *right, binding_locals)
+        }
+        hir::ExprKind::Unary { expr, .. } | hir::ExprKind::Question(expr) => {
+            expr_mentions_any_binding_local(module, resolution, *expr, binding_locals)
+        }
+    }
+}
+
+fn block_mentions_any_binding_local(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    block_id: hir::BlockId,
+    binding_locals: &HashSet<hir::LocalId>,
+) -> bool {
+    let block = module.block(block_id);
+    block
+        .statements
+        .iter()
+        .any(|statement_id| match &module.stmt(*statement_id).kind {
+            hir::StmtKind::Let { value, .. } => {
+                expr_mentions_any_binding_local(module, resolution, *value, binding_locals)
+            }
+            hir::StmtKind::Return(expr) => expr.is_some_and(|expr_id| {
+                expr_mentions_any_binding_local(module, resolution, expr_id, binding_locals)
+            }),
+            hir::StmtKind::Defer(expr) | hir::StmtKind::Expr { expr, .. } => {
+                expr_mentions_any_binding_local(module, resolution, *expr, binding_locals)
+            }
+            hir::StmtKind::While { condition, body } => {
+                expr_mentions_any_binding_local(module, resolution, *condition, binding_locals)
+                    || block_mentions_any_binding_local(module, resolution, *body, binding_locals)
+            }
+            hir::StmtKind::Loop { body } => {
+                block_mentions_any_binding_local(module, resolution, *body, binding_locals)
+            }
+            hir::StmtKind::For { iterable, body, .. } => {
+                expr_mentions_any_binding_local(module, resolution, *iterable, binding_locals)
+                    || block_mentions_any_binding_local(module, resolution, *body, binding_locals)
+            }
+            hir::StmtKind::Break | hir::StmtKind::Continue => false,
+        })
+        || block.tail.is_some_and(|expr_id| {
+            expr_mentions_any_binding_local(module, resolution, expr_id, binding_locals)
+        })
+}
+
 fn guard_direct_callee_function(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -13602,6 +14148,28 @@ fn scalar_abi_layout(ty: &Ty, span: Span, context: &str) -> Result<ScalarAbiLayo
         ))
         .with_label(Label::new(span))),
     }
+}
+
+fn is_scalar_capture_ty(ty: &Ty) -> bool {
+    matches!(
+        ty,
+        Ty::Builtin(BuiltinType::Bool)
+            | Ty::Builtin(BuiltinType::Int)
+            | Ty::Builtin(BuiltinType::UInt)
+            | Ty::Builtin(BuiltinType::I8)
+            | Ty::Builtin(BuiltinType::I16)
+            | Ty::Builtin(BuiltinType::I32)
+            | Ty::Builtin(BuiltinType::I64)
+            | Ty::Builtin(BuiltinType::ISize)
+            | Ty::Builtin(BuiltinType::U8)
+            | Ty::Builtin(BuiltinType::U16)
+            | Ty::Builtin(BuiltinType::U32)
+            | Ty::Builtin(BuiltinType::U64)
+            | Ty::Builtin(BuiltinType::USize)
+            | Ty::Builtin(BuiltinType::F32)
+            | Ty::Builtin(BuiltinType::F64)
+            | Ty::TaskHandle(_)
+    )
 }
 
 fn align_to(value: u64, align: u64) -> u64 {
@@ -15990,6 +16558,27 @@ fn main() -> Int {
     }
 
     #[test]
+    fn emits_direct_local_capturing_closure_calls() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let base = 41
+    let run = () => base + 1
+    return run()
+}
+"#,
+        );
+
+        assert!(rendered.contains("store ptr null"));
+        assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
+        assert!(rendered.contains("call i64 @ql_0_main__closure0("));
+        assert!(!rendered.contains("load ptr, ptr %l2_run"));
+        assert!(!rendered.contains(
+            "currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
+        ));
+    }
+
+    #[test]
     fn emits_callable_const_and_static_item_calls() {
         let rendered = emit(
             r#"
@@ -16185,14 +16774,15 @@ fn main() -> Int {
 fn main() -> Int {
     let value = 1
     let capture = () => value
-    return capture()
+    let alias = capture
+    return alias()
 }
 "#,
         );
 
         assert!(messages.iter().any(|message| {
             message
-                == "LLVM IR backend foundation currently only supports non-capturing sync closure values"
+                == "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
         }));
         assert!(messages.iter().all(|message| {
             !message.contains("could not resolve LLVM type for local")
@@ -22205,7 +22795,8 @@ fn main() -> Int {
     defer first()
     let value = 1
     let capture = () => value
-    return capture()
+    let alias = capture
+    return alias()
 }
 "#,
         );
@@ -22225,7 +22816,7 @@ fn main() -> Int {
                 .iter()
                 .filter(|message| {
                     message.as_str()
-                        == "LLVM IR backend foundation currently only supports non-capturing sync closure values"
+                        == "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
                 })
                 .count(),
             1

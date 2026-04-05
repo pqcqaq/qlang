@@ -377,6 +377,7 @@ pub struct ClosureDecl {
     pub is_move: bool,
     pub params: Vec<String>,
     pub param_locals: Vec<HirLocalId>,
+    pub capture_binding_locals: Vec<HirLocalId>,
     pub captures: Vec<ClosureCapture>,
     pub body: ExprId,
     pub lowered_body: Option<Box<MirBody>>,

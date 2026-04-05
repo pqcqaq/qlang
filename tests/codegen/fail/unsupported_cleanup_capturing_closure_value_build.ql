@@ -4,5 +4,6 @@ fn main() -> Int {
     defer first()
     let value = 1
     let capture = () => value
-    return capture()
+    let alias = capture
+    return alias()
 }

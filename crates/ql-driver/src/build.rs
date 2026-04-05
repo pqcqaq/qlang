@@ -5275,7 +5275,8 @@ fn add_one(value: Int) -> Int {
 fn main() -> Int {
     let value = 1
     let capture = () => value
-    return capture()
+    let alias = capture
+    return alias()
 }
 "#,
         );
@@ -5287,7 +5288,7 @@ fn main() -> Int {
 
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message
-                == "LLVM IR backend foundation currently only supports non-capturing sync closure values"
+                == "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
         }));
         assert!(diagnostics.iter().all(|diagnostic| {
             !diagnostic
@@ -9244,7 +9245,8 @@ fn main() -> Int {
     defer first()
     let value = 1
     let capture = () => value
-    return capture()
+    let alias = capture
+    return alias()
 }
 "#,
         );
@@ -9269,7 +9271,7 @@ fn main() -> Int {
                 .iter()
                 .filter(|diagnostic| {
                     diagnostic.message
-                        == "LLVM IR backend foundation currently only supports non-capturing sync closure values"
+                        == "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
                 })
                 .count(),
             1

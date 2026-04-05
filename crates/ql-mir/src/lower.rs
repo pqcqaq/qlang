@@ -94,7 +94,17 @@ pub fn lower_standalone_non_capturing_closure_body(
     params: Vec<hir::LocalId>,
     body_expr: ExprId,
 ) -> MirBody {
-    BodyBuilder::new_closure(hir, resolution, owner, name, span, params, body_expr).lower()
+    BodyBuilder::new_closure(
+        hir,
+        resolution,
+        owner,
+        name,
+        span,
+        Vec::new(),
+        params,
+        body_expr,
+    )
+    .lower()
 }
 
 fn lower_function_body(
@@ -625,6 +635,7 @@ struct BodyBuilder<'a> {
     function: Option<&'a Function>,
     callable_name: String,
     callable_span: ql_span::Span,
+    closure_capture_bindings: Vec<hir::LocalId>,
     closure_params: Vec<hir::LocalId>,
     closure_body: Option<ExprId>,
     body: MirBody,
@@ -653,6 +664,7 @@ impl<'a> BodyBuilder<'a> {
             function: Some(function),
             callable_name: function.name.clone(),
             callable_span: function.span,
+            closure_capture_bindings: Vec::new(),
             closure_params: Vec::new(),
             closure_body: None,
             body: MirBody {
@@ -685,6 +697,7 @@ impl<'a> BodyBuilder<'a> {
         owner: BodyOwner,
         name: String,
         span: ql_span::Span,
+        capture_bindings: Vec<hir::LocalId>,
         params: Vec<hir::LocalId>,
         body_expr: ExprId,
     ) -> Self {
@@ -698,6 +711,7 @@ impl<'a> BodyBuilder<'a> {
             function: None,
             callable_name: name.clone(),
             callable_span: span,
+            closure_capture_bindings: capture_bindings,
             closure_params: params.clone(),
             closure_body: Some(body_expr),
             body: MirBody {
@@ -812,6 +826,19 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
         } else {
+            for capture_local in self.closure_capture_bindings.clone() {
+                let local_decl = self.hir.local(capture_local);
+                let local = self.alloc_local_in_scope(
+                    root_scope,
+                    local_decl.name.clone(),
+                    local_decl.span,
+                    false,
+                    LocalKind::Binding,
+                    LocalOrigin::Binding(capture_local),
+                );
+                self.local_map.insert(capture_local, local);
+                self.push_statement(entry, local_decl.span, StatementKind::StorageLive { local });
+            }
             for (index, local_id) in self.closure_params.clone().into_iter().enumerate() {
                 let local_decl = self.hir.local(local_id);
                 let local = self.alloc_local_in_scope(
@@ -829,13 +856,14 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    fn lower_non_capturing_closure_body(
+    fn lower_closure_body(
         &self,
         span: ql_span::Span,
+        capture_bindings: Vec<hir::LocalId>,
         params: Vec<hir::LocalId>,
         body_expr: ExprId,
     ) -> MirBody {
-        lower_standalone_non_capturing_closure_body(
+        BodyBuilder::new_closure(
             self.hir,
             self.resolution,
             self.body.owner,
@@ -845,9 +873,11 @@ impl<'a> BodyBuilder<'a> {
                 self.body.closure_ids().count()
             ),
             span,
+            capture_bindings,
             params,
             body_expr,
         )
+        .lower()
     }
 
     fn lower_scoped_block(
@@ -1275,24 +1305,43 @@ impl<'a> BodyBuilder<'a> {
                 body,
             } => {
                 let captures = self.collect_closure_captures(*body);
+                let capture_binding_locals = (!*is_move)
+                    .then(|| {
+                        captures
+                            .iter()
+                            .map(|capture| match self.body.local(capture.local).origin {
+                                LocalOrigin::Binding(hir_local)
+                                    if !self.body.local(capture.local).mutable =>
+                                {
+                                    Some(hir_local)
+                                }
+                                _ => None,
+                            })
+                            .collect::<Option<Vec<_>>>()
+                    })
+                    .flatten()
+                    .unwrap_or_default();
                 let param_locals = params.clone();
                 let params = params
                     .iter()
                     .map(|local_id| self.hir.local(*local_id).name.clone())
                     .collect();
-                let lowered_body = captures.is_empty().then(|| {
-                    Box::new(self.lower_non_capturing_closure_body(
-                        expr.span,
-                        param_locals.clone(),
-                        *body,
-                    ))
-                });
+                let lowered_body = (!*is_move && capture_binding_locals.len() == captures.len())
+                    .then(|| {
+                        Box::new(self.lower_closure_body(
+                            expr.span,
+                            capture_binding_locals.clone(),
+                            param_locals.clone(),
+                            *body,
+                        ))
+                    });
                 let closure = self.body.alloc_closure(ClosureDecl {
                     expr: expr_id,
                     span: expr.span,
                     is_move: *is_move,
                     params,
                     param_locals,
+                    capture_binding_locals,
                     captures,
                     body: *body,
                     lowered_body,
