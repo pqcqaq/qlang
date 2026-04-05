@@ -1472,6 +1472,11 @@ defer (match branch {
     },
     false => right_run,
 })(2)
+defer ({
+    let chosen = if branch { left_run } else { right_run }
+    let alias = chosen
+    alias
+})(3)
 defer if (if branch { left_check } else { right_check })(42) {
     keep()
 }
@@ -1481,6 +1486,19 @@ defer if (match branch {
         alias
     },
     false => right_check,
+})(42) {
+    keep()
+}
+defer if ({
+    let chosen = match branch {
+        true => {
+            let alias = left_check
+            alias
+        },
+        false => right_check,
+    }
+    let alias = chosen
+    alias
 })(42) {
     keep()
 }

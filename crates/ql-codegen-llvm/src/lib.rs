@@ -4231,6 +4231,15 @@ impl<'a> ModuleEmitter<'a> {
                     && self.supports_cleanup_value_expr(*right, &target_ty, body, local_types);
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+                if matches!(expected_ty, Ty::Callable { .. })
+                    && let Some(tail) = callable_elided_block_tail_expr(
+                        self.input.hir,
+                        self.input.resolution,
+                        *block_id,
+                    )
+                {
+                    return self.supports_cleanup_value_expr(tail, expected_ty, body, local_types);
+                }
                 return self.supports_cleanup_block_with_tail(
                     *block_id,
                     true,
@@ -8870,6 +8879,14 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         args: &[hir::CallArg],
         span: Span,
     ) -> Option<LoweredValue> {
+        if let Some(tail) = callable_elided_block_tail_expr(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            block_id,
+        ) {
+            return self.render_cleanup_call(output, tail, args, span);
+        }
+
         let binding_depth = self.cleanup_bindings.len();
         let closure_binding_depth = self.cleanup_capturing_closure_bindings.len();
         let tail = self
@@ -13511,7 +13528,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
         guard_binding: Option<&GuardBindingValue>,
     ) -> LoweredValue {
-        if let Some(tail) = guard_callable_elided_block_tail_expr(
+        if let Some(tail) = callable_elided_block_tail_expr(
             self.emitter.input.hir,
             self.emitter.input.resolution,
             block_id,
@@ -16987,6 +17004,16 @@ fn cleanup_supported_capturing_closure_callee_expr(
             *inner,
         ),
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+            if let Some(tail) = callable_elided_block_tail_expr(module, resolution, *block_id) {
+                return cleanup_supported_capturing_closure_callee_expr(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    cleanup_aliases,
+                    tail,
+                );
+            }
             cleanup_supported_capturing_closure_callee_block_expr(
                 module,
                 resolution,
@@ -17945,7 +17972,7 @@ fn supported_guard_value_expr_as_type(
     .is_some_and(|actual_ty| expected_ty.compatible_with(&actual_ty))
 }
 
-fn guard_callable_elided_block_tail_expr(
+fn callable_elided_block_tail_expr(
     module: &hir::Module,
     resolution: &ResolutionMap,
     block_id: hir::BlockId,
@@ -17963,25 +17990,25 @@ fn guard_callable_elided_block_tail_expr(
         let PatternKind::Binding(local) = pattern_kind(module, *pattern) else {
             return None;
         };
-        if !guard_callable_binding_expr_is_elidable(module, resolution, &bindings, *value) {
+        if !callable_binding_expr_is_elidable(module, resolution, &bindings, *value) {
             return None;
         }
         bindings.insert(*local, *value);
     }
 
-    resolve_guard_callable_binding_expr(module, resolution, &bindings, block.tail?)
+    resolve_callable_binding_expr(module, resolution, &bindings, block.tail?)
 }
 
-fn guard_callable_binding_expr_is_elidable(
+fn callable_binding_expr_is_elidable(
     module: &hir::Module,
     resolution: &ResolutionMap,
     bindings: &HashMap<hir::LocalId, hir::ExprId>,
     expr_id: hir::ExprId,
 ) -> bool {
-    resolve_guard_callable_binding_expr(module, resolution, bindings, expr_id).is_some()
+    resolve_callable_binding_expr(module, resolution, bindings, expr_id).is_some()
 }
 
-fn resolve_guard_callable_binding_expr(
+fn resolve_callable_binding_expr(
     module: &hir::Module,
     resolution: &ResolutionMap,
     bindings: &HashMap<hir::LocalId, hir::ExprId>,
@@ -18005,7 +18032,7 @@ fn resolve_guard_callable_binding_expr(
             }
             hir::ExprKind::Question(inner) => current = *inner,
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
-                current = guard_callable_elided_block_tail_expr(module, resolution, *block_id)?;
+                current = callable_elided_block_tail_expr(module, resolution, *block_id)?;
             }
             _ => return None,
         }
@@ -18040,7 +18067,7 @@ fn supported_guard_callable_block_expr_as_type(
         });
     }
 
-    if let Some(tail) = guard_callable_elided_block_tail_expr(module, resolution, block_id) {
+    if let Some(tail) = callable_elided_block_tail_expr(module, resolution, block_id) {
         return supported_guard_value_expr_as_type(
             module,
             resolution,
