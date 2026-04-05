@@ -1603,6 +1603,12 @@ impl<'a> ModuleEmitter<'a> {
             self.input.resolution,
             expr_id,
             &body_binding_locals,
+        ) && !cleanup_expr_is_supported_direct_local_capturing_closure_call(
+            self.input.hir,
+            self.input.resolution,
+            body,
+            supported,
+            expr_id,
         )
     }
 
@@ -7609,6 +7615,19 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             .expect("prepared cleanup spawn lowering should produce a value")
     }
 
+    fn supported_direct_local_capturing_closure_for_expr(
+        &self,
+        expr_id: hir::ExprId,
+    ) -> Option<mir::ClosureId> {
+        direct_local_capturing_closure_for_expr(
+            self.emitter.input.hir,
+            self.emitter.input.resolution,
+            self.body,
+            &self.prepared.direct_local_capturing_closures,
+            expr_id,
+        )
+    }
+
     fn render_cleanup_call(
         &mut self,
         output: &mut String,
@@ -7660,6 +7679,82 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             return Some(LoweredValue {
                 ty: cleanup_call_result_ty(signature),
                 llvm_ty: signature.return_llvm_ty.clone(),
+                repr: temp,
+            });
+        }
+
+        if let Some(closure_id) =
+            self.supported_direct_local_capturing_closure_for_expr(callee_expr)
+        {
+            let closure = self.body.closure(closure_id);
+            let closure_ty = self
+                .emitter
+                .input
+                .typeck
+                .expr_ty(closure.expr)
+                .cloned()
+                .expect(
+                    "supported cleanup lowering should preserve direct local capturing closure callable types",
+                );
+            let Ty::Callable { params, ret } = &closure_ty else {
+                panic!(
+                    "supported cleanup lowering at {span:?} should only treat callable capturing closures as cleanup callees"
+                );
+            };
+            assert!(
+                args.len() == params.len()
+                    && args
+                        .iter()
+                        .all(|arg| matches!(arg, hir::CallArg::Positional(_))),
+                "supported cleanup lowering at {span:?} should only render positional capturing-closure cleanup arguments matching the callable arity"
+            );
+
+            let mut rendered_args = Vec::with_capacity(closure.captures.len() + args.len());
+            for capture in &closure.captures {
+                let rendered =
+                    self.render_operand(output, &Operand::Place(Place::local(capture.local)), span);
+                rendered_args.push(format!("{} {}", rendered.llvm_ty, rendered.repr));
+            }
+            for (arg, param_ty) in args.iter().zip(params.iter()) {
+                let rendered = self.render_cleanup_value_expr(
+                    output,
+                    guard_call_arg_expr(arg),
+                    param_ty,
+                    span,
+                );
+                assert!(
+                    param_ty.compatible_with(&rendered.ty),
+                    "supported cleanup lowering at {span:?} should only render compatible capturing-closure cleanup arguments"
+                );
+                rendered_args.push(format!("{} {}", rendered.llvm_ty, rendered.repr));
+            }
+
+            let rendered_args = rendered_args.join(", ");
+            let return_ty = ret.as_ref().clone();
+            let return_llvm_ty = self
+                .emitter
+                .lower_llvm_type(&return_ty, span, "cleanup call result")
+                .expect(
+                    "supported cleanup lowering should only emit lowered capturing-closure cleanup results",
+                );
+            let callee_name = closure_llvm_name(&self.prepared.signature.llvm_name, closure_id);
+
+            if is_void_ty(&return_ty) {
+                let _ = writeln!(
+                    output,
+                    "  call {return_llvm_ty} @{callee_name}({rendered_args})"
+                );
+                return None;
+            }
+
+            let temp = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {temp} = call {return_llvm_ty} @{callee_name}({rendered_args})"
+            );
+            return Some(LoweredValue {
+                ty: return_ty,
+                llvm_ty: return_llvm_ty,
                 repr: temp,
             });
         }
@@ -11112,6 +11207,73 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             };
         }
 
+        if let Some(closure_id) =
+            self.supported_direct_local_capturing_closure_for_expr(callee_expr)
+        {
+            let closure = self.body.closure(closure_id);
+            let closure_ty = self
+                .emitter
+                .input
+                .typeck
+                .expr_ty(closure.expr)
+                .cloned()
+                .expect(
+                    "prepared bool guard lowering should preserve direct local capturing closure callable types",
+                );
+            let Ty::Callable { params, ret } = &closure_ty else {
+                panic!(
+                    "prepared bool guard lowering at {span:?} should only treat callable capturing closures as guard callees"
+                );
+            };
+            assert!(
+                params.len() == args.len()
+                    && args
+                        .iter()
+                        .all(|arg| matches!(arg, hir::CallArg::Positional(_))),
+                "prepared bool guard lowering at {span:?} should only render positional capturing-closure guard-call arguments matching the callable arity"
+            );
+            let return_ty = ret.as_ref().clone();
+            assert!(
+                !is_void_ty(&return_ty),
+                "prepared bool guard lowering at {span:?} should only render valued capturing-closure guard calls"
+            );
+
+            let mut rendered_args = Vec::with_capacity(closure.captures.len() + args.len());
+            for capture in &closure.captures {
+                let rendered =
+                    self.render_operand(output, &Operand::Place(Place::local(capture.local)), span);
+                rendered_args.push(format!("{} {}", rendered.llvm_ty, rendered.repr));
+            }
+            for (arg, param_ty) in args.iter().zip(params.iter()) {
+                rendered_args.push(self.render_guard_call_arg(
+                    output,
+                    arg,
+                    param_ty,
+                    span,
+                    guard_binding,
+                ));
+            }
+
+            let rendered_args = rendered_args.join(", ");
+            let return_llvm_ty = self
+                .emitter
+                .lower_llvm_type(&return_ty, span, "guard call result")
+                .expect(
+                    "prepared bool guard lowering should only emit lowered capturing-closure guard results",
+                );
+            let callee_name = closure_llvm_name(&self.prepared.signature.llvm_name, closure_id);
+            let temp = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {temp} = call {return_llvm_ty} @{callee_name}({rendered_args})"
+            );
+            return LoweredValue {
+                ty: return_ty,
+                llvm_ty: return_llvm_ty,
+                repr: temp,
+            };
+        }
+
         let callee_ty = self
             .emitter
             .input
@@ -13639,6 +13801,66 @@ fn expr_mentions_any_binding_local(
         hir::ExprKind::Unary { expr, .. } | hir::ExprKind::Question(expr) => {
             expr_mentions_any_binding_local(module, resolution, *expr, binding_locals)
         }
+    }
+}
+
+fn direct_local_capturing_closure_for_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    supported: &HashMap<mir::LocalId, mir::ClosureId>,
+    expr_id: hir::ExprId,
+) -> Option<mir::ClosureId> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Name(_) => {
+            let ValueResolution::Local(local_id) = resolution.expr_resolution(expr_id)? else {
+                return None;
+            };
+            let local = mir_local_for_hir_local(body, *local_id)?;
+            supported.get(&local).copied()
+        }
+        hir::ExprKind::Question(inner) => {
+            direct_local_capturing_closure_for_expr(module, resolution, body, supported, *inner)
+        }
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+            let block = module.block(*block_id);
+            if !block.statements.is_empty() {
+                return None;
+            }
+            direct_local_capturing_closure_for_expr(
+                module,
+                resolution,
+                body,
+                supported,
+                block.tail?,
+            )
+        }
+        _ => None,
+    }
+}
+
+fn cleanup_expr_is_supported_direct_local_capturing_closure_call(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    supported: &HashMap<mir::LocalId, mir::ClosureId>,
+    expr_id: hir::ExprId,
+) -> bool {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Call { callee, args } => {
+            args.iter()
+                .all(|arg| matches!(arg, hir::CallArg::Positional(_)))
+                && direct_local_capturing_closure_for_expr(
+                    module, resolution, body, supported, *callee,
+                )
+                .is_some()
+        }
+        hir::ExprKind::Question(inner) => {
+            cleanup_expr_is_supported_direct_local_capturing_closure_call(
+                module, resolution, body, supported, *inner,
+            )
+        }
+        _ => false,
     }
 }
 
@@ -16783,6 +17005,33 @@ fn main() -> Int {
         assert!(!rendered.contains("does not support cleanup lowering yet"));
         assert!(!rendered.contains("does not support `match` lowering yet"));
         assert!(!rendered.contains("currently only supports non-capturing sync closure values"));
+    }
+
+    #[test]
+    fn emits_local_capturing_closures_in_cleanup_and_match_guards() {
+        let rendered = emit(
+            r#"
+fn main() -> Int {
+    let target = 42
+    let check = (value: Int) => value == target
+    let base = 40
+    let run = (value: Int) => value + base + 1
+    defer run(1)
+    return match 42 {
+        current if check(current) => 1,
+        _ => 0,
+    }
+}
+"#,
+        );
+
+        assert!(rendered.contains("call i1 @ql_0_main__closure0("));
+        assert!(rendered.contains("call i64 @ql_0_main__closure1("));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+        assert!(!rendered.contains(
+            "currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings"
+        ));
     }
 
     #[test]
