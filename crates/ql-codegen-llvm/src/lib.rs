@@ -171,6 +171,15 @@ enum CleanupDirectCapturingClosureExpr {
     Assignment(CleanupCapturingClosureBinding),
 }
 
+impl CleanupDirectCapturingClosureExpr {
+    fn closure_id(self) -> mir::ClosureId {
+        match self {
+            Self::Direct(closure_id) => closure_id,
+            Self::Assignment(binding) => binding.closure_id,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct SupportedForLoopLowering {
     iterable_root: SupportedForLoopIterableRoot,
@@ -1376,14 +1385,12 @@ impl<'a> ModuleEmitter<'a> {
                     } else {
                         None
                     };
-                    let temp_forwarded_closure = if matches!(
-                        body.local(place.base).origin,
-                        LocalOrigin::Temp { .. }
-                    ) {
-                        forwarded_closure
-                    } else {
-                        None
-                    };
+                    let temp_forwarded_closure =
+                        if matches!(body.local(place.base).origin, LocalOrigin::Temp { .. }) {
+                            forwarded_closure
+                        } else {
+                            None
+                        };
                     let same_supported_forwarded_closure = matches!(
                         forwarded_closure,
                         Some((closure_id, _))
@@ -6348,8 +6355,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         span: Span,
     ) {
         if let PatternKind::Binding(local) = pattern_kind(self.emitter.input.hir, pattern)
-            && let Some(closure_id) =
-                self.supported_direct_local_capturing_closure_for_expr(value)
+            && let Some(closure_id) = self.supported_direct_local_capturing_closure_for_expr(value)
         {
             self.cleanup_capturing_closure_bindings
                 .push(CleanupCapturingClosureBinding {
@@ -7822,9 +7828,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             });
         }
 
-        if let Some(callee) = self.supported_direct_cleanup_capturing_closure_callee_for_expr(
-            callee_expr,
-        ) {
+        if let Some(callee) =
+            self.supported_direct_cleanup_capturing_closure_callee_for_expr(callee_expr)
+        {
             let closure_id = match callee {
                 CleanupDirectCapturingClosureExpr::Direct(closure_id) => closure_id,
                 CleanupDirectCapturingClosureExpr::Assignment(binding) => {
@@ -13898,16 +13904,14 @@ fn direct_local_capturing_closure_for_expr(
             let local = mir_local_for_hir_local(body, *local_id)?;
             supported.get(&local).copied()
         }
-        hir::ExprKind::Question(inner) => {
-            direct_local_capturing_closure_for_expr(
-                module,
-                resolution,
-                body,
-                supported,
-                cleanup_aliases,
-                *inner,
-            )
-        }
+        hir::ExprKind::Question(inner) => direct_local_capturing_closure_for_expr(
+            module,
+            resolution,
+            body,
+            supported,
+            cleanup_aliases,
+            *inner,
+        ),
         hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
             let block = module.block(*block_id);
             if !block.statements.is_empty() {
@@ -14071,6 +14075,98 @@ fn cleanup_direct_capturing_closure_callee_expr(
     .map(CleanupDirectCapturingClosureExpr::Assignment)
 }
 
+fn cleanup_supported_capturing_closure_callee_closure(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    body: &mir::MirBody,
+    supported: &HashMap<mir::LocalId, mir::ClosureId>,
+    cleanup_aliases: &[CleanupCapturingClosureBinding],
+    expr_id: hir::ExprId,
+) -> Option<mir::ClosureId> {
+    if let Some(expr) = cleanup_direct_capturing_closure_callee_expr(
+        module,
+        resolution,
+        body,
+        supported,
+        cleanup_aliases,
+        expr_id,
+    ) {
+        return Some(expr.closure_id());
+    }
+
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::Question(inner) => cleanup_supported_capturing_closure_callee_closure(
+            module,
+            resolution,
+            body,
+            supported,
+            cleanup_aliases,
+            *inner,
+        ),
+        hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
+            let block = module.block(*block_id);
+            if !block.statements.is_empty() {
+                return None;
+            }
+            cleanup_supported_capturing_closure_callee_closure(
+                module,
+                resolution,
+                body,
+                supported,
+                cleanup_aliases,
+                block.tail?,
+            )
+        }
+        hir::ExprKind::If {
+            then_branch,
+            else_branch: Some(other),
+            ..
+        } => {
+            let block = module.block(*then_branch);
+            if !block.statements.is_empty() {
+                return None;
+            }
+            let then_closure = cleanup_supported_capturing_closure_callee_closure(
+                module,
+                resolution,
+                body,
+                supported,
+                cleanup_aliases,
+                block.tail?,
+            )?;
+            let other_closure = cleanup_supported_capturing_closure_callee_closure(
+                module,
+                resolution,
+                body,
+                supported,
+                cleanup_aliases,
+                *other,
+            )?;
+            (then_closure == other_closure).then_some(then_closure)
+        }
+        hir::ExprKind::Match { arms, .. } => {
+            let mut closure_id = None;
+            for arm in arms {
+                let current = cleanup_supported_capturing_closure_callee_closure(
+                    module,
+                    resolution,
+                    body,
+                    supported,
+                    cleanup_aliases,
+                    arm.body,
+                )?;
+                match closure_id {
+                    Some(existing) if existing != current => return None,
+                    Some(_) => {}
+                    None => closure_id = Some(current),
+                }
+            }
+            closure_id
+        }
+        _ => None,
+    }
+}
+
 fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_call(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -14193,7 +14289,7 @@ fn cleanup_expr_mentions_binding_local_outside_direct_local_capturing_closure_ca
         }
         hir::ExprKind::Call { callee, args } => {
             let callee_allowed = args.iter().all(|arg| matches!(arg, hir::CallArg::Positional(_)))
-                && cleanup_direct_capturing_closure_callee_expr(
+                && cleanup_supported_capturing_closure_callee_closure(
                     module,
                     resolution,
                     body,
@@ -17387,9 +17483,10 @@ fn main() -> Int {
         assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
         assert!(rendered.contains("call i64 @ql_0_main__closure0("));
         assert!(!rendered.contains("load ptr, ptr %l2_run"));
-        assert!(!rendered.contains(
-            "currently only supports a narrow non-`move` capturing-closure subset"
-        ));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
     }
 
     #[test]
@@ -17408,9 +17505,10 @@ fn main() -> Int {
         assert!(rendered.contains("store ptr null"));
         assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
         assert!(rendered.contains("call i64 @ql_0_main__closure0("));
-        assert!(!rendered.contains(
-            "currently only supports a narrow non-`move` capturing-closure subset"
-        ));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
     }
 
     #[test]
@@ -17429,9 +17527,10 @@ fn main() -> Int {
         assert!(rendered.contains("store ptr null"));
         assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
         assert!(rendered.contains("call i64 @ql_0_main__closure0("));
-        assert!(!rendered.contains(
-            "currently only supports a narrow non-`move` capturing-closure subset"
-        ));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
     }
 
     #[test]
@@ -17451,9 +17550,10 @@ fn main() -> Int {
         assert!(rendered.contains("store ptr null"));
         assert!(rendered.contains("define i64 @ql_0_main__closure0(i64 %arg0)"));
         assert!(rendered.contains("call i64 @ql_0_main__closure0("));
-        assert!(!rendered.contains(
-            "currently only supports a narrow non-`move` capturing-closure subset"
-        ));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
     }
 
     #[test]
@@ -17476,9 +17576,10 @@ fn main() -> Int {
         );
 
         assert!(rendered.matches("@ql_0_main__closure0(").count() >= 2);
-        assert!(!rendered.contains(
-            "currently only supports a narrow non-`move` capturing-closure subset"
-        ));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
     }
 
     #[test]
@@ -17753,9 +17854,10 @@ fn main() -> Int {
         assert!(rendered.contains("call i64 @"));
         assert!(rendered.contains("call i1 @"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
-        assert!(!rendered.contains(
-            "currently only supports a narrow non-`move` capturing-closure subset"
-        ));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
     }
 
     #[test]
@@ -17788,9 +17890,10 @@ fn main() -> Int {
         assert!(rendered.contains("call i64 @"));
         assert!(rendered.contains("call i1 @"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
-        assert!(!rendered.contains(
-            "currently only supports a narrow non-`move` capturing-closure subset"
-        ));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
     }
 
     #[test]
@@ -17818,9 +17921,45 @@ fn main() -> Int {
         assert!(rendered.contains("call i64 @"));
         assert!(rendered.contains("call i1 @"));
         assert!(!rendered.contains("does not support cleanup lowering yet"));
-        assert!(!rendered.contains(
-            "currently only supports a narrow non-`move` capturing-closure subset"
-        ));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
+    }
+
+    #[test]
+    fn emits_cleanup_control_flow_assignment_valued_capturing_closure_calls() {
+        let rendered = emit(
+            r#"
+extern "c" fn keep()
+
+fn main() -> Int {
+    let branch = true
+    let target = 42
+    let check = (value: Int) => value == target
+    var check_alias = check
+    let run = (value: Int) => value + target
+    var run_alias = run
+    defer (if branch { run_alias = run } else { run })(1)
+    defer if (match branch {
+        true => check_alias = check,
+        false => check,
+    })(42) {
+        keep()
+    }
+    return 0
+}
+"#,
+        );
+
+        assert!(rendered.matches("__closure").count() >= 2);
+        assert!(rendered.contains("call i64 %t"));
+        assert!(rendered.contains("call i1 %t"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
     }
 
     #[test]
