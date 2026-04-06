@@ -217,6 +217,30 @@ pub fn hover_for_dependency_struct_fields(
     })
 }
 
+pub fn hover_for_dependency_methods(
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<Hover> {
+    let offset = position_to_offset(source, position)?;
+    let info = package.dependency_method_hover_in_source_at(source, offset)?;
+    let hover = HoverInfo {
+        span: info.span,
+        kind: info.kind,
+        name: info.name,
+        detail: info.detail,
+        ty: None,
+        definition_span: None,
+    };
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: render_hover_markdown(&hover),
+        }),
+        range: Some(span_to_range(source, hover.span)),
+    })
+}
+
 pub fn hover_for_dependency_imports(
     source: &str,
     package: &PackageAnalysis,
@@ -352,6 +376,21 @@ pub fn definition_for_dependency_struct_fields(
 ) -> Option<GotoDefinitionResponse> {
     let offset = position_to_offset(source, position)?;
     let target = package.dependency_struct_field_definition_in_source_at(source, offset)?;
+    let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
+    let target_uri = Url::from_file_path(&target.path).ok()?;
+    Some(GotoDefinitionResponse::Scalar(Location::new(
+        target_uri,
+        span_to_range(&target_source, target.span),
+    )))
+}
+
+pub fn definition_for_dependency_methods(
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<GotoDefinitionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let target = package.dependency_method_definition_in_source_at(source, offset)?;
     let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
     let target_uri = Url::from_file_path(&target.path).ok()?;
     Some(GotoDefinitionResponse::Scalar(Location::new(
@@ -572,6 +611,35 @@ pub fn references_for_dependency_struct_fields(
             .dependency_struct_field_references_in_source_at(source, offset)?
             .into_iter()
             .filter(|reference| include_declaration || !reference.is_definition)
+            .map(|reference| Location::new(uri.clone(), span_to_range(source, reference.span))),
+    );
+    Some(locations)
+}
+
+pub fn references_for_dependency_methods(
+    uri: &Url,
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    let offset = position_to_offset(source, position)?;
+    let local_references = package.dependency_method_references_in_source_at(source, offset)?;
+
+    let mut locations = Vec::new();
+    if include_declaration {
+        let target = package.dependency_method_definition_in_source_at(source, offset)?;
+        let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
+        let target_uri = Url::from_file_path(&target.path).ok()?;
+        locations.push(Location::new(
+            target_uri,
+            span_to_range(&target_source, target.span),
+        ));
+    }
+
+    locations.extend(
+        local_references
+            .into_iter()
             .map(|reference| Location::new(uri.clone(), span_to_range(source, reference.span))),
     );
     Some(locations)

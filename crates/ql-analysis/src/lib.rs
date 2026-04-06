@@ -703,6 +703,22 @@ impl PackageAnalysis {
         })
     }
 
+    pub fn dependency_method_hover_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyHoverInfo> {
+        let target = self.dependency_method_target_in_source_at(source, offset)?;
+        Some(DependencyHoverInfo {
+            span: target.reference_span,
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Method,
+            name: target.name,
+            detail: target.detail,
+        })
+    }
+
     pub fn dependency_struct_field_hover_in_source_at(
         &self,
         source: &str,
@@ -741,6 +757,22 @@ impl PackageAnalysis {
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
         let target = self.dependency_method_target_at(analysis, offset)?;
+        Some(DependencyDefinitionTarget {
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Method,
+            name: target.name,
+            path: target.path,
+            span: target.definition_span,
+        })
+    }
+
+    pub fn dependency_method_definition_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let target = self.dependency_method_target_in_source_at(source, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
             source_path: target.source_path,
@@ -805,6 +837,37 @@ impl PackageAnalysis {
         let target = self.dependency_method_target_at(analysis, offset)?;
         let mut references = self
             .dependency_method_occurrences(analysis.ast())
+            .into_iter()
+            .filter(|occurrence| {
+                occurrence.package_name == target.package_name
+                    && occurrence.source_path == target.source_path
+                    && occurrence.struct_name == target.struct_name
+                    && occurrence.name == target.name
+                    && occurrence.path == target.path
+            })
+            .map(|occurrence| ReferenceTarget {
+                kind: SymbolKind::Method,
+                name: occurrence.name,
+                span: occurrence.reference_span,
+                is_definition: false,
+            })
+            .collect::<Vec<_>>();
+        if references.is_empty() {
+            return None;
+        }
+        references.sort_by_key(|reference| (reference.span.start, reference.span.end));
+        Some(references)
+    }
+
+    pub fn dependency_method_references_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<ReferenceTarget>> {
+        let module = parse_source(source).ok()?;
+        let target = self.dependency_method_target_in_source_at(source, offset)?;
+        let mut references = self
+            .dependency_method_occurrences(&module)
             .into_iter()
             .filter(|occurrence| {
                 occurrence.package_name == target.package_name
@@ -1139,6 +1202,27 @@ impl PackageAnalysis {
             .into_iter()
             .find(|occurrence| occurrence.reference_span.contains(offset))
             .map(|occurrence| DependencyStructFieldTarget {
+                reference_span: occurrence.reference_span,
+                package_name: occurrence.package_name,
+                source_path: occurrence.source_path,
+                struct_name: occurrence.struct_name,
+                name: occurrence.name,
+                detail: occurrence.detail,
+                path: occurrence.path,
+                definition_span: occurrence.definition_span,
+            })
+    }
+
+    fn dependency_method_target_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyMethodTarget> {
+        let module = parse_source(source).ok()?;
+        self.dependency_method_occurrences(&module)
+            .into_iter()
+            .find(|occurrence| occurrence.reference_span.contains(offset))
+            .map(|occurrence| DependencyMethodTarget {
                 reference_span: occurrence.reference_span,
                 package_name: occurrence.package_name,
                 source_path: occurrence.source_path,

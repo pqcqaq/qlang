@@ -7,10 +7,11 @@ use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source}
 use ql_lsp::bridge::{
     completion_for_dependency_imports, completion_for_dependency_struct_fields,
     completion_for_dependency_variants, completion_for_package_analysis,
-    definition_for_dependency_imports, definition_for_dependency_struct_fields,
-    definition_for_dependency_variants, definition_for_package_analysis,
-    hover_for_dependency_imports, hover_for_dependency_struct_fields,
-    hover_for_dependency_variants, hover_for_package_analysis, references_for_dependency_imports,
+    definition_for_dependency_imports, definition_for_dependency_methods,
+    definition_for_dependency_struct_fields, definition_for_dependency_variants,
+    definition_for_package_analysis, hover_for_dependency_imports, hover_for_dependency_methods,
+    hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
+    references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_variants,
     references_for_package_analysis, span_to_range,
 };
@@ -1837,6 +1838,165 @@ pub fn read(config: Cfg) -> Int {
     assert_eq!(
         range,
         span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_struct_member_method_queries_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-package-struct-member-method-broken-query");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let built = Cfg { value: 1 }
+    let broken: Int = "oops"
+    return config.get() + built.get()
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let config_method = nth_offset(source, "get", 1);
+    let built_method = nth_offset(source, "get", 2);
+
+    let hover =
+        hover_for_dependency_methods(source, &package, offset_to_position(source, config_method))
+            .expect(
+                "dependency struct member method hover should exist even without semantic analysis",
+            );
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**method** `get`"));
+    assert!(markup.value.contains("fn get(self) -> Int"));
+
+    let definition = definition_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, built_method),
+    )
+    .expect(
+        "dependency struct member method definition should exist even without semantic analysis",
+    );
+    let GotoDefinitionResponse::Scalar(Location {
+        uri: definition_uri,
+        range,
+    }) = definition
+    else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        definition_uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = "pub fn get(self) -> Int";
+    let start = artifact
+        .find(snippet)
+        .map(|offset| offset + "pub fn ".len())
+        .expect("method signature should exist in dependency artifact");
+    assert_eq!(
+        range,
+        span_to_range(&artifact, Span::new(start, start + "get".len()))
+    );
+
+    let with_declaration = references_for_dependency_methods(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, config_method),
+        true,
+    )
+    .expect(
+        "dependency struct member method references should exist even without semantic analysis",
+    );
+    assert_eq!(with_declaration.len(), 3);
+    assert_eq!(
+        with_declaration[0]
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    assert!(
+        with_declaration[1..]
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+
+    let without_declaration = references_for_dependency_methods(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, built_method),
+        false,
+    )
+    .expect("dependency struct member method references should exist without semantic analysis");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
     );
 }
 

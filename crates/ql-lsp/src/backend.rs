@@ -18,10 +18,11 @@ use crate::bridge::{
     completion_for_analysis, completion_for_dependency_imports,
     completion_for_dependency_struct_fields, completion_for_dependency_variants,
     completion_for_package_analysis, definition_for_dependency_imports,
-    definition_for_dependency_struct_fields, definition_for_dependency_variants,
-    definition_for_package_analysis, diagnostics_to_lsp, hover_for_dependency_imports,
-    hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
-    prepare_rename_for_analysis, references_for_analysis, references_for_dependency_imports,
+    definition_for_dependency_methods, definition_for_dependency_struct_fields,
+    definition_for_dependency_variants, definition_for_package_analysis, diagnostics_to_lsp,
+    hover_for_dependency_imports, hover_for_dependency_methods, hover_for_dependency_struct_fields,
+    hover_for_dependency_variants, hover_for_package_analysis, prepare_rename_for_analysis,
+    references_for_analysis, references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_variants,
     references_for_package_analysis, rename_for_analysis, semantic_tokens_for_analysis,
     semantic_tokens_legend,
@@ -157,6 +158,9 @@ impl LanguageServer for Backend {
             if let Some(hover) = hover_for_dependency_imports(&source, &package, position) {
                 return Ok(Some(hover));
             }
+            if let Some(hover) = hover_for_dependency_methods(&source, &package, position) {
+                return Ok(Some(hover));
+            }
             if let Some(hover) = hover_for_dependency_struct_fields(&source, &package, position) {
                 return Ok(Some(hover));
             }
@@ -191,6 +195,10 @@ impl LanguageServer for Backend {
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
             if let Some(definition) = definition_for_dependency_imports(&source, &package, position)
+            {
+                return Ok(Some(definition));
+            }
+            if let Some(definition) = definition_for_dependency_methods(&source, &package, position)
             {
                 return Ok(Some(definition));
             }
@@ -230,6 +238,15 @@ impl LanguageServer for Backend {
         if let Some(package) = self.package_analysis_for_uri(&uri) {
             let Ok(analysis) = analyze_source(&source) else {
                 if let Some(references) = references_for_dependency_imports(
+                    &uri,
+                    &source,
+                    &package,
+                    position,
+                    params.context.include_declaration,
+                ) {
+                    return Ok(Some(references));
+                }
+                if let Some(references) = references_for_dependency_methods(
                     &uri,
                     &source,
                     &package,
