@@ -3,9 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_source};
+use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    span_to_range, type_definition_for_analysis, type_definition_for_package_analysis,
+    span_to_range, type_definition_for_analysis, type_definition_for_dependency_imports,
+    type_definition_for_package_analysis,
 };
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{Location, Position, Url};
@@ -268,6 +269,98 @@ pub fn main(value: Buf[Int]) -> Buf[Int] {
         offset_to_position(source, nth_offset(source, "Buf", 3)),
     )
     .expect("dependency type definition should exist");
+    let GotoTypeDefinitionResponse::Scalar(Location {
+        uri: definition_uri,
+        range,
+    }) = definition
+    else {
+        panic!("type definition should be one location")
+    };
+    assert_eq!(
+        definition_uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = "pub struct Buffer[T] {\n    value: T,\n}";
+    let struct_def = artifact
+        .find(snippet)
+        .expect("struct signature should exist in dependency artifact");
+    assert_eq!(
+        range,
+        span_to_range(
+            &artifact,
+            ql_span::Span::new(struct_def, struct_def + snippet.len())
+        )
+    );
+}
+
+#[test]
+fn type_definition_bridge_follows_dependency_type_roots_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-type-definition-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Buffer[T] {
+    value: T,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Buffer as Buf
+
+pub fn main(value: Buf[Int]) -> Int {
+    let next = missing(value)
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let definition = type_definition_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "Buf", 3)),
+    )
+    .expect("dependency type definition should exist even without semantic analysis");
     let GotoTypeDefinitionResponse::Scalar(Location {
         uri: definition_uri,
         range,

@@ -1077,6 +1077,22 @@ impl PackageAnalysis {
         })
     }
 
+    pub fn dependency_type_definition_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let target = self.dependency_type_target_in_source_at(source, offset)?;
+        Some(DependencyDefinitionTarget {
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: target.kind,
+            name: target.name,
+            path: target.path,
+            span: target.definition_span,
+        })
+    }
+
     pub fn dependency_references_in_source_at(
         &self,
         source: &str,
@@ -1156,6 +1172,34 @@ impl PackageAnalysis {
         let occurrence = dependency_import_occurrence_in_module(&module, offset)?;
         let (dependency, symbol) =
             dependency_import_binding_for_local_name(self, &module, &occurrence.local_name)?;
+        let definition_span = dependency.artifact_span_for(symbol)?;
+        Some(DependencyResolvedTarget {
+            import_span: occurrence.span,
+            package_name: dependency.artifact.package_name.clone(),
+            source_path: symbol.source_path.clone(),
+            kind: symbol.kind,
+            name: symbol.name.clone(),
+            detail: symbol.detail.clone(),
+            path: dependency.interface_path.clone(),
+            definition_span,
+        })
+    }
+
+    fn dependency_type_target_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyResolvedTarget> {
+        let module = parse_source(source).ok()?;
+        let occurrence = dependency_type_import_occurrence_in_module(&module, offset)?;
+        let (dependency, symbol) =
+            dependency_import_binding_for_local_name(self, &module, &occurrence.local_name)?;
+        if !matches!(
+            symbol.kind,
+            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::TypeAlias
+        ) {
+            return None;
+        }
         let definition_span = dependency.artifact_span_for(symbol)?;
         Some(DependencyResolvedTarget {
             import_span: occurrence.span,
@@ -2902,6 +2946,16 @@ fn dependency_import_occurrence_in_module(
     None
 }
 
+fn dependency_type_import_occurrence_in_module(
+    module: &ql_ast::Module,
+    offset: usize,
+) -> Option<DependencyImportOccurrence> {
+    module
+        .items
+        .iter()
+        .find_map(|item| dependency_type_import_occurrence_in_item(item, offset))
+}
+
 fn dependency_import_occurrence_in_use_decl(
     use_decl: &ql_ast::UseDecl,
     offset: usize,
@@ -3010,6 +3064,84 @@ fn dependency_import_occurrence_in_item(
     }
 }
 
+fn dependency_type_import_occurrence_in_item(
+    item: &ql_ast::Item,
+    offset: usize,
+) -> Option<DependencyImportOccurrence> {
+    match &item.kind {
+        AstItemKind::Function(function) => {
+            dependency_type_import_occurrence_in_function(function, offset)
+        }
+        AstItemKind::Const(global) | AstItemKind::Static(global) => {
+            dependency_import_occurrence_in_type_expr(&global.ty, offset)
+                .or_else(|| dependency_type_import_occurrence_in_expr(&global.value, offset))
+        }
+        AstItemKind::Struct(struct_decl) => struct_decl.fields.iter().find_map(|field| {
+            dependency_import_occurrence_in_type_expr(&field.ty, offset).or_else(|| {
+                field
+                    .default
+                    .as_ref()
+                    .and_then(|default| dependency_type_import_occurrence_in_expr(default, offset))
+            })
+        }),
+        AstItemKind::Enum(enum_decl) => {
+            enum_decl
+                .variants
+                .iter()
+                .find_map(|variant| match &variant.fields {
+                    ql_ast::VariantFields::Unit => None,
+                    ql_ast::VariantFields::Tuple(items) => items
+                        .iter()
+                        .find_map(|item| dependency_import_occurrence_in_type_expr(item, offset)),
+                    ql_ast::VariantFields::Struct(fields) => fields.iter().find_map(|field| {
+                        dependency_import_occurrence_in_type_expr(&field.ty, offset).or_else(|| {
+                            field.default.as_ref().and_then(|default| {
+                                dependency_type_import_occurrence_in_expr(default, offset)
+                            })
+                        })
+                    }),
+                })
+        }
+        AstItemKind::Trait(trait_decl) => trait_decl
+            .methods
+            .iter()
+            .find_map(|method| dependency_type_import_occurrence_in_function(method, offset)),
+        AstItemKind::Impl(impl_block) => {
+            dependency_import_occurrence_in_type_expr(&impl_block.target, offset)
+                .or_else(|| {
+                    impl_block
+                        .trait_ty
+                        .as_ref()
+                        .and_then(|ty| dependency_import_occurrence_in_type_expr(ty, offset))
+                })
+                .or_else(|| {
+                    impl_block.where_clause.iter().find_map(|predicate| {
+                        dependency_type_import_occurrence_in_where_predicate(predicate, offset)
+                    })
+                })
+                .or_else(|| {
+                    impl_block.methods.iter().find_map(|method| {
+                        dependency_type_import_occurrence_in_function(method, offset)
+                    })
+                })
+        }
+        AstItemKind::Extend(extend_block) => {
+            dependency_import_occurrence_in_type_expr(&extend_block.target, offset).or_else(|| {
+                extend_block.methods.iter().find_map(|method| {
+                    dependency_type_import_occurrence_in_function(method, offset)
+                })
+            })
+        }
+        AstItemKind::TypeAlias(type_alias) => {
+            dependency_import_occurrence_in_type_expr(&type_alias.ty, offset)
+        }
+        AstItemKind::ExternBlock(extern_block) => extern_block
+            .functions
+            .iter()
+            .find_map(|function| dependency_type_import_occurrence_in_function(function, offset)),
+    }
+}
+
 fn dependency_import_occurrence_in_function(
     function: &ql_ast::FunctionDecl,
     offset: usize,
@@ -3042,7 +3174,51 @@ fn dependency_import_occurrence_in_function(
         })
 }
 
+fn dependency_type_import_occurrence_in_function(
+    function: &ql_ast::FunctionDecl,
+    offset: usize,
+) -> Option<DependencyImportOccurrence> {
+    function
+        .params
+        .iter()
+        .find_map(|param| match param {
+            ql_ast::Param::Regular { ty, .. } => {
+                dependency_import_occurrence_in_type_expr(ty, offset)
+            }
+            ql_ast::Param::Receiver { .. } => None,
+        })
+        .or_else(|| {
+            function
+                .return_type
+                .as_ref()
+                .and_then(|ty| dependency_import_occurrence_in_type_expr(ty, offset))
+        })
+        .or_else(|| {
+            function.where_clause.iter().find_map(|predicate| {
+                dependency_type_import_occurrence_in_where_predicate(predicate, offset)
+            })
+        })
+        .or_else(|| {
+            function
+                .body
+                .as_ref()
+                .and_then(|body| dependency_type_import_occurrence_in_block(body, offset))
+        })
+}
+
 fn dependency_import_occurrence_in_where_predicate(
+    predicate: &ql_ast::WherePredicate,
+    offset: usize,
+) -> Option<DependencyImportOccurrence> {
+    dependency_import_occurrence_in_type_expr(&predicate.target, offset).or_else(|| {
+        predicate
+            .bounds
+            .iter()
+            .find_map(|bound| dependency_import_occurrence_for_path(bound, offset))
+    })
+}
+
+fn dependency_type_import_occurrence_in_where_predicate(
     predicate: &ql_ast::WherePredicate,
     offset: usize,
 ) -> Option<DependencyImportOccurrence> {
@@ -3067,6 +3243,21 @@ fn dependency_import_occurrence_in_block(
         .tail
         .as_ref()
         .and_then(|tail| dependency_import_occurrence_in_expr(tail, offset))
+}
+
+fn dependency_type_import_occurrence_in_block(
+    block: &ql_ast::Block,
+    offset: usize,
+) -> Option<DependencyImportOccurrence> {
+    for stmt in &block.statements {
+        if let Some(occurrence) = dependency_type_import_occurrence_in_stmt(stmt, offset) {
+            return Some(occurrence);
+        }
+    }
+    block
+        .tail
+        .as_ref()
+        .and_then(|tail| dependency_type_import_occurrence_in_expr(tail, offset))
 }
 
 fn dependency_import_occurrence_in_stmt(
@@ -3104,6 +3295,35 @@ fn dependency_import_occurrence_in_stmt(
     }
 }
 
+fn dependency_type_import_occurrence_in_stmt(
+    stmt: &ql_ast::Stmt,
+    offset: usize,
+) -> Option<DependencyImportOccurrence> {
+    match &stmt.kind {
+        ql_ast::StmtKind::Let { ty, value, .. } => ty
+            .as_ref()
+            .and_then(|ty| dependency_import_occurrence_in_type_expr(ty, offset))
+            .or_else(|| dependency_type_import_occurrence_in_expr(value, offset)),
+        ql_ast::StmtKind::Return(Some(expr))
+        | ql_ast::StmtKind::Defer(expr)
+        | ql_ast::StmtKind::Expr { expr, .. } => {
+            dependency_type_import_occurrence_in_expr(expr, offset)
+        }
+        ql_ast::StmtKind::While { condition, body } => {
+            dependency_type_import_occurrence_in_expr(condition, offset)
+                .or_else(|| dependency_type_import_occurrence_in_block(body, offset))
+        }
+        ql_ast::StmtKind::Loop { body } => dependency_type_import_occurrence_in_block(body, offset),
+        ql_ast::StmtKind::For { iterable, body, .. } => {
+            dependency_type_import_occurrence_in_expr(iterable, offset)
+                .or_else(|| dependency_type_import_occurrence_in_block(body, offset))
+        }
+        ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {
+            None
+        }
+    }
+}
+
 fn dependency_import_occurrence_in_type_expr(
     ty: &ql_ast::TypeExpr,
     offset: usize,
@@ -3128,6 +3348,90 @@ fn dependency_import_occurrence_in_type_expr(
             .iter()
             .find_map(|param| dependency_import_occurrence_in_type_expr(param, offset))
             .or_else(|| dependency_import_occurrence_in_type_expr(ret, offset)),
+    }
+}
+
+fn dependency_type_import_occurrence_in_expr(
+    expr: &ql_ast::Expr,
+    offset: usize,
+) -> Option<DependencyImportOccurrence> {
+    match &expr.kind {
+        ql_ast::ExprKind::Name(_)
+        | ql_ast::ExprKind::Integer(_)
+        | ql_ast::ExprKind::String { .. }
+        | ql_ast::ExprKind::Bool(_)
+        | ql_ast::ExprKind::NoneLiteral => None,
+        ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => items
+            .iter()
+            .find_map(|item| dependency_type_import_occurrence_in_expr(item, offset)),
+        ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
+            dependency_type_import_occurrence_in_block(block, offset)
+        }
+        ql_ast::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => dependency_type_import_occurrence_in_expr(condition, offset)
+            .or_else(|| dependency_type_import_occurrence_in_block(then_branch, offset))
+            .or_else(|| {
+                else_branch
+                    .as_ref()
+                    .and_then(|expr| dependency_type_import_occurrence_in_expr(expr, offset))
+            }),
+        ql_ast::ExprKind::Match { value, arms } => {
+            dependency_type_import_occurrence_in_expr(value, offset).or_else(|| {
+                arms.iter().find_map(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .and_then(|guard| dependency_type_import_occurrence_in_expr(guard, offset))
+                        .or_else(|| dependency_type_import_occurrence_in_expr(&arm.body, offset))
+                })
+            })
+        }
+        ql_ast::ExprKind::Closure { params, body, .. } => params
+            .iter()
+            .find_map(|param| {
+                param
+                    .ty
+                    .as_ref()
+                    .and_then(|ty| dependency_import_occurrence_in_type_expr(ty, offset))
+            })
+            .or_else(|| dependency_type_import_occurrence_in_expr(body, offset)),
+        ql_ast::ExprKind::Call { callee, args } => {
+            dependency_type_import_occurrence_in_expr(callee, offset).or_else(|| {
+                args.iter().find_map(|arg| match arg {
+                    ql_ast::CallArg::Positional(expr) => {
+                        dependency_type_import_occurrence_in_expr(expr, offset)
+                    }
+                    ql_ast::CallArg::Named { value, .. } => {
+                        dependency_type_import_occurrence_in_expr(value, offset)
+                    }
+                })
+            })
+        }
+        ql_ast::ExprKind::Member { object, .. } => {
+            dependency_type_import_occurrence_in_expr(object, offset)
+        }
+        ql_ast::ExprKind::Bracket { target, items } => {
+            dependency_type_import_occurrence_in_expr(target, offset).or_else(|| {
+                items
+                    .iter()
+                    .find_map(|item| dependency_type_import_occurrence_in_expr(item, offset))
+            })
+        }
+        ql_ast::ExprKind::StructLiteral { fields, .. } => fields.iter().find_map(|field| {
+            field
+                .value
+                .as_ref()
+                .and_then(|value| dependency_type_import_occurrence_in_expr(value, offset))
+        }),
+        ql_ast::ExprKind::Binary { left, right, .. } => {
+            dependency_type_import_occurrence_in_expr(left, offset)
+                .or_else(|| dependency_type_import_occurrence_in_expr(right, offset))
+        }
+        ql_ast::ExprKind::Unary { expr, .. } | ql_ast::ExprKind::Question(expr) => {
+            dependency_type_import_occurrence_in_expr(expr, offset)
+        }
     }
 }
 
