@@ -3154,15 +3154,34 @@ fn dependency_member_completion_binding_in_stmt(
         ql_ast::StmtKind::Loop { body } => dependency_member_completion_binding_in_block(
             package, module, body, source, offset, kind, scopes,
         ),
-        ql_ast::StmtKind::For { iterable, body, .. } => {
-            dependency_member_completion_binding_in_expr(
+        ql_ast::StmtKind::For {
+            pattern,
+            iterable,
+            body,
+            ..
+        } => {
+            let iterable_binding = dependency_struct_element_binding_for_iterable_expr(
+                package, module, iterable, scopes,
+            );
+            let expr_binding = dependency_member_completion_binding_in_expr(
                 package, module, iterable, source, offset, kind, scopes,
-            )
-            .or_else(|| {
-                dependency_member_completion_binding_in_block(
-                    package, module, body, source, offset, kind, scopes,
+            );
+            let pattern_binding = iterable_binding.as_ref().and_then(|binding| {
+                dependency_member_completion_binding_for_pattern(
+                    package, pattern, binding, offset, kind,
                 )
-            })
+            });
+
+            scopes.push(HashMap::new());
+            if let Some(binding) = &iterable_binding {
+                bind_dependency_struct_pattern(package, pattern, binding, scopes);
+            }
+            let body_binding = dependency_member_completion_binding_in_block(
+                package, module, body, source, offset, kind, scopes,
+            );
+            scopes.pop();
+
+            expr_binding.or(pattern_binding).or(body_binding)
         }
         ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {
             None
@@ -5987,6 +6006,37 @@ fn dependency_struct_binding_for_match_expr(
         resolved = Some(body_binding);
     }
     resolved
+}
+
+fn dependency_struct_common_binding_for_exprs(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    items: &[ql_ast::Expr],
+    scopes: &[HashMap<String, DependencyStructBinding>],
+) -> Option<DependencyStructBinding> {
+    let mut items = items.iter();
+    let first = dependency_struct_binding_for_expr(package, module, items.next()?, scopes)?;
+    for item in items {
+        let binding = dependency_struct_binding_for_expr(package, module, item, scopes)?;
+        if binding != first {
+            return None;
+        }
+    }
+    Some(first)
+}
+
+fn dependency_struct_element_binding_for_iterable_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    expr: &ql_ast::Expr,
+    scopes: &[HashMap<String, DependencyStructBinding>],
+) -> Option<DependencyStructBinding> {
+    match &expr.kind {
+        ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
+            dependency_struct_common_binding_for_exprs(package, module, items, scopes)
+        }
+        _ => None,
+    }
 }
 
 fn dependency_struct_binding_for_expr(
