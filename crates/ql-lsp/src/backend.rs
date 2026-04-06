@@ -7,7 +7,10 @@ use ql_analysis::{
     analyze_package_dependencies, analyze_source,
 };
 use tower_lsp::jsonrpc::{Error, Result};
-use tower_lsp::lsp_types::request::{GotoDeclarationParams, GotoDeclarationResponse};
+use tower_lsp::lsp_types::request::{
+    GotoDeclarationParams, GotoDeclarationResponse, GotoTypeDefinitionParams,
+    GotoTypeDefinitionResponse,
+};
 use tower_lsp::lsp_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DeclarationCapability,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -17,8 +20,8 @@ use tower_lsp::lsp_types::{
     RenameOptions, RenameParams, SemanticTokensFullOptions, SemanticTokensOptions,
     SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
     ServerCapabilities, ServerInfo, SymbolInformation, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, Url, WorkspaceEdit,
-    WorkspaceSymbolParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -38,6 +41,7 @@ use crate::bridge::{
     references_for_dependency_methods, references_for_dependency_struct_fields,
     references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
     semantic_tokens_for_analysis, semantic_tokens_legend, span_to_range,
+    type_definition_for_analysis, type_definition_for_package_analysis,
     workspace_symbols_for_analysis,
 };
 use crate::store::DocumentStore;
@@ -254,6 +258,7 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 declaration_provider: Some(DeclarationCapability::Simple(true)),
+                type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
@@ -437,6 +442,33 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(crate::bridge::declaration_for_analysis(
+            &uri, &source, &analysis, position,
+        ))
+    }
+
+    async fn goto_type_definition(
+        &self,
+        params: GotoTypeDefinitionParams,
+    ) -> Result<Option<GotoTypeDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let Ok(analysis) = analyze_source(&source) else {
+                return Ok(None);
+            };
+            return Ok(type_definition_for_package_analysis(
+                &uri, &source, &analysis, &package, position,
+            ));
+        }
+
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(type_definition_for_analysis(
             &uri, &source, &analysis, position,
         ))
     }

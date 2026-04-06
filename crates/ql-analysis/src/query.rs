@@ -211,6 +211,7 @@ pub struct HoverInfo {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct QueryIndex {
     occurrences: Vec<IndexedSymbol>,
+    type_definitions: Vec<TypeDefinitionOccurrence>,
     field_shorthand_occurrences: HashMap<FieldTarget, Vec<FieldShorthandOccurrence>>,
     binding_shorthand_occurrences: HashMap<SymbolKey, Vec<BindingShorthandOccurrence>>,
     async_contexts: Vec<AsyncContextInfo>,
@@ -265,6 +266,20 @@ impl QueryIndex {
                 span,
             })
         })
+    }
+
+    pub(crate) fn type_definition_at(&self, offset: usize) -> Option<DefinitionTarget> {
+        self.type_definitions
+            .iter()
+            .find(|entry| entry.span.contains(offset))
+            .and_then(|entry| entry.target.clone())
+    }
+
+    pub(crate) fn type_import_binding_at(&self, offset: usize) -> Option<ImportBinding> {
+        self.type_definitions
+            .iter()
+            .find(|entry| entry.span.contains(offset))
+            .and_then(|entry| entry.import_binding.clone())
     }
 
     pub(crate) fn import_binding_at(&self, offset: usize) -> Option<(ImportBinding, Span)> {
@@ -483,6 +498,13 @@ struct IndexedSymbol {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct TypeDefinitionOccurrence {
+    span: Span,
+    target: Option<DefinitionTarget>,
+    import_binding: Option<ImportBinding>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct FieldShorthandOccurrence {
     span: Span,
     binding_text: String,
@@ -558,6 +580,7 @@ struct QueryIndexBuilder<'a> {
     resolution: &'a ResolutionMap,
     typeck: &'a TypeckResult,
     occurrences: Vec<IndexedSymbol>,
+    type_definitions: Vec<TypeDefinitionOccurrence>,
     item_defs: HashMap<ItemId, SymbolData>,
     function_defs: HashMap<FunctionRef, SymbolData>,
     variant_defs: HashMap<VariantTarget, SymbolData>,
@@ -597,6 +620,7 @@ impl<'a> QueryIndexBuilder<'a> {
             resolution,
             typeck,
             occurrences: Vec::new(),
+            type_definitions: Vec::new(),
             item_defs: HashMap::new(),
             function_defs: HashMap::new(),
             variant_defs: HashMap::new(),
@@ -621,6 +645,13 @@ impl<'a> QueryIndexBuilder<'a> {
     fn finish(mut self) -> QueryIndex {
         self.occurrences
             .sort_by_key(|entry| (entry.span.len(), entry.span.start, entry.span.end));
+        self.type_definitions
+            .sort_by_key(|entry| (entry.span.len(), entry.span.start, entry.span.end));
+        self.type_definitions.dedup_by(|left, right| {
+            left.span == right.span
+                && left.target == right.target
+                && left.import_binding == right.import_binding
+        });
         self.completion_sites.sort_by_key(|site| {
             (
                 site.span.len(),
@@ -653,6 +684,7 @@ impl<'a> QueryIndexBuilder<'a> {
 
         QueryIndex {
             occurrences: self.occurrences,
+            type_definitions: self.type_definitions,
             field_shorthand_occurrences: self.field_shorthand_occurrences,
             binding_shorthand_occurrences: self.binding_shorthand_occurrences,
             async_contexts: self.async_contexts,
@@ -1481,8 +1513,13 @@ impl<'a> QueryIndexBuilder<'a> {
         let block = self.module.block(block_id);
         for &stmt_id in &block.statements {
             match &self.module.stmt(stmt_id).kind {
-                ql_hir::StmtKind::Let { pattern, value, .. } => {
+                ql_hir::StmtKind::Let {
+                    pattern, ty, value, ..
+                } => {
                     self.index_pattern_completion_sites(*pattern);
+                    if let Some(type_id) = *ty {
+                        self.index_type_completion_sites(type_id);
+                    }
                     self.index_expr_completion_sites(*value);
                 }
                 ql_hir::StmtKind::Return(expr) => {
@@ -1885,8 +1922,13 @@ impl<'a> QueryIndexBuilder<'a> {
         for &stmt_id in &block.statements {
             let stmt = self.module.stmt(stmt_id);
             match &stmt.kind {
-                ql_hir::StmtKind::Let { pattern, value, .. } => {
+                ql_hir::StmtKind::Let {
+                    pattern, ty, value, ..
+                } => {
                     self.index_pattern_use(*pattern);
+                    if let Some(type_id) = *ty {
+                        self.index_type_use(type_id);
+                    }
                     self.index_expr_use(*value);
                 }
                 ql_hir::StmtKind::Return(expr) => {
@@ -2117,10 +2159,16 @@ impl<'a> QueryIndexBuilder<'a> {
             TypeKind::Pointer { inner, .. } => self.index_type_use(*inner),
             TypeKind::Array { element, .. } => self.index_type_use(*element),
             TypeKind::Named { path, args } => {
-                if let Some(resolution) = self.resolution.type_resolution(type_id)
-                    && let Some(symbol) = self.symbol_for_type_resolution(resolution)
-                {
-                    self.push_occurrence(self.path_root_span(path, ty.span), &symbol);
+                let root_span = self.path_root_span(path, ty.span);
+                if let Some(resolution) = self.resolution.type_resolution(type_id) {
+                    if let Some(symbol) = self.symbol_for_type_resolution(resolution) {
+                        self.push_occurrence(root_span, &symbol);
+                    }
+                    if let Some(type_definition) =
+                        self.type_definition_occurrence(root_span, resolution)
+                    {
+                        self.type_definitions.push(type_definition);
+                    }
                 }
                 for &arg in args {
                     self.index_type_use(arg);
@@ -2332,6 +2380,43 @@ impl<'a> QueryIndexBuilder<'a> {
         }
     }
 
+    fn type_definition_occurrence(
+        &self,
+        span: Span,
+        resolution: &TypeResolution,
+    ) -> Option<TypeDefinitionOccurrence> {
+        match resolution {
+            TypeResolution::Generic(binding) => Some(TypeDefinitionOccurrence {
+                span,
+                target: self
+                    .generic_defs
+                    .get(binding)
+                    .and_then(definition_target_from_symbol),
+                import_binding: None,
+            }),
+            TypeResolution::Builtin(_) => None,
+            TypeResolution::Item(item_id) => Some(TypeDefinitionOccurrence {
+                span,
+                target: self
+                    .item_defs
+                    .get(item_id)
+                    .and_then(definition_target_from_symbol),
+                import_binding: None,
+            }),
+            TypeResolution::Import(binding) => {
+                let target = self
+                    .local_type_item_for_import_binding(binding)
+                    .and_then(|item_id| self.item_defs.get(&item_id))
+                    .and_then(definition_target_from_symbol);
+                Some(TypeDefinitionOccurrence {
+                    span,
+                    import_binding: target.is_none().then(|| binding.clone()),
+                    target,
+                })
+            }
+        }
+    }
+
     fn import_symbol(binding: &ImportBinding) -> SymbolData {
         SymbolData {
             key: SymbolKey::Import(binding.clone()),
@@ -2523,29 +2608,31 @@ impl<'a> QueryIndexBuilder<'a> {
     }
 
     fn local_enum_item_for_import_binding(&self, binding: &ImportBinding) -> Option<ItemId> {
-        let [name] = binding.path.segments.as_slice() else {
-            return None;
-        };
-
-        self.module.items.iter().copied().find(|item_id| {
-            matches!(
-                &self.module.item(*item_id).kind,
-                ItemKind::Enum(enum_decl) if enum_decl.name == *name
-            )
-        })
+        self.local_type_item_for_import_binding(binding)
+            .filter(|item_id| matches!(self.module.item(*item_id).kind, ItemKind::Enum(_)))
     }
 
     fn local_struct_item_for_import_binding(&self, binding: &ImportBinding) -> Option<ItemId> {
+        self.local_type_item_for_import_binding(binding)
+            .filter(|item_id| matches!(self.module.item(*item_id).kind, ItemKind::Struct(_)))
+    }
+
+    fn local_type_item_for_import_binding(&self, binding: &ImportBinding) -> Option<ItemId> {
         let [name] = binding.path.segments.as_slice() else {
             return None;
         };
 
-        self.module.items.iter().copied().find(|item_id| {
-            matches!(
-                &self.module.item(*item_id).kind,
-                ItemKind::Struct(struct_decl) if struct_decl.name == *name
-            )
-        })
+        self.module
+            .items
+            .iter()
+            .copied()
+            .find(|item_id| match &self.module.item(*item_id).kind {
+                ItemKind::Struct(struct_decl) => struct_decl.name == *name,
+                ItemKind::Enum(enum_decl) => enum_decl.name == *name,
+                ItemKind::Trait(trait_decl) => trait_decl.name == *name,
+                ItemKind::TypeAlias(alias) => alias.name == *name,
+                _ => false,
+            })
     }
 
     fn member_completion_items(&self, object_ty: &ql_typeck::Ty) -> Vec<CompletionItem> {
@@ -3126,6 +3213,14 @@ fn completion_item_from_symbol(symbol: &SymbolData) -> CompletionItem {
         detail: symbol.detail.clone(),
         ty: symbol.ty.clone(),
     }
+}
+
+fn definition_target_from_symbol(symbol: &SymbolData) -> Option<DefinitionTarget> {
+    symbol.definition_span.map(|span| DefinitionTarget {
+        kind: symbol.kind,
+        name: symbol.name.clone(),
+        span,
+    })
 }
 
 fn completion_insert_text(name: &str) -> String {

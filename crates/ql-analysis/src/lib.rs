@@ -1027,6 +1027,24 @@ impl PackageAnalysis {
         })
     }
 
+    pub fn dependency_type_definition_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let binding = analysis.type_import_binding_at(offset)?;
+        let (dependency, symbol) = self.resolve_dependency_import_binding(&binding)?;
+        let definition_span = dependency.artifact_span_for(symbol)?;
+        Some(DependencyDefinitionTarget {
+            package_name: dependency.artifact.package_name.clone(),
+            source_path: symbol.source_path.clone(),
+            kind: symbol.kind,
+            name: symbol.name.clone(),
+            path: dependency.interface_path.clone(),
+            span: definition_span,
+        })
+    }
+
     pub fn dependency_hover_in_source_at(
         &self,
         source: &str,
@@ -1511,6 +1529,10 @@ impl Analysis {
         self.index.import_binding_at(offset)
     }
 
+    fn type_import_binding_at(&self, offset: usize) -> Option<ImportBinding> {
+        self.index.type_import_binding_at(offset)
+    }
+
     /// Return async semantic context for `await` / `spawn` / `for await` at `offset`.
     pub fn async_context_at(&self, offset: usize) -> Option<AsyncContextInfo> {
         self.index.async_context_at(offset)
@@ -1524,6 +1546,11 @@ impl Analysis {
     /// Return the definition site for the symbol covering `offset`, when the target lives in source.
     pub fn definition_at(&self, offset: usize) -> Option<DefinitionTarget> {
         self.index.definition_at(offset)
+    }
+
+    /// Return the explicit type-definition target covering `offset`, when the target lives in source.
+    pub fn type_definition_at(&self, offset: usize) -> Option<DefinitionTarget> {
+        self.index.type_definition_at(offset)
     }
 
     /// Return every indexed occurrence for the symbol covering `offset` within the current file.

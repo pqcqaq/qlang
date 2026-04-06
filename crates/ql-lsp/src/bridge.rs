@@ -8,7 +8,7 @@ use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
 };
 use ql_span::Span;
-use tower_lsp::lsp_types::request::GotoDeclarationResponse;
+use tower_lsp::lsp_types::request::{GotoDeclarationResponse, GotoTypeDefinitionResponse};
 use tower_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionResponse,
     CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
@@ -318,6 +318,20 @@ pub fn declaration_for_analysis(
     definition_for_analysis(uri, source, analysis, position).map(definition_to_declaration)
 }
 
+pub fn type_definition_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<GotoTypeDefinitionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let target = analysis.type_definition_at(offset)?;
+    Some(GotoTypeDefinitionResponse::Scalar(Location::new(
+        uri.clone(),
+        span_to_range(source, target.span),
+    )))
+}
+
 pub fn definition_for_package_analysis(
     uri: &Url,
     source: &str,
@@ -374,6 +388,27 @@ pub fn declaration_for_package_analysis(
 ) -> Option<GotoDeclarationResponse> {
     definition_for_package_analysis(uri, source, analysis, package, position)
         .map(definition_to_declaration)
+}
+
+pub fn type_definition_for_package_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<GotoTypeDefinitionResponse> {
+    if let Some(definition) = type_definition_for_analysis(uri, source, analysis, position) {
+        return Some(definition);
+    }
+
+    let offset = position_to_offset(source, position)?;
+    let target = package.dependency_type_definition_at(analysis, offset)?;
+    let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
+    let target_uri = Url::from_file_path(&target.path).ok()?;
+    Some(GotoTypeDefinitionResponse::Scalar(Location::new(
+        target_uri,
+        span_to_range(&target_source, target.span),
+    )))
 }
 
 pub fn definition_for_dependency_variants(
