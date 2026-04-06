@@ -6071,6 +6071,73 @@ fn dependency_struct_common_binding_for_exprs(
     Some(first)
 }
 
+fn dependency_struct_element_binding_for_block_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    block: &ql_ast::Block,
+    scopes: &[HashMap<String, DependencyStructBinding>],
+) -> Option<DependencyStructBinding> {
+    let mut scopes = scopes.to_vec();
+    scopes.push(HashMap::new());
+    for stmt in &block.statements {
+        if let ql_ast::StmtKind::Let {
+            pattern, ty, value, ..
+        } = &stmt.kind
+        {
+            bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, &mut scopes);
+        }
+    }
+    block.tail.as_ref().and_then(|tail| {
+        dependency_struct_element_binding_for_iterable_expr(package, module, tail, &scopes)
+    })
+}
+
+fn dependency_struct_element_binding_for_if_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    then_branch: &ql_ast::Block,
+    else_branch: &ql_ast::Expr,
+    scopes: &[HashMap<String, DependencyStructBinding>],
+) -> Option<DependencyStructBinding> {
+    let then_binding =
+        dependency_struct_element_binding_for_block_expr(package, module, then_branch, scopes)?;
+    let else_binding =
+        dependency_struct_element_binding_for_iterable_expr(package, module, else_branch, scopes)?;
+    (then_binding == else_binding).then_some(then_binding)
+}
+
+fn dependency_struct_element_binding_for_match_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    value: &ql_ast::Expr,
+    arms: &[ql_ast::MatchArm],
+    scopes: &[HashMap<String, DependencyStructBinding>],
+) -> Option<DependencyStructBinding> {
+    let value_binding = dependency_struct_binding_for_expr(package, module, value, scopes);
+    let mut resolved = None;
+    for arm in arms {
+        let mut arm_scopes = scopes.to_vec();
+        arm_scopes.push(HashMap::new());
+        if let Some(binding) = &value_binding {
+            bind_dependency_struct_match_pattern(package, &arm.pattern, binding, &mut arm_scopes);
+        }
+        let body_binding = dependency_struct_element_binding_for_iterable_expr(
+            package,
+            module,
+            &arm.body,
+            &arm_scopes,
+        )?;
+        if resolved
+            .as_ref()
+            .is_some_and(|binding| binding != &body_binding)
+        {
+            return None;
+        }
+        resolved = Some(body_binding);
+    }
+    resolved
+}
+
 fn dependency_struct_element_binding_for_iterable_expr(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -6080,6 +6147,23 @@ fn dependency_struct_element_binding_for_iterable_expr(
     match &expr.kind {
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
             dependency_struct_common_binding_for_exprs(package, module, items, scopes)
+        }
+        ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
+            dependency_struct_element_binding_for_block_expr(package, module, block, scopes)
+        }
+        ql_ast::ExprKind::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => dependency_struct_element_binding_for_if_expr(
+            package,
+            module,
+            then_branch,
+            else_branch,
+            scopes,
+        ),
+        ql_ast::ExprKind::Match { value, arms } => {
+            dependency_struct_element_binding_for_match_expr(package, module, value, arms, scopes)
         }
         _ => None,
     }
