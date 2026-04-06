@@ -5,9 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    completion_for_dependency_imports, completion_for_package_analysis,
-    definition_for_package_analysis, hover_for_package_analysis, references_for_package_analysis,
-    span_to_range,
+    completion_for_dependency_imports, completion_for_dependency_struct_fields,
+    completion_for_package_analysis, definition_for_package_analysis, hover_for_package_analysis,
+    references_for_package_analysis, span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
@@ -736,6 +736,87 @@ pub fn main() -> Int {
     assert!(items.iter().any(|item| {
         item.label == "Retry" && item.detail.as_deref() == Some("variant Command.Retry(Int)")
     }));
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_struct_field_completion_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-package-struct-field-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+    flag: Bool,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn main(current: Int, built: Cfg) -> Int {
+    let next = Cfg { value: current, fl: true }
+    let Cfg { value: reused, fl: enabled } = built
+    return missing
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "fl", 1) + "fl".len()),
+    ) else {
+        panic!("struct field completion should exist even without semantic analysis")
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "flag");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field flag: Bool"));
+    assert_eq!(
+        items[0].text_edit,
+        Some(CompletionTextEdit::Edit(TextEdit::new(
+            span_to_range(
+                source,
+                Span::new(
+                    nth_offset(source, "fl", 1),
+                    nth_offset(source, "fl", 1) + "fl".len(),
+                ),
+            ),
+            "flag".to_owned(),
+        ))),
+    );
 }
 
 #[test]

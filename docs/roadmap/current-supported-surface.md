@@ -22,7 +22,7 @@
 
 - Phase 1 到 Phase 6 地基已经落地：lexer、parser、formatter、diagnostics、HIR、resolve、typeck、MIR、borrowck、LLVM backend、driver、CLI、same-file LSP/query、FFI header projection 都已进入真实工程主干。
 - 当前活跃主线是保守推进的 Phase 7：async/runtime/task-handle lowering、library/program build surface、Rust interop。
-- Phase 8 的前三条入口切片已继续向前推进：仓库现已具备最小 `qlang.toml` manifest graph loader、`ql project graph` 调试入口、`.qi` V1 emit 入口 `ql project emit-interface`，以及 package-aware `ql check <package-dir>` 对引用 `.qi` 的 syntax-aware 加载；`ql-analysis::analyze_package` 现也已把 dependency `.qi` 的公开符号收进 package 级查询面，并接通 imported dependency symbol 的最小 cross-file hover / definition / references，以及 `use ...` 导入路径和平铺 / grouped import 位置里的 dependency package path segment / public symbol completion；真实 dependency build graph 与更广义 cross-file LSP 仍未开放。
+- Phase 8 的前三条入口切片已继续向前推进：仓库现已具备最小 `qlang.toml` manifest graph loader、`ql project graph` 调试入口、`.qi` V1 emit 入口 `ql project emit-interface`，以及 package-aware `ql check <package-dir>` 对引用 `.qi` 的 syntax-aware 加载；`ql-analysis::analyze_package` 现也已把 dependency `.qi` 的公开符号收进 package 级查询面，并接通 imported dependency symbol 的最小 cross-file hover / definition / references、`use ...` 导入路径和平铺 / grouped import 位置里的 dependency package path segment / public symbol completion，以及 imported dependency enum variant / explicit struct field-label 的最小非导入路径 completion contract；真实 dependency build graph 与更广义 cross-file LSP 仍未开放。
 - 外部稳定互操作边界仍是 C ABI；Rust 继续走 `build.rs + staticlib + header` 路线。
 - async 已经不是“只有语法”，而是有真实 build、真实样例和真实回归的受控子集；但 broader async ABI、broader runtime semantics 仍然刻意关闭。
 - sync backend 的首个 `String` build 子集现已进入真实 build surface：UTF-8 string literal 现可 lowering 为 `{ ptr, i64 }`，并经过 local binding、const/static materialization、普通参数传递、返回值、`==` / `!=` 比较与 fixed-shape aggregate transport 进入当前 LLVM/object build；string ordering compare、string-pattern match lowering 与 C header `String` 导出仍保持保守关闭。
@@ -63,11 +63,11 @@
 - `ql-analysis` / `ql-lsp` 当前也已开放 `use ...` 导入路径位置上的 dependency completion：例如 `use demo.d` 可补全到 `dep`，`use demo.dep.Bu` 与 `use demo.dep.{Bu}` 都可补全到 `.qi` 里的 `Buffer`；grouped import 空补全位当前也会跳过已经写过的项，避免重复提示；该能力当前只覆盖导入路径，不代表更广义 symbol-space cross-file completion 已完成
 - 上述 dependency import completion 当前还额外覆盖了一个编辑中断场景：如果当前文档暂时存在 same-file 语义/语法错误，只要 package manifest 与 dependency `.qi` 仍可装载，`use ...` 导入路径上的 dependency path segment / public symbol completion 仍可继续工作；这条回退路径当前只服务导入补全，不扩展到同文件其它语义补全
 - dependency enum import alias root 的首个非导入路径 contract 现已开放：当 `use demo.dep.Command as Cmd` 唯一映射到 dependency `.qi` 里的 public enum 时，`Cmd.Re` 这类路径位置现在会补全 dependency variants，而 `Cmd.Retry` 这类已写出的 variant token 也已支持 cross-file hover / definition / references；当前这条能力只覆盖 enum variant roots，还不代表更广义 dependency member completion 已完成
-- dependency struct import alias root 的首个 field-query contract 现也已开放：当 `use demo.dep.Config as Cfg` 唯一映射到 dependency `.qi` 里的 public struct 时，`Cfg { value: 1 }` / `Cfg { value: current }` 这类显式 struct literal / struct pattern 字段标签现在也已支持 cross-file hover / definition / references；当前这条能力只覆盖显式字段标签，不扩展到 shorthand token 或 `built.value` 这类 member path
+- dependency struct import alias root 的首个 field-query contract 现也已开放：当 `use demo.dep.Config as Cfg` 唯一映射到 dependency `.qi` 里的 public struct 时，`Cfg { fl: true }` / `let Cfg { fl: enabled } = built` 这类显式 struct literal / struct pattern 字段标签现在已支持 dependency public field completion，并会跳过同一字面量/模式里已经写过的 sibling 字段；已写出的显式字段标签也继续支持 cross-file hover / definition / references；当前这条能力只覆盖显式字段标签，不扩展到 shorthand token、`built.value` 这类 member path，也不承诺 syntax-error fallback
 
 当前仍未开放：
 
-- dependency `.qi` 到 rename 与非导入路径 completion 的 cross-file 消费
+- dependency `.qi` 到 rename 与更广义非导入路径 completion 的 cross-file 消费
 - 真实 package build graph
 - dependency invalidation
 - 更广义的 cross-file query / rename / completion

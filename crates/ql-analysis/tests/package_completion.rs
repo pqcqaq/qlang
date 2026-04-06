@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{SymbolKind, analyze_package};
+use ql_analysis::{SymbolKind, analyze_package, analyze_package_dependencies};
 
 struct TempDir {
     path: PathBuf,
@@ -358,4 +358,84 @@ pub fn main() -> Int {
             .iter()
             .any(|item| { item.label == "Retry" && item.detail == "variant Command.Retry(Int)" })
     );
+}
+
+#[test]
+fn package_analysis_surfaces_dependency_struct_field_completions_from_parse_only_contexts() {
+    let temp = TempDir::new("ql-analysis-package-struct-field-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+    flag: Bool,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn main(current: Int, built: Cfg) -> Int {
+    let next = Cfg { value: current, fl: true }
+    let Cfg { value: reused, fl: enabled } = built
+    return missing
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let literal = package
+        .dependency_struct_field_completions_at(source, nth_offset(source, "fl", 1) + "fl".len())
+        .expect("struct literal field completions should exist");
+    assert_eq!(
+        literal
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["flag"]
+    );
+    assert!(literal.iter().all(|item| item.kind == SymbolKind::Field));
+    assert_eq!(literal[0].detail, "field flag: Bool");
+
+    let pattern = package
+        .dependency_struct_field_completions_at(source, nth_offset(source, "fl", 2) + "fl".len())
+        .expect("struct pattern field completions should exist");
+    assert_eq!(
+        pattern
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["flag"]
+    );
+    assert!(pattern.iter().all(|item| item.kind == SymbolKind::Field));
 }

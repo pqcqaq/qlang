@@ -373,6 +373,44 @@ impl PackageAnalysis {
         dependency.variant_completions_for(symbol)
     }
 
+    pub fn dependency_struct_field_completions_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<CompletionItem>> {
+        let module = parse_source(source).ok()?;
+        let site = dependency_struct_field_completion_site(&module, offset)?;
+        let (dependency, symbol) =
+            dependency_struct_import_binding_for_local_name(self, &module, &site.root_name)?;
+        let mut items = dependency
+            .struct_decl_for(symbol)?
+            .fields
+            .iter()
+            .filter(|field| {
+                !site
+                    .excluded_field_names
+                    .iter()
+                    .any(|name| name == &field.name)
+            })
+            .map(|field| CompletionItem {
+                label: field.name.clone(),
+                insert_text: field.name.clone(),
+                kind: SymbolKind::Field,
+                detail: dependency_struct_field_detail(field),
+                ty: Some(render_dependency_type_expr(&field.ty)),
+            })
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return None;
+        }
+        items.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| left.detail.cmp(&right.detail))
+        });
+        Some(items)
+    }
+
     pub fn dependency_variant_hover_at(
         &self,
         analysis: &Analysis,
@@ -670,6 +708,12 @@ struct DependencyStructFieldOccurrence {
     detail: String,
     path: PathBuf,
     definition_span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencyStructFieldCompletionSite {
+    root_name: String,
+    excluded_field_names: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1421,6 +1465,274 @@ fn dependency_struct_field_detail(field: &ql_ast::FieldDecl) -> String {
         field.name,
         render_dependency_type_expr(&field.ty)
     )
+}
+
+fn dependency_struct_field_completion_site(
+    module: &ql_ast::Module,
+    offset: usize,
+) -> Option<DependencyStructFieldCompletionSite> {
+    for item in &module.items {
+        if let Some(site) = dependency_struct_field_completion_site_in_item(item, offset) {
+            return Some(site);
+        }
+    }
+    None
+}
+
+fn dependency_struct_field_completion_site_in_item(
+    item: &ql_ast::Item,
+    offset: usize,
+) -> Option<DependencyStructFieldCompletionSite> {
+    match &item.kind {
+        AstItemKind::Function(function) => function
+            .body
+            .as_ref()
+            .and_then(|body| dependency_struct_field_completion_site_in_block(body, offset)),
+        AstItemKind::Const(global) | AstItemKind::Static(global) => {
+            dependency_struct_field_completion_site_in_expr(&global.value, offset)
+        }
+        AstItemKind::Struct(struct_decl) => struct_decl.fields.iter().find_map(|field| {
+            field.default.as_ref().and_then(|default| {
+                dependency_struct_field_completion_site_in_expr(default, offset)
+            })
+        }),
+        AstItemKind::Trait(trait_decl) => trait_decl.methods.iter().find_map(|method| {
+            method
+                .body
+                .as_ref()
+                .and_then(|body| dependency_struct_field_completion_site_in_block(body, offset))
+        }),
+        AstItemKind::Impl(impl_block) => impl_block.methods.iter().find_map(|method| {
+            method
+                .body
+                .as_ref()
+                .and_then(|body| dependency_struct_field_completion_site_in_block(body, offset))
+        }),
+        AstItemKind::Extend(extend_block) => extend_block.methods.iter().find_map(|method| {
+            method
+                .body
+                .as_ref()
+                .and_then(|body| dependency_struct_field_completion_site_in_block(body, offset))
+        }),
+        AstItemKind::TypeAlias(_) | AstItemKind::Enum(_) | AstItemKind::ExternBlock(_) => None,
+    }
+}
+
+fn dependency_struct_field_completion_site_in_block(
+    block: &ql_ast::Block,
+    offset: usize,
+) -> Option<DependencyStructFieldCompletionSite> {
+    for stmt in &block.statements {
+        if let Some(site) = dependency_struct_field_completion_site_in_stmt(stmt, offset) {
+            return Some(site);
+        }
+    }
+    block
+        .tail
+        .as_ref()
+        .and_then(|tail| dependency_struct_field_completion_site_in_expr(tail, offset))
+}
+
+fn dependency_struct_field_completion_site_in_stmt(
+    stmt: &ql_ast::Stmt,
+    offset: usize,
+) -> Option<DependencyStructFieldCompletionSite> {
+    match &stmt.kind {
+        ql_ast::StmtKind::Let { pattern, value, .. } => {
+            dependency_struct_field_completion_site_in_pattern(pattern, offset)
+                .or_else(|| dependency_struct_field_completion_site_in_expr(value, offset))
+        }
+        ql_ast::StmtKind::Return(Some(expr))
+        | ql_ast::StmtKind::Defer(expr)
+        | ql_ast::StmtKind::Expr { expr, .. } => {
+            dependency_struct_field_completion_site_in_expr(expr, offset)
+        }
+        ql_ast::StmtKind::While { condition, body } => {
+            dependency_struct_field_completion_site_in_expr(condition, offset)
+                .or_else(|| dependency_struct_field_completion_site_in_block(body, offset))
+        }
+        ql_ast::StmtKind::Loop { body } => {
+            dependency_struct_field_completion_site_in_block(body, offset)
+        }
+        ql_ast::StmtKind::For {
+            pattern,
+            iterable,
+            body,
+            ..
+        } => dependency_struct_field_completion_site_in_pattern(pattern, offset)
+            .or_else(|| dependency_struct_field_completion_site_in_expr(iterable, offset))
+            .or_else(|| dependency_struct_field_completion_site_in_block(body, offset)),
+        ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {
+            None
+        }
+    }
+}
+
+fn dependency_struct_field_completion_site_in_pattern(
+    pattern: &ql_ast::Pattern,
+    offset: usize,
+) -> Option<DependencyStructFieldCompletionSite> {
+    match &pattern.kind {
+        ql_ast::PatternKind::Tuple(items) | ql_ast::PatternKind::TupleStruct { items, .. } => items
+            .iter()
+            .find_map(|item| dependency_struct_field_completion_site_in_pattern(item, offset)),
+        ql_ast::PatternKind::Struct { path, fields, .. } => {
+            dependency_struct_pattern_field_completion_site(path, fields, offset).or_else(|| {
+                fields.iter().find_map(|field| {
+                    field.pattern.as_ref().and_then(|pattern| {
+                        dependency_struct_field_completion_site_in_pattern(pattern, offset)
+                    })
+                })
+            })
+        }
+        ql_ast::PatternKind::Name(_)
+        | ql_ast::PatternKind::Path(_)
+        | ql_ast::PatternKind::Integer(_)
+        | ql_ast::PatternKind::String(_)
+        | ql_ast::PatternKind::Bool(_)
+        | ql_ast::PatternKind::NoneLiteral
+        | ql_ast::PatternKind::Wildcard => None,
+    }
+}
+
+fn dependency_struct_field_completion_site_in_expr(
+    expr: &ql_ast::Expr,
+    offset: usize,
+) -> Option<DependencyStructFieldCompletionSite> {
+    match &expr.kind {
+        ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => items
+            .iter()
+            .find_map(|item| dependency_struct_field_completion_site_in_expr(item, offset)),
+        ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
+            dependency_struct_field_completion_site_in_block(block, offset)
+        }
+        ql_ast::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => dependency_struct_field_completion_site_in_expr(condition, offset)
+            .or_else(|| dependency_struct_field_completion_site_in_block(then_branch, offset))
+            .or_else(|| {
+                else_branch
+                    .as_ref()
+                    .and_then(|expr| dependency_struct_field_completion_site_in_expr(expr, offset))
+            }),
+        ql_ast::ExprKind::Match { value, arms } => {
+            dependency_struct_field_completion_site_in_expr(value, offset).or_else(|| {
+                arms.iter().find_map(|arm| {
+                    dependency_struct_field_completion_site_in_pattern(&arm.pattern, offset)
+                        .or_else(|| {
+                            arm.guard.as_ref().and_then(|guard| {
+                                dependency_struct_field_completion_site_in_expr(guard, offset)
+                            })
+                        })
+                        .or_else(|| {
+                            dependency_struct_field_completion_site_in_expr(&arm.body, offset)
+                        })
+                })
+            })
+        }
+        ql_ast::ExprKind::Closure { body, .. } => {
+            dependency_struct_field_completion_site_in_expr(body, offset)
+        }
+        ql_ast::ExprKind::Call { callee, args } => {
+            dependency_struct_field_completion_site_in_expr(callee, offset).or_else(|| {
+                args.iter().find_map(|arg| match arg {
+                    ql_ast::CallArg::Positional(expr) => {
+                        dependency_struct_field_completion_site_in_expr(expr, offset)
+                    }
+                    ql_ast::CallArg::Named { value, .. } => {
+                        dependency_struct_field_completion_site_in_expr(value, offset)
+                    }
+                })
+            })
+        }
+        ql_ast::ExprKind::Member { object, .. } | ql_ast::ExprKind::Question(object) => {
+            dependency_struct_field_completion_site_in_expr(object, offset)
+        }
+        ql_ast::ExprKind::Bracket { target, items } => {
+            dependency_struct_field_completion_site_in_expr(target, offset).or_else(|| {
+                items
+                    .iter()
+                    .find_map(|item| dependency_struct_field_completion_site_in_expr(item, offset))
+            })
+        }
+        ql_ast::ExprKind::StructLiteral { path, fields } => {
+            dependency_struct_literal_field_completion_site(path, fields, offset).or_else(|| {
+                fields.iter().find_map(|field| {
+                    field.value.as_ref().and_then(|value| {
+                        dependency_struct_field_completion_site_in_expr(value, offset)
+                    })
+                })
+            })
+        }
+        ql_ast::ExprKind::Binary { left, right, .. } => {
+            dependency_struct_field_completion_site_in_expr(left, offset)
+                .or_else(|| dependency_struct_field_completion_site_in_expr(right, offset))
+        }
+        ql_ast::ExprKind::Unary { expr, .. } => {
+            dependency_struct_field_completion_site_in_expr(expr, offset)
+        }
+        ql_ast::ExprKind::Name(_)
+        | ql_ast::ExprKind::Integer(_)
+        | ql_ast::ExprKind::String { .. }
+        | ql_ast::ExprKind::Bool(_)
+        | ql_ast::ExprKind::NoneLiteral => None,
+    }
+}
+
+fn dependency_struct_pattern_field_completion_site(
+    path: &ql_ast::Path,
+    fields: &[ql_ast::PatternField],
+    offset: usize,
+) -> Option<DependencyStructFieldCompletionSite> {
+    let [root_name] = path.segments.as_slice() else {
+        return None;
+    };
+    let current = fields.iter().find(|field| {
+        field.pattern.is_some()
+            && dependency_struct_field_completion_span_contains(field.name_span, offset)
+    })?;
+    let mut excluded_field_names = fields
+        .iter()
+        .filter(|field| field.pattern.is_some() && field.name != current.name)
+        .map(|field| field.name.clone())
+        .collect::<Vec<_>>();
+    excluded_field_names.sort();
+    excluded_field_names.dedup();
+    Some(DependencyStructFieldCompletionSite {
+        root_name: root_name.clone(),
+        excluded_field_names,
+    })
+}
+
+fn dependency_struct_literal_field_completion_site(
+    path: &ql_ast::Path,
+    fields: &[ql_ast::StructLiteralField],
+    offset: usize,
+) -> Option<DependencyStructFieldCompletionSite> {
+    let [root_name] = path.segments.as_slice() else {
+        return None;
+    };
+    let current = fields.iter().find(|field| {
+        field.value.is_some()
+            && dependency_struct_field_completion_span_contains(field.name_span, offset)
+    })?;
+    let mut excluded_field_names = fields
+        .iter()
+        .filter(|field| field.value.is_some() && field.name != current.name)
+        .map(|field| field.name.clone())
+        .collect::<Vec<_>>();
+    excluded_field_names.sort();
+    excluded_field_names.dedup();
+    Some(DependencyStructFieldCompletionSite {
+        root_name: root_name.clone(),
+        excluded_field_names,
+    })
+}
+
+fn dependency_struct_field_completion_span_contains(span: Span, offset: usize) -> bool {
+    span.start <= offset && offset <= span.end
 }
 
 fn collect_dependency_struct_field_occurrences_in_item(

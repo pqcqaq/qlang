@@ -121,7 +121,7 @@ LSP V1 继续关闭：
 - `ql-analysis::analyze_package` 现已把 dependency `.qi` 的公开符号索引进 package-level truth surface：当前覆盖 top-level `fn` / `const` / `static` / `struct` / `enum` / `trait` / `type`，以及 public trait / `impl` / `extend` methods
 - 当前已接通第一条消费链路：imported dependency symbol 的 hover / definition / references 现已可通过 package-level truth surface 落到 dependency `.qi` declaration，且 grouped import alias 形态也已显式落进同一条 target resolution 合同
 - 当前也已接通首个 completion 消费切片：`use ...` 导入路径和平铺 / grouped import 位置现已既能补 dependency package path segment，也能继续补到 `.qi` 里的公开声明；grouped import 空补全位还会跳过已经写过的 item；并且当当前文档自身暂时分析失败时，LSP 还会退回到 dependency-only package load，继续保留这条 import completion。除此之外，imported dependency public enum alias root 的首个非导入路径 contract 也已接上：例如 `use demo.dep.Command as Cmd` 后，`Cmd.Re` 现可继续补全 dependency variants，而 `Cmd.Retry` 也已支持 dependency hover / definition / references
-- imported dependency public struct alias root 的首个 field-query contract 也已接上：例如 `use demo.dep.Config as Cfg` 后，`Cfg { value: 1 }` / `Cfg { value: current }` 这类显式字段标签现已支持 dependency hover / definition / references
+- imported dependency public struct alias root 的首个 field-query contract 也已接上：例如 `use demo.dep.Config as Cfg` 后，`Cfg { fl: true }` / `let Cfg { fl: enabled } = built` 这类显式字段标签现已支持 dependency public field completion，并会跳过同一字面量/模式里已经写过的 sibling 字段；已写出的显式字段标签继续支持 dependency hover / definition / references
 - 更广义的 cross-file completion 仍未接上这些 indexed dependency symbols
 
 交付目标：
@@ -139,7 +139,7 @@ LSP V1 继续关闭：
 - import 后的 cross-file hover / definition / completion / references
 - `use ...` dependency import completion 需要在当前文档临时语义失败时保持可用，但范围只限导入路径，不扩展为 broader same-file semantic completion
 - imported dependency enum alias root 允许最小 variant completion + hover / definition / references，但这条合同当前不自动扩展到 struct field、method 或更广义 dependency member completion
-- imported dependency struct alias root 允许最小显式字段标签 hover / definition / references，但这条合同当前不自动扩展到 shorthand token、`value.field` member path 或更广义 dependency member completion
+- imported dependency struct alias root 允许最小显式字段标签 completion + hover / definition / references，但这条合同当前不自动扩展到 shorthand token、`value.field` member path 或更广义 dependency member completion
 - 仍不做 cross-file rename
 - `DocumentStore` 旁新增 workspace/package 级缓存，但 bridge 继续只做协议映射
 
