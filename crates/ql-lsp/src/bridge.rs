@@ -12,9 +12,9 @@ use tower_lsp::lsp_types::request::{GotoDeclarationResponse, GotoTypeDefinitionR
 use tower_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionResponse,
     CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
-    DocumentSymbol, DocumentSymbolResponse, GotoDefinitionResponse, Hover, HoverContents, Location,
-    MarkupContent, MarkupKind, Position, PrepareRenameResponse, Range, SemanticToken,
-    SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult,
+    DocumentSymbol, DocumentSymbolResponse, Documentation, GotoDefinitionResponse, Hover,
+    HoverContents, Location, MarkupContent, MarkupKind, Position, PrepareRenameResponse, Range,
+    SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult,
     SymbolInformation, TextEdit, Url, WorkspaceEdit,
 };
 
@@ -920,10 +920,8 @@ fn completion_response(
         .map(|item| LspCompletionItem {
             label: item.label.clone(),
             kind: Some(completion_item_kind(item.kind)),
-            detail: Some(item.detail),
-            documentation: item
-                .ty
-                .map(|ty| tower_lsp::lsp_types::Documentation::String(format!("Type: `{ty}`"))),
+            detail: Some(item.detail.clone()),
+            documentation: completion_documentation(&item),
             text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
                 span_to_range(source, replace_span),
                 item.insert_text,
@@ -936,6 +934,25 @@ fn completion_response(
     }
 
     Some(CompletionResponse::Array(items))
+}
+
+fn completion_documentation(item: &ql_analysis::CompletionItem) -> Option<Documentation> {
+    let mut sections = Vec::new();
+
+    if !item.detail.trim().is_empty() {
+        sections.push(format!("```ql\n{}\n```", item.detail));
+    }
+
+    if let Some(ty) = &item.ty {
+        sections.push(format!("Type: `{ty}`"));
+    }
+
+    (!sections.is_empty()).then(|| {
+        Documentation::MarkupContent(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: sections.join("\n\n"),
+        })
+    })
 }
 
 pub fn semantic_tokens_legend() -> SemanticTokensLegend {
