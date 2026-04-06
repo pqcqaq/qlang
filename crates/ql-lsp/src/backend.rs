@@ -32,20 +32,22 @@ use crate::bridge::{
     completion_for_dependency_struct_fields, completion_for_dependency_variants,
     completion_for_package_analysis, declaration_for_dependency_imports,
     declaration_for_dependency_methods, declaration_for_dependency_struct_fields,
-    declaration_for_dependency_variants, declaration_for_package_analysis,
-    definition_for_dependency_imports, definition_for_dependency_methods,
-    definition_for_dependency_struct_fields, definition_for_dependency_variants,
+    declaration_for_dependency_values, declaration_for_dependency_variants,
+    declaration_for_package_analysis, definition_for_dependency_imports,
+    definition_for_dependency_methods, definition_for_dependency_struct_fields,
+    definition_for_dependency_values, definition_for_dependency_variants,
     definition_for_package_analysis, diagnostics_to_lsp, document_symbol_kind,
     document_symbols_for_analysis, hover_for_dependency_imports, hover_for_dependency_methods,
-    hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
-    prepare_rename_for_analysis, references_for_analysis, references_for_dependency_imports,
-    references_for_dependency_methods, references_for_dependency_struct_fields,
-    references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
-    semantic_tokens_for_analysis, semantic_tokens_legend, span_to_range,
-    type_definition_for_analysis, type_definition_for_dependency_imports,
-    type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
-    type_definition_for_dependency_values, type_definition_for_dependency_variants,
-    type_definition_for_package_analysis, workspace_symbols_for_analysis,
+    hover_for_dependency_struct_fields, hover_for_dependency_values, hover_for_dependency_variants,
+    hover_for_package_analysis, prepare_rename_for_analysis, references_for_analysis,
+    references_for_dependency_imports, references_for_dependency_methods,
+    references_for_dependency_struct_fields, references_for_dependency_variants,
+    references_for_package_analysis, rename_for_analysis, semantic_tokens_for_analysis,
+    semantic_tokens_legend, span_to_range, type_definition_for_analysis,
+    type_definition_for_dependency_imports, type_definition_for_dependency_method_types,
+    type_definition_for_dependency_struct_field_types, type_definition_for_dependency_values,
+    type_definition_for_dependency_variants, type_definition_for_package_analysis,
+    workspace_symbols_for_analysis,
 };
 use crate::store::DocumentStore;
 
@@ -545,7 +547,7 @@ impl LanguageServer for Backend {
                 return Ok(Some(hover));
             }
             let Ok(analysis) = analyze_source(&source) else {
-                return Ok(None);
+                return Ok(hover_for_dependency_values(&source, &package, position));
             };
             return Ok(hover_for_package_analysis(
                 &source, &analysis, &package, position,
@@ -590,7 +592,9 @@ impl LanguageServer for Backend {
                 return Ok(Some(definition));
             }
             let Ok(analysis) = analyze_source(&source) else {
-                return Ok(None);
+                return Ok(definition_for_dependency_values(
+                    &source, &package, position,
+                ));
             };
             return Ok(definition_for_package_analysis(
                 &uri, &source, &analysis, &package, position,
@@ -637,7 +641,9 @@ impl LanguageServer for Backend {
                 return Ok(Some(declaration));
             }
             let Ok(analysis) = analyze_source(&source) else {
-                return Ok(None);
+                return Ok(declaration_for_dependency_values(
+                    &source, &package, position,
+                ));
             };
             return Ok(declaration_for_package_analysis(
                 &uri, &source, &analysis, &package, position,

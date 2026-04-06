@@ -519,6 +519,21 @@ impl PackageAnalysis {
         &self.dependencies
     }
 
+    fn dependency_value_binding_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyStructBinding> {
+        let module = parse_source(source).ok()?;
+        dependency_member_completion_binding(
+            self,
+            &module,
+            source,
+            offset,
+            DependencyMemberCompletionKind::ValueType,
+        )
+    }
+
     pub fn dependency_symbols(&self) -> Vec<&DependencySymbol> {
         self.dependencies
             .iter()
@@ -1183,14 +1198,7 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
-        let module = parse_source(source).ok()?;
-        let binding = dependency_member_completion_binding(
-            self,
-            &module,
-            source,
-            offset,
-            DependencyMemberCompletionKind::ValueType,
-        )?;
+        let binding = self.dependency_value_binding_in_source_at(source, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: binding.package_name,
             source_path: binding.source_path,
@@ -1198,6 +1206,30 @@ impl PackageAnalysis {
             name: binding.struct_name,
             path: binding.path,
             span: binding.definition_span,
+        })
+    }
+
+    pub fn dependency_value_definition_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        self.dependency_value_type_definition_in_source_at(source, offset)
+    }
+
+    pub fn dependency_value_hover_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyHoverInfo> {
+        let binding = self.dependency_value_binding_in_source_at(source, offset)?;
+        Some(DependencyHoverInfo {
+            span: Span::new(offset, offset),
+            package_name: binding.package_name,
+            source_path: binding.source_path,
+            kind: SymbolKind::Struct,
+            name: binding.struct_name,
+            detail: binding.detail,
         })
     }
 
@@ -1688,6 +1720,7 @@ struct DependencyStructBinding {
     package_name: String,
     source_path: String,
     struct_name: String,
+    detail: String,
     path: PathBuf,
     definition_span: Span,
     fields: HashMap<String, DependencyStructResolvedField>,
@@ -5178,6 +5211,7 @@ fn dependency_struct_binding_for_symbol(
         package_name: dependency.artifact.package_name.clone(),
         source_path: symbol.source_path.clone(),
         struct_name: symbol.name.clone(),
+        detail: symbol.detail.clone(),
         path: dependency.interface_path.clone(),
         definition_span,
         fields,
