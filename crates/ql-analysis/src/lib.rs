@@ -1,6 +1,7 @@
 mod query;
 mod runtime;
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -974,11 +975,13 @@ impl PackageAnalysis {
         module: &ql_ast::Module,
     ) -> Vec<DependencyStructFieldOccurrence> {
         let mut occurrences = Vec::new();
+        let mut scopes = vec![HashMap::new()];
         for item in &module.items {
             collect_dependency_struct_field_occurrences_in_item(
                 self,
                 module,
                 item,
+                &mut scopes,
                 &mut occurrences,
             );
         }
@@ -1025,6 +1028,22 @@ struct DependencyStructFieldTarget {
     name: String,
     detail: String,
     path: PathBuf,
+    definition_span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencyStructBinding {
+    package_name: String,
+    source_path: String,
+    struct_name: String,
+    path: PathBuf,
+    fields: HashMap<String, DependencyStructResolvedField>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencyStructResolvedField {
+    name: String,
+    detail: String,
     definition_span: Span,
 }
 
@@ -2426,17 +2445,24 @@ fn collect_dependency_struct_field_occurrences_in_item(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     item: &ql_ast::Item,
+    scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
     match &item.kind {
         AstItemKind::Function(function) => {
             if let Some(body) = &function.body {
+                scopes.push(HashMap::new());
+                for param in &function.params {
+                    bind_dependency_struct_param(package, module, param, scopes);
+                }
                 collect_dependency_struct_field_occurrences_in_block(
                     package,
                     module,
                     body,
+                    scopes,
                     occurrences,
                 );
+                scopes.pop();
             }
         }
         AstItemKind::Const(global) | AstItemKind::Static(global) => {
@@ -2444,6 +2470,7 @@ fn collect_dependency_struct_field_occurrences_in_item(
                 package,
                 module,
                 &global.value,
+                scopes,
                 occurrences,
             );
         }
@@ -2454,6 +2481,7 @@ fn collect_dependency_struct_field_occurrences_in_item(
                         package,
                         module,
                         default,
+                        scopes,
                         occurrences,
                     );
                 }
@@ -2462,36 +2490,54 @@ fn collect_dependency_struct_field_occurrences_in_item(
         AstItemKind::Trait(trait_decl) => {
             for method in &trait_decl.methods {
                 if let Some(body) = &method.body {
+                    scopes.push(HashMap::new());
+                    for param in &method.params {
+                        bind_dependency_struct_param(package, module, param, scopes);
+                    }
                     collect_dependency_struct_field_occurrences_in_block(
                         package,
                         module,
                         body,
+                        scopes,
                         occurrences,
                     );
+                    scopes.pop();
                 }
             }
         }
         AstItemKind::Impl(impl_block) => {
             for method in &impl_block.methods {
                 if let Some(body) = &method.body {
+                    scopes.push(HashMap::new());
+                    for param in &method.params {
+                        bind_dependency_struct_param(package, module, param, scopes);
+                    }
                     collect_dependency_struct_field_occurrences_in_block(
                         package,
                         module,
                         body,
+                        scopes,
                         occurrences,
                     );
+                    scopes.pop();
                 }
             }
         }
         AstItemKind::Extend(extend_block) => {
             for method in &extend_block.methods {
                 if let Some(body) = &method.body {
+                    scopes.push(HashMap::new());
+                    for param in &method.params {
+                        bind_dependency_struct_param(package, module, param, scopes);
+                    }
                     collect_dependency_struct_field_occurrences_in_block(
                         package,
                         module,
                         body,
+                        scopes,
                         occurrences,
                     );
+                    scopes.pop();
                 }
             }
         }
@@ -2503,53 +2549,82 @@ fn collect_dependency_struct_field_occurrences_in_block(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     block: &ql_ast::Block,
+    scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
+    scopes.push(HashMap::new());
     for stmt in &block.statements {
-        collect_dependency_struct_field_occurrences_in_stmt(package, module, stmt, occurrences);
+        collect_dependency_struct_field_occurrences_in_stmt(
+            package,
+            module,
+            stmt,
+            scopes,
+            occurrences,
+        );
     }
     if let Some(tail) = &block.tail {
-        collect_dependency_struct_field_occurrences_in_expr(package, module, tail, occurrences);
+        collect_dependency_struct_field_occurrences_in_expr(
+            package,
+            module,
+            tail,
+            scopes,
+            occurrences,
+        );
     }
+    scopes.pop();
 }
 
 fn collect_dependency_struct_field_occurrences_in_stmt(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     stmt: &ql_ast::Stmt,
+    scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
     match &stmt.kind {
-        ql_ast::StmtKind::Let { pattern, value, .. } => {
+        ql_ast::StmtKind::Let {
+            pattern, ty, value, ..
+        } => {
             collect_dependency_struct_field_occurrences_in_pattern(
                 package,
                 module,
                 pattern,
+                scopes,
                 occurrences,
             );
             collect_dependency_struct_field_occurrences_in_expr(
                 package,
                 module,
                 value,
+                scopes,
                 occurrences,
             );
+            bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, scopes);
         }
         ql_ast::StmtKind::Return(Some(expr))
         | ql_ast::StmtKind::Defer(expr)
         | ql_ast::StmtKind::Expr { expr, .. } => {
-            collect_dependency_struct_field_occurrences_in_expr(package, module, expr, occurrences);
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                expr,
+                scopes,
+                occurrences,
+            );
         }
         ql_ast::StmtKind::While { condition, body } => {
             collect_dependency_struct_field_occurrences_in_expr(
                 package,
                 module,
                 condition,
+                scopes,
                 occurrences,
             );
             collect_dependency_struct_field_occurrences_in_block(
                 package,
                 module,
                 body,
+                scopes,
                 occurrences,
             );
         }
@@ -2558,6 +2633,7 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 package,
                 module,
                 body,
+                scopes,
                 occurrences,
             );
         }
@@ -2571,18 +2647,21 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 package,
                 module,
                 pattern,
+                scopes,
                 occurrences,
             );
             collect_dependency_struct_field_occurrences_in_expr(
                 package,
                 module,
                 iterable,
+                scopes,
                 occurrences,
             );
             collect_dependency_struct_field_occurrences_in_block(
                 package,
                 module,
                 body,
+                scopes,
                 occurrences,
             );
         }
@@ -2594,6 +2673,7 @@ fn collect_dependency_struct_field_occurrences_in_pattern(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     pattern: &ql_ast::Pattern,
+    scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
     match &pattern.kind {
@@ -2603,6 +2683,7 @@ fn collect_dependency_struct_field_occurrences_in_pattern(
                     package,
                     module,
                     item,
+                    scopes,
                     occurrences,
                 );
             }
@@ -2622,6 +2703,7 @@ fn collect_dependency_struct_field_occurrences_in_pattern(
                         package,
                         module,
                         pattern,
+                        scopes,
                         occurrences,
                     );
                 }
@@ -2641,6 +2723,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     expr: &ql_ast::Expr,
+    scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
     match &expr.kind {
@@ -2650,6 +2733,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                     package,
                     module,
                     item,
+                    scopes,
                     occurrences,
                 );
             }
@@ -2659,6 +2743,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 package,
                 module,
                 block,
+                scopes,
                 occurrences,
             );
         }
@@ -2671,12 +2756,14 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 package,
                 module,
                 condition,
+                scopes,
                 occurrences,
             );
             collect_dependency_struct_field_occurrences_in_block(
                 package,
                 module,
                 then_branch,
+                scopes,
                 occurrences,
             );
             if let Some(expr) = else_branch {
@@ -2684,6 +2771,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                     package,
                     module,
                     expr,
+                    scopes,
                     occurrences,
                 );
             }
@@ -2693,13 +2781,20 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 package,
                 module,
                 value,
+                scopes,
                 occurrences,
             );
+            let value_binding = dependency_struct_binding_for_expr(package, module, value, scopes);
             for arm in arms {
+                scopes.push(HashMap::new());
+                if let Some(binding) = &value_binding {
+                    bind_dependency_struct_match_pattern(&arm.pattern, binding, scopes);
+                }
                 collect_dependency_struct_field_occurrences_in_pattern(
                     package,
                     module,
                     &arm.pattern,
+                    scopes,
                     occurrences,
                 );
                 if let Some(guard) = &arm.guard {
@@ -2707,6 +2802,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                         package,
                         module,
                         guard,
+                        scopes,
                         occurrences,
                     );
                 }
@@ -2714,18 +2810,32 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                     package,
                     module,
                     &arm.body,
+                    scopes,
                     occurrences,
                 );
+                scopes.pop();
             }
         }
-        ql_ast::ExprKind::Closure { body, .. } => {
-            collect_dependency_struct_field_occurrences_in_expr(package, module, body, occurrences);
+        ql_ast::ExprKind::Closure { params, body, .. } => {
+            scopes.push(HashMap::new());
+            for param in params {
+                bind_dependency_struct_closure_param(package, module, param, scopes);
+            }
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                body,
+                scopes,
+                occurrences,
+            );
+            scopes.pop();
         }
         ql_ast::ExprKind::Call { callee, args } => {
             collect_dependency_struct_field_occurrences_in_expr(
                 package,
                 module,
                 callee,
+                scopes,
                 occurrences,
             );
             for arg in args {
@@ -2735,6 +2845,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                             package,
                             module,
                             expr,
+                            scopes,
                             occurrences,
                         );
                     }
@@ -2743,17 +2854,42 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                             package,
                             module,
                             value,
+                            scopes,
                             occurrences,
                         );
                     }
                 }
             }
         }
-        ql_ast::ExprKind::Member { object, .. } | ql_ast::ExprKind::Question(object) => {
+        ql_ast::ExprKind::Member {
+            object,
+            field,
+            field_span,
+        } => {
             collect_dependency_struct_field_occurrences_in_expr(
                 package,
                 module,
                 object,
+                scopes,
+                occurrences,
+            );
+            if let Some(binding) =
+                dependency_struct_binding_for_expr(package, module, object, scopes)
+            {
+                push_dependency_struct_field_occurrence_for_binding(
+                    &binding,
+                    field,
+                    *field_span,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::Question(object) => {
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                object,
+                scopes,
                 occurrences,
             );
         }
@@ -2762,6 +2898,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 package,
                 module,
                 target,
+                scopes,
                 occurrences,
             );
             for item in items {
@@ -2769,6 +2906,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                     package,
                     module,
                     item,
+                    scopes,
                     occurrences,
                 );
             }
@@ -2788,22 +2926,36 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                         package,
                         module,
                         value,
+                        scopes,
                         occurrences,
                     );
                 }
             }
         }
         ql_ast::ExprKind::Binary { left, right, .. } => {
-            collect_dependency_struct_field_occurrences_in_expr(package, module, left, occurrences);
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                left,
+                scopes,
+                occurrences,
+            );
             collect_dependency_struct_field_occurrences_in_expr(
                 package,
                 module,
                 right,
+                scopes,
                 occurrences,
             );
         }
         ql_ast::ExprKind::Unary { expr, .. } => {
-            collect_dependency_struct_field_occurrences_in_expr(package, module, expr, occurrences);
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                expr,
+                scopes,
+                occurrences,
+            );
         }
         ql_ast::ExprKind::Name(_)
         | ql_ast::ExprKind::Integer(_)
@@ -2857,6 +3009,186 @@ fn dependency_struct_import_binding_for_local_name<'a>(
     let (dependency, symbol) =
         dependency_import_binding_for_local_name(package, module, local_name)?;
     (symbol.kind == SymbolKind::Struct).then_some((dependency, symbol))
+}
+
+fn dependency_struct_binding_for_symbol(
+    dependency: &DependencyInterface,
+    symbol: &DependencySymbol,
+) -> Option<DependencyStructBinding> {
+    let struct_decl = dependency.struct_decl_for(symbol)?;
+    let fields = struct_decl
+        .fields
+        .iter()
+        .filter_map(|field| {
+            let definition_span =
+                dependency.artifact_source_span(&symbol.source_path, field.name_span)?;
+            Some((
+                field.name.clone(),
+                DependencyStructResolvedField {
+                    name: field.name.clone(),
+                    detail: dependency_struct_field_detail(field),
+                    definition_span,
+                },
+            ))
+        })
+        .collect();
+
+    Some(DependencyStructBinding {
+        package_name: dependency.artifact.package_name.clone(),
+        source_path: symbol.source_path.clone(),
+        struct_name: symbol.name.clone(),
+        path: dependency.interface_path.clone(),
+        fields,
+    })
+}
+
+fn dependency_struct_binding_for_local_name(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<DependencyStructBinding> {
+    let (dependency, symbol) =
+        dependency_struct_import_binding_for_local_name(package, module, local_name)?;
+    dependency_struct_binding_for_symbol(dependency, symbol)
+}
+
+fn dependency_struct_binding_for_type_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    ty: &ql_ast::TypeExpr,
+) -> Option<DependencyStructBinding> {
+    let ql_ast::TypeExprKind::Named { path, .. } = &ty.kind else {
+        return None;
+    };
+    let [root_name] = path.segments.as_slice() else {
+        return None;
+    };
+    dependency_struct_binding_for_local_name(package, module, root_name)
+}
+
+fn dependency_struct_binding_for_name(
+    scopes: &[HashMap<String, DependencyStructBinding>],
+    name: &str,
+) -> Option<DependencyStructBinding> {
+    scopes
+        .iter()
+        .rev()
+        .find_map(|scope| scope.get(name).cloned())
+}
+
+fn dependency_struct_binding_for_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    expr: &ql_ast::Expr,
+    scopes: &[HashMap<String, DependencyStructBinding>],
+) -> Option<DependencyStructBinding> {
+    match &expr.kind {
+        ql_ast::ExprKind::Name(name) => dependency_struct_binding_for_name(scopes, name),
+        ql_ast::ExprKind::StructLiteral { path, .. } => {
+            let [root_name] = path.segments.as_slice() else {
+                return None;
+            };
+            dependency_struct_binding_for_local_name(package, module, root_name)
+        }
+        ql_ast::ExprKind::Question(inner) => {
+            dependency_struct_binding_for_expr(package, module, inner, scopes)
+        }
+        _ => None,
+    }
+}
+
+fn bind_dependency_struct_param(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    param: &ql_ast::Param,
+    scopes: &mut [HashMap<String, DependencyStructBinding>],
+) {
+    let ql_ast::Param::Regular { name, ty, .. } = param else {
+        return;
+    };
+    let Some(binding) = dependency_struct_binding_for_type_expr(package, module, ty) else {
+        return;
+    };
+    scopes
+        .last_mut()
+        .expect("scope stack must be non-empty")
+        .insert(name.clone(), binding);
+}
+
+fn bind_dependency_struct_closure_param(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    param: &ql_ast::ClosureParam,
+    scopes: &mut [HashMap<String, DependencyStructBinding>],
+) {
+    let Some(ty) = &param.ty else {
+        return;
+    };
+    let Some(binding) = dependency_struct_binding_for_type_expr(package, module, ty) else {
+        return;
+    };
+    scopes
+        .last_mut()
+        .expect("scope stack must be non-empty")
+        .insert(param.name.clone(), binding);
+}
+
+fn bind_dependency_struct_let(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    pattern: &ql_ast::Pattern,
+    ty: Option<&ql_ast::TypeExpr>,
+    value: &ql_ast::Expr,
+    scopes: &mut [HashMap<String, DependencyStructBinding>],
+) {
+    let ql_ast::PatternKind::Name(name) = &pattern.kind else {
+        return;
+    };
+    let binding = ty
+        .and_then(|ty| dependency_struct_binding_for_type_expr(package, module, ty))
+        .or_else(|| dependency_struct_binding_for_expr(package, module, value, scopes));
+    let Some(binding) = binding else {
+        return;
+    };
+    scopes
+        .last_mut()
+        .expect("scope stack must be non-empty")
+        .insert(name.clone(), binding);
+}
+
+fn bind_dependency_struct_match_pattern(
+    pattern: &ql_ast::Pattern,
+    binding: &DependencyStructBinding,
+    scopes: &mut [HashMap<String, DependencyStructBinding>],
+) {
+    let ql_ast::PatternKind::Name(name) = &pattern.kind else {
+        return;
+    };
+    scopes
+        .last_mut()
+        .expect("scope stack must be non-empty")
+        .insert(name.clone(), binding.clone());
+}
+
+fn push_dependency_struct_field_occurrence_for_binding(
+    binding: &DependencyStructBinding,
+    field_name: &str,
+    field_span: Span,
+    occurrences: &mut Vec<DependencyStructFieldOccurrence>,
+) {
+    let Some(field) = binding.fields.get(field_name) else {
+        return;
+    };
+    occurrences.push(DependencyStructFieldOccurrence {
+        reference_span: field_span,
+        package_name: binding.package_name.clone(),
+        source_path: binding.source_path.clone(),
+        struct_name: binding.struct_name.clone(),
+        name: field.name.clone(),
+        detail: field.detail.clone(),
+        path: binding.path.clone(),
+        definition_span: field.definition_span,
+    });
 }
 
 fn dependency_import_binding_for_local_name<'a>(

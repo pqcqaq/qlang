@@ -1360,7 +1360,8 @@ pub fn read(config: Cfg) -> Int {
         true,
     )
     .expect("dependency struct field references should exist");
-    assert_eq!(with_declaration.len(), 3);
+    let member_field = nth_offset(source, "value", 3);
+    assert_eq!(with_declaration.len(), 4);
     assert_eq!(
         with_declaration[0]
             .uri
@@ -1386,6 +1387,13 @@ pub fn read(config: Cfg) -> Int {
             Span::new(pattern_field, pattern_field + "value".len())
         )
     );
+    assert_eq!(
+        with_declaration[3].range,
+        span_to_range(
+            source,
+            Span::new(member_field, member_field + "value".len())
+        )
+    );
 
     let without_declaration = references_for_package_analysis(
         &uri,
@@ -1396,7 +1404,169 @@ pub fn read(config: Cfg) -> Int {
         false,
     )
     .expect("dependency struct field references should exist without declaration");
-    assert_eq!(without_declaration.len(), 2);
+    assert_eq!(without_declaration.len(), 3);
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_struct_member_field_queries() {
+    let temp = TempDir::new("ql-lsp-package-struct-member-query");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    return config.value + built.value
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let config_member = nth_offset(source, "value", 2);
+    let built_member = nth_offset(source, "value", 3);
+
+    let hover = hover_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, built_member),
+    )
+    .expect("dependency struct member hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**field** `value`"));
+    assert!(markup.value.contains("field value: Int"));
+
+    let definition = definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, config_member),
+    )
+    .expect("dependency struct member definition should exist");
+    let GotoDefinitionResponse::Scalar(Location {
+        uri: definition_uri,
+        range,
+    }) = definition
+    else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        definition_uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = "value";
+    let start = artifact
+        .find(snippet)
+        .expect("field name should exist in dependency artifact");
+    assert_eq!(
+        range,
+        span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
+
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, built_member),
+        true,
+    )
+    .expect("dependency struct member references should exist");
+    assert_eq!(with_declaration.len(), 4);
+    assert_eq!(
+        with_declaration[0]
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    let local_ranges = with_declaration[1..]
+        .iter()
+        .map(|location| location.range)
+        .collect::<Vec<_>>();
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        Span::new(config_member, config_member + "value".len())
+    )));
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        Span::new(built_member, built_member + "value".len())
+    )));
+
+    let without_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, config_member),
+        false,
+    )
+    .expect("dependency struct member references should exist without declaration");
+    assert_eq!(without_declaration.len(), 3);
     assert!(
         without_declaration
             .iter()
