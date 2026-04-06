@@ -173,6 +173,44 @@ impl DependencyInterface {
         self.artifact_span_for(symbol)
     }
 
+    fn public_type_target_for_type_expr(
+        &self,
+        ty: &ql_ast::TypeExpr,
+    ) -> Option<DependencyDefinitionTarget> {
+        let ql_ast::TypeExprKind::Named { path, .. } = &ty.kind else {
+            return None;
+        };
+        let [type_name] = path.segments.as_slice() else {
+            return None;
+        };
+        let mut matches = self
+            .symbols_named(type_name)
+            .into_iter()
+            .filter(|symbol| {
+                matches!(
+                    symbol.kind,
+                    SymbolKind::Struct
+                        | SymbolKind::Enum
+                        | SymbolKind::Trait
+                        | SymbolKind::TypeAlias
+                )
+            })
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return None;
+        }
+        let symbol = matches.pop()?;
+        let span = self.artifact_span_for(symbol)?;
+        Some(DependencyDefinitionTarget {
+            package_name: symbol.package_name.clone(),
+            source_path: symbol.source_path.clone(),
+            kind: symbol.kind,
+            name: symbol.name.clone(),
+            path: self.interface_path.clone(),
+            span,
+        })
+    }
+
     fn import_path_variants(&self) -> Vec<Vec<String>> {
         let mut variants = self
             .artifact
@@ -1114,6 +1152,25 @@ impl PackageAnalysis {
             path: binding.path,
             span: binding.definition_span,
         })
+    }
+
+    pub fn dependency_struct_field_type_definition_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let target = self.dependency_struct_field_target_in_source_at(source, offset)?;
+        let dependency = self
+            .dependencies
+            .iter()
+            .find(|dependency| dependency.interface_path == target.path)?;
+        let symbol = dependency.symbols.iter().find(|symbol| {
+            symbol.kind == SymbolKind::Struct
+                && symbol.source_path == target.source_path
+                && symbol.name == target.struct_name
+        })?;
+        let field = dependency.struct_field_for(symbol, &target.name)?;
+        dependency.public_type_target_for_type_expr(&field.ty)
     }
 
     pub fn dependency_references_in_source_at(
