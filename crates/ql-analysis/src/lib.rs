@@ -1162,6 +1162,50 @@ impl PackageAnalysis {
         })
     }
 
+    pub fn dependency_variant_type_definition_at(
+        &self,
+        analysis: &Analysis,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let (root_offset, _, variant_name) = dependency_variant_reference_at(source, offset)?;
+        let (binding, _) = analysis.import_binding_at(root_offset)?;
+        let (dependency, symbol) = self.resolve_dependency_import_binding(&binding)?;
+        dependency.variant_for(symbol, &variant_name)?;
+        let definition_span = dependency.artifact_span_for(symbol)?;
+        Some(DependencyDefinitionTarget {
+            package_name: dependency.artifact.package_name.clone(),
+            source_path: symbol.source_path.clone(),
+            kind: SymbolKind::Enum,
+            name: symbol.name.clone(),
+            path: dependency.interface_path.clone(),
+            span: definition_span,
+        })
+    }
+
+    pub fn dependency_variant_type_definition_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let module = parse_source(source).ok()?;
+        let (root_offset, _, variant_name) = dependency_variant_reference_at(source, offset)?;
+        let root_end = dependency_identifier_end(source, root_offset);
+        let root_name = source.get(root_offset..root_end)?;
+        let (dependency, symbol) =
+            dependency_import_binding_for_local_name(self, &module, root_name)?;
+        dependency.variant_for(symbol, &variant_name)?;
+        let definition_span = dependency.artifact_span_for(symbol)?;
+        Some(DependencyDefinitionTarget {
+            package_name: dependency.artifact.package_name.clone(),
+            source_path: symbol.source_path.clone(),
+            kind: SymbolKind::Enum,
+            name: symbol.name.clone(),
+            path: dependency.interface_path.clone(),
+            span: definition_span,
+        })
+    }
+
     pub fn dependency_struct_field_type_definition_in_source_at(
         &self,
         source: &str,

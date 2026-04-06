@@ -44,8 +44,8 @@ use crate::bridge::{
     semantic_tokens_for_analysis, semantic_tokens_legend, span_to_range,
     type_definition_for_analysis, type_definition_for_dependency_imports,
     type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
-    type_definition_for_dependency_values, type_definition_for_package_analysis,
-    workspace_symbols_for_analysis,
+    type_definition_for_dependency_values, type_definition_for_dependency_variants,
+    type_definition_for_package_analysis, workspace_symbols_for_analysis,
 };
 use crate::store::DocumentStore;
 
@@ -669,13 +669,18 @@ impl LanguageServer for Backend {
                         || {
                             type_definition_for_dependency_values(&source, &package, position)
                                 .or_else(|| {
-                                    type_definition_for_dependency_struct_field_types(
+                                    type_definition_for_dependency_variants(
                                         &source, &package, position,
                                     )
                                     .or_else(|| {
-                                        type_definition_for_dependency_method_types(
+                                        type_definition_for_dependency_struct_field_types(
                                             &source, &package, position,
                                         )
+                                        .or_else(|| {
+                                            type_definition_for_dependency_method_types(
+                                                &source, &package, position,
+                                            )
+                                        })
                                     })
                                 })
                         },

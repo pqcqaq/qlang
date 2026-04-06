@@ -405,6 +405,7 @@ pub fn type_definition_for_package_analysis(
     let target = package
         .dependency_type_definition_at(analysis, offset)
         .or_else(|| package.dependency_value_type_definition_in_source_at(source, offset))
+        .or_else(|| package.dependency_variant_type_definition_at(analysis, source, offset))
         .or_else(|| package.dependency_struct_field_type_definition_in_source_at(source, offset))
         .or_else(|| package.dependency_method_type_definition_in_source_at(source, offset))?;
     let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
@@ -437,6 +438,21 @@ pub fn type_definition_for_dependency_values(
 ) -> Option<GotoTypeDefinitionResponse> {
     let offset = position_to_offset(source, position)?;
     let target = package.dependency_value_type_definition_in_source_at(source, offset)?;
+    let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
+    let target_uri = Url::from_file_path(&target.path).ok()?;
+    Some(GotoTypeDefinitionResponse::Scalar(Location::new(
+        target_uri,
+        span_to_range(&target_source, target.span),
+    )))
+}
+
+pub fn type_definition_for_dependency_variants(
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<GotoTypeDefinitionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let target = package.dependency_variant_type_definition_in_source_at(source, offset)?;
     let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
     let target_uri = Url::from_file_path(&target.path).ok()?;
     Some(GotoTypeDefinitionResponse::Scalar(Location::new(
