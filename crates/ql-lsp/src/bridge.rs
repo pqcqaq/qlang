@@ -199,6 +199,30 @@ pub fn hover_for_dependency_struct_fields(
     })
 }
 
+pub fn hover_for_dependency_imports(
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<Hover> {
+    let offset = position_to_offset(source, position)?;
+    let info = package.dependency_hover_in_source_at(source, offset)?;
+    let hover = HoverInfo {
+        span: info.span,
+        kind: info.kind,
+        name: info.name,
+        detail: info.detail,
+        ty: None,
+        definition_span: None,
+    };
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: render_hover_markdown(&hover),
+        }),
+        range: Some(span_to_range(source, hover.span)),
+    })
+}
+
 pub fn async_context_for_analysis(
     source: &str,
     analysis: &Analysis,
@@ -301,6 +325,21 @@ pub fn definition_for_dependency_struct_fields(
 ) -> Option<GotoDefinitionResponse> {
     let offset = position_to_offset(source, position)?;
     let target = package.dependency_struct_field_definition_in_source_at(source, offset)?;
+    let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
+    let target_uri = Url::from_file_path(&target.path).ok()?;
+    Some(GotoDefinitionResponse::Scalar(Location::new(
+        target_uri,
+        span_to_range(&target_source, target.span),
+    )))
+}
+
+pub fn definition_for_dependency_imports(
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<GotoDefinitionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let target = package.dependency_definition_in_source_at(source, offset)?;
     let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
     let target_uri = Url::from_file_path(&target.path).ok()?;
     Some(GotoDefinitionResponse::Scalar(Location::new(

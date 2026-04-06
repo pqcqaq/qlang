@@ -7,8 +7,9 @@ use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source}
 use ql_lsp::bridge::{
     completion_for_dependency_imports, completion_for_dependency_struct_fields,
     completion_for_dependency_variants, completion_for_package_analysis,
-    definition_for_dependency_struct_fields, definition_for_dependency_variants,
-    definition_for_package_analysis, hover_for_dependency_struct_fields,
+    definition_for_dependency_imports, definition_for_dependency_struct_fields,
+    definition_for_dependency_variants, definition_for_package_analysis,
+    hover_for_dependency_imports, hover_for_dependency_struct_fields,
     hover_for_dependency_variants, hover_for_package_analysis, references_for_package_analysis,
     span_to_range,
 };
@@ -1503,6 +1504,109 @@ pub fn read(config: Cfg) -> Int {
     let start = artifact
         .find(snippet)
         .expect("field name should exist in dependency artifact");
+    assert_eq!(
+        range,
+        span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_import_hover_and_definition_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-package-import-broken-query");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported(value: Int) -> Int
+
+pub struct Buffer[T] {
+    value: T,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.exported as run
+use demo.dep.Buffer as Buf
+
+pub fn main(value: Buf[Int]) -> Int {
+    let next = run(1)
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let hover = hover_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "run", 2)),
+    )
+    .expect("dependency import hover should exist even without semantic analysis");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**function** `exported`"));
+    assert!(markup.value.contains("fn exported(value: Int) -> Int"));
+
+    let definition = definition_for_dependency_imports(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "Buf", 2)),
+    )
+    .expect("dependency import definition should exist even without semantic analysis");
+    let GotoDefinitionResponse::Scalar(Location {
+        uri: definition_uri,
+        range,
+    }) = definition
+    else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        definition_uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = "pub struct Buffer[T] {\n    value: T,\n}";
+    let start = artifact
+        .find(snippet)
+        .expect("struct signature should exist in dependency artifact");
     assert_eq!(
         range,
         span_to_range(&artifact, Span::new(start, start + snippet.len()))
