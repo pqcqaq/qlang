@@ -335,7 +335,9 @@ fn run() -> Result<(), u8> {
 }
 
 fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
-    if should_use_package_check(path) {
+    let use_package_check =
+        should_use_package_check(path) || (sync_interfaces && load_project_manifest(path).is_ok());
+    if use_package_check {
         if sync_interfaces {
             for interface_path in sync_reference_interfaces(path, &mut BTreeSet::new())? {
                 println!("wrote interface: {}", interface_path.display());
@@ -384,13 +386,6 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
                 return Err(1);
             }
         }
-    }
-
-    if sync_interfaces {
-        eprintln!(
-            "error: `ql check --sync-interfaces` currently requires a package directory or `qlang.toml` path"
-        );
-        return Err(1);
     }
 
     let files = collect_ql_files(path).map_err(|error| {
