@@ -15,8 +15,9 @@ use ql_driver::{
 };
 use ql_fmt::format_source;
 use ql_project::{
-    collect_package_sources, default_interface_path, load_project_manifest, package_name,
-    package_source_root, render_module_interface, render_project_graph_resolved,
+    InterfaceArtifactStatus, collect_package_sources, default_interface_path,
+    interface_artifact_status, load_project_manifest, package_name, package_source_root,
+    render_module_interface, render_project_graph_resolved,
 };
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 
@@ -338,11 +339,13 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
     let use_package_check = should_use_package_check(path)
         || (is_ql_source_file(path) && load_project_manifest(path).is_ok());
     if use_package_check {
-        if let Ok(manifest) = load_project_manifest(path)
-            && manifest.package.is_none()
-            && manifest.workspace.is_some()
-        {
-            return check_workspace_manifest(&manifest, sync_interfaces);
+        if let Ok(manifest) = load_project_manifest(path) {
+            if manifest.package.is_none() && manifest.workspace.is_some() {
+                return check_workspace_manifest(&manifest, sync_interfaces);
+            }
+            if !sync_interfaces {
+                ensure_reference_interfaces_current(&manifest)?;
+            }
         }
         if sync_interfaces {
             for interface_path in sync_reference_interfaces(path, &mut BTreeSet::new())? {
@@ -438,6 +441,15 @@ fn check_workspace_manifest(
 
     for member in &workspace.members {
         let member_path = manifest_dir.join(member);
+        let member_manifest = load_project_manifest(&member_path).map_err(|error| {
+            eprintln!("error: {error}");
+            1
+        })?;
+
+        if !sync_interfaces {
+            ensure_reference_interfaces_current(&member_manifest)?;
+        }
+
         if sync_interfaces {
             for interface_path in sync_reference_interfaces(&member_path, &mut sync_visited)? {
                 let display_path =
@@ -787,13 +799,69 @@ fn sync_reference_interfaces(
             &dependency_manifest.manifest_path,
             visited,
         )?);
-        written.push(emit_package_interface_path(
-            &dependency_manifest.manifest_path,
-            None,
-            "`ql check --sync-interfaces`",
-        )?);
+        if should_sync_interface_artifact(&dependency_manifest)? {
+            written.push(emit_package_interface_path(
+                &dependency_manifest.manifest_path,
+                None,
+                "`ql check --sync-interfaces`",
+            )?);
+        }
     }
     Ok(written)
+}
+
+fn ensure_reference_interfaces_current(manifest: &ql_project::ProjectManifest) -> Result<(), u8> {
+    ensure_reference_interfaces_current_recursive(manifest, &mut BTreeSet::new())
+}
+
+fn ensure_reference_interfaces_current_recursive(
+    manifest: &ql_project::ProjectManifest,
+    visited: &mut BTreeSet<PathBuf>,
+) -> Result<(), u8> {
+    let manifest_path = manifest.manifest_path.clone();
+    if !visited.insert(manifest_path.clone()) {
+        return Ok(());
+    }
+
+    for dependency_manifest in ql_project::load_reference_manifests(manifest).map_err(|error| {
+        eprintln!("error: {error}");
+        1
+    })? {
+        let dependency_package = package_name(&dependency_manifest).map_err(|error| {
+            eprintln!("error: {error}");
+            1
+        })?;
+        let interface_path = default_interface_path(&dependency_manifest).map_err(|error| {
+            eprintln!("error: {error}");
+            1
+        })?;
+        if interface_artifact_status(&dependency_manifest, &interface_path)
+            == InterfaceArtifactStatus::Stale
+        {
+            eprintln!(
+                "error: referenced package `{dependency_package}` has stale interface artifact `{}`",
+                interface_path.display()
+            );
+            eprintln!(
+                "hint: rerun `ql check --sync-interfaces {}` or regenerate `{}` with `ql project emit-interface {}`",
+                manifest_path.display(),
+                dependency_package,
+                dependency_manifest.manifest_path.display()
+            );
+            return Err(1);
+        }
+        ensure_reference_interfaces_current_recursive(&dependency_manifest, visited)?;
+    }
+
+    Ok(())
+}
+
+fn should_sync_interface_artifact(manifest: &ql_project::ProjectManifest) -> Result<bool, u8> {
+    let interface_path = default_interface_path(manifest).map_err(|error| {
+        eprintln!("error: {error}");
+        1
+    })?;
+    Ok(interface_artifact_status(manifest, &interface_path) != InterfaceArtifactStatus::Valid)
 }
 
 fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {

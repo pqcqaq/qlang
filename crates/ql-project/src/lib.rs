@@ -255,7 +255,7 @@ pub fn render_project_graph_resolved(manifest: &ProjectManifest) -> Result<Strin
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum InterfaceArtifactStatus {
+pub enum InterfaceArtifactStatus {
     Missing,
     Unreadable,
     Invalid,
@@ -264,7 +264,7 @@ enum InterfaceArtifactStatus {
 }
 
 impl InterfaceArtifactStatus {
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Self::Missing => "missing",
             Self::Unreadable => "unreadable",
@@ -341,7 +341,10 @@ fn append_reference_interface_summaries(
     }
 }
 
-fn interface_artifact_status(manifest: &ProjectManifest, path: &Path) -> InterfaceArtifactStatus {
+pub fn interface_artifact_status(
+    manifest: &ProjectManifest,
+    path: &Path,
+) -> InterfaceArtifactStatus {
     if !path.is_file() {
         return InterfaceArtifactStatus::Missing;
     }
