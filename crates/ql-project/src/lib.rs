@@ -1,6 +1,7 @@
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
 
 use ql_ast::{
     EnumDecl, ExtendBlock, ExternBlock, FunctionDecl, GenericParam, GlobalDecl, ImplBlock, Item,
@@ -198,7 +199,7 @@ pub fn render_project_graph(manifest: &ProjectManifest) -> String {
     if manifest.package.is_some() {
         let interface_path =
             default_interface_path(manifest).expect("package manifests have a default interface");
-        append_interface_summary(&mut output, manifest_dir, &interface_path, "");
+        append_interface_summary(&mut output, manifest_dir, manifest, &interface_path, "");
         append_reference_interface_summaries(&mut output, manifest_dir, manifest, "");
     }
 
@@ -230,7 +231,13 @@ pub fn render_project_graph_resolved(manifest: &ProjectManifest) -> Result<Strin
             relative_display_path(manifest_dir, &member_manifest.manifest_path)
         ));
         output.push_str(&format!("    package: {package}\n"));
-        append_interface_summary(&mut output, manifest_dir, &interface_path, "    ");
+        append_interface_summary(
+            &mut output,
+            manifest_dir,
+            &member_manifest,
+            &interface_path,
+            "    ",
+        );
 
         if member_manifest.references.packages.is_empty() {
             output.push_str("    references: []\n");
@@ -247,7 +254,34 @@ pub fn render_project_graph_resolved(manifest: &ProjectManifest) -> Result<Strin
     Ok(output)
 }
 
-fn append_interface_summary(output: &mut String, root: &Path, interface_path: &Path, indent: &str) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InterfaceArtifactStatus {
+    Missing,
+    Unreadable,
+    Invalid,
+    Stale,
+    Valid,
+}
+
+impl InterfaceArtifactStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Unreadable => "unreadable",
+            Self::Invalid => "invalid",
+            Self::Stale => "stale",
+            Self::Valid => "valid",
+        }
+    }
+}
+
+fn append_interface_summary(
+    output: &mut String,
+    root: &Path,
+    manifest: &ProjectManifest,
+    interface_path: &Path,
+    indent: &str,
+) {
     output.push_str(&format!("{indent}interface:\n"));
     output.push_str(&format!(
         "{indent}  path: {}\n",
@@ -255,7 +289,7 @@ fn append_interface_summary(output: &mut String, root: &Path, interface_path: &P
     ));
     output.push_str(&format!(
         "{indent}  status: {}\n",
-        interface_artifact_status(interface_path)
+        interface_artifact_status(manifest, interface_path).label()
     ));
 }
 
@@ -289,7 +323,7 @@ fn append_reference_interface_summaries(
                     ));
                     output.push_str(&format!(
                         "{indent}    status: {}\n",
-                        interface_artifact_status(&interface_path)
+                        interface_artifact_status(&reference_manifest, &interface_path).label()
                     ));
                 }
                 Err(_) => {
@@ -307,16 +341,46 @@ fn append_reference_interface_summaries(
     }
 }
 
-fn interface_artifact_status(path: &Path) -> &'static str {
+fn interface_artifact_status(manifest: &ProjectManifest, path: &Path) -> InterfaceArtifactStatus {
     if !path.is_file() {
-        return "missing";
+        return InterfaceArtifactStatus::Missing;
     }
 
     match load_interface_artifact(path) {
-        Ok(_) => "valid",
-        Err(InterfaceError::Parse { .. }) => "invalid",
-        Err(InterfaceError::Read { .. }) => "unreadable",
+        Ok(_) => {
+            if interface_artifact_is_stale(manifest, path) {
+                InterfaceArtifactStatus::Stale
+            } else {
+                InterfaceArtifactStatus::Valid
+            }
+        }
+        Err(InterfaceError::Parse { .. }) => InterfaceArtifactStatus::Invalid,
+        Err(InterfaceError::Read { .. }) => InterfaceArtifactStatus::Unreadable,
     }
+}
+
+fn interface_artifact_is_stale(manifest: &ProjectManifest, interface_path: &Path) -> bool {
+    let interface_modified = match file_modified(interface_path) {
+        Some(modified) => modified,
+        None => return false,
+    };
+
+    if file_modified(&manifest.manifest_path).is_some_and(|modified| modified > interface_modified)
+    {
+        return true;
+    }
+
+    match collect_package_sources(manifest) {
+        Ok(source_paths) => source_paths
+            .into_iter()
+            .filter_map(|path| file_modified(&path))
+            .any(|modified| modified > interface_modified),
+        Err(_) => false,
+    }
+}
+
+fn file_modified(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).ok()?.modified().ok()
 }
 
 pub fn manifest_dir(manifest: &ProjectManifest) -> &Path {

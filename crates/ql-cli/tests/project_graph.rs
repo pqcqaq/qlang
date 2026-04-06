@@ -121,6 +121,121 @@ packages = ["../core"]
 }
 
 #[test]
+fn project_graph_reports_stale_package_and_reference_interfaces() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-stale-interface");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source directory for stale interface test");
+    std::fs::create_dir_all(temp.path().join("workspace").join("dep").join("src"))
+        .expect("create dep source directory for stale interface test");
+    let manifest_path = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+pub fn run() -> Int {
+    1
+}
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/lib.ql",
+        r#"
+pub fn exported() -> Int {
+    1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/app.qi",
+        r#"
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn run() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+pub fn run() -> Int {
+    2
+}
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/lib.ql",
+        r#"
+pub fn exported() -> Int {
+    2
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "graph"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql project graph` stale interfaces");
+    let (stdout, stderr) = expect_success(
+        "project-graph-stale-interface",
+        "project graph rendering with stale interfaces",
+        &output,
+    )
+    .expect("project graph rendering with stale interfaces should succeed");
+    expect_empty_stderr(
+        "project-graph-stale-interface",
+        "project graph rendering with stale interfaces",
+        &stderr,
+    )
+    .expect("stale interface graph rendering should stay silent on stderr");
+
+    let expected = format!(
+        "manifest: {}\npackage: app\nworkspace_members: []\nreferences:\n  - ../dep\ninterface:\n  path: app.qi\n  status: stale\nreference_interfaces:\n  - reference: ../dep\n    package: dep\n    path: ../dep/dep.qi\n    status: stale\n",
+        manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-graph-stale-interface",
+        "stale interface project graph stdout",
+        &expected,
+        &stdout,
+    )
+    .expect("project graph should report stale package and reference interfaces");
+}
+
+#[test]
 fn project_graph_expands_workspace_root_members() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-graph-workspace-root");
