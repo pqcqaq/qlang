@@ -20,7 +20,7 @@
 
 ## 一页结论
 
-- Phase 1 到 Phase 6 地基已经落地：lexer、parser、formatter、diagnostics、HIR、resolve、typeck、MIR、borrowck、LLVM backend、driver、CLI、same-file LSP/query、FFI header projection 都已进入真实工程主干。
+- Phase 1 到 Phase 6 地基已经落地：lexer、parser、formatter、diagnostics、HIR、resolve、typeck、MIR、borrowck、LLVM backend、driver、CLI、same-file LSP/query、same-file document symbol outline、FFI header projection 都已进入真实工程主干。
 - 当前活跃主线是保守推进的 Phase 7：async/runtime/task-handle lowering、library/program build surface、Rust interop。
 - Phase 8 的前三条入口切片已继续向前推进：仓库现已具备最小 `qlang.toml` manifest graph loader、`ql project graph` 调试入口、`.qi` V1 emit 入口 `ql project emit-interface`、build-side `.qi` 写出开关 `ql build --emit-interface`，以及 package-aware `ql check` 对引用 `.qi` 的 syntax-aware 加载；当前入口已覆盖 package directory、`qlang.toml` 与包内源码文件路径。`ql check --sync-interfaces` 现也可在分析前递归同步写出本地引用包默认 `.qi`，并且入口同样覆盖 package directory、`qlang.toml` 与包内源码文件路径，减少手工预生成步骤。`ql-analysis::analyze_package` 现也已把 dependency `.qi` 的公开符号收进 package 级查询面，并接通 imported dependency symbol 的最小 cross-file hover / definition / declaration / references、`use ...` 导入路径和平铺 / grouped import 位置里的 dependency package path segment / public symbol completion、dependency enum variant / explicit struct field-label 的最小非导入路径 completion contract，以及 syntax-local dependency struct member-field / member-method token 的最小 completion contract；broken-source / semantic-error 场景下的 import-root / variant / struct-field / 首个 struct-member-field token / 首个 struct-member-method token 最小 hover / definition / declaration / references fallback 也已落地。真实 dependency build graph 与更广义 cross-file LSP 仍未开放。
 - 外部稳定互操作边界仍是 C ABI；Rust 继续走 `build.rs + staticlib + header` 路线。

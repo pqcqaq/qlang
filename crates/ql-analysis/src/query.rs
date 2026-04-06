@@ -57,6 +57,22 @@ impl SymbolKind {
                 | Self::Import
         )
     }
+
+    fn supports_document_symbol(self) -> bool {
+        matches!(
+            self,
+            Self::Function
+                | Self::Const
+                | Self::Static
+                | Self::Struct
+                | Self::Enum
+                | Self::Variant
+                | Self::Trait
+                | Self::TypeAlias
+                | Self::Field
+                | Self::Method
+        )
+    }
 }
 
 /// Source-backed definition target for go-to-definition style queries.
@@ -99,6 +115,15 @@ pub struct CompletionItem {
 pub struct SemanticTokenOccurrence {
     pub span: Span,
     pub kind: SymbolKind,
+}
+
+/// One source-backed declaration suitable for document outline style queries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocumentSymbolTarget {
+    pub kind: SymbolKind,
+    pub name: String,
+    pub detail: String,
+    pub span: Span,
 }
 
 /// Async operator forms represented in same-file semantic queries.
@@ -248,6 +273,28 @@ impl QueryIndex {
             SymbolKey::Import(binding) => Some((binding.clone(), entry.span)),
             _ => None,
         }
+    }
+
+    pub(crate) fn document_symbols(&self) -> Vec<DocumentSymbolTarget> {
+        let mut symbols = self
+            .occurrences
+            .iter()
+            .filter(|entry| {
+                entry.hover.definition_span == Some(entry.span)
+                    && entry.hover.kind.supports_document_symbol()
+            })
+            .map(|entry| DocumentSymbolTarget {
+                kind: entry.hover.kind,
+                name: entry.hover.name.clone(),
+                detail: entry.hover.detail.clone(),
+                span: entry.span,
+            })
+            .collect::<Vec<_>>();
+        symbols.sort_by_key(|symbol| (symbol.span.start, symbol.span.end));
+        symbols.dedup_by(|left, right| {
+            left.span == right.span && left.kind == right.kind && left.name == right.name
+        });
+        symbols
     }
 
     pub(crate) fn references_at(&self, offset: usize) -> Option<Vec<ReferenceTarget>> {

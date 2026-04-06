@@ -6,12 +6,13 @@ use tower_lsp::lsp_types::request::{GotoDeclarationParams, GotoDeclarationRespon
 use tower_lsp::lsp_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DeclarationCapability,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, Location, MessageType, OneOf,
-    PrepareRenameResponse, ReferenceParams, RenameOptions, RenameParams, SemanticTokensFullOptions,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, Url, WorkspaceEdit,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    Hover, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
+    InitializedParams, Location, MessageType, OneOf, PrepareRenameResponse, ReferenceParams,
+    RenameOptions, RenameParams, SemanticTokensFullOptions, SemanticTokensOptions,
+    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, Url, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -24,8 +25,8 @@ use crate::bridge::{
     declaration_for_dependency_variants, declaration_for_package_analysis,
     definition_for_dependency_imports, definition_for_dependency_methods,
     definition_for_dependency_struct_fields, definition_for_dependency_variants,
-    definition_for_package_analysis, diagnostics_to_lsp, hover_for_dependency_imports,
-    hover_for_dependency_methods, hover_for_dependency_struct_fields,
+    definition_for_package_analysis, diagnostics_to_lsp, document_symbols_for_analysis,
+    hover_for_dependency_imports, hover_for_dependency_methods, hover_for_dependency_struct_fields,
     hover_for_dependency_variants, hover_for_package_analysis, prepare_rename_for_analysis,
     references_for_analysis, references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_variants,
@@ -97,6 +98,7 @@ impl LanguageServer for Backend {
                 definition_provider: Some(OneOf::Left(true)),
                 declaration_provider: Some(DeclarationCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions::default()),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
@@ -391,6 +393,18 @@ impl LanguageServer for Backend {
         }
 
         Ok(completion_for_analysis(&source, &analysis, position))
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = params.text_document.uri;
+        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+            return Ok(None);
+        };
+
+        Ok(Some(document_symbols_for_analysis(&source, &analysis)))
     }
 
     async fn semantic_tokens_full(

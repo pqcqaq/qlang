@@ -24,7 +24,7 @@
 | P3 | 已完成 | 结构化 MIR、ownership facts、cleanup-aware 分析、closure groundwork |
 | P4 | 已完成 | `ql build`、LLVM IR、`obj` / `exe` / `dylib` / `staticlib`、driver/codegen 边界 |
 | P5 | 已完成 | 最小 C ABI 闭环、header projection、C/Rust host examples、FFI 集成回归 |
-| P6 | 已完成 | same-file hover / definition / references / rename / completion / semantic tokens / LSP parity |
+| P6 | 已完成 | same-file hover / definition / references / rename / completion / semantic tokens / document symbols / LSP parity |
 | P7 | 进行中 | 受控 async/runtime/task-handle lowering、library/program build 子集、Rust interop 扩展 |
 | P8 | 启动中 | 最小 `qlang.toml` manifest graph、`ql project graph`、`.qi` V1 emit、package-aware dependency `.qi` load、后续 cross-file LSP 入口 |
 
@@ -52,7 +52,7 @@
 
 ### P6 编辑器与语义一致性
 
-- same-file LSP/query 的共享 truth surface 已形成，后续 editor work 默认应继续复用 analysis。
+- same-file LSP/query 的共享 truth surface 已形成，hover / definition / references / rename / completion / semantic tokens 之外，当前同一份真相源也已接出最小 document symbol outline；后续 editor work 默认应继续复用 analysis。
 
 ### P7 async / runtime / Rust interop
 

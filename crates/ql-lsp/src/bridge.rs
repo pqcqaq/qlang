@@ -1,8 +1,8 @@
 use std::{collections::HashMap, fs};
 
 use ql_analysis::{
-    Analysis, AsyncOperatorKind, HoverInfo, LoopControlKind, PackageAnalysis, RenameError,
-    SymbolKind,
+    Analysis, AsyncOperatorKind, DocumentSymbolTarget, HoverInfo, LoopControlKind, PackageAnalysis,
+    RenameError, SymbolKind,
 };
 use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
@@ -12,9 +12,10 @@ use tower_lsp::lsp_types::request::GotoDeclarationResponse;
 use tower_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionResponse,
     CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
-    GotoDefinitionResponse, Hover, HoverContents, Location, MarkupContent, MarkupKind, Position,
-    PrepareRenameResponse, Range, SemanticToken, SemanticTokenType, SemanticTokens,
-    SemanticTokensLegend, SemanticTokensResult, TextEdit, Url, WorkspaceEdit,
+    DocumentSymbol, DocumentSymbolResponse, GotoDefinitionResponse, Hover, HoverContents, Location,
+    MarkupContent, MarkupKind, Position, PrepareRenameResponse, Range, SemanticToken,
+    SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult, TextEdit, Url,
+    WorkspaceEdit,
 };
 
 pub fn position_to_offset(source: &str, position: Position) -> Option<usize> {
@@ -876,6 +877,15 @@ pub fn semantic_tokens_for_analysis(source: &str, analysis: &Analysis) -> Semant
     })
 }
 
+pub fn document_symbols_for_analysis(source: &str, analysis: &Analysis) -> DocumentSymbolResponse {
+    analysis
+        .document_symbols()
+        .into_iter()
+        .map(|symbol| document_symbol(source, symbol))
+        .collect::<Vec<_>>()
+        .into()
+}
+
 pub fn prepare_rename_for_analysis(
     source: &str,
     analysis: &Analysis,
@@ -995,6 +1005,21 @@ fn definition_to_declaration(response: GotoDefinitionResponse) -> GotoDeclaratio
     }
 }
 
+#[allow(deprecated)]
+fn document_symbol(source: &str, symbol: DocumentSymbolTarget) -> DocumentSymbol {
+    let range = span_to_range(source, symbol.span);
+    DocumentSymbol {
+        name: symbol.name,
+        detail: Some(symbol.detail),
+        kind: document_symbol_kind(symbol.kind),
+        tags: None,
+        deprecated: None,
+        range,
+        selection_range: range,
+        children: None,
+    }
+}
+
 fn symbol_kind_name(kind: SymbolKind) -> &'static str {
     match kind {
         SymbolKind::Function => "function",
@@ -1013,6 +1038,25 @@ fn symbol_kind_name(kind: SymbolKind) -> &'static str {
         SymbolKind::SelfParameter => "receiver",
         SymbolKind::BuiltinType => "builtin type",
         SymbolKind::Import => "import",
+    }
+}
+
+const fn document_symbol_kind(kind: SymbolKind) -> tower_lsp::lsp_types::SymbolKind {
+    match kind {
+        SymbolKind::Function => tower_lsp::lsp_types::SymbolKind::FUNCTION,
+        SymbolKind::Const | SymbolKind::Static => tower_lsp::lsp_types::SymbolKind::CONSTANT,
+        SymbolKind::Struct => tower_lsp::lsp_types::SymbolKind::STRUCT,
+        SymbolKind::Enum => tower_lsp::lsp_types::SymbolKind::ENUM,
+        SymbolKind::Variant => tower_lsp::lsp_types::SymbolKind::ENUM_MEMBER,
+        SymbolKind::Trait => tower_lsp::lsp_types::SymbolKind::INTERFACE,
+        SymbolKind::TypeAlias | SymbolKind::BuiltinType => tower_lsp::lsp_types::SymbolKind::CLASS,
+        SymbolKind::Field => tower_lsp::lsp_types::SymbolKind::FIELD,
+        SymbolKind::Method => tower_lsp::lsp_types::SymbolKind::METHOD,
+        SymbolKind::Local | SymbolKind::Parameter | SymbolKind::SelfParameter => {
+            tower_lsp::lsp_types::SymbolKind::VARIABLE
+        }
+        SymbolKind::Generic => tower_lsp::lsp_types::SymbolKind::TYPE_PARAMETER,
+        SymbolKind::Import => tower_lsp::lsp_types::SymbolKind::NAMESPACE,
     }
 }
 

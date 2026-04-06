@@ -23,8 +23,8 @@ use ql_span::Span;
 use ql_typeck::{Ty, TypeckResult, analyze_module as analyze_types};
 use query::QueryIndex;
 pub use query::{
-    AsyncContextInfo, AsyncOperatorKind, CompletionItem, DefinitionTarget, HoverInfo,
-    LoopControlContextInfo, LoopControlKind, ReferenceTarget, RenameEdit, RenameError,
+    AsyncContextInfo, AsyncOperatorKind, CompletionItem, DefinitionTarget, DocumentSymbolTarget,
+    HoverInfo, LoopControlContextInfo, LoopControlKind, ReferenceTarget, RenameEdit, RenameError,
     RenameResult, RenameTarget, SemanticTokenOccurrence, SymbolKind,
 };
 pub use runtime::RuntimeRequirement;
@@ -1561,6 +1561,14 @@ impl Analysis {
     /// only tokens with stable source-backed semantic identity are emitted.
     pub fn semantic_tokens(&self) -> Vec<SemanticTokenOccurrence> {
         self.index.semantic_tokens()
+    }
+
+    /// Return source-backed document outline declarations for the current file.
+    ///
+    /// This stays conservative and only exports document-level declarations with stable source
+    /// identity: top-level items plus member declarations already represented in the query index.
+    pub fn document_symbols(&self) -> Vec<DocumentSymbolTarget> {
+        self.index.document_symbols()
     }
 
     pub fn render_diagnostics(&self, path: &Path, source: &str) -> String {

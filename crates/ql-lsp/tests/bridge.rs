@@ -4,15 +4,17 @@ use ql_analysis::{AsyncOperatorKind, LoopControlKind, analyze_source};
 use ql_diagnostics::{Diagnostic as CompilerDiagnostic, Label};
 use ql_lsp::bridge::{
     async_context_for_analysis, completion_for_analysis, definition_for_analysis,
-    diagnostics_to_lsp, hover_for_analysis, loop_control_context_for_analysis, position_to_offset,
-    prepare_rename_for_analysis, references_for_analysis, rename_for_analysis,
-    semantic_tokens_for_analysis, semantic_tokens_legend, span_to_range,
+    diagnostics_to_lsp, document_symbols_for_analysis, hover_for_analysis,
+    loop_control_context_for_analysis, position_to_offset, prepare_rename_for_analysis,
+    references_for_analysis, rename_for_analysis, semantic_tokens_for_analysis,
+    semantic_tokens_legend, span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
-    CompletionItemKind, CompletionResponse, DiagnosticSeverity, GotoDefinitionResponse,
-    HoverContents, Location, Position, PrepareRenameResponse, SemanticTokenType,
-    SemanticTokensResult, TextEdit, Url, WorkspaceEdit,
+    CompletionItemKind, CompletionResponse, DiagnosticSeverity, DocumentSymbolResponse,
+    GotoDefinitionResponse, HoverContents, Location, Position, PrepareRenameResponse,
+    SemanticTokenType, SemanticTokensResult, SymbolKind as LspSymbolKind, TextEdit, Url,
+    WorkspaceEdit,
 };
 
 fn nth_span(source: &str, needle: &str, occurrence: usize) -> Span {
@@ -266,6 +268,63 @@ fn diagnostics_conversion_preserves_source_and_defaults_secondary_related_messag
         span_to_range(source, Span::new(5, 10))
     );
     assert_eq!(related[0].message, "related span");
+}
+
+#[test]
+fn document_symbols_bridge_lists_same_file_declarations() {
+    let source = r#"
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+enum Command {
+    Retry,
+}
+
+type Alias = Point
+const LIMIT: Int = 3
+
+impl Point {
+    fn area(self) -> Int {
+        return self.x + self.y
+    }
+}
+
+fn main() -> Int {
+    let local = LIMIT
+    return local
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let response = document_symbols_for_analysis(source, &analysis);
+    let DocumentSymbolResponse::Nested(symbols) = response else {
+        panic!("document symbols should use nested response")
+    };
+
+    let names = symbols
+        .iter()
+        .map(|symbol| symbol.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        vec![
+            "Point", "x", "y", "Command", "Retry", "Alias", "LIMIT", "area", "main"
+        ]
+    );
+    assert_eq!(symbols[0].kind, LspSymbolKind::STRUCT);
+    assert_eq!(symbols[1].kind, LspSymbolKind::FIELD);
+    assert_eq!(symbols[3].kind, LspSymbolKind::ENUM);
+    assert_eq!(symbols[4].kind, LspSymbolKind::ENUM_MEMBER);
+    assert_eq!(symbols[5].kind, LspSymbolKind::CLASS);
+    assert_eq!(symbols[6].kind, LspSymbolKind::CONSTANT);
+    assert_eq!(symbols[7].kind, LspSymbolKind::METHOD);
+    assert_eq!(symbols[8].kind, LspSymbolKind::FUNCTION);
+    assert_eq!(symbols[7].detail.as_deref(), Some("fn area(self) -> Int"));
+    assert_eq!(
+        symbols[8].range,
+        span_to_range(source, nth_span(source, "main", 1))
+    );
 }
 
 #[test]
