@@ -41,13 +41,13 @@ use crate::bridge::{
     hover_for_dependency_struct_fields, hover_for_dependency_values, hover_for_dependency_variants,
     hover_for_package_analysis, prepare_rename_for_analysis, references_for_analysis,
     references_for_dependency_imports, references_for_dependency_methods,
-    references_for_dependency_struct_fields, references_for_dependency_variants,
-    references_for_package_analysis, rename_for_analysis, semantic_tokens_for_analysis,
-    semantic_tokens_legend, span_to_range, type_definition_for_analysis,
-    type_definition_for_dependency_imports, type_definition_for_dependency_method_types,
-    type_definition_for_dependency_struct_field_types, type_definition_for_dependency_values,
-    type_definition_for_dependency_variants, type_definition_for_package_analysis,
-    workspace_symbols_for_analysis,
+    references_for_dependency_struct_fields, references_for_dependency_values,
+    references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
+    semantic_tokens_for_analysis, semantic_tokens_legend, span_to_range,
+    type_definition_for_analysis, type_definition_for_dependency_imports,
+    type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
+    type_definition_for_dependency_values, type_definition_for_dependency_variants,
+    type_definition_for_package_analysis, workspace_symbols_for_analysis,
 };
 use crate::store::DocumentStore;
 
@@ -716,6 +716,15 @@ impl LanguageServer for Backend {
         if let Some(package) = self.package_analysis_for_uri(&uri) {
             let Ok(analysis) = analyze_source(&source) else {
                 if let Some(references) = references_for_dependency_imports(
+                    &uri,
+                    &source,
+                    &package,
+                    position,
+                    params.context.include_declaration,
+                ) {
+                    return Ok(Some(references));
+                }
+                if let Some(references) = references_for_dependency_values(
                     &uri,
                     &source,
                     &package,

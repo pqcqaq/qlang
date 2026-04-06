@@ -113,6 +113,19 @@ struct DependencyImportOccurrence {
     is_definition: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencyValueOccurrence {
+    kind: SymbolKind,
+    local_name: String,
+    reference_span: Span,
+    definition_span: Span,
+    package_name: String,
+    source_path: String,
+    struct_name: String,
+    path: PathBuf,
+    is_definition: bool,
+}
+
 #[derive(Debug)]
 pub enum PackageAnalysisError {
     Project(ProjectError),
@@ -1385,6 +1398,38 @@ impl PackageAnalysis {
         Some(references)
     }
 
+    pub fn dependency_value_references_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<ReferenceTarget>> {
+        let module = parse_source(source).ok()?;
+        let target_occurrence = self.dependency_value_occurrence_in_module(&module, offset)?;
+        let mut references = self
+            .dependency_value_occurrences(&module)
+            .into_iter()
+            .filter(|occurrence| {
+                occurrence.local_name == target_occurrence.local_name
+                    && occurrence.definition_span == target_occurrence.definition_span
+                    && occurrence.package_name == target_occurrence.package_name
+                    && occurrence.source_path == target_occurrence.source_path
+                    && occurrence.struct_name == target_occurrence.struct_name
+                    && occurrence.path == target_occurrence.path
+            })
+            .map(|occurrence| ReferenceTarget {
+                kind: occurrence.kind,
+                name: occurrence.local_name,
+                span: occurrence.reference_span,
+                is_definition: occurrence.is_definition,
+            })
+            .collect::<Vec<_>>();
+        if references.is_empty() {
+            return None;
+        }
+        references.sort_by_key(|reference| (reference.span.start, reference.span.end));
+        Some(references)
+    }
+
     pub fn dependency_target_at(
         &self,
         analysis: &Analysis,
@@ -1530,6 +1575,36 @@ impl PackageAnalysis {
         })
     }
 
+    fn dependency_value_occurrence_in_module(
+        &self,
+        module: &ql_ast::Module,
+        offset: usize,
+    ) -> Option<DependencyValueOccurrence> {
+        self.dependency_value_occurrences(module)
+            .into_iter()
+            .find(|occurrence| occurrence.reference_span.contains(offset))
+    }
+
+    fn dependency_value_occurrences(
+        &self,
+        module: &ql_ast::Module,
+    ) -> Vec<DependencyValueOccurrence> {
+        let mut binding_scopes = vec![HashMap::new()];
+        let mut value_scopes = vec![HashMap::new()];
+        let mut occurrences = Vec::new();
+        for item in &module.items {
+            collect_dependency_value_occurrences_in_item(
+                self,
+                module,
+                item,
+                &mut binding_scopes,
+                &mut value_scopes,
+                &mut occurrences,
+            );
+        }
+        occurrences
+    }
+
     fn dependency_struct_field_target_at(
         &self,
         analysis: &Analysis,
@@ -1671,6 +1746,14 @@ struct DependencyStructFieldOccurrence {
     detail: String,
     path: PathBuf,
     definition_span: Span,
+}
+
+#[derive(Clone, Debug)]
+struct DependencyValueBinding {
+    kind: SymbolKind,
+    local_name: String,
+    definition_span: Span,
+    dependency: DependencyStructBinding,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4591,6 +4674,511 @@ fn collect_dependency_method_occurrences_in_expr(
     }
 }
 
+fn collect_dependency_value_occurrences_in_item(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    item: &ql_ast::Item,
+    binding_scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    value_scopes: &mut Vec<HashMap<String, DependencyValueBinding>>,
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    match &item.kind {
+        AstItemKind::Function(function) => collect_dependency_value_occurrences_in_function(
+            package,
+            module,
+            function,
+            None,
+            binding_scopes,
+            value_scopes,
+            occurrences,
+        ),
+        AstItemKind::Const(global) | AstItemKind::Static(global) => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                &global.value,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        AstItemKind::Struct(struct_decl) => {
+            for field in &struct_decl.fields {
+                if let Some(default) = &field.default {
+                    collect_dependency_value_occurrences_in_expr(
+                        package,
+                        module,
+                        default,
+                        binding_scopes,
+                        value_scopes,
+                        occurrences,
+                    );
+                }
+            }
+        }
+        AstItemKind::Trait(trait_decl) => {
+            for method in &trait_decl.methods {
+                collect_dependency_value_occurrences_in_function(
+                    package,
+                    module,
+                    method,
+                    None,
+                    binding_scopes,
+                    value_scopes,
+                    occurrences,
+                );
+            }
+        }
+        AstItemKind::Impl(impl_block) => {
+            let receiver_binding =
+                dependency_struct_binding_for_type_expr(package, module, &impl_block.target);
+            for method in &impl_block.methods {
+                collect_dependency_value_occurrences_in_function(
+                    package,
+                    module,
+                    method,
+                    receiver_binding.as_ref(),
+                    binding_scopes,
+                    value_scopes,
+                    occurrences,
+                );
+            }
+        }
+        AstItemKind::Extend(extend_block) => {
+            let receiver_binding =
+                dependency_struct_binding_for_type_expr(package, module, &extend_block.target);
+            for method in &extend_block.methods {
+                collect_dependency_value_occurrences_in_function(
+                    package,
+                    module,
+                    method,
+                    receiver_binding.as_ref(),
+                    binding_scopes,
+                    value_scopes,
+                    occurrences,
+                );
+            }
+        }
+        AstItemKind::TypeAlias(_) | AstItemKind::Enum(_) | AstItemKind::ExternBlock(_) => {}
+    }
+}
+
+fn collect_dependency_value_occurrences_in_function(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    function: &ql_ast::FunctionDecl,
+    receiver_binding: Option<&DependencyStructBinding>,
+    binding_scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    value_scopes: &mut Vec<HashMap<String, DependencyValueBinding>>,
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    let Some(body) = &function.body else {
+        return;
+    };
+    binding_scopes.push(HashMap::new());
+    value_scopes.push(HashMap::new());
+    for param in &function.params {
+        bind_dependency_value_param(
+            package,
+            module,
+            param,
+            receiver_binding,
+            binding_scopes,
+            value_scopes,
+            occurrences,
+        );
+    }
+    collect_dependency_value_occurrences_in_block(
+        package,
+        module,
+        body,
+        binding_scopes,
+        value_scopes,
+        occurrences,
+    );
+    value_scopes.pop();
+    binding_scopes.pop();
+}
+
+fn collect_dependency_value_occurrences_in_block(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    block: &ql_ast::Block,
+    binding_scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    value_scopes: &mut Vec<HashMap<String, DependencyValueBinding>>,
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    binding_scopes.push(HashMap::new());
+    value_scopes.push(HashMap::new());
+    for stmt in &block.statements {
+        collect_dependency_value_occurrences_in_stmt(
+            package,
+            module,
+            stmt,
+            binding_scopes,
+            value_scopes,
+            occurrences,
+        );
+    }
+    if let Some(tail) = &block.tail {
+        collect_dependency_value_occurrences_in_expr(
+            package,
+            module,
+            tail,
+            binding_scopes,
+            value_scopes,
+            occurrences,
+        );
+    }
+    value_scopes.pop();
+    binding_scopes.pop();
+}
+
+fn collect_dependency_value_occurrences_in_stmt(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    stmt: &ql_ast::Stmt,
+    binding_scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    value_scopes: &mut Vec<HashMap<String, DependencyValueBinding>>,
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    match &stmt.kind {
+        ql_ast::StmtKind::Let {
+            pattern, ty, value, ..
+        } => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                value,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+            bind_dependency_value_let(
+                package,
+                module,
+                pattern,
+                ty.as_ref(),
+                value,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::Return(Some(expr))
+        | ql_ast::StmtKind::Defer(expr)
+        | ql_ast::StmtKind::Expr { expr, .. } => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                expr,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::While { condition, body } => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                condition,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+            collect_dependency_value_occurrences_in_block(
+                package,
+                module,
+                body,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::Loop { body } => {
+            collect_dependency_value_occurrences_in_block(
+                package,
+                module,
+                body,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::For { iterable, body, .. } => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                iterable,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+            collect_dependency_value_occurrences_in_block(
+                package,
+                module,
+                body,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {}
+    }
+}
+
+fn collect_dependency_value_occurrences_in_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    expr: &ql_ast::Expr,
+    binding_scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    value_scopes: &mut Vec<HashMap<String, DependencyValueBinding>>,
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    match &expr.kind {
+        ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
+            for item in items {
+                collect_dependency_value_occurrences_in_expr(
+                    package,
+                    module,
+                    item,
+                    binding_scopes,
+                    value_scopes,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
+            collect_dependency_value_occurrences_in_block(
+                package,
+                module,
+                block,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                condition,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+            collect_dependency_value_occurrences_in_block(
+                package,
+                module,
+                then_branch,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+            if let Some(expr) = else_branch {
+                collect_dependency_value_occurrences_in_expr(
+                    package,
+                    module,
+                    expr,
+                    binding_scopes,
+                    value_scopes,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::Match { value, arms } => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                value,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+            let value_binding =
+                dependency_struct_binding_for_expr(package, module, value, binding_scopes);
+            for arm in arms {
+                binding_scopes.push(HashMap::new());
+                value_scopes.push(HashMap::new());
+                if let Some(binding) = &value_binding {
+                    bind_dependency_value_match_pattern(
+                        package,
+                        &arm.pattern,
+                        binding,
+                        binding_scopes,
+                        value_scopes,
+                        occurrences,
+                    );
+                }
+                if let Some(guard) = &arm.guard {
+                    collect_dependency_value_occurrences_in_expr(
+                        package,
+                        module,
+                        guard,
+                        binding_scopes,
+                        value_scopes,
+                        occurrences,
+                    );
+                }
+                collect_dependency_value_occurrences_in_expr(
+                    package,
+                    module,
+                    &arm.body,
+                    binding_scopes,
+                    value_scopes,
+                    occurrences,
+                );
+                value_scopes.pop();
+                binding_scopes.pop();
+            }
+        }
+        ql_ast::ExprKind::Closure { params, body, .. } => {
+            binding_scopes.push(HashMap::new());
+            value_scopes.push(HashMap::new());
+            for param in params {
+                bind_dependency_value_closure_param(
+                    package,
+                    module,
+                    param,
+                    binding_scopes,
+                    value_scopes,
+                    occurrences,
+                );
+            }
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                body,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+            value_scopes.pop();
+            binding_scopes.pop();
+        }
+        ql_ast::ExprKind::Call { callee, args } => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                callee,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+            for arg in args {
+                match arg {
+                    ql_ast::CallArg::Positional(expr) => {
+                        collect_dependency_value_occurrences_in_expr(
+                            package,
+                            module,
+                            expr,
+                            binding_scopes,
+                            value_scopes,
+                            occurrences,
+                        );
+                    }
+                    ql_ast::CallArg::Named { value, .. } => {
+                        collect_dependency_value_occurrences_in_expr(
+                            package,
+                            module,
+                            value,
+                            binding_scopes,
+                            value_scopes,
+                            occurrences,
+                        );
+                    }
+                }
+            }
+        }
+        ql_ast::ExprKind::Member { object, .. } | ql_ast::ExprKind::Question(object) => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                object,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::Bracket { target, items } => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                target,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+            for item in items {
+                collect_dependency_value_occurrences_in_expr(
+                    package,
+                    module,
+                    item,
+                    binding_scopes,
+                    value_scopes,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::StructLiteral { fields, .. } => {
+            for field in fields {
+                if let Some(value) = &field.value {
+                    collect_dependency_value_occurrences_in_expr(
+                        package,
+                        module,
+                        value,
+                        binding_scopes,
+                        value_scopes,
+                        occurrences,
+                    );
+                }
+            }
+        }
+        ql_ast::ExprKind::Binary { left, right, .. } => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                left,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                right,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::Unary { expr, .. } => {
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                expr,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::Name(name) => {
+            let Some(binding) = dependency_value_binding_for_name(value_scopes, name) else {
+                return;
+            };
+            push_dependency_value_occurrence(binding, expr.span, false, occurrences);
+        }
+        ql_ast::ExprKind::Integer(_)
+        | ql_ast::ExprKind::String { .. }
+        | ql_ast::ExprKind::Bool(_)
+        | ql_ast::ExprKind::NoneLiteral => {}
+    }
+}
+
 fn collect_dependency_struct_field_occurrences_in_item(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -5543,6 +6131,227 @@ fn bind_dependency_struct_match_pattern(
     scopes: &mut [HashMap<String, DependencyStructBinding>],
 ) {
     bind_dependency_struct_pattern(package, pattern, binding, scopes);
+}
+
+fn dependency_value_binding_for_name<'a>(
+    scopes: &'a [HashMap<String, DependencyValueBinding>],
+    name: &str,
+) -> Option<&'a DependencyValueBinding> {
+    scopes.iter().rev().find_map(|scope| scope.get(name))
+}
+
+fn push_dependency_value_occurrence(
+    binding: &DependencyValueBinding,
+    reference_span: Span,
+    is_definition: bool,
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    occurrences.push(DependencyValueOccurrence {
+        kind: binding.kind,
+        local_name: binding.local_name.clone(),
+        reference_span,
+        definition_span: binding.definition_span,
+        package_name: binding.dependency.package_name.clone(),
+        source_path: binding.dependency.source_path.clone(),
+        struct_name: binding.dependency.struct_name.clone(),
+        path: binding.dependency.path.clone(),
+        is_definition,
+    });
+}
+
+fn bind_dependency_value_local(
+    kind: SymbolKind,
+    local_name: String,
+    definition_span: Span,
+    dependency: DependencyStructBinding,
+    binding_scopes: &mut [HashMap<String, DependencyStructBinding>],
+    value_scopes: &mut [HashMap<String, DependencyValueBinding>],
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    binding_scopes
+        .last_mut()
+        .expect("scope stack must be non-empty")
+        .insert(local_name.clone(), dependency.clone());
+    let binding = DependencyValueBinding {
+        kind,
+        local_name,
+        definition_span,
+        dependency,
+    };
+    value_scopes
+        .last_mut()
+        .expect("scope stack must be non-empty")
+        .insert(binding.local_name.clone(), binding.clone());
+    push_dependency_value_occurrence(&binding, binding.definition_span, true, occurrences);
+}
+
+fn bind_dependency_value_param(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    param: &ql_ast::Param,
+    receiver_binding: Option<&DependencyStructBinding>,
+    binding_scopes: &mut [HashMap<String, DependencyStructBinding>],
+    value_scopes: &mut [HashMap<String, DependencyValueBinding>],
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    match param {
+        ql_ast::Param::Regular {
+            name,
+            name_span,
+            ty,
+        } => {
+            let Some(binding) = dependency_struct_binding_for_type_expr(package, module, ty) else {
+                return;
+            };
+            bind_dependency_value_local(
+                SymbolKind::Parameter,
+                name.clone(),
+                *name_span,
+                binding,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::Param::Receiver { span, .. } => {
+            let Some(binding) = receiver_binding.cloned() else {
+                return;
+            };
+            bind_dependency_value_local(
+                SymbolKind::SelfParameter,
+                String::from("self"),
+                *span,
+                binding,
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+    }
+}
+
+fn bind_dependency_value_closure_param(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    param: &ql_ast::ClosureParam,
+    binding_scopes: &mut [HashMap<String, DependencyStructBinding>],
+    value_scopes: &mut [HashMap<String, DependencyValueBinding>],
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    let Some(ty) = &param.ty else {
+        return;
+    };
+    let Some(binding) = dependency_struct_binding_for_type_expr(package, module, ty) else {
+        return;
+    };
+    bind_dependency_value_local(
+        SymbolKind::Parameter,
+        param.name.clone(),
+        param.span,
+        binding,
+        binding_scopes,
+        value_scopes,
+        occurrences,
+    );
+}
+
+fn bind_dependency_value_pattern(
+    package: &PackageAnalysis,
+    pattern: &ql_ast::Pattern,
+    binding: &DependencyStructBinding,
+    binding_scopes: &mut [HashMap<String, DependencyStructBinding>],
+    value_scopes: &mut [HashMap<String, DependencyValueBinding>],
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    match &pattern.kind {
+        ql_ast::PatternKind::Name(name) => {
+            bind_dependency_value_local(
+                SymbolKind::Local,
+                name.clone(),
+                pattern.span,
+                binding.clone(),
+                binding_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::PatternKind::Struct { fields, .. } => {
+            for field in fields {
+                let Some(field_binding) = binding
+                    .fields
+                    .get(&field.name)
+                    .and_then(|field| dependency_struct_binding_for_resolved_field(package, field))
+                else {
+                    continue;
+                };
+                if let Some(pattern) = &field.pattern {
+                    bind_dependency_value_pattern(
+                        package,
+                        pattern,
+                        &field_binding,
+                        binding_scopes,
+                        value_scopes,
+                        occurrences,
+                    );
+                } else {
+                    bind_dependency_value_local(
+                        SymbolKind::Local,
+                        field.name.clone(),
+                        field.name_span,
+                        field_binding,
+                        binding_scopes,
+                        value_scopes,
+                        occurrences,
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn bind_dependency_value_let(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    pattern: &ql_ast::Pattern,
+    ty: Option<&ql_ast::TypeExpr>,
+    value: &ql_ast::Expr,
+    binding_scopes: &mut [HashMap<String, DependencyStructBinding>],
+    value_scopes: &mut [HashMap<String, DependencyValueBinding>],
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    let binding = ty
+        .and_then(|ty| dependency_struct_binding_for_type_expr(package, module, ty))
+        .or_else(|| dependency_struct_binding_for_expr(package, module, value, binding_scopes));
+    let Some(binding) = binding else {
+        return;
+    };
+    bind_dependency_value_pattern(
+        package,
+        pattern,
+        &binding,
+        binding_scopes,
+        value_scopes,
+        occurrences,
+    );
+}
+
+fn bind_dependency_value_match_pattern(
+    package: &PackageAnalysis,
+    pattern: &ql_ast::Pattern,
+    binding: &DependencyStructBinding,
+    binding_scopes: &mut [HashMap<String, DependencyStructBinding>],
+    value_scopes: &mut [HashMap<String, DependencyValueBinding>],
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    bind_dependency_value_pattern(
+        package,
+        pattern,
+        binding,
+        binding_scopes,
+        value_scopes,
+        occurrences,
+    );
 }
 
 fn push_dependency_struct_field_occurrence_for_binding(
