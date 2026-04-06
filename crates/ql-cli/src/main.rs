@@ -338,6 +338,12 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
     let use_package_check = should_use_package_check(path)
         || (is_ql_source_file(path) && load_project_manifest(path).is_ok());
     if use_package_check {
+        if let Ok(manifest) = load_project_manifest(path)
+            && manifest.package.is_none()
+            && manifest.workspace.is_some()
+        {
+            return check_workspace_manifest(&manifest, sync_interfaces);
+        }
         if sync_interfaces {
             for interface_path in sync_reference_interfaces(path, &mut BTreeSet::new())? {
                 println!("wrote interface: {}", interface_path.display());
@@ -416,6 +422,62 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
     }
 
     if has_errors { Err(1) } else { Ok(()) }
+}
+
+fn check_workspace_manifest(
+    manifest: &ql_project::ProjectManifest,
+    sync_interfaces: bool,
+) -> Result<(), u8> {
+    let Some(workspace) = &manifest.workspace else {
+        return Ok(());
+    };
+
+    let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let mut sync_visited = BTreeSet::new();
+    let mut synced_interfaces = BTreeSet::new();
+
+    for member in &workspace.members {
+        let member_path = manifest_dir.join(member);
+        if sync_interfaces {
+            for interface_path in sync_reference_interfaces(&member_path, &mut sync_visited)? {
+                let display_path =
+                    fs::canonicalize(&interface_path).unwrap_or_else(|_| interface_path.clone());
+                if synced_interfaces.insert(display_path.clone()) {
+                    println!("wrote interface: {}", display_path.display());
+                }
+            }
+        }
+
+        match analyze_package(&member_path) {
+            Ok(package) => {
+                if package.modules().is_empty() {
+                    let source_root = package_source_root(package.manifest()).expect(
+                        "package-aware `ql check` should only succeed for package manifests",
+                    );
+                    eprintln!(
+                        "error: no `.ql` files found under `{}`",
+                        source_root.display()
+                    );
+                    return Err(1);
+                }
+                for module in package.modules() {
+                    println!("ok: {}", module.path().display());
+                }
+                for dependency in package.dependencies() {
+                    println!(
+                        "loaded interface: {}",
+                        dependency.interface_path().display()
+                    );
+                }
+            }
+            Err(error) => {
+                print_package_analysis_error(&error);
+                return Err(1);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn format_path(path: &Path, write: bool) -> Result<(), u8> {
