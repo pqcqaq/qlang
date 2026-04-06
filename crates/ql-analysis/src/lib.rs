@@ -275,6 +275,40 @@ impl DependencyInterface {
                 _ => None,
             })
     }
+
+    fn struct_field_for<'a>(
+        &'a self,
+        symbol: &DependencySymbol,
+        field_name: &str,
+    ) -> Option<&'a ql_ast::FieldDecl> {
+        let struct_decl = self.struct_decl_for(symbol)?;
+        struct_decl
+            .fields
+            .iter()
+            .find(|field| field.name == field_name)
+    }
+
+    fn struct_decl_for<'a>(&'a self, symbol: &DependencySymbol) -> Option<&'a ql_ast::StructDecl> {
+        if symbol.kind != SymbolKind::Struct {
+            return None;
+        }
+
+        self.artifact
+            .modules
+            .iter()
+            .find(|module| module.source_path == symbol.source_path)?
+            .syntax
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                AstItemKind::Struct(struct_decl)
+                    if is_public(&struct_decl.visibility) && struct_decl.name == symbol.name =>
+                {
+                    Some(struct_decl)
+                }
+                _ => None,
+            })
+    }
 }
 
 impl PackageAnalysis {
@@ -415,6 +449,68 @@ impl PackageAnalysis {
         Some(references)
     }
 
+    pub fn dependency_struct_field_hover_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<DependencyHoverInfo> {
+        let target = self.dependency_struct_field_target_at(analysis, offset)?;
+        Some(DependencyHoverInfo {
+            span: target.reference_span,
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Field,
+            name: target.name,
+            detail: target.detail,
+        })
+    }
+
+    pub fn dependency_struct_field_definition_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let target = self.dependency_struct_field_target_at(analysis, offset)?;
+        Some(DependencyDefinitionTarget {
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Field,
+            name: target.name,
+            path: target.path,
+            span: target.definition_span,
+        })
+    }
+
+    pub fn dependency_struct_field_references_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<Vec<ReferenceTarget>> {
+        let target = self.dependency_struct_field_target_at(analysis, offset)?;
+        let mut references = self
+            .dependency_struct_field_occurrences(analysis.ast())
+            .into_iter()
+            .filter(|occurrence| {
+                occurrence.package_name == target.package_name
+                    && occurrence.source_path == target.source_path
+                    && occurrence.struct_name == target.struct_name
+                    && occurrence.name == target.name
+                    && occurrence.path == target.path
+            })
+            .map(|occurrence| ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: occurrence.name,
+                span: occurrence.reference_span,
+                is_definition: false,
+            })
+            .collect::<Vec<_>>();
+        if references.is_empty() {
+            return None;
+        }
+        references.sort_by_key(|reference| (reference.span.start, reference.span.end));
+        Some(references)
+    }
+
     pub fn dependency_hover_at(
         &self,
         analysis: &Analysis,
@@ -514,6 +610,42 @@ impl PackageAnalysis {
             definition_span,
         })
     }
+
+    fn dependency_struct_field_target_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<DependencyStructFieldTarget> {
+        self.dependency_struct_field_occurrences(analysis.ast())
+            .into_iter()
+            .find(|occurrence| occurrence.reference_span.contains(offset))
+            .map(|occurrence| DependencyStructFieldTarget {
+                reference_span: occurrence.reference_span,
+                package_name: occurrence.package_name,
+                source_path: occurrence.source_path,
+                struct_name: occurrence.struct_name,
+                name: occurrence.name,
+                detail: occurrence.detail,
+                path: occurrence.path,
+                definition_span: occurrence.definition_span,
+            })
+    }
+
+    fn dependency_struct_field_occurrences(
+        &self,
+        module: &ql_ast::Module,
+    ) -> Vec<DependencyStructFieldOccurrence> {
+        let mut occurrences = Vec::new();
+        for item in &module.items {
+            collect_dependency_struct_field_occurrences_in_item(
+                self,
+                module,
+                item,
+                &mut occurrences,
+            );
+        }
+        occurrences
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -522,6 +654,30 @@ struct DependencyVariantTarget {
     package_name: String,
     source_path: String,
     enum_name: String,
+    name: String,
+    detail: String,
+    path: PathBuf,
+    definition_span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencyStructFieldOccurrence {
+    reference_span: Span,
+    package_name: String,
+    source_path: String,
+    struct_name: String,
+    name: String,
+    detail: String,
+    path: PathBuf,
+    definition_span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencyStructFieldTarget {
+    reference_span: Span,
+    package_name: String,
+    source_path: String,
+    struct_name: String,
     name: String,
     detail: String,
     path: PathBuf,
@@ -1256,6 +1412,485 @@ fn dependency_variant_detail(enum_name: &str, variant: &ql_ast::EnumVariant) -> 
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+    }
+}
+
+fn dependency_struct_field_detail(field: &ql_ast::FieldDecl) -> String {
+    format!(
+        "field {}: {}",
+        field.name,
+        render_dependency_type_expr(&field.ty)
+    )
+}
+
+fn collect_dependency_struct_field_occurrences_in_item(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    item: &ql_ast::Item,
+    occurrences: &mut Vec<DependencyStructFieldOccurrence>,
+) {
+    match &item.kind {
+        AstItemKind::Function(function) => {
+            if let Some(body) = &function.body {
+                collect_dependency_struct_field_occurrences_in_block(
+                    package,
+                    module,
+                    body,
+                    occurrences,
+                );
+            }
+        }
+        AstItemKind::Const(global) | AstItemKind::Static(global) => {
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                &global.value,
+                occurrences,
+            );
+        }
+        AstItemKind::Struct(struct_decl) => {
+            for field in &struct_decl.fields {
+                if let Some(default) = &field.default {
+                    collect_dependency_struct_field_occurrences_in_expr(
+                        package,
+                        module,
+                        default,
+                        occurrences,
+                    );
+                }
+            }
+        }
+        AstItemKind::Trait(trait_decl) => {
+            for method in &trait_decl.methods {
+                if let Some(body) = &method.body {
+                    collect_dependency_struct_field_occurrences_in_block(
+                        package,
+                        module,
+                        body,
+                        occurrences,
+                    );
+                }
+            }
+        }
+        AstItemKind::Impl(impl_block) => {
+            for method in &impl_block.methods {
+                if let Some(body) = &method.body {
+                    collect_dependency_struct_field_occurrences_in_block(
+                        package,
+                        module,
+                        body,
+                        occurrences,
+                    );
+                }
+            }
+        }
+        AstItemKind::Extend(extend_block) => {
+            for method in &extend_block.methods {
+                if let Some(body) = &method.body {
+                    collect_dependency_struct_field_occurrences_in_block(
+                        package,
+                        module,
+                        body,
+                        occurrences,
+                    );
+                }
+            }
+        }
+        AstItemKind::TypeAlias(_) | AstItemKind::Enum(_) | AstItemKind::ExternBlock(_) => {}
+    }
+}
+
+fn collect_dependency_struct_field_occurrences_in_block(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    block: &ql_ast::Block,
+    occurrences: &mut Vec<DependencyStructFieldOccurrence>,
+) {
+    for stmt in &block.statements {
+        collect_dependency_struct_field_occurrences_in_stmt(package, module, stmt, occurrences);
+    }
+    if let Some(tail) = &block.tail {
+        collect_dependency_struct_field_occurrences_in_expr(package, module, tail, occurrences);
+    }
+}
+
+fn collect_dependency_struct_field_occurrences_in_stmt(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    stmt: &ql_ast::Stmt,
+    occurrences: &mut Vec<DependencyStructFieldOccurrence>,
+) {
+    match &stmt.kind {
+        ql_ast::StmtKind::Let { pattern, value, .. } => {
+            collect_dependency_struct_field_occurrences_in_pattern(
+                package,
+                module,
+                pattern,
+                occurrences,
+            );
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                value,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::Return(Some(expr))
+        | ql_ast::StmtKind::Defer(expr)
+        | ql_ast::StmtKind::Expr { expr, .. } => {
+            collect_dependency_struct_field_occurrences_in_expr(package, module, expr, occurrences);
+        }
+        ql_ast::StmtKind::While { condition, body } => {
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                condition,
+                occurrences,
+            );
+            collect_dependency_struct_field_occurrences_in_block(
+                package,
+                module,
+                body,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::Loop { body } => {
+            collect_dependency_struct_field_occurrences_in_block(
+                package,
+                module,
+                body,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::For {
+            pattern,
+            iterable,
+            body,
+            ..
+        } => {
+            collect_dependency_struct_field_occurrences_in_pattern(
+                package,
+                module,
+                pattern,
+                occurrences,
+            );
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                iterable,
+                occurrences,
+            );
+            collect_dependency_struct_field_occurrences_in_block(
+                package,
+                module,
+                body,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {}
+    }
+}
+
+fn collect_dependency_struct_field_occurrences_in_pattern(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    pattern: &ql_ast::Pattern,
+    occurrences: &mut Vec<DependencyStructFieldOccurrence>,
+) {
+    match &pattern.kind {
+        ql_ast::PatternKind::Tuple(items) | ql_ast::PatternKind::TupleStruct { items, .. } => {
+            for item in items {
+                collect_dependency_struct_field_occurrences_in_pattern(
+                    package,
+                    module,
+                    item,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::PatternKind::Struct { path, fields, .. } => {
+            for field in fields {
+                if field.pattern.is_some() {
+                    push_dependency_struct_field_occurrence_for_path(
+                        package,
+                        module,
+                        path,
+                        &field.name,
+                        field.name_span,
+                        occurrences,
+                    );
+                }
+                if let Some(pattern) = &field.pattern {
+                    collect_dependency_struct_field_occurrences_in_pattern(
+                        package,
+                        module,
+                        pattern,
+                        occurrences,
+                    );
+                }
+            }
+        }
+        ql_ast::PatternKind::Name(_)
+        | ql_ast::PatternKind::Path(_)
+        | ql_ast::PatternKind::Integer(_)
+        | ql_ast::PatternKind::String(_)
+        | ql_ast::PatternKind::Bool(_)
+        | ql_ast::PatternKind::NoneLiteral
+        | ql_ast::PatternKind::Wildcard => {}
+    }
+}
+
+fn collect_dependency_struct_field_occurrences_in_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    expr: &ql_ast::Expr,
+    occurrences: &mut Vec<DependencyStructFieldOccurrence>,
+) {
+    match &expr.kind {
+        ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
+            for item in items {
+                collect_dependency_struct_field_occurrences_in_expr(
+                    package,
+                    module,
+                    item,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
+            collect_dependency_struct_field_occurrences_in_block(
+                package,
+                module,
+                block,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                condition,
+                occurrences,
+            );
+            collect_dependency_struct_field_occurrences_in_block(
+                package,
+                module,
+                then_branch,
+                occurrences,
+            );
+            if let Some(expr) = else_branch {
+                collect_dependency_struct_field_occurrences_in_expr(
+                    package,
+                    module,
+                    expr,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::Match { value, arms } => {
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                value,
+                occurrences,
+            );
+            for arm in arms {
+                collect_dependency_struct_field_occurrences_in_pattern(
+                    package,
+                    module,
+                    &arm.pattern,
+                    occurrences,
+                );
+                if let Some(guard) = &arm.guard {
+                    collect_dependency_struct_field_occurrences_in_expr(
+                        package,
+                        module,
+                        guard,
+                        occurrences,
+                    );
+                }
+                collect_dependency_struct_field_occurrences_in_expr(
+                    package,
+                    module,
+                    &arm.body,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::Closure { body, .. } => {
+            collect_dependency_struct_field_occurrences_in_expr(package, module, body, occurrences);
+        }
+        ql_ast::ExprKind::Call { callee, args } => {
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                callee,
+                occurrences,
+            );
+            for arg in args {
+                match arg {
+                    ql_ast::CallArg::Positional(expr) => {
+                        collect_dependency_struct_field_occurrences_in_expr(
+                            package,
+                            module,
+                            expr,
+                            occurrences,
+                        );
+                    }
+                    ql_ast::CallArg::Named { value, .. } => {
+                        collect_dependency_struct_field_occurrences_in_expr(
+                            package,
+                            module,
+                            value,
+                            occurrences,
+                        );
+                    }
+                }
+            }
+        }
+        ql_ast::ExprKind::Member { object, .. } | ql_ast::ExprKind::Question(object) => {
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                object,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::Bracket { target, items } => {
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                target,
+                occurrences,
+            );
+            for item in items {
+                collect_dependency_struct_field_occurrences_in_expr(
+                    package,
+                    module,
+                    item,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::StructLiteral { path, fields } => {
+            for field in fields {
+                if field.value.is_some() {
+                    push_dependency_struct_field_occurrence_for_path(
+                        package,
+                        module,
+                        path,
+                        &field.name,
+                        field.name_span,
+                        occurrences,
+                    );
+                }
+                if let Some(value) = &field.value {
+                    collect_dependency_struct_field_occurrences_in_expr(
+                        package,
+                        module,
+                        value,
+                        occurrences,
+                    );
+                }
+            }
+        }
+        ql_ast::ExprKind::Binary { left, right, .. } => {
+            collect_dependency_struct_field_occurrences_in_expr(package, module, left, occurrences);
+            collect_dependency_struct_field_occurrences_in_expr(
+                package,
+                module,
+                right,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::Unary { expr, .. } => {
+            collect_dependency_struct_field_occurrences_in_expr(package, module, expr, occurrences);
+        }
+        ql_ast::ExprKind::Name(_)
+        | ql_ast::ExprKind::Integer(_)
+        | ql_ast::ExprKind::String { .. }
+        | ql_ast::ExprKind::Bool(_)
+        | ql_ast::ExprKind::NoneLiteral => {}
+    }
+}
+
+fn push_dependency_struct_field_occurrence_for_path(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    path: &ql_ast::Path,
+    field_name: &str,
+    field_span: Span,
+    occurrences: &mut Vec<DependencyStructFieldOccurrence>,
+) {
+    let [root_name] = path.segments.as_slice() else {
+        return;
+    };
+    let Some((dependency, symbol)) =
+        dependency_struct_import_binding_for_local_name(package, module, root_name)
+    else {
+        return;
+    };
+    let Some(field) = dependency.struct_field_for(symbol, field_name) else {
+        return;
+    };
+    let Some(definition_span) =
+        dependency.artifact_source_span(&symbol.source_path, field.name_span)
+    else {
+        return;
+    };
+    occurrences.push(DependencyStructFieldOccurrence {
+        reference_span: field_span,
+        package_name: dependency.artifact.package_name.clone(),
+        source_path: symbol.source_path.clone(),
+        struct_name: symbol.name.clone(),
+        name: field.name.clone(),
+        detail: dependency_struct_field_detail(field),
+        path: dependency.interface_path.clone(),
+        definition_span,
+    });
+}
+
+fn dependency_struct_import_binding_for_local_name<'a>(
+    package: &'a PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<(&'a DependencyInterface, &'a DependencySymbol)> {
+    let mut matches = module
+        .uses
+        .iter()
+        .flat_map(|use_decl| dependency_import_bindings_for_local_name(use_decl, local_name))
+        .filter_map(|binding| package.resolve_dependency_import_binding(&binding))
+        .filter(|(_, symbol)| symbol.kind == SymbolKind::Struct)
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return None;
+    }
+    matches.pop()
+}
+
+fn dependency_import_bindings_for_local_name(
+    use_decl: &ql_ast::UseDecl,
+    local_name: &str,
+) -> Vec<ImportBinding> {
+    if let Some(group) = &use_decl.group {
+        group
+            .iter()
+            .filter_map(|item| {
+                let binding = ImportBinding::grouped(&use_decl.prefix, item);
+                (binding.local_name == local_name).then_some(binding)
+            })
+            .collect()
+    } else {
+        let binding = ImportBinding::direct(use_decl);
+        if binding.local_name == local_name {
+            vec![binding]
+        } else {
+            Vec::new()
+        }
     }
 }
 

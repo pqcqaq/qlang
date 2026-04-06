@@ -94,6 +94,24 @@ pub fn hover_for_package_analysis(
     position: Position,
 ) -> Option<Hover> {
     let offset = position_to_offset(source, position)?;
+    if let Some(info) = package.dependency_struct_field_hover_at(analysis, offset) {
+        let hover = HoverInfo {
+            span: info.span,
+            kind: info.kind,
+            name: info.name,
+            detail: info.detail,
+            ty: None,
+            definition_span: None,
+        };
+        return Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: render_hover_markdown(&hover),
+            }),
+            range: Some(span_to_range(source, hover.span)),
+        });
+    }
+
     if let Some(info) = package.dependency_variant_hover_at(analysis, source, offset) {
         let hover = HoverInfo {
             span: info.span,
@@ -183,6 +201,15 @@ pub fn definition_for_package_analysis(
     position: Position,
 ) -> Option<GotoDefinitionResponse> {
     let offset = position_to_offset(source, position)?;
+    if let Some(target) = package.dependency_struct_field_definition_at(analysis, offset) {
+        let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
+        let target_uri = Url::from_file_path(&target.path).ok()?;
+        return Some(GotoDefinitionResponse::Scalar(Location::new(
+            target_uri,
+            span_to_range(&target_source, target.span),
+        )));
+    }
+
     if let Some(target) = package.dependency_variant_definition_at(analysis, source, offset) {
         let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
         let target_uri = Url::from_file_path(&target.path).ok()?;
@@ -232,6 +259,27 @@ pub fn references_for_package_analysis(
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
     let offset = position_to_offset(source, position)?;
+    if let Some(local_references) = package.dependency_struct_field_references_at(analysis, offset)
+    {
+        let mut locations = Vec::new();
+        if include_declaration {
+            let target = package.dependency_struct_field_definition_at(analysis, offset)?;
+            let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
+            let target_uri = Url::from_file_path(&target.path).ok()?;
+            locations.push(Location::new(
+                target_uri,
+                span_to_range(&target_source, target.span),
+            ));
+        }
+
+        locations.extend(
+            local_references
+                .into_iter()
+                .map(|reference| Location::new(uri.clone(), span_to_range(source, reference.span))),
+        );
+        return Some(locations);
+    }
+
     if let Some(local_references) =
         package.dependency_variant_references_at(analysis, source, offset)
     {

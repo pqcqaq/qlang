@@ -360,3 +360,109 @@ pub fn second() -> Int {
         )
     );
 }
+
+#[test]
+fn package_analysis_exposes_dependency_struct_field_queries() {
+    let temp = TempDir::new("ql-analysis-package-struct-field-queries");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    match config {
+        Cfg { value: current, limit: 3 } => current,
+    }
+    return built.value
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let literal_field = nth_offset(source, "value", 1);
+    let pattern_field = nth_offset(source, "value", 2);
+
+    let hover = package
+        .dependency_struct_field_hover_at(&analysis, literal_field)
+        .expect("dependency struct field hover should exist");
+    assert_eq!(hover.kind, SymbolKind::Field);
+    assert_eq!(hover.name, "value");
+    assert_eq!(hover.detail, "field value: Int");
+    assert_eq!(
+        source
+            .get(hover.span.start..hover.span.end)
+            .expect("hover span should slice source"),
+        "value",
+    );
+
+    let definition = package
+        .dependency_struct_field_definition_at(&analysis, pattern_field)
+        .expect("dependency struct field definition should exist");
+    assert_eq!(definition.kind, SymbolKind::Field);
+    assert_eq!(definition.name, "value");
+    assert!(definition.path.ends_with("dep.qi"));
+
+    let artifact = fs::read_to_string(&definition.path)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = artifact
+        .get(definition.span.start..definition.span.end)
+        .expect("definition span should slice artifact text");
+    assert_eq!(snippet.trim(), "value");
+
+    let references = package
+        .dependency_struct_field_references_at(&analysis, literal_field)
+        .expect("dependency struct field references should exist");
+    assert_eq!(references.len(), 2);
+    assert!(
+        references
+            .iter()
+            .all(|reference| reference.kind == SymbolKind::Field)
+    );
+    assert!(references.iter().all(|reference| !reference.is_definition));
+    assert_eq!(references[0].name, "value");
+    assert_eq!(
+        references[0].span,
+        Span::new(literal_field, literal_field + "value".len())
+    );
+    assert_eq!(
+        references[1].span,
+        Span::new(pattern_field, pattern_field + "value".len())
+    );
+}
