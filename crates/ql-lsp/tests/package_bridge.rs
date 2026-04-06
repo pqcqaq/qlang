@@ -7,7 +7,8 @@ use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source}
 use ql_lsp::bridge::{
     completion_for_dependency_imports, completion_for_dependency_struct_fields,
     completion_for_dependency_variants, completion_for_package_analysis,
-    definition_for_package_analysis, hover_for_package_analysis, references_for_package_analysis,
+    definition_for_dependency_variants, definition_for_package_analysis,
+    hover_for_dependency_variants, hover_for_package_analysis, references_for_package_analysis,
     span_to_range,
 };
 use ql_span::Span;
@@ -977,6 +978,111 @@ pub fn main() -> Int {
     };
     assert_eq!(
         uri.to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = "Retry";
+    let start = artifact
+        .find(snippet)
+        .expect("variant name should exist in dependency artifact");
+    assert_eq!(
+        range,
+        span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_variant_hover_and_definition_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-package-variant-broken-query");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+
+pub fn main(flag: Bool) -> Int {
+    let value = Cmd.Retry(1)
+    if flag {
+        return 0
+    }
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let hover = hover_for_dependency_variants(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "Retry", 1)),
+    )
+    .expect("dependency variant hover should exist even without semantic analysis");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**variant** `Retry`"));
+    assert!(markup.value.contains("variant Command.Retry(Int)"));
+
+    let definition = definition_for_dependency_variants(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "Retry", 1)),
+    )
+    .expect("dependency variant definition should exist even without semantic analysis");
+    let GotoDefinitionResponse::Scalar(Location {
+        uri: definition_uri,
+        range,
+    }) = definition
+    else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        definition_uri
+            .to_file_path()
             .expect("definition URI should convert to a file path")
             .canonicalize()
             .expect("definition path should canonicalize"),

@@ -430,6 +430,22 @@ impl PackageAnalysis {
         })
     }
 
+    pub fn dependency_variant_hover_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyHoverInfo> {
+        let target = self.dependency_variant_target_in_source_at(source, offset)?;
+        Some(DependencyHoverInfo {
+            span: target.reference_span,
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Variant,
+            name: target.name,
+            detail: target.detail,
+        })
+    }
+
     pub fn dependency_variant_definition_at(
         &self,
         analysis: &Analysis,
@@ -437,6 +453,22 @@ impl PackageAnalysis {
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
         let target = self.dependency_variant_target_at(analysis, source, offset)?;
+        Some(DependencyDefinitionTarget {
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Variant,
+            name: target.name,
+            path: target.path,
+            span: target.definition_span,
+        })
+    }
+
+    pub fn dependency_variant_definition_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let target = self.dependency_variant_target_in_source_at(source, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
             source_path: target.source_path,
@@ -636,6 +668,33 @@ impl PackageAnalysis {
             dependency_variant_reference_at(source, offset)?;
         let (binding, _) = analysis.import_binding_at(root_offset)?;
         let (dependency, symbol) = self.resolve_dependency_import_binding(&binding)?;
+        let variant = dependency.variant_for(symbol, &variant_name)?;
+        let definition_span =
+            dependency.artifact_source_span(&symbol.source_path, variant.name_span)?;
+        Some(DependencyVariantTarget {
+            reference_span,
+            package_name: dependency.artifact.package_name.clone(),
+            source_path: symbol.source_path.clone(),
+            enum_name: symbol.name.clone(),
+            name: variant.name.clone(),
+            detail: dependency_variant_detail(&symbol.name, variant),
+            path: dependency.interface_path.clone(),
+            definition_span,
+        })
+    }
+
+    fn dependency_variant_target_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyVariantTarget> {
+        let module = parse_source(source).ok()?;
+        let (root_offset, reference_span, variant_name) =
+            dependency_variant_reference_at(source, offset)?;
+        let root_end = dependency_identifier_end(source, root_offset);
+        let root_name = source.get(root_offset..root_end)?;
+        let (dependency, symbol) =
+            dependency_import_binding_for_local_name(self, &module, root_name)?;
         let variant = dependency.variant_for(symbol, &variant_name)?;
         let definition_span =
             dependency.artifact_source_span(&symbol.source_path, variant.name_span)?;

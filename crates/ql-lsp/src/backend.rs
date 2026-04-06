@@ -17,7 +17,8 @@ use tower_lsp::{Client, LanguageServer};
 use crate::bridge::{
     completion_for_analysis, completion_for_dependency_imports,
     completion_for_dependency_struct_fields, completion_for_dependency_variants,
-    completion_for_package_analysis, definition_for_package_analysis, diagnostics_to_lsp,
+    completion_for_package_analysis, definition_for_dependency_variants,
+    definition_for_package_analysis, diagnostics_to_lsp, hover_for_dependency_variants,
     hover_for_package_analysis, prepare_rename_for_analysis, references_for_analysis,
     references_for_package_analysis, rename_for_analysis, semantic_tokens_for_analysis,
     semantic_tokens_legend,
@@ -145,16 +146,25 @@ impl LanguageServer for Backend {
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+        let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            if let Some(hover) = hover_for_dependency_variants(&source, &package, position) {
+                return Ok(Some(hover));
+            }
+            let Ok(analysis) = analyze_source(&source) else {
+                return Ok(None);
+            };
             return Ok(hover_for_package_analysis(
                 &source, &analysis, &package, position,
             ));
         }
 
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
         Ok(crate::bridge::hover_for_analysis(
             &source, &analysis, position,
         ))
@@ -166,16 +176,27 @@ impl LanguageServer for Backend {
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+        let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            if let Some(definition) =
+                definition_for_dependency_variants(&source, &package, position)
+            {
+                return Ok(Some(definition));
+            }
+            let Ok(analysis) = analyze_source(&source) else {
+                return Ok(None);
+            };
             return Ok(definition_for_package_analysis(
                 &uri, &source, &analysis, &package, position,
             ));
         }
 
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
         Ok(crate::bridge::definition_for_analysis(
             &uri, &source, &analysis, position,
         ))
