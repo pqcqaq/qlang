@@ -6,7 +6,7 @@ use ql_analysis::{
     Analysis, DependencyInterface, PackageAnalysisError, analyze_package,
     analyze_package_dependencies, analyze_source,
 };
-use ql_project::load_project_manifest;
+use ql_project::{collect_package_sources, load_project_manifest};
 use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::request::{
     GotoDeclarationParams, GotoDeclarationResponse, GotoTypeDefinitionParams,
@@ -194,6 +194,51 @@ fn append_package_workspace_symbols(
     }
 }
 
+#[allow(deprecated)]
+fn append_manifest_source_workspace_symbols(
+    manifest: &ql_project::ProjectManifest,
+    open_docs: &HashMap<PathBuf, (Url, String)>,
+    covered_files: &mut HashSet<PathBuf>,
+    symbols: &mut Vec<SymbolInformation>,
+    query: &str,
+) {
+    let Ok(source_paths) = collect_package_sources(manifest) else {
+        return;
+    };
+
+    for source_path in source_paths {
+        covered_files.insert(source_path.clone());
+
+        if let Some((open_uri, open_source)) = open_docs.get(&source_path) {
+            if let Ok(analysis) = analyze_source(open_source) {
+                symbols.extend(workspace_symbols_for_analysis(
+                    open_uri,
+                    open_source,
+                    &analysis,
+                    query,
+                ));
+            }
+            continue;
+        }
+
+        let Ok(source_uri) = Url::from_file_path(&source_path) else {
+            continue;
+        };
+        let Ok(source) = fs::read_to_string(&source_path) else {
+            continue;
+        };
+        let Ok(analysis) = analyze_source(&source) else {
+            continue;
+        };
+        symbols.extend(workspace_symbols_for_analysis(
+            &source_uri,
+            &source,
+            &analysis,
+            query,
+        ));
+    }
+}
+
 fn workspace_symbols_for_documents(
     documents: Vec<(Url, String)>,
     query: &str,
@@ -257,6 +302,70 @@ fn workspace_symbols_for_documents(
                         &normalized_query,
                         false,
                     );
+                }
+            }
+            Err(PackageAnalysisError::SourceDiagnostics { .. }) => {
+                let Ok(manifest) = load_project_manifest(&path) else {
+                    covered_files.insert(path.clone());
+                    if let Ok(analysis) = analyze_source(source) {
+                        symbols.extend(workspace_symbols_for_analysis(
+                            uri,
+                            source,
+                            &analysis,
+                            &normalized_query,
+                        ));
+                    }
+                    continue;
+                };
+
+                let manifest_path = manifest.manifest_path.clone();
+                if !searched_packages.insert(manifest_path) {
+                    continue;
+                }
+
+                append_manifest_source_workspace_symbols(
+                    &manifest,
+                    &open_docs,
+                    &mut covered_files,
+                    &mut symbols,
+                    &normalized_query,
+                );
+
+                if let Ok(package) = analyze_package_dependencies(&path) {
+                    symbols.extend(workspace_symbols_for_dependencies(
+                        package.dependencies(),
+                        &normalized_query,
+                    ));
+
+                    for member_manifest_path in workspace_member_manifest_paths_for_package(
+                        package.manifest().manifest_path.as_path(),
+                    ) {
+                        if !searched_packages.insert(member_manifest_path.clone()) {
+                            continue;
+                        }
+                        if let Ok(member_package) = analyze_package(&member_manifest_path) {
+                            append_package_workspace_symbols(
+                                &member_package,
+                                &open_docs,
+                                &mut covered_files,
+                                &mut symbols,
+                                &normalized_query,
+                                false,
+                            );
+                            continue;
+                        }
+                        let Ok(member_manifest) = load_project_manifest(&member_manifest_path)
+                        else {
+                            continue;
+                        };
+                        append_manifest_source_workspace_symbols(
+                            &member_manifest,
+                            &open_docs,
+                            &mut covered_files,
+                            &mut symbols,
+                            &normalized_query,
+                        );
+                    }
                 }
             }
             Err(_) => {
@@ -879,6 +988,148 @@ name = "app"
             "workspace/app/src/main.ql",
             r#"
 fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+"#,
+        );
+        let helper_path = temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "helper");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "tool_helper".to_owned(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(&helper_path).expect("helper path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(1, 3),
+                        tower_lsp::lsp_types::Position::new(1, 14),
+                    ),
+                ),
+                container_name: None,
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_dependency_symbols_for_broken_open_packages() {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-broken-dependency");
+
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.dep.exported as run
+
+fn main() -> Int {
+    let broken: Int = "oops"
+    return run(1)
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "exported");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "exported".to_owned(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(7, 4),
+                        tower_lsp::lsp_types::Position::new(7, 34),
+                    ),
+                ),
+                container_name: Some("dep".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_workspace_member_modules_for_broken_open_packages() {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-broken-members");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    let broken: Int = "oops"
     return 0
 }
 "#,
