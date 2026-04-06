@@ -443,6 +443,35 @@ pub fn references_for_package_analysis(
     references_for_analysis(uri, source, analysis, position, include_declaration)
 }
 
+pub fn references_for_dependency_imports(
+    uri: &Url,
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    let offset = position_to_offset(source, position)?;
+    let mut locations = Vec::new();
+    if include_declaration {
+        let target = package.dependency_definition_in_source_at(source, offset)?;
+        let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
+        let target_uri = Url::from_file_path(&target.path).ok()?;
+        locations.push(Location::new(
+            target_uri,
+            span_to_range(&target_source, target.span),
+        ));
+    }
+
+    locations.extend(
+        package
+            .dependency_references_in_source_at(source, offset)?
+            .into_iter()
+            .filter(|reference| include_declaration || !reference.is_definition)
+            .map(|reference| Location::new(uri.clone(), span_to_range(source, reference.span))),
+    );
+    Some(locations)
+}
+
 pub fn completion_for_analysis(
     source: &str,
     analysis: &Analysis,

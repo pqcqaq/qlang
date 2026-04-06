@@ -9,7 +9,7 @@
 
 - P1 到 P6 已完成，并且已经形成可持续扩展的工程主干。
 - P7 正在进行，但主线不是“重新设计 async”，而是在既有 compiler/runtime/build 真相源上保守扩面。
-- P8 已进入前三条工程入口切片：最小 `qlang.toml` manifest graph、`ql project graph`、`.qi` V1 emit、`ql build --emit-interface`、`ql check --sync-interfaces`、package-aware dependency `.qi` syntax-load、dependency public symbol index，以及 imported dependency symbol 的最小 cross-file hover / definition / references、`use ...` 导入路径和平铺 / grouped import 位置里的 package path segment / public symbol completion、dependency enum variant completion、dependency struct explicit field-label completion，以及 broken-source 场景下的 import-root / variant / explicit struct-field 最小 hover / definition fallback 已落地；更完整的 cross-file editor semantics 仍未开始实现。
+- P8 已进入前三条工程入口切片：最小 `qlang.toml` manifest graph、`ql project graph`、`.qi` V1 emit、`ql build --emit-interface`、`ql check --sync-interfaces`、package-aware dependency `.qi` syntax-load、dependency public symbol index，以及 imported dependency symbol 的最小 cross-file hover / definition / references、`use ...` 导入路径和平铺 / grouped import 位置里的 package path segment / public symbol completion、dependency enum variant completion、dependency struct explicit field-label completion，以及 broken-source 场景下的 import-root 最小 hover / definition / references fallback 与 variant / explicit struct-field 最小 hover / definition fallback 已落地；更完整的 cross-file editor semantics 仍未开始实现。
 - 当前最重要的治理要求仍然是三者一致：
   - 代码里的真实实现
   - 测试里的真实合同
@@ -75,7 +75,7 @@
 - `ql check <package-dir> --sync-interfaces` 现会在 package-aware check 前递归同步写出本地引用包默认 `<package>.qi`，减少依赖接口需要手工预生成的摩擦；当前该开关只支持 package directory / `qlang.toml` 路径。
 - `ql-analysis::analyze_package` 与 package-aware `ql check <package-dir>` 现已开始加载 `[references].packages` 指向的 dependency `.qi` artifact，并在 interface 缺失时显式失败。
 - 当前 dependency `.qi` load 已推进到 syntax-aware section parse：每个 `// source: ...` module section 都会进入 interface-mode AST，支持 bodyless `fn` / `impl` / `extend` 声明以及无值 `const` / `static` 接口声明；`ql-analysis::analyze_package` 现也已把公开 dependency symbols 收进 package 级 truth surface，并接通 imported dependency symbol 的 cross-file hover / definition / references 到 `.qi` declaration；这条查询链当前也已显式覆盖 grouped import alias 形态。与此同时，`use ...` 导入路径和平铺 / grouped import 位置里的 dependency package path segment / public symbol completion 也已打通，且 grouped import 的空补全位会过滤已写过的 dependency item，减少重复提示；rename、更广义 completion 与真实 dependency build graph 仍未开放。
-- dependency-only 回退现在还带有最小编辑期容错：当当前文档自身暂时分析失败时，真实 `ql-lsp` backend 仍会走 dependency-only package load 回退，继续提供 `use ...` 导入路径上的 dependency path segment / public symbol completion、dependency enum import alias root 上的 variant completion，以及 dependency struct explicit field-label completion；同一条回退链现在也已开放 imported dependency local name 的最小 hover / definition 查询，覆盖 import binding token 本身，以及 parse-only 可恢复的 single-segment use site/type root；该路径当前仍不扩大到 references、broader member query 或其它同文件补全。
+- dependency-only 回退现在还带有最小编辑期容错：当当前文档自身暂时分析失败时，真实 `ql-lsp` backend 仍会走 dependency-only package load 回退，继续提供 `use ...` 导入路径上的 dependency path segment / public symbol completion、dependency enum import alias root 上的 variant completion，以及 dependency struct explicit field-label completion；同一条回退链现在也已开放 imported dependency local name 的最小 hover / definition / references 查询，覆盖 import binding token 本身，以及 parse-only 可恢复的 single-segment use site/type root；该路径当前仍不扩大到 broader member query 或其它同文件补全，而 variant / explicit struct-field 的 broken-source 回退目前仍只到 hover / definition。
 - dependency enum import alias root 的首个 non-import-path query contract 也已落地：当 `use demo.dep.Command as Cmd` 这类 alias 能唯一映射到 dependency public enum 时，`Cmd.Re` 现可通过 `.qi` public surface 继续补全到 `Retry` 等 variants，而 `Cmd.Retry` 这类 variant token 也已接通 dependency hover / definition / references；与此同时，当当前文档仅有 same-file 语义错误时，真实 `ql-lsp` backend 现在也会继续从该 variant token 提供 dependency hover / definition 回退；更广义 dependency member completion 仍未开放。
 - dependency struct import alias root 的首个 field-query contract 也已落地：当 `use demo.dep.Config as Cfg` 这类 alias 能唯一映射到 dependency public struct 时，`Cfg { fl: true }` / `let Cfg { fl: enabled } = built` 这类显式 struct literal / struct pattern 字段标签现在也已接通 dependency public field completion，并会跳过同一字面量/模式里已经写过的 sibling 字段；已写出的显式字段标签继续支持 dependency hover / definition / references；shorthand token、`built.value` member path 与 broader member completion 仍未开放。
 
@@ -92,7 +92,7 @@
 
 1. 继续沿已开放的 async executable / library 子集扩真实用户可写 surface，而不是另开 ABI 或 runtime 设计。
 2. 继续让 task-handle、dynamic path、`for await`、awaited `match` 这几条线共享同一份 truth source。
-3. 按已固定顺序继续推进 Phase 8：dependency `.qi` 的 syntax-aware load、public symbol index、hover / definition / references，以及 `use ...` 导入路径 completion、import-root/enum-variant/explicit-struct-field 的最小 broken-source query fallback 已落地；下一步应继续扩真正需要的 cross-file completion/identity contract，而不是直接跳到 cross-file rename。
+3. 按已固定顺序继续推进 Phase 8：dependency `.qi` 的 syntax-aware load、public symbol index、hover / definition / references，以及 `use ...` 导入路径 completion、import-root 的最小 broken-source query fallback、enum-variant/explicit-struct-field 的最小 broken-source hover / definition fallback 已落地；下一步应继续扩真正需要的 cross-file completion/identity contract，而不是直接跳到 cross-file rename。
 
 ## 归档入口
 

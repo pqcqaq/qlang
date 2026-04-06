@@ -21,8 +21,9 @@ use crate::bridge::{
     definition_for_dependency_struct_fields, definition_for_dependency_variants,
     definition_for_package_analysis, diagnostics_to_lsp, hover_for_dependency_imports,
     hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
-    prepare_rename_for_analysis, references_for_analysis, references_for_package_analysis,
-    rename_for_analysis, semantic_tokens_for_analysis, semantic_tokens_legend,
+    prepare_rename_for_analysis, references_for_analysis, references_for_dependency_imports,
+    references_for_package_analysis, rename_for_analysis, semantic_tokens_for_analysis,
+    semantic_tokens_legend,
 };
 use crate::store::DocumentStore;
 
@@ -221,11 +222,20 @@ impl LanguageServer for Backend {
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
-        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+        let Some(source) = self.documents.get(&uri).await else {
             return Ok(None);
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let Ok(analysis) = analyze_source(&source) else {
+                return Ok(references_for_dependency_imports(
+                    &uri,
+                    &source,
+                    &package,
+                    position,
+                    params.context.include_declaration,
+                ));
+            };
             return Ok(references_for_package_analysis(
                 &uri,
                 &source,
@@ -236,6 +246,9 @@ impl LanguageServer for Backend {
             ));
         }
 
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
         Ok(references_for_analysis(
             &uri,
             &source,

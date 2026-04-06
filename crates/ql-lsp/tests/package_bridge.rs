@@ -10,8 +10,8 @@ use ql_lsp::bridge::{
     definition_for_dependency_imports, definition_for_dependency_struct_fields,
     definition_for_dependency_variants, definition_for_package_analysis,
     hover_for_dependency_imports, hover_for_dependency_struct_fields,
-    hover_for_dependency_variants, hover_for_package_analysis, references_for_package_analysis,
-    span_to_range,
+    hover_for_dependency_variants, hover_for_package_analysis, references_for_dependency_imports,
+    references_for_package_analysis, span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
@@ -1610,6 +1610,109 @@ pub fn main(value: Buf[Int]) -> Int {
     assert_eq!(
         range,
         span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_import_references_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-package-import-broken-references");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported(value: Int) -> Int
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.exported as run
+
+pub fn main() -> Int {
+    let next = run(1)
+    return "oops"
+}
+
+pub fn later() -> Int {
+    return run(2)
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let with_declaration = references_for_dependency_imports(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "run", 2)),
+        true,
+    )
+    .expect("dependency import references should exist even without semantic analysis");
+    assert_eq!(with_declaration.len(), 4);
+    assert_eq!(
+        with_declaration[0]
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    assert!(
+        with_declaration[1..]
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+
+    let without_declaration = references_for_dependency_imports(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "run", 3)),
+        false,
+    )
+    .expect("dependency import references should exist without declaration");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
     );
 }
 

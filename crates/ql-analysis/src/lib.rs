@@ -109,6 +109,7 @@ pub struct DependencyResolvedTarget {
 struct DependencyImportOccurrence {
     local_name: String,
     span: Span,
+    is_definition: bool,
 }
 
 #[derive(Debug)]
@@ -683,6 +684,56 @@ impl PackageAnalysis {
             path: target.path,
             span: target.definition_span,
         })
+    }
+
+    pub fn dependency_references_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<ReferenceTarget>> {
+        let module = parse_source(source).ok()?;
+        let target_occurrence = dependency_import_occurrence_in_module(&module, offset)?;
+        let (dependency, symbol) =
+            dependency_import_binding_for_local_name(self, &module, &target_occurrence.local_name)?;
+        let mut references = source
+            .match_indices(&target_occurrence.local_name)
+            .filter_map(|(start, _)| {
+                let occurrence = dependency_import_occurrence_in_module(&module, start)?;
+                if occurrence.span.start != start
+                    || occurrence.local_name != target_occurrence.local_name
+                {
+                    return None;
+                }
+
+                let (occurrence_dependency, occurrence_symbol) =
+                    dependency_import_binding_for_local_name(
+                        self,
+                        &module,
+                        &occurrence.local_name,
+                    )?;
+                if occurrence_dependency.interface_path != dependency.interface_path
+                    || occurrence_dependency.artifact.package_name
+                        != dependency.artifact.package_name
+                    || occurrence_symbol.source_path != symbol.source_path
+                    || occurrence_symbol.kind != symbol.kind
+                    || occurrence_symbol.name != symbol.name
+                {
+                    return None;
+                }
+
+                Some(ReferenceTarget {
+                    kind: symbol.kind,
+                    name: symbol.name.clone(),
+                    span: occurrence.span,
+                    is_definition: occurrence.is_definition,
+                })
+            })
+            .collect::<Vec<_>>();
+        if references.is_empty() {
+            return None;
+        }
+        references.sort_by_key(|reference| (reference.span.start, reference.span.end));
+        Some(references)
     }
 
     pub fn dependency_target_at(
@@ -1937,6 +1988,7 @@ fn dependency_import_occurrence_in_use_decl(
                 return Some(DependencyImportOccurrence {
                     local_name: binding.local_name,
                     span: binding.definition_span,
+                    is_definition: true,
                 });
             }
         }
@@ -1948,6 +2000,7 @@ fn dependency_import_occurrence_in_use_decl(
         DependencyImportOccurrence {
             local_name: binding.local_name,
             span: binding.definition_span,
+            is_definition: true,
         },
     )
 }
@@ -2198,6 +2251,7 @@ fn dependency_import_occurrence_in_expr(
         .then_some(DependencyImportOccurrence {
             local_name: name.clone(),
             span: expr.span,
+            is_definition: false,
         }),
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => items
             .iter()
@@ -2288,6 +2342,7 @@ fn dependency_import_occurrence_for_path(
         DependencyImportOccurrence {
             local_name: local_name.clone(),
             span,
+            is_definition: false,
         },
     )
 }
