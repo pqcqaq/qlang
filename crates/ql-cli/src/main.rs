@@ -335,8 +335,8 @@ fn run() -> Result<(), u8> {
 }
 
 fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
-    let use_package_check =
-        should_use_package_check(path) || (sync_interfaces && load_project_manifest(path).is_ok());
+    let use_package_check = should_use_package_check(path)
+        || (is_ql_source_file(path) && load_project_manifest(path).is_ok());
     if use_package_check {
         if sync_interfaces {
             for interface_path in sync_reference_interfaces(path, &mut BTreeSet::new())? {
@@ -843,6 +843,14 @@ fn should_use_package_check(path: &Path) -> bool {
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
+}
+
+fn is_ql_source_file(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("ql"))
 }
 
 fn normalize_path(path: &Path) -> String {

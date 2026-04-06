@@ -93,6 +93,81 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn check_source_file_loads_referenced_interfaces() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-source-file");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("app");
+    let source_path = app_root.join("src").join("lib.ql");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check"]).arg(&source_path);
+    let output = run_command_capture(&mut command, "`ql check` source file");
+    let (stdout, stderr) = expect_success(
+        "project-check-source-file-success",
+        "package-aware ql check from source file",
+        &output,
+    )
+    .expect("package-aware ql check from a source file should succeed");
+    expect_stdout_contains_all(
+        "project-check-source-file-success",
+        &stdout,
+        &[
+            &format!("ok: {}", source_path.display()),
+            "loaded interface: ",
+            "dep.qi",
+        ],
+    )
+    .expect("source-file package-aware ql check should report sources and loaded interfaces");
+    assert!(
+        stderr.trim().is_empty(),
+        "expected package-aware ql check stderr to stay empty, got:\n{stderr}"
+    );
+}
+
+#[test]
 fn check_package_dir_reports_missing_dependency_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-check-missing-interface");
