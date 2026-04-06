@@ -74,9 +74,9 @@ Qlang 仓库结构必须同时服务于四类工作：
 └─ qlang.toml                 # Qlang workspace / package manifest
 ```
 
-## 当前已落地结构（2026-03-28）
+## 当前已落地结构（2026-04-06）
 
-当前仓库已经不是早期前端样机，而是覆盖 P1-P6 主干并进入 Phase 7 async/runtime/staticlib/Rust interop 的真实工作区。当前根目录里最关键的已落地部分是：
+当前仓库已经不是早期前端样机，而是覆盖 P1-P6 主干、并行推进 Phase 7 async/runtime/staticlib/Rust interop 与 Phase 8 `.qi`/dependency/cross-file tooling 入口的真实工作区。当前根目录里最关键的已落地部分是：
 
 ```text
 .
