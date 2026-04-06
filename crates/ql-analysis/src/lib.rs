@@ -2853,6 +2853,7 @@ fn dependency_member_completion_binding_for_closure_param(
 }
 
 fn dependency_member_completion_binding_for_pattern(
+    package: &PackageAnalysis,
     pattern: &ql_ast::Pattern,
     binding: &DependencyStructBinding,
     offset: usize,
@@ -2861,10 +2862,28 @@ fn dependency_member_completion_binding_for_pattern(
     if !matches!(kind, DependencyMemberCompletionKind::ValueType) {
         return None;
     }
-    matches!(&pattern.kind, ql_ast::PatternKind::Name(_))
-        .then_some(())
-        .filter(|_| dependency_struct_field_completion_span_contains(pattern.span, offset))
-        .map(|_| binding.clone())
+    match &pattern.kind {
+        ql_ast::PatternKind::Name(_) => {
+            dependency_struct_field_completion_span_contains(pattern.span, offset)
+                .then_some(binding.clone())
+        }
+        ql_ast::PatternKind::Struct { fields, .. } => fields.iter().find_map(|field| {
+            let field_binding = binding
+                .fields
+                .get(&field.name)
+                .and_then(|field| dependency_struct_binding_for_resolved_field(package, field))?;
+            field.pattern.as_ref().and_then(|pattern| {
+                dependency_member_completion_binding_for_pattern(
+                    package,
+                    pattern,
+                    &field_binding,
+                    offset,
+                    kind,
+                )
+            })
+        }),
+        _ => None,
+    }
 }
 
 fn dependency_member_completion_binding_in_block(
@@ -2915,7 +2934,9 @@ fn dependency_member_completion_binding_in_stmt(
                 .and_then(|ty| dependency_struct_binding_for_type_expr(package, module, ty))
                 .or_else(|| dependency_struct_binding_for_expr(package, module, value, scopes));
             let pattern_binding = let_binding.as_ref().and_then(|binding| {
-                dependency_member_completion_binding_for_pattern(pattern, binding, offset, kind)
+                dependency_member_completion_binding_for_pattern(
+                    package, pattern, binding, offset, kind,
+                )
             });
             bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, scopes);
             expr_binding.or(pattern_binding)
@@ -3010,6 +3031,7 @@ fn dependency_member_completion_binding_in_expr(
                 scopes.push(HashMap::new());
                 let pattern_binding = value_binding.as_ref().and_then(|binding| {
                     dependency_member_completion_binding_for_pattern(
+                        package,
                         &arm.pattern,
                         binding,
                         offset,
@@ -3017,7 +3039,7 @@ fn dependency_member_completion_binding_in_expr(
                     )
                 });
                 if let Some(binding) = &value_binding {
-                    bind_dependency_struct_match_pattern(&arm.pattern, binding, scopes);
+                    bind_dependency_struct_match_pattern(package, &arm.pattern, binding, scopes);
                 }
                 let binding = pattern_binding.or_else(|| {
                     arm.guard
@@ -4087,7 +4109,7 @@ fn collect_dependency_method_occurrences_in_expr(
             for arm in arms {
                 scopes.push(HashMap::new());
                 if let Some(binding) = &value_binding {
-                    bind_dependency_struct_match_pattern(&arm.pattern, binding, scopes);
+                    bind_dependency_struct_match_pattern(package, &arm.pattern, binding, scopes);
                 }
                 if let Some(guard) = &arm.guard {
                     collect_dependency_method_occurrences_in_expr(
@@ -4587,7 +4609,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
             for arm in arms {
                 scopes.push(HashMap::new());
                 if let Some(binding) = &value_binding {
-                    bind_dependency_struct_match_pattern(&arm.pattern, binding, scopes);
+                    bind_dependency_struct_match_pattern(package, &arm.pattern, binding, scopes);
                 }
                 collect_dependency_struct_field_occurrences_in_pattern(
                     package,
@@ -4930,6 +4952,14 @@ fn dependency_struct_binding_for_member_expr(
     dependency_struct_binding_for_definition_target(package, type_definition)
 }
 
+fn dependency_struct_binding_for_resolved_field(
+    package: &PackageAnalysis,
+    field: &DependencyStructResolvedField,
+) -> Option<DependencyStructBinding> {
+    let type_definition = field.type_definition.as_ref()?;
+    dependency_struct_binding_for_definition_target(package, type_definition)
+}
+
 fn dependency_struct_binding_for_block_expr(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -4978,7 +5008,7 @@ fn dependency_struct_binding_for_match_expr(
         let mut arm_scopes = scopes.to_vec();
         arm_scopes.push(HashMap::new());
         if let Some(binding) = &value_binding {
-            bind_dependency_struct_match_pattern(&arm.pattern, binding, &mut arm_scopes);
+            bind_dependency_struct_match_pattern(package, &arm.pattern, binding, &mut arm_scopes);
         }
         let body_binding =
             dependency_struct_binding_for_expr(package, module, &arm.body, &arm_scopes)?;
@@ -5051,6 +5081,42 @@ fn bind_dependency_struct_param(
         .insert(name.clone(), binding);
 }
 
+fn bind_dependency_struct_pattern(
+    package: &PackageAnalysis,
+    pattern: &ql_ast::Pattern,
+    binding: &DependencyStructBinding,
+    scopes: &mut [HashMap<String, DependencyStructBinding>],
+) {
+    match &pattern.kind {
+        ql_ast::PatternKind::Name(name) => {
+            scopes
+                .last_mut()
+                .expect("scope stack must be non-empty")
+                .insert(name.clone(), binding.clone());
+        }
+        ql_ast::PatternKind::Struct { fields, .. } => {
+            for field in fields {
+                let Some(field_binding) = binding
+                    .fields
+                    .get(&field.name)
+                    .and_then(|field| dependency_struct_binding_for_resolved_field(package, field))
+                else {
+                    continue;
+                };
+                if let Some(pattern) = &field.pattern {
+                    bind_dependency_struct_pattern(package, pattern, &field_binding, scopes);
+                } else {
+                    scopes
+                        .last_mut()
+                        .expect("scope stack must be non-empty")
+                        .insert(field.name.clone(), field_binding);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn bind_dependency_struct_closure_param(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -5077,33 +5143,22 @@ fn bind_dependency_struct_let(
     value: &ql_ast::Expr,
     scopes: &mut [HashMap<String, DependencyStructBinding>],
 ) {
-    let ql_ast::PatternKind::Name(name) = &pattern.kind else {
-        return;
-    };
     let binding = ty
         .and_then(|ty| dependency_struct_binding_for_type_expr(package, module, ty))
         .or_else(|| dependency_struct_binding_for_expr(package, module, value, scopes));
     let Some(binding) = binding else {
         return;
     };
-    scopes
-        .last_mut()
-        .expect("scope stack must be non-empty")
-        .insert(name.clone(), binding);
+    bind_dependency_struct_pattern(package, pattern, &binding, scopes);
 }
 
 fn bind_dependency_struct_match_pattern(
+    package: &PackageAnalysis,
     pattern: &ql_ast::Pattern,
     binding: &DependencyStructBinding,
     scopes: &mut [HashMap<String, DependencyStructBinding>],
 ) {
-    let ql_ast::PatternKind::Name(name) = &pattern.kind else {
-        return;
-    };
-    scopes
-        .last_mut()
-        .expect("scope stack must be non-empty")
-        .insert(name.clone(), binding.clone());
+    bind_dependency_struct_pattern(package, pattern, binding, scopes);
 }
 
 fn push_dependency_struct_field_occurrence_for_binding(
