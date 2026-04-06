@@ -537,12 +537,44 @@ impl PackageAnalysis {
         })
     }
 
+    pub fn dependency_struct_field_hover_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyHoverInfo> {
+        let target = self.dependency_struct_field_target_in_source_at(source, offset)?;
+        Some(DependencyHoverInfo {
+            span: target.reference_span,
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Field,
+            name: target.name,
+            detail: target.detail,
+        })
+    }
+
     pub fn dependency_struct_field_definition_at(
         &self,
         analysis: &Analysis,
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
         let target = self.dependency_struct_field_target_at(analysis, offset)?;
+        Some(DependencyDefinitionTarget {
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Field,
+            name: target.name,
+            path: target.path,
+            span: target.definition_span,
+        })
+    }
+
+    pub fn dependency_struct_field_definition_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let target = self.dependency_struct_field_target_in_source_at(source, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
             source_path: target.source_path,
@@ -716,6 +748,27 @@ impl PackageAnalysis {
         offset: usize,
     ) -> Option<DependencyStructFieldTarget> {
         self.dependency_struct_field_occurrences(analysis.ast())
+            .into_iter()
+            .find(|occurrence| occurrence.reference_span.contains(offset))
+            .map(|occurrence| DependencyStructFieldTarget {
+                reference_span: occurrence.reference_span,
+                package_name: occurrence.package_name,
+                source_path: occurrence.source_path,
+                struct_name: occurrence.struct_name,
+                name: occurrence.name,
+                detail: occurrence.detail,
+                path: occurrence.path,
+                definition_span: occurrence.definition_span,
+            })
+    }
+
+    fn dependency_struct_field_target_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyStructFieldTarget> {
+        let module = parse_source(source).ok()?;
+        self.dependency_struct_field_occurrences(&module)
             .into_iter()
             .find(|occurrence| occurrence.reference_span.contains(offset))
             .map(|occurrence| DependencyStructFieldTarget {

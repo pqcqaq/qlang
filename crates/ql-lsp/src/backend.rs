@@ -17,11 +17,11 @@ use tower_lsp::{Client, LanguageServer};
 use crate::bridge::{
     completion_for_analysis, completion_for_dependency_imports,
     completion_for_dependency_struct_fields, completion_for_dependency_variants,
-    completion_for_package_analysis, definition_for_dependency_variants,
-    definition_for_package_analysis, diagnostics_to_lsp, hover_for_dependency_variants,
-    hover_for_package_analysis, prepare_rename_for_analysis, references_for_analysis,
-    references_for_package_analysis, rename_for_analysis, semantic_tokens_for_analysis,
-    semantic_tokens_legend,
+    completion_for_package_analysis, definition_for_dependency_struct_fields,
+    definition_for_dependency_variants, definition_for_package_analysis, diagnostics_to_lsp,
+    hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
+    prepare_rename_for_analysis, references_for_analysis, references_for_package_analysis,
+    rename_for_analysis, semantic_tokens_for_analysis, semantic_tokens_legend,
 };
 use crate::store::DocumentStore;
 
@@ -151,6 +151,9 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            if let Some(hover) = hover_for_dependency_struct_fields(&source, &package, position) {
+                return Ok(Some(hover));
+            }
             if let Some(hover) = hover_for_dependency_variants(&source, &package, position) {
                 return Ok(Some(hover));
             }
@@ -181,6 +184,11 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            if let Some(definition) =
+                definition_for_dependency_struct_fields(&source, &package, position)
+            {
+                return Ok(Some(definition));
+            }
             if let Some(definition) =
                 definition_for_dependency_variants(&source, &package, position)
             {
