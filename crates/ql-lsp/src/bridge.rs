@@ -8,6 +8,7 @@ use ql_diagnostics::{
     Diagnostic as CompilerDiagnostic, DiagnosticSeverity as CompilerSeverity, Label,
 };
 use ql_span::Span;
+use tower_lsp::lsp_types::request::GotoDeclarationResponse;
 use tower_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionResponse,
     CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
@@ -307,6 +308,15 @@ pub fn definition_for_analysis(
     )))
 }
 
+pub fn declaration_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: Position,
+) -> Option<GotoDeclarationResponse> {
+    definition_for_analysis(uri, source, analysis, position).map(definition_to_declaration)
+}
+
 pub fn definition_for_package_analysis(
     uri: &Url,
     source: &str,
@@ -354,6 +364,17 @@ pub fn definition_for_package_analysis(
     definition_for_analysis(uri, source, analysis, position)
 }
 
+pub fn declaration_for_package_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<GotoDeclarationResponse> {
+    definition_for_package_analysis(uri, source, analysis, package, position)
+        .map(definition_to_declaration)
+}
+
 pub fn definition_for_dependency_variants(
     source: &str,
     package: &PackageAnalysis,
@@ -367,6 +388,14 @@ pub fn definition_for_dependency_variants(
         target_uri,
         span_to_range(&target_source, target.span),
     )))
+}
+
+pub fn declaration_for_dependency_variants(
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<GotoDeclarationResponse> {
+    definition_for_dependency_variants(source, package, position).map(definition_to_declaration)
 }
 
 pub fn definition_for_dependency_struct_fields(
@@ -384,6 +413,15 @@ pub fn definition_for_dependency_struct_fields(
     )))
 }
 
+pub fn declaration_for_dependency_struct_fields(
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<GotoDeclarationResponse> {
+    definition_for_dependency_struct_fields(source, package, position)
+        .map(definition_to_declaration)
+}
+
 pub fn definition_for_dependency_methods(
     source: &str,
     package: &PackageAnalysis,
@@ -399,6 +437,14 @@ pub fn definition_for_dependency_methods(
     )))
 }
 
+pub fn declaration_for_dependency_methods(
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<GotoDeclarationResponse> {
+    definition_for_dependency_methods(source, package, position).map(definition_to_declaration)
+}
+
 pub fn definition_for_dependency_imports(
     source: &str,
     package: &PackageAnalysis,
@@ -412,6 +458,14 @@ pub fn definition_for_dependency_imports(
         target_uri,
         span_to_range(&target_source, target.span),
     )))
+}
+
+pub fn declaration_for_dependency_imports(
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<GotoDeclarationResponse> {
+    definition_for_dependency_imports(source, package, position).map(definition_to_declaration)
 }
 
 pub fn references_for_analysis(
@@ -931,6 +985,14 @@ fn render_hover_markdown(info: &HoverInfo) -> String {
     }
 
     text
+}
+
+fn definition_to_declaration(response: GotoDefinitionResponse) -> GotoDeclarationResponse {
+    match response {
+        GotoDefinitionResponse::Scalar(location) => GotoDeclarationResponse::Scalar(location),
+        GotoDefinitionResponse::Array(locations) => GotoDeclarationResponse::Array(locations),
+        GotoDefinitionResponse::Link(links) => GotoDeclarationResponse::Link(links),
+    }
 }
 
 fn symbol_kind_name(kind: SymbolKind) -> &'static str {

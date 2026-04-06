@@ -2,15 +2,16 @@ use ql_analysis::{
     Analysis, PackageAnalysisError, analyze_package, analyze_package_dependencies, analyze_source,
 };
 use tower_lsp::jsonrpc::{Error, Result};
+use tower_lsp::lsp_types::request::{GotoDeclarationParams, GotoDeclarationResponse};
 use tower_lsp::lsp_types::{
-    CompletionOptions, CompletionParams, CompletionResponse, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability, InitializeParams,
-    InitializeResult, InitializedParams, Location, MessageType, OneOf, PrepareRenameResponse,
-    ReferenceParams, RenameOptions, RenameParams, SemanticTokensFullOptions, SemanticTokensOptions,
-    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
-    ServerCapabilities, ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, Url, WorkspaceEdit,
+    CompletionOptions, CompletionParams, CompletionResponse, DeclarationCapability,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
+    InitializeParams, InitializeResult, InitializedParams, Location, MessageType, OneOf,
+    PrepareRenameResponse, ReferenceParams, RenameOptions, RenameParams, SemanticTokensFullOptions,
+    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, Url, WorkspaceEdit,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -18,10 +19,13 @@ use crate::bridge::{
     completion_for_analysis, completion_for_dependency_imports,
     completion_for_dependency_member_fields, completion_for_dependency_methods,
     completion_for_dependency_struct_fields, completion_for_dependency_variants,
-    completion_for_package_analysis, definition_for_dependency_imports,
-    definition_for_dependency_methods, definition_for_dependency_struct_fields,
-    definition_for_dependency_variants, definition_for_package_analysis, diagnostics_to_lsp,
-    hover_for_dependency_imports, hover_for_dependency_methods, hover_for_dependency_struct_fields,
+    completion_for_package_analysis, declaration_for_dependency_imports,
+    declaration_for_dependency_methods, declaration_for_dependency_struct_fields,
+    declaration_for_dependency_variants, declaration_for_package_analysis,
+    definition_for_dependency_imports, definition_for_dependency_methods,
+    definition_for_dependency_struct_fields, definition_for_dependency_variants,
+    definition_for_package_analysis, diagnostics_to_lsp, hover_for_dependency_imports,
+    hover_for_dependency_methods, hover_for_dependency_struct_fields,
     hover_for_dependency_variants, hover_for_package_analysis, prepare_rename_for_analysis,
     references_for_analysis, references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_variants,
@@ -91,6 +95,7 @@ impl LanguageServer for Backend {
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                declaration_provider: Some(DeclarationCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions::default()),
                 semantic_tokens_provider: Some(
@@ -225,6 +230,53 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(crate::bridge::definition_for_analysis(
+            &uri, &source, &analysis, position,
+        ))
+    }
+
+    async fn goto_declaration(
+        &self,
+        params: GotoDeclarationParams,
+    ) -> Result<Option<GotoDeclarationResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            if let Some(declaration) =
+                declaration_for_dependency_imports(&source, &package, position)
+            {
+                return Ok(Some(declaration));
+            }
+            if let Some(declaration) =
+                declaration_for_dependency_methods(&source, &package, position)
+            {
+                return Ok(Some(declaration));
+            }
+            if let Some(declaration) =
+                declaration_for_dependency_struct_fields(&source, &package, position)
+            {
+                return Ok(Some(declaration));
+            }
+            if let Some(declaration) =
+                declaration_for_dependency_variants(&source, &package, position)
+            {
+                return Ok(Some(declaration));
+            }
+            let Ok(analysis) = analyze_source(&source) else {
+                return Ok(None);
+            };
+            return Ok(declaration_for_package_analysis(
+                &uri, &source, &analysis, &package, position,
+            ));
+        }
+
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(crate::bridge::declaration_for_analysis(
             &uri, &source, &analysis, position,
         ))
     }

@@ -8,15 +8,16 @@ use ql_lsp::bridge::{
     completion_for_dependency_imports, completion_for_dependency_member_fields,
     completion_for_dependency_methods, completion_for_dependency_struct_fields,
     completion_for_dependency_variants, completion_for_package_analysis,
-    definition_for_dependency_imports, definition_for_dependency_methods,
-    definition_for_dependency_struct_fields, definition_for_dependency_variants,
-    definition_for_package_analysis, hover_for_dependency_imports, hover_for_dependency_methods,
-    hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
-    references_for_dependency_imports, references_for_dependency_methods,
-    references_for_dependency_struct_fields, references_for_dependency_variants,
-    references_for_package_analysis, span_to_range,
+    declaration_for_dependency_methods, definition_for_dependency_imports,
+    definition_for_dependency_methods, definition_for_dependency_struct_fields,
+    definition_for_dependency_variants, definition_for_package_analysis,
+    hover_for_dependency_imports, hover_for_dependency_methods, hover_for_dependency_struct_fields,
+    hover_for_dependency_variants, hover_for_package_analysis, references_for_dependency_imports,
+    references_for_dependency_methods, references_for_dependency_struct_fields,
+    references_for_dependency_variants, references_for_package_analysis, span_to_range,
 };
 use ql_span::Span;
+use tower_lsp::lsp_types::request::GotoDeclarationResponse;
 use tower_lsp::lsp_types::{
     CompletionItemKind, CompletionResponse, CompletionTextEdit, GotoDefinitionResponse,
     HoverContents, Location, Position, TextEdit, Url,
@@ -1956,6 +1957,33 @@ pub fn read(config: Cfg) -> Int {
         range,
         span_to_range(&artifact, Span::new(start, start + "get".len()))
     );
+
+    let declaration = declaration_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, config_method),
+    )
+    .expect(
+        "dependency struct member method declaration should exist even without semantic analysis",
+    );
+    let GotoDeclarationResponse::Scalar(Location {
+        uri: declaration_uri,
+        range: declaration_range,
+    }) = declaration
+    else {
+        panic!("declaration should be one location")
+    };
+    assert_eq!(
+        declaration_uri
+            .to_file_path()
+            .expect("declaration URI should convert to a file path")
+            .canonicalize()
+            .expect("declaration path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    assert_eq!(declaration_range, range);
 
     let with_declaration = references_for_dependency_methods(
         &uri,
