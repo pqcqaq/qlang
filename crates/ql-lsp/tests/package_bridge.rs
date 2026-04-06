@@ -845,6 +845,141 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn package_bridge_surfaces_dependency_variant_references() {
+    let temp = TempDir::new("ql-lsp-package-variant-references");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+
+pub fn first() -> Int {
+    let value = Cmd.Retry(1)
+    return 0
+}
+
+pub fn second() -> Int {
+    let value = Cmd.Retry(2)
+    return 1
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "Retry", 2)),
+        true,
+    )
+    .expect("dependency variant references should exist");
+    assert_eq!(with_declaration.len(), 3);
+    assert_eq!(
+        with_declaration[0]
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = "Retry";
+    let start = artifact
+        .find(snippet)
+        .expect("variant name should exist in dependency artifact");
+    assert_eq!(
+        with_declaration[0].range,
+        span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
+
+    let without_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "Retry", 2)),
+        false,
+    )
+    .expect("dependency variant references should exist without declaration");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+    assert_eq!(
+        without_declaration[0].range,
+        span_to_range(
+            source,
+            Span::new(
+                nth_offset(source, "Retry", 1),
+                nth_offset(source, "Retry", 1) + "Retry".len(),
+            ),
+        )
+    );
+    assert_eq!(
+        without_declaration[1].range,
+        span_to_range(
+            source,
+            Span::new(
+                nth_offset(source, "Retry", 2),
+                nth_offset(source, "Retry", 2) + "Retry".len(),
+            ),
+        )
+    );
+}
+
+#[test]
 fn package_bridge_surfaces_dependency_references() {
     let temp = TempDir::new("ql-lsp-package-refs");
     let app_root = temp.path().join("workspace").join("app");

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{SymbolKind, analyze_package, analyze_source};
+use ql_span::Span;
 
 struct TempDir {
     path: PathBuf,
@@ -274,4 +275,88 @@ pub fn main() -> Int {
         .get(definition.span.start..definition.span.end)
         .expect("definition span should slice artifact text");
     assert_eq!(snippet.trim(), "Retry");
+}
+
+#[test]
+fn package_analysis_exposes_dependency_variant_references() {
+    let temp = TempDir::new("ql-analysis-package-variant-references");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+
+pub fn first() -> Int {
+    let value = Cmd.Retry(1)
+    return 0
+}
+
+pub fn second() -> Int {
+    let value = Cmd.Retry(2)
+    return 1
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let references = package
+        .dependency_variant_references_at(&analysis, source, nth_offset(source, "Retry", 2))
+        .expect("dependency variant references should exist");
+    assert_eq!(references.len(), 2);
+    assert!(
+        references
+            .iter()
+            .all(|reference| reference.kind == SymbolKind::Variant)
+    );
+    assert!(references.iter().all(|reference| !reference.is_definition));
+    assert_eq!(references[0].name, "Retry");
+    assert_eq!(
+        references[0].span,
+        Span::new(
+            nth_offset(source, "Retry", 1),
+            nth_offset(source, "Retry", 1) + "Retry".len(),
+        )
+    );
+    assert_eq!(
+        references[1].span,
+        Span::new(
+            nth_offset(source, "Retry", 2),
+            nth_offset(source, "Retry", 2) + "Retry".len(),
+        )
+    );
 }

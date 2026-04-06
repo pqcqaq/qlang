@@ -62,7 +62,7 @@
 - `ql-analysis` / `ql-lsp` 当前已开放 imported dependency symbol 的最小 cross-file hover / definition / references：当当前文件里的 import binding 能唯一映射到 dependency `.qi` public symbol 时，hover 会显示 dependency declaration，go to definition 会跳到 dependency `.qi` artifact 内的 declaration 位置，references 会在需要时把 dependency `.qi` declaration 与当前文件 import/use 位置一起返回；当前这一合同同样覆盖 grouped import alias 形态，例如 `use demo.dep.{exported as run}`
 - `ql-analysis` / `ql-lsp` 当前也已开放 `use ...` 导入路径位置上的 dependency completion：例如 `use demo.d` 可补全到 `dep`，`use demo.dep.Bu` 与 `use demo.dep.{Bu}` 都可补全到 `.qi` 里的 `Buffer`；grouped import 空补全位当前也会跳过已经写过的项，避免重复提示；该能力当前只覆盖导入路径，不代表更广义 symbol-space cross-file completion 已完成
 - 上述 dependency import completion 当前还额外覆盖了一个编辑中断场景：如果当前文档暂时存在 same-file 语义/语法错误，只要 package manifest 与 dependency `.qi` 仍可装载，`use ...` 导入路径上的 dependency path segment / public symbol completion 仍可继续工作；这条回退路径当前只服务导入补全，不扩展到同文件其它语义补全
-- dependency enum import alias root 的首个非导入路径 contract 现已开放：当 `use demo.dep.Command as Cmd` 唯一映射到 dependency `.qi` 里的 public enum 时，`Cmd.Re` 这类路径位置现在会补全 dependency variants，而 `Cmd.Retry` 这类已写出的 variant token 也已支持 cross-file hover / definition；当前这条能力只覆盖 enum variant roots，还不代表更广义 dependency member completion 或 variant references 已完成
+- dependency enum import alias root 的首个非导入路径 contract 现已开放：当 `use demo.dep.Command as Cmd` 唯一映射到 dependency `.qi` 里的 public enum 时，`Cmd.Re` 这类路径位置现在会补全 dependency variants，而 `Cmd.Retry` 这类已写出的 variant token 也已支持 cross-file hover / definition / references；当前这条能力只覆盖 enum variant roots，还不代表更广义 dependency member completion 已完成
 
 当前仍未开放：
 

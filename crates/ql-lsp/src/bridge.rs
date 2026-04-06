@@ -232,6 +232,28 @@ pub fn references_for_package_analysis(
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
     let offset = position_to_offset(source, position)?;
+    if let Some(local_references) =
+        package.dependency_variant_references_at(analysis, source, offset)
+    {
+        let mut locations = Vec::new();
+        if include_declaration {
+            let target = package.dependency_variant_definition_at(analysis, source, offset)?;
+            let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
+            let target_uri = Url::from_file_path(&target.path).ok()?;
+            locations.push(Location::new(
+                target_uri,
+                span_to_range(&target_source, target.span),
+            ));
+        }
+
+        locations.extend(
+            local_references
+                .into_iter()
+                .map(|reference| Location::new(uri.clone(), span_to_range(source, reference.span))),
+        );
+        return Some(locations);
+    }
+
     if let Some(target) = package.dependency_target_at(analysis, offset) {
         let mut locations = Vec::new();
         if include_declaration {

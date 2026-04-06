@@ -373,6 +373,48 @@ impl PackageAnalysis {
         })
     }
 
+    pub fn dependency_variant_references_at(
+        &self,
+        analysis: &Analysis,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<ReferenceTarget>> {
+        let target = self.dependency_variant_target_at(analysis, source, offset)?;
+        let mut references = source
+            .match_indices(&target.name)
+            .filter_map(|(start, _)| {
+                let (root_offset, span, variant_name) =
+                    dependency_variant_reference_at(source, start)?;
+                if span.start != start || variant_name != target.name {
+                    return None;
+                }
+
+                let (binding, _) = analysis.import_binding_at(root_offset)?;
+                let (dependency, symbol) = self.resolve_dependency_import_binding(&binding)?;
+                if dependency.interface_path != target.path
+                    || dependency.artifact.package_name != target.package_name
+                    || symbol.kind != SymbolKind::Enum
+                    || symbol.source_path != target.source_path
+                    || symbol.name != target.enum_name
+                {
+                    return None;
+                }
+
+                Some(ReferenceTarget {
+                    kind: SymbolKind::Variant,
+                    name: target.name.clone(),
+                    span,
+                    is_definition: false,
+                })
+            })
+            .collect::<Vec<_>>();
+        if references.is_empty() {
+            return None;
+        }
+        references.sort_by_key(|reference| (reference.span.start, reference.span.end));
+        Some(references)
+    }
+
     pub fn dependency_hover_at(
         &self,
         analysis: &Analysis,
@@ -465,6 +507,7 @@ impl PackageAnalysis {
             reference_span,
             package_name: dependency.artifact.package_name.clone(),
             source_path: symbol.source_path.clone(),
+            enum_name: symbol.name.clone(),
             name: variant.name.clone(),
             detail: dependency_variant_detail(&symbol.name, variant),
             path: dependency.interface_path.clone(),
@@ -478,6 +521,7 @@ struct DependencyVariantTarget {
     reference_span: Span,
     package_name: String,
     source_path: String,
+    enum_name: String,
     name: String,
     detail: String,
     path: PathBuf,
