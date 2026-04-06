@@ -15,7 +15,8 @@ use tower_lsp::lsp_types::{
 use tower_lsp::{Client, LanguageServer};
 
 use crate::bridge::{
-    completion_for_analysis, completion_for_dependency_imports, completion_for_dependency_methods,
+    completion_for_analysis, completion_for_dependency_imports,
+    completion_for_dependency_member_fields, completion_for_dependency_methods,
     completion_for_dependency_struct_fields, completion_for_dependency_variants,
     completion_for_package_analysis, definition_for_dependency_imports,
     definition_for_dependency_methods, definition_for_dependency_struct_fields,
@@ -309,6 +310,11 @@ impl LanguageServer for Backend {
             }
             if let Some(completion) =
                 completion_for_dependency_struct_fields(&source, package, position)
+            {
+                return Ok(Some(completion));
+            }
+            if let Some(completion) =
+                completion_for_dependency_member_fields(&source, package, position)
             {
                 return Ok(Some(completion));
             }

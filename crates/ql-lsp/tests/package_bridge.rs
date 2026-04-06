@@ -5,15 +5,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    completion_for_dependency_imports, completion_for_dependency_methods,
-    completion_for_dependency_struct_fields, completion_for_dependency_variants,
-    completion_for_package_analysis, definition_for_dependency_imports,
-    definition_for_dependency_methods, definition_for_dependency_struct_fields,
-    definition_for_dependency_variants, definition_for_package_analysis,
-    hover_for_dependency_imports, hover_for_dependency_methods, hover_for_dependency_struct_fields,
-    hover_for_dependency_variants, hover_for_package_analysis, references_for_dependency_imports,
-    references_for_dependency_methods, references_for_dependency_struct_fields,
-    references_for_dependency_variants, references_for_package_analysis, span_to_range,
+    completion_for_dependency_imports, completion_for_dependency_member_fields,
+    completion_for_dependency_methods, completion_for_dependency_struct_fields,
+    completion_for_dependency_variants, completion_for_package_analysis,
+    definition_for_dependency_imports, definition_for_dependency_methods,
+    definition_for_dependency_struct_fields, definition_for_dependency_variants,
+    definition_for_package_analysis, hover_for_dependency_imports, hover_for_dependency_methods,
+    hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
+    references_for_dependency_imports, references_for_dependency_methods,
+    references_for_dependency_struct_fields, references_for_dependency_variants,
+    references_for_package_analysis, span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
@@ -2136,6 +2137,144 @@ packages = ["../dep"]
     assert_eq!(items[0].label, "get");
     assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
     assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+}
+
+#[test]
+fn package_bridge_completes_dependency_struct_member_fields() {
+    let temp = TempDir::new("ql-lsp-package-struct-member-field-completion");
+    let app_root = temp.path().join("workspace").join("app");
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let built = Cfg { value: 1 }
+    return config.va + built.va
+}
+"#;
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let analysis = analyze_source(source).expect("analysis should succeed for completion query");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
+    ) else {
+        panic!("dependency struct member field completion should exist");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "value");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
+}
+
+#[test]
+fn package_bridge_completes_dependency_struct_member_fields_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-package-struct-member-field-broken-completion");
+    let app_root = temp.path().join("workspace").join("app");
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let built = Cfg { value: 1 }
+    let broken: Int = "oops"
+    return config.va + built.va
+}
+"#;
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_dependency_member_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
+    ) else {
+        panic!("dependency struct member field completion should exist without semantic analysis");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "value");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
 }
 
 #[test]

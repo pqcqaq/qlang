@@ -525,7 +525,13 @@ impl PackageAnalysis {
         offset: usize,
     ) -> Option<Vec<CompletionItem>> {
         let module = parse_source(source).ok()?;
-        let binding = dependency_method_completion_binding(self, &module, source, offset)?;
+        let binding = dependency_member_completion_binding(
+            self,
+            &module,
+            source,
+            offset,
+            DependencyMemberCompletionKind::Method,
+        )?;
         let mut items = binding
             .methods
             .values()
@@ -534,6 +540,41 @@ impl PackageAnalysis {
                 insert_text: method.name.clone(),
                 kind: SymbolKind::Method,
                 detail: method.detail.clone(),
+                ty: None,
+            })
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return None;
+        }
+        items.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| left.detail.cmp(&right.detail))
+        });
+        Some(items)
+    }
+
+    pub fn dependency_member_field_completions_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<CompletionItem>> {
+        let module = parse_source(source).ok()?;
+        let binding = dependency_member_completion_binding(
+            self,
+            &module,
+            source,
+            offset,
+            DependencyMemberCompletionKind::Field,
+        )?;
+        let mut items = binding
+            .fields
+            .values()
+            .map(|field| CompletionItem {
+                label: field.name.clone(),
+                insert_text: field.name.clone(),
+                kind: SymbolKind::Field,
+                detail: field.detail.clone(),
                 ty: None,
             })
             .collect::<Vec<_>>();
@@ -2398,20 +2439,28 @@ fn dependency_struct_field_completion_span_contains(span: Span, offset: usize) -
     span.start <= offset && offset <= span.end
 }
 
-fn dependency_method_completion_binding(
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DependencyMemberCompletionKind {
+    Field,
+    Method,
+}
+
+fn dependency_member_completion_binding(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     source: &str,
     offset: usize,
+    kind: DependencyMemberCompletionKind,
 ) -> Option<DependencyStructBinding> {
     let mut scopes = vec![HashMap::new()];
     for item in &module.items {
-        if let Some(binding) = dependency_method_completion_binding_in_item(
+        if let Some(binding) = dependency_member_completion_binding_in_item(
             package,
             module,
             item,
             source,
             offset,
+            kind,
             &mut scopes,
         ) {
             return Some(binding);
@@ -2420,12 +2469,13 @@ fn dependency_method_completion_binding(
     None
 }
 
-fn dependency_method_completion_binding_in_item(
+fn dependency_member_completion_binding_in_item(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     item: &ql_ast::Item,
     source: &str,
     offset: usize,
+    kind: DependencyMemberCompletionKind,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
 ) -> Option<DependencyStructBinding> {
     match &item.kind {
@@ -2435,26 +2485,27 @@ fn dependency_method_completion_binding_in_item(
             for param in &function.params {
                 bind_dependency_struct_param(package, module, param, scopes);
             }
-            let binding = dependency_method_completion_binding_in_block(
-                package, module, body, source, offset, scopes,
+            let binding = dependency_member_completion_binding_in_block(
+                package, module, body, source, offset, kind, scopes,
             );
             scopes.pop();
             binding
         }
         AstItemKind::Const(global) | AstItemKind::Static(global) => {
-            dependency_method_completion_binding_in_expr(
+            dependency_member_completion_binding_in_expr(
                 package,
                 module,
                 &global.value,
                 source,
                 offset,
+                kind,
                 scopes,
             )
         }
         AstItemKind::Struct(struct_decl) => struct_decl.fields.iter().find_map(|field| {
             field.default.as_ref().and_then(|default| {
-                dependency_method_completion_binding_in_expr(
-                    package, module, default, source, offset, scopes,
+                dependency_member_completion_binding_in_expr(
+                    package, module, default, source, offset, kind, scopes,
                 )
             })
         }),
@@ -2467,8 +2518,8 @@ fn dependency_method_completion_binding_in_item(
                 for param in &method.params {
                     bind_dependency_struct_param(package, module, param, scopes);
                 }
-                let binding = dependency_method_completion_binding_in_block(
-                    package, module, body, source, offset, scopes,
+                let binding = dependency_member_completion_binding_in_block(
+                    package, module, body, source, offset, kind, scopes,
                 );
                 scopes.pop();
                 if binding.is_some() {
@@ -2486,8 +2537,8 @@ fn dependency_method_completion_binding_in_item(
                 for param in &method.params {
                     bind_dependency_struct_param(package, module, param, scopes);
                 }
-                let binding = dependency_method_completion_binding_in_block(
-                    package, module, body, source, offset, scopes,
+                let binding = dependency_member_completion_binding_in_block(
+                    package, module, body, source, offset, kind, scopes,
                 );
                 scopes.pop();
                 if binding.is_some() {
@@ -2505,8 +2556,8 @@ fn dependency_method_completion_binding_in_item(
                 for param in &method.params {
                     bind_dependency_struct_param(package, module, param, scopes);
                 }
-                let binding = dependency_method_completion_binding_in_block(
-                    package, module, body, source, offset, scopes,
+                let binding = dependency_member_completion_binding_in_block(
+                    package, module, body, source, offset, kind, scopes,
                 );
                 scopes.pop();
                 if binding.is_some() {
@@ -2519,73 +2570,77 @@ fn dependency_method_completion_binding_in_item(
     }
 }
 
-fn dependency_method_completion_binding_in_block(
+fn dependency_member_completion_binding_in_block(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     block: &ql_ast::Block,
     source: &str,
     offset: usize,
+    kind: DependencyMemberCompletionKind,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
 ) -> Option<DependencyStructBinding> {
     scopes.push(HashMap::new());
     for stmt in &block.statements {
-        if let Some(binding) = dependency_method_completion_binding_in_stmt(
-            package, module, stmt, source, offset, scopes,
+        if let Some(binding) = dependency_member_completion_binding_in_stmt(
+            package, module, stmt, source, offset, kind, scopes,
         ) {
             scopes.pop();
             return Some(binding);
         }
     }
     let binding = block.tail.as_ref().and_then(|tail| {
-        dependency_method_completion_binding_in_expr(package, module, tail, source, offset, scopes)
+        dependency_member_completion_binding_in_expr(
+            package, module, tail, source, offset, kind, scopes,
+        )
     });
     scopes.pop();
     binding
 }
 
-fn dependency_method_completion_binding_in_stmt(
+fn dependency_member_completion_binding_in_stmt(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     stmt: &ql_ast::Stmt,
     source: &str,
     offset: usize,
+    kind: DependencyMemberCompletionKind,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
 ) -> Option<DependencyStructBinding> {
     match &stmt.kind {
         ql_ast::StmtKind::Let {
             pattern, ty, value, ..
         } => {
-            let binding = dependency_method_completion_binding_in_expr(
-                package, module, value, source, offset, scopes,
+            let binding = dependency_member_completion_binding_in_expr(
+                package, module, value, source, offset, kind, scopes,
             );
             bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, scopes);
             binding
         }
         ql_ast::StmtKind::Return(Some(expr))
         | ql_ast::StmtKind::Defer(expr)
-        | ql_ast::StmtKind::Expr { expr, .. } => dependency_method_completion_binding_in_expr(
-            package, module, expr, source, offset, scopes,
+        | ql_ast::StmtKind::Expr { expr, .. } => dependency_member_completion_binding_in_expr(
+            package, module, expr, source, offset, kind, scopes,
         ),
         ql_ast::StmtKind::While { condition, body } => {
-            dependency_method_completion_binding_in_expr(
-                package, module, condition, source, offset, scopes,
+            dependency_member_completion_binding_in_expr(
+                package, module, condition, source, offset, kind, scopes,
             )
             .or_else(|| {
-                dependency_method_completion_binding_in_block(
-                    package, module, body, source, offset, scopes,
+                dependency_member_completion_binding_in_block(
+                    package, module, body, source, offset, kind, scopes,
                 )
             })
         }
-        ql_ast::StmtKind::Loop { body } => dependency_method_completion_binding_in_block(
-            package, module, body, source, offset, scopes,
+        ql_ast::StmtKind::Loop { body } => dependency_member_completion_binding_in_block(
+            package, module, body, source, offset, kind, scopes,
         ),
         ql_ast::StmtKind::For { iterable, body, .. } => {
-            dependency_method_completion_binding_in_expr(
-                package, module, iterable, source, offset, scopes,
+            dependency_member_completion_binding_in_expr(
+                package, module, iterable, source, offset, kind, scopes,
             )
             .or_else(|| {
-                dependency_method_completion_binding_in_block(
-                    package, module, body, source, offset, scopes,
+                dependency_member_completion_binding_in_block(
+                    package, module, body, source, offset, kind, scopes,
                 )
             })
         }
@@ -2595,53 +2650,55 @@ fn dependency_method_completion_binding_in_stmt(
     }
 }
 
-fn dependency_method_completion_binding_in_expr(
+fn dependency_member_completion_binding_in_expr(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     expr: &ql_ast::Expr,
     source: &str,
     offset: usize,
+    kind: DependencyMemberCompletionKind,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
 ) -> Option<DependencyStructBinding> {
     match &expr.kind {
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
             items.iter().find_map(|item| {
-                dependency_method_completion_binding_in_expr(
-                    package, module, item, source, offset, scopes,
+                dependency_member_completion_binding_in_expr(
+                    package, module, item, source, offset, kind, scopes,
                 )
             })
         }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
-            dependency_method_completion_binding_in_block(
-                package, module, block, source, offset, scopes,
+            dependency_member_completion_binding_in_block(
+                package, module, block, source, offset, kind, scopes,
             )
         }
         ql_ast::ExprKind::If {
             condition,
             then_branch,
             else_branch,
-        } => dependency_method_completion_binding_in_expr(
-            package, module, condition, source, offset, scopes,
+        } => dependency_member_completion_binding_in_expr(
+            package, module, condition, source, offset, kind, scopes,
         )
         .or_else(|| {
-            dependency_method_completion_binding_in_block(
+            dependency_member_completion_binding_in_block(
                 package,
                 module,
                 then_branch,
                 source,
                 offset,
+                kind,
                 scopes,
             )
         })
         .or_else(|| {
             else_branch.as_ref().and_then(|expr| {
-                dependency_method_completion_binding_in_expr(
-                    package, module, expr, source, offset, scopes,
+                dependency_member_completion_binding_in_expr(
+                    package, module, expr, source, offset, kind, scopes,
                 )
             })
         }),
-        ql_ast::ExprKind::Match { value, arms } => dependency_method_completion_binding_in_expr(
-            package, module, value, source, offset, scopes,
+        ql_ast::ExprKind::Match { value, arms } => dependency_member_completion_binding_in_expr(
+            package, module, value, source, offset, kind, scopes,
         )
         .or_else(|| {
             let value_binding = dependency_struct_binding_for_expr(package, module, value, scopes);
@@ -2654,13 +2711,13 @@ fn dependency_method_completion_binding_in_expr(
                     .guard
                     .as_ref()
                     .and_then(|guard| {
-                        dependency_method_completion_binding_in_expr(
-                            package, module, guard, source, offset, scopes,
+                        dependency_member_completion_binding_in_expr(
+                            package, module, guard, source, offset, kind, scopes,
                         )
                     })
                     .or_else(|| {
-                        dependency_method_completion_binding_in_expr(
-                            package, module, &arm.body, source, offset, scopes,
+                        dependency_member_completion_binding_in_expr(
+                            package, module, &arm.body, source, offset, kind, scopes,
                         )
                     });
                 scopes.pop();
@@ -2675,23 +2732,23 @@ fn dependency_method_completion_binding_in_expr(
             for param in params {
                 bind_dependency_struct_closure_param(package, module, param, scopes);
             }
-            let binding = dependency_method_completion_binding_in_expr(
-                package, module, body, source, offset, scopes,
+            let binding = dependency_member_completion_binding_in_expr(
+                package, module, body, source, offset, kind, scopes,
             );
             scopes.pop();
             binding
         }
-        ql_ast::ExprKind::Call { callee, args } => dependency_method_completion_binding_in_expr(
-            package, module, callee, source, offset, scopes,
+        ql_ast::ExprKind::Call { callee, args } => dependency_member_completion_binding_in_expr(
+            package, module, callee, source, offset, kind, scopes,
         )
         .or_else(|| {
             args.iter().find_map(|arg| match arg {
-                ql_ast::CallArg::Positional(expr) => dependency_method_completion_binding_in_expr(
-                    package, module, expr, source, offset, scopes,
+                ql_ast::CallArg::Positional(expr) => dependency_member_completion_binding_in_expr(
+                    package, module, expr, source, offset, kind, scopes,
                 ),
                 ql_ast::CallArg::Named { value, .. } => {
-                    dependency_method_completion_binding_in_expr(
-                        package, module, value, source, offset, scopes,
+                    dependency_member_completion_binding_in_expr(
+                        package, module, value, source, offset, kind, scopes,
                     )
                 }
             })
@@ -2700,52 +2757,53 @@ fn dependency_method_completion_binding_in_expr(
             object,
             field,
             field_span,
-        } => dependency_method_completion_binding_in_expr(
-            package, module, object, source, offset, scopes,
+        } => dependency_member_completion_binding_in_expr(
+            package, module, object, source, offset, kind, scopes,
         )
         .or_else(|| {
             let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
-            dependency_method_completion_binding_matches(
+            dependency_member_completion_binding_matches(
                 &binding,
                 source,
                 field,
                 *field_span,
                 offset,
+                kind,
             )
             .then_some(binding)
         }),
         ql_ast::ExprKind::Bracket { target, items } => {
-            dependency_method_completion_binding_in_expr(
-                package, module, target, source, offset, scopes,
+            dependency_member_completion_binding_in_expr(
+                package, module, target, source, offset, kind, scopes,
             )
             .or_else(|| {
                 items.iter().find_map(|item| {
-                    dependency_method_completion_binding_in_expr(
-                        package, module, item, source, offset, scopes,
+                    dependency_member_completion_binding_in_expr(
+                        package, module, item, source, offset, kind, scopes,
                     )
                 })
             })
         }
         ql_ast::ExprKind::StructLiteral { fields, .. } => fields.iter().find_map(|field| {
             field.value.as_ref().and_then(|value| {
-                dependency_method_completion_binding_in_expr(
-                    package, module, value, source, offset, scopes,
+                dependency_member_completion_binding_in_expr(
+                    package, module, value, source, offset, kind, scopes,
                 )
             })
         }),
         ql_ast::ExprKind::Binary { left, right, .. } => {
-            dependency_method_completion_binding_in_expr(
-                package, module, left, source, offset, scopes,
+            dependency_member_completion_binding_in_expr(
+                package, module, left, source, offset, kind, scopes,
             )
             .or_else(|| {
-                dependency_method_completion_binding_in_expr(
-                    package, module, right, source, offset, scopes,
+                dependency_member_completion_binding_in_expr(
+                    package, module, right, source, offset, kind, scopes,
                 )
             })
         }
         ql_ast::ExprKind::Unary { expr, .. } | ql_ast::ExprKind::Question(expr) => {
-            dependency_method_completion_binding_in_expr(
-                package, module, expr, source, offset, scopes,
+            dependency_member_completion_binding_in_expr(
+                package, module, expr, source, offset, kind, scopes,
             )
         }
         ql_ast::ExprKind::Name(_)
@@ -2756,22 +2814,36 @@ fn dependency_method_completion_binding_in_expr(
     }
 }
 
-fn dependency_method_completion_binding_matches(
+fn dependency_member_completion_binding_matches(
     binding: &DependencyStructBinding,
     source: &str,
     field_name: &str,
     field_span: Span,
     offset: usize,
+    kind: DependencyMemberCompletionKind,
 ) -> bool {
-    if binding.methods.is_empty()
-        || !dependency_struct_field_completion_span_contains(field_span, offset)
-    {
+    if !dependency_struct_field_completion_span_contains(field_span, offset) {
         return false;
     }
+    let field_prefix_match = binding
+        .fields
+        .keys()
+        .any(|name| name.starts_with(field_name));
+    let method_prefix_match = binding
+        .methods
+        .keys()
+        .any(|name| name.starts_with(field_name));
     let next_non_whitespace = source
         .get(field_span.end..)
         .and_then(|suffix| suffix.chars().find(|ch| !ch.is_whitespace()));
-    next_non_whitespace == Some('(') || !binding.fields.contains_key(field_name)
+    match kind {
+        DependencyMemberCompletionKind::Field => {
+            field_prefix_match && next_non_whitespace != Some('(')
+        }
+        DependencyMemberCompletionKind::Method => {
+            method_prefix_match && (next_non_whitespace == Some('(') || !field_prefix_match)
+        }
+    }
 }
 
 fn dependency_import_occurrence_in_module(
