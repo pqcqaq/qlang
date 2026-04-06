@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -35,11 +36,32 @@ fn run() -> Result<(), u8> {
 
     match command.as_str() {
         "check" => {
-            let Some(path) = args.next() else {
+            let remaining = args.collect::<Vec<_>>();
+            let mut path = None;
+            let mut sync_interfaces = false;
+            for arg in remaining {
+                match arg.as_str() {
+                    "--sync-interfaces" => {
+                        sync_interfaces = true;
+                    }
+                    other if other.starts_with('-') => {
+                        eprintln!("error: unknown `ql check` option `{other}`");
+                        return Err(1);
+                    }
+                    other => {
+                        if path.is_some() {
+                            eprintln!("error: unknown `ql check` argument `{other}`");
+                            return Err(1);
+                        }
+                        path = Some(other.to_owned());
+                    }
+                }
+            }
+            let Some(path) = path else {
                 eprintln!("error: `ql check` expects a file or directory path");
                 return Err(1);
             };
-            check_path(Path::new(&path))
+            check_path(Path::new(&path), sync_interfaces)
         }
         "fmt" => {
             let mut write = false;
@@ -312,8 +334,13 @@ fn run() -> Result<(), u8> {
     }
 }
 
-fn check_path(path: &Path) -> Result<(), u8> {
+fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
     if should_use_package_check(path) {
+        if sync_interfaces {
+            for interface_path in sync_reference_interfaces(path, &mut BTreeSet::new())? {
+                println!("wrote interface: {}", interface_path.display());
+            }
+        }
         match analyze_package(path) {
             Ok(package) => {
                 if package.modules().is_empty() {
@@ -357,6 +384,13 @@ fn check_path(path: &Path) -> Result<(), u8> {
                 return Err(1);
             }
         }
+    }
+
+    if sync_interfaces {
+        eprintln!(
+            "error: `ql check --sync-interfaces` currently requires a package directory or `qlang.toml` path"
+        );
+        return Err(1);
     }
 
     let files = collect_ql_files(path).map_err(|error| {
@@ -641,6 +675,37 @@ fn emit_package_interface_path(
     Ok(output_path)
 }
 
+fn sync_reference_interfaces(
+    path: &Path,
+    visited: &mut BTreeSet<PathBuf>,
+) -> Result<Vec<PathBuf>, u8> {
+    let manifest = load_project_manifest(path).map_err(|error| {
+        eprintln!("error: {error}");
+        1
+    })?;
+    let manifest_path = manifest.manifest_path.clone();
+    if !visited.insert(manifest_path) {
+        return Ok(Vec::new());
+    }
+
+    let mut written = Vec::new();
+    for dependency_manifest in ql_project::load_reference_manifests(&manifest).map_err(|error| {
+        eprintln!("error: {error}");
+        1
+    })? {
+        written.extend(sync_reference_interfaces(
+            &dependency_manifest.manifest_path,
+            visited,
+        )?);
+        written.push(emit_package_interface_path(
+            &dependency_manifest.manifest_path,
+            None,
+            "`ql check --sync-interfaces`",
+        )?);
+    }
+    Ok(written)
+}
+
 fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
     let analysis = analyze_semantics(source)?;
     if analysis.has_errors() {
@@ -837,7 +902,7 @@ fn print_package_analysis_error(error: &PackageAnalysisError) {
 fn print_usage() {
     eprintln!("Qlang CLI");
     eprintln!("usage:");
-    eprintln!("  ql check <file-or-dir>");
+    eprintln!("  ql check <file-or-dir> [--sync-interfaces]");
     eprintln!(
         "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
     );

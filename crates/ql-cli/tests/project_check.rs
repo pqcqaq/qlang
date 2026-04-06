@@ -147,3 +147,83 @@ pub fn main() -> Int {
     )
     .expect("missing dependency interface should surface a clear error");
 }
+
+#[test]
+fn check_package_dir_syncs_missing_dependency_interfaces() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-sync-interfaces");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("app");
+    let source_path = app_root.join("src").join("lib.ql");
+    let interface_path = dep_root.join("dep.qi");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/lib.ql",
+        r#"
+package demo.dep
+
+pub fn exported() -> Int {
+    return 7
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check", "--sync-interfaces"]).arg(&app_root);
+    let output = run_command_capture(&mut command, "`ql check --sync-interfaces` package dir");
+    let (stdout, stderr) = expect_success(
+        "project-check-sync-interfaces",
+        "package-aware ql check with synced dependency interfaces",
+        &output,
+    )
+    .expect("syncing missing dependency interfaces should let package-aware ql check succeed");
+    expect_stdout_contains_all(
+        "project-check-sync-interfaces",
+        &stdout,
+        &[
+            "wrote interface: ",
+            "dep.qi",
+            &format!("ok: {}", source_path.display()),
+            "loaded interface: ",
+        ],
+    )
+    .expect("syncing missing dependency interfaces should report emitted and loaded interfaces");
+    assert!(
+        interface_path.is_file(),
+        "expected synced dependency interface at `{}`",
+        interface_path.display()
+    );
+    assert!(
+        stderr.trim().is_empty(),
+        "expected package-aware ql check stderr to stay empty, got:\n{stderr}"
+    );
+}
