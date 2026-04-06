@@ -317,6 +317,104 @@ impl DependencyInterface {
                 _ => None,
             })
     }
+
+    fn struct_methods_for(
+        &self,
+        symbol: &DependencySymbol,
+    ) -> HashMap<String, DependencyStructResolvedMethod> {
+        if symbol.kind != SymbolKind::Struct {
+            return HashMap::new();
+        }
+
+        let mut impl_candidates: HashMap<String, Vec<DependencyStructResolvedMethod>> =
+            HashMap::new();
+        let mut extend_candidates: HashMap<String, Vec<DependencyStructResolvedMethod>> =
+            HashMap::new();
+
+        for module in &self.artifact.modules {
+            for item in &module.syntax.items {
+                match &item.kind {
+                    AstItemKind::Impl(impl_block)
+                        if dependency_type_expr_targets_struct(
+                            &impl_block.target,
+                            &symbol.name,
+                        ) =>
+                    {
+                        for method in impl_block
+                            .methods
+                            .iter()
+                            .filter(|method| is_public(&method.visibility))
+                        {
+                            let Some(definition_span) =
+                                self.artifact_source_span(&module.source_path, method.name_span)
+                            else {
+                                continue;
+                            };
+                            impl_candidates
+                                .entry(method.name.clone())
+                                .or_default()
+                                .push(DependencyStructResolvedMethod {
+                                    name: method.name.clone(),
+                                    source_path: module.source_path.clone(),
+                                    detail: interface_detail_text(
+                                        &module.contents,
+                                        method.span,
+                                        &method.name,
+                                    ),
+                                    definition_span,
+                                });
+                        }
+                    }
+                    AstItemKind::Extend(extend_block)
+                        if dependency_type_expr_targets_struct(
+                            &extend_block.target,
+                            &symbol.name,
+                        ) =>
+                    {
+                        for method in extend_block
+                            .methods
+                            .iter()
+                            .filter(|method| is_public(&method.visibility))
+                        {
+                            let Some(definition_span) =
+                                self.artifact_source_span(&module.source_path, method.name_span)
+                            else {
+                                continue;
+                            };
+                            extend_candidates
+                                .entry(method.name.clone())
+                                .or_default()
+                                .push(DependencyStructResolvedMethod {
+                                    name: method.name.clone(),
+                                    source_path: module.source_path.clone(),
+                                    detail: interface_detail_text(
+                                        &module.contents,
+                                        method.span,
+                                        &method.name,
+                                    ),
+                                    definition_span,
+                                });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let mut methods = HashMap::new();
+        for (name, candidates) in impl_candidates {
+            if candidates.len() == 1 {
+                methods.insert(name, candidates.into_iter().next().unwrap());
+            }
+        }
+        for (name, candidates) in extend_candidates {
+            if methods.contains_key(&name) || candidates.len() != 1 {
+                continue;
+            }
+            methods.insert(name, candidates.into_iter().next().unwrap());
+        }
+        methods
+    }
 }
 
 impl PackageAnalysis {
@@ -589,6 +687,22 @@ impl PackageAnalysis {
         })
     }
 
+    pub fn dependency_method_hover_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<DependencyHoverInfo> {
+        let target = self.dependency_method_target_at(analysis, offset)?;
+        Some(DependencyHoverInfo {
+            span: target.reference_span,
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Method,
+            name: target.name,
+            detail: target.detail,
+        })
+    }
+
     pub fn dependency_struct_field_hover_in_source_at(
         &self,
         source: &str,
@@ -615,6 +729,22 @@ impl PackageAnalysis {
             package_name: target.package_name,
             source_path: target.source_path,
             kind: SymbolKind::Field,
+            name: target.name,
+            path: target.path,
+            span: target.definition_span,
+        })
+    }
+
+    pub fn dependency_method_definition_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let target = self.dependency_method_target_at(analysis, offset)?;
+        Some(DependencyDefinitionTarget {
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Method,
             name: target.name,
             path: target.path,
             span: target.definition_span,
@@ -655,6 +785,36 @@ impl PackageAnalysis {
             })
             .map(|occurrence| ReferenceTarget {
                 kind: SymbolKind::Field,
+                name: occurrence.name,
+                span: occurrence.reference_span,
+                is_definition: false,
+            })
+            .collect::<Vec<_>>();
+        if references.is_empty() {
+            return None;
+        }
+        references.sort_by_key(|reference| (reference.span.start, reference.span.end));
+        Some(references)
+    }
+
+    pub fn dependency_method_references_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<Vec<ReferenceTarget>> {
+        let target = self.dependency_method_target_at(analysis, offset)?;
+        let mut references = self
+            .dependency_method_occurrences(analysis.ast())
+            .into_iter()
+            .filter(|occurrence| {
+                occurrence.package_name == target.package_name
+                    && occurrence.source_path == target.source_path
+                    && occurrence.struct_name == target.struct_name
+                    && occurrence.name == target.name
+                    && occurrence.path == target.path
+            })
+            .map(|occurrence| ReferenceTarget {
+                kind: SymbolKind::Method,
                 name: occurrence.name,
                 span: occurrence.reference_span,
                 is_definition: false,
@@ -949,6 +1109,26 @@ impl PackageAnalysis {
             })
     }
 
+    fn dependency_method_target_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<DependencyMethodTarget> {
+        self.dependency_method_occurrences(analysis.ast())
+            .into_iter()
+            .find(|occurrence| occurrence.reference_span.contains(offset))
+            .map(|occurrence| DependencyMethodTarget {
+                reference_span: occurrence.reference_span,
+                package_name: occurrence.package_name,
+                source_path: occurrence.source_path,
+                struct_name: occurrence.struct_name,
+                name: occurrence.name,
+                detail: occurrence.detail,
+                path: occurrence.path,
+                definition_span: occurrence.definition_span,
+            })
+    }
+
     fn dependency_struct_field_target_in_source_at(
         &self,
         source: &str,
@@ -987,6 +1167,24 @@ impl PackageAnalysis {
         }
         occurrences
     }
+
+    fn dependency_method_occurrences(
+        &self,
+        module: &ql_ast::Module,
+    ) -> Vec<DependencyMethodOccurrence> {
+        let mut occurrences = Vec::new();
+        let mut scopes = vec![HashMap::new()];
+        for item in &module.items {
+            collect_dependency_method_occurrences_in_item(
+                self,
+                module,
+                item,
+                &mut scopes,
+                &mut occurrences,
+            );
+        }
+        occurrences
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1003,6 +1201,18 @@ struct DependencyVariantTarget {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DependencyStructFieldOccurrence {
+    reference_span: Span,
+    package_name: String,
+    source_path: String,
+    struct_name: String,
+    name: String,
+    detail: String,
+    path: PathBuf,
+    definition_span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencyMethodOccurrence {
     reference_span: Span,
     package_name: String,
     source_path: String,
@@ -1032,17 +1242,38 @@ struct DependencyStructFieldTarget {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencyMethodTarget {
+    reference_span: Span,
+    package_name: String,
+    source_path: String,
+    struct_name: String,
+    name: String,
+    detail: String,
+    path: PathBuf,
+    definition_span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct DependencyStructBinding {
     package_name: String,
     source_path: String,
     struct_name: String,
     path: PathBuf,
     fields: HashMap<String, DependencyStructResolvedField>,
+    methods: HashMap<String, DependencyStructResolvedMethod>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DependencyStructResolvedField {
     name: String,
+    detail: String,
+    definition_span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencyStructResolvedMethod {
+    name: String,
+    source_path: String,
     detail: String,
     definition_span: Span,
 }
@@ -2441,6 +2672,425 @@ fn dependency_import_occurrence_for_path(
     )
 }
 
+fn collect_dependency_method_occurrences_in_item(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    item: &ql_ast::Item,
+    scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    occurrences: &mut Vec<DependencyMethodOccurrence>,
+) {
+    match &item.kind {
+        AstItemKind::Function(function) => {
+            if let Some(body) = &function.body {
+                scopes.push(HashMap::new());
+                for param in &function.params {
+                    bind_dependency_struct_param(package, module, param, scopes);
+                }
+                collect_dependency_method_occurrences_in_block(
+                    package,
+                    module,
+                    body,
+                    scopes,
+                    occurrences,
+                );
+                scopes.pop();
+            }
+        }
+        AstItemKind::Const(global) | AstItemKind::Static(global) => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                &global.value,
+                scopes,
+                occurrences,
+            );
+        }
+        AstItemKind::Struct(struct_decl) => {
+            for field in &struct_decl.fields {
+                if let Some(default) = &field.default {
+                    collect_dependency_method_occurrences_in_expr(
+                        package,
+                        module,
+                        default,
+                        scopes,
+                        occurrences,
+                    );
+                }
+            }
+        }
+        AstItemKind::Trait(trait_decl) => {
+            for method in &trait_decl.methods {
+                if let Some(body) = &method.body {
+                    scopes.push(HashMap::new());
+                    for param in &method.params {
+                        bind_dependency_struct_param(package, module, param, scopes);
+                    }
+                    collect_dependency_method_occurrences_in_block(
+                        package,
+                        module,
+                        body,
+                        scopes,
+                        occurrences,
+                    );
+                    scopes.pop();
+                }
+            }
+        }
+        AstItemKind::Impl(impl_block) => {
+            for method in &impl_block.methods {
+                if let Some(body) = &method.body {
+                    scopes.push(HashMap::new());
+                    for param in &method.params {
+                        bind_dependency_struct_param(package, module, param, scopes);
+                    }
+                    collect_dependency_method_occurrences_in_block(
+                        package,
+                        module,
+                        body,
+                        scopes,
+                        occurrences,
+                    );
+                    scopes.pop();
+                }
+            }
+        }
+        AstItemKind::Extend(extend_block) => {
+            for method in &extend_block.methods {
+                if let Some(body) = &method.body {
+                    scopes.push(HashMap::new());
+                    for param in &method.params {
+                        bind_dependency_struct_param(package, module, param, scopes);
+                    }
+                    collect_dependency_method_occurrences_in_block(
+                        package,
+                        module,
+                        body,
+                        scopes,
+                        occurrences,
+                    );
+                    scopes.pop();
+                }
+            }
+        }
+        AstItemKind::TypeAlias(_) | AstItemKind::Enum(_) | AstItemKind::ExternBlock(_) => {}
+    }
+}
+
+fn collect_dependency_method_occurrences_in_block(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    block: &ql_ast::Block,
+    scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    occurrences: &mut Vec<DependencyMethodOccurrence>,
+) {
+    scopes.push(HashMap::new());
+    for stmt in &block.statements {
+        collect_dependency_method_occurrences_in_stmt(package, module, stmt, scopes, occurrences);
+    }
+    if let Some(tail) = &block.tail {
+        collect_dependency_method_occurrences_in_expr(package, module, tail, scopes, occurrences);
+    }
+    scopes.pop();
+}
+
+fn collect_dependency_method_occurrences_in_stmt(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    stmt: &ql_ast::Stmt,
+    scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    occurrences: &mut Vec<DependencyMethodOccurrence>,
+) {
+    match &stmt.kind {
+        ql_ast::StmtKind::Let {
+            pattern, ty, value, ..
+        } => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                value,
+                scopes,
+                occurrences,
+            );
+            bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, scopes);
+        }
+        ql_ast::StmtKind::Return(Some(expr))
+        | ql_ast::StmtKind::Defer(expr)
+        | ql_ast::StmtKind::Expr { expr, .. } => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                expr,
+                scopes,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::While { condition, body } => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                condition,
+                scopes,
+                occurrences,
+            );
+            collect_dependency_method_occurrences_in_block(
+                package,
+                module,
+                body,
+                scopes,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::Loop { body } => {
+            collect_dependency_method_occurrences_in_block(
+                package,
+                module,
+                body,
+                scopes,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::For { iterable, body, .. } => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                iterable,
+                scopes,
+                occurrences,
+            );
+            collect_dependency_method_occurrences_in_block(
+                package,
+                module,
+                body,
+                scopes,
+                occurrences,
+            );
+        }
+        ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {}
+    }
+}
+
+fn collect_dependency_method_occurrences_in_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    expr: &ql_ast::Expr,
+    scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    occurrences: &mut Vec<DependencyMethodOccurrence>,
+) {
+    match &expr.kind {
+        ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
+            for item in items {
+                collect_dependency_method_occurrences_in_expr(
+                    package,
+                    module,
+                    item,
+                    scopes,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
+            collect_dependency_method_occurrences_in_block(
+                package,
+                module,
+                block,
+                scopes,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                condition,
+                scopes,
+                occurrences,
+            );
+            collect_dependency_method_occurrences_in_block(
+                package,
+                module,
+                then_branch,
+                scopes,
+                occurrences,
+            );
+            if let Some(expr) = else_branch {
+                collect_dependency_method_occurrences_in_expr(
+                    package,
+                    module,
+                    expr,
+                    scopes,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::Match { value, arms } => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                value,
+                scopes,
+                occurrences,
+            );
+            let value_binding = dependency_struct_binding_for_expr(package, module, value, scopes);
+            for arm in arms {
+                scopes.push(HashMap::new());
+                if let Some(binding) = &value_binding {
+                    bind_dependency_struct_match_pattern(&arm.pattern, binding, scopes);
+                }
+                if let Some(guard) = &arm.guard {
+                    collect_dependency_method_occurrences_in_expr(
+                        package,
+                        module,
+                        guard,
+                        scopes,
+                        occurrences,
+                    );
+                }
+                collect_dependency_method_occurrences_in_expr(
+                    package,
+                    module,
+                    &arm.body,
+                    scopes,
+                    occurrences,
+                );
+                scopes.pop();
+            }
+        }
+        ql_ast::ExprKind::Closure { params, body, .. } => {
+            scopes.push(HashMap::new());
+            for param in params {
+                bind_dependency_struct_closure_param(package, module, param, scopes);
+            }
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                body,
+                scopes,
+                occurrences,
+            );
+            scopes.pop();
+        }
+        ql_ast::ExprKind::Call { callee, args } => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                callee,
+                scopes,
+                occurrences,
+            );
+            for arg in args {
+                match arg {
+                    ql_ast::CallArg::Positional(expr) => {
+                        collect_dependency_method_occurrences_in_expr(
+                            package,
+                            module,
+                            expr,
+                            scopes,
+                            occurrences,
+                        );
+                    }
+                    ql_ast::CallArg::Named { value, .. } => {
+                        collect_dependency_method_occurrences_in_expr(
+                            package,
+                            module,
+                            value,
+                            scopes,
+                            occurrences,
+                        );
+                    }
+                }
+            }
+        }
+        ql_ast::ExprKind::Member {
+            object,
+            field,
+            field_span,
+        } => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                object,
+                scopes,
+                occurrences,
+            );
+            if let Some(binding) =
+                dependency_struct_binding_for_expr(package, module, object, scopes)
+            {
+                push_dependency_method_occurrence_for_binding(
+                    &binding,
+                    field,
+                    *field_span,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::Bracket { target, items } => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                target,
+                scopes,
+                occurrences,
+            );
+            for item in items {
+                collect_dependency_method_occurrences_in_expr(
+                    package,
+                    module,
+                    item,
+                    scopes,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::StructLiteral { fields, .. } => {
+            for field in fields {
+                if let Some(value) = &field.value {
+                    collect_dependency_method_occurrences_in_expr(
+                        package,
+                        module,
+                        value,
+                        scopes,
+                        occurrences,
+                    );
+                }
+            }
+        }
+        ql_ast::ExprKind::Binary { left, right, .. } => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                left,
+                scopes,
+                occurrences,
+            );
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                right,
+                scopes,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::Unary { expr, .. } | ql_ast::ExprKind::Question(expr) => {
+            collect_dependency_method_occurrences_in_expr(
+                package,
+                module,
+                expr,
+                scopes,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::Name(_)
+        | ql_ast::ExprKind::Integer(_)
+        | ql_ast::ExprKind::String { .. }
+        | ql_ast::ExprKind::Bool(_)
+        | ql_ast::ExprKind::NoneLiteral => {}
+    }
+}
+
 fn collect_dependency_struct_field_occurrences_in_item(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -2876,12 +3526,14 @@ fn collect_dependency_struct_field_occurrences_in_expr(
             if let Some(binding) =
                 dependency_struct_binding_for_expr(package, module, object, scopes)
             {
-                push_dependency_struct_field_occurrence_for_binding(
-                    &binding,
-                    field,
-                    *field_span,
-                    occurrences,
-                );
+                if !binding.methods.contains_key(field) {
+                    push_dependency_struct_field_occurrence_for_binding(
+                        &binding,
+                        field,
+                        *field_span,
+                        occurrences,
+                    );
+                }
             }
         }
         ql_ast::ExprKind::Question(object) => {
@@ -3032,6 +3684,7 @@ fn dependency_struct_binding_for_symbol(
             ))
         })
         .collect();
+    let methods = dependency.struct_methods_for(symbol);
 
     Some(DependencyStructBinding {
         package_name: dependency.artifact.package_name.clone(),
@@ -3039,6 +3692,7 @@ fn dependency_struct_binding_for_symbol(
         struct_name: symbol.name.clone(),
         path: dependency.interface_path.clone(),
         fields,
+        methods,
     })
 }
 
@@ -3189,6 +3843,36 @@ fn push_dependency_struct_field_occurrence_for_binding(
         path: binding.path.clone(),
         definition_span: field.definition_span,
     });
+}
+
+fn push_dependency_method_occurrence_for_binding(
+    binding: &DependencyStructBinding,
+    method_name: &str,
+    method_span: Span,
+    occurrences: &mut Vec<DependencyMethodOccurrence>,
+) {
+    let Some(method) = binding.methods.get(method_name) else {
+        return;
+    };
+    occurrences.push(DependencyMethodOccurrence {
+        reference_span: method_span,
+        package_name: binding.package_name.clone(),
+        source_path: method.source_path.clone(),
+        struct_name: binding.struct_name.clone(),
+        name: method.name.clone(),
+        detail: method.detail.clone(),
+        path: binding.path.clone(),
+        definition_span: method.definition_span,
+    });
+}
+
+fn dependency_type_expr_targets_struct(ty: &ql_ast::TypeExpr, struct_name: &str) -> bool {
+    let ql_ast::TypeExprKind::Named { path, .. } = &ty.kind else {
+        return false;
+    };
+    path.segments
+        .last()
+        .is_some_and(|segment| segment == struct_name)
 }
 
 fn dependency_import_binding_for_local_name<'a>(
