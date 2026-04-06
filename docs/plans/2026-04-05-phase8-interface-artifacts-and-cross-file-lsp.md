@@ -139,7 +139,7 @@ LSP V1 继续关闭：
 - import 后的 cross-file hover / definition / completion / references
 - `use ...` dependency import completion 需要在当前文档临时语义失败时保持可用，但范围只限导入路径，不扩展为 broader same-file semantic completion
 - imported dependency enum alias root 允许最小 variant completion + hover / definition / references，但这条合同当前不自动扩展到更广义 dependency member completion
-- imported dependency struct alias root 现已在原始显式字段标签 completion + hover / definition / references 之上，小步扩到 shorthand field token、named local value 的 `value.field` member token，以及同一 syntax-local receiver slice 上的唯一 `value.method` member token；其中 `value.method` 现已覆盖成功分析路径与 broken-source fallback，但这条合同仍不自动扩展到 member completion、任意表达式 receiver 或更广义 dependency member completion
+- imported dependency struct alias root 现已在原始显式字段标签 completion + hover / definition / references 之上，小步扩到 shorthand field token、named local value 的 `value.field` member token，以及同一 syntax-local receiver slice 上的唯一 `value.method` member token；其中 `value.method` 现已覆盖成功分析路径与 broken-source fallback 下的 hover / definition / references，并额外开放同一 slice 上的最小 method completion，但这条合同仍不自动扩展到 member field completion、任意表达式 receiver 或更广义 dependency member completion
 - 仍不做 cross-file rename
 - `DocumentStore` 旁新增 workspace/package 级缓存，但 bridge 继续只做协议映射
 
