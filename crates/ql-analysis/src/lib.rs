@@ -1655,6 +1655,7 @@ struct DependencyStructResolvedField {
     detail: String,
     ty: String,
     definition_span: Span,
+    type_definition: Option<DependencyDefinitionTarget>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4830,6 +4831,7 @@ fn dependency_struct_binding_for_symbol(
                     detail: dependency_struct_field_detail(field),
                     ty: render_dependency_type_expr(&field.ty),
                     definition_span,
+                    type_definition: dependency.public_type_target_for_type_expr(&field.ty),
                 },
             ))
         })
@@ -4913,6 +4915,19 @@ fn dependency_struct_binding_for_call_expr(
     let method = binding.methods.get(field)?;
     let return_type = method.return_type_definition.as_ref()?;
     dependency_struct_binding_for_definition_target(package, return_type)
+}
+
+fn dependency_struct_binding_for_member_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    object: &ql_ast::Expr,
+    field: &str,
+    scopes: &[HashMap<String, DependencyStructBinding>],
+) -> Option<DependencyStructBinding> {
+    let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
+    let field = binding.fields.get(field)?;
+    let type_definition = field.type_definition.as_ref()?;
+    dependency_struct_binding_for_definition_target(package, type_definition)
 }
 
 fn dependency_struct_binding_for_block_expr(
@@ -5004,6 +5019,9 @@ fn dependency_struct_binding_for_expr(
         }
         ql_ast::ExprKind::Match { value, arms } => {
             dependency_struct_binding_for_match_expr(package, module, value, arms, scopes)
+        }
+        ql_ast::ExprKind::Member { object, field, .. } => {
+            dependency_struct_binding_for_member_expr(package, module, object, field, scopes)
         }
         ql_ast::ExprKind::Call { callee, .. } => {
             dependency_struct_binding_for_call_expr(package, module, callee, scopes)
