@@ -90,6 +90,7 @@ fn run() -> Result<(), u8> {
             };
 
             let mut options = BuildOptions::default();
+            let mut emit_interface = false;
             let remaining = args.collect::<Vec<_>>();
             let mut index = 0;
 
@@ -129,6 +130,9 @@ fn run() -> Result<(), u8> {
                             .c_header
                             .get_or_insert_with(BuildCHeaderOptions::default);
                     }
+                    "--emit-interface" => {
+                        emit_interface = true;
+                    }
                     "--header-surface" => {
                         index += 1;
                         let Some(value) = remaining.get(index) else {
@@ -166,7 +170,7 @@ fn run() -> Result<(), u8> {
                 index += 1;
             }
 
-            build_path(Path::new(&path), &options)
+            build_path(Path::new(&path), &options, emit_interface)
         }
         "project" => {
             let Some(subcommand) = args.next() else {
@@ -479,7 +483,7 @@ fn render_runtime_requirements_path(path: &Path) -> Result<(), u8> {
     }
 }
 
-fn build_path(path: &Path, options: &BuildOptions) -> Result<(), u8> {
+fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Result<(), u8> {
     match build_file(path, options) {
         Ok(artifact) => {
             println!(
@@ -489,6 +493,11 @@ fn build_path(path: &Path, options: &BuildOptions) -> Result<(), u8> {
             );
             if let Some(header) = artifact.c_header {
                 println!("wrote c-header: {}", header.path.display());
+            }
+            if emit_interface {
+                let interface_path =
+                    emit_package_interface_path(path, None, "`ql build --emit-interface`")?;
+                println!("wrote interface: {}", interface_path.display());
             }
             Ok(())
         }
@@ -559,12 +568,22 @@ fn project_graph_path(path: &Path) -> Result<(), u8> {
 }
 
 fn project_emit_interface_path(path: &Path, output: Option<&Path>) -> Result<(), u8> {
+    let output_path = emit_package_interface_path(path, output, "`ql project emit-interface`")?;
+    println!("wrote interface: {}", output_path.display());
+    Ok(())
+}
+
+fn emit_package_interface_path(
+    path: &Path,
+    output: Option<&Path>,
+    command_label: &str,
+) -> Result<PathBuf, u8> {
     let manifest = load_project_manifest(path).map_err(|error| {
         eprintln!("error: {error}");
         1
     })?;
     let package_name = package_name(&manifest).map_err(|error| {
-        eprintln!("error: `ql project emit-interface` {error}");
+        eprintln!("error: {command_label} {error}");
         1
     })?;
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
@@ -619,8 +638,7 @@ fn project_emit_interface_path(path: &Path, output: Option<&Path>) -> Result<(),
         );
         1
     })?;
-    println!("wrote interface: {}", output_path.display());
-    Ok(())
+    Ok(output_path)
 }
 
 fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
@@ -821,7 +839,7 @@ fn print_usage() {
     eprintln!("usage:");
     eprintln!("  ql check <file-or-dir>");
     eprintln!(
-        "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
+        "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
     );
     eprintln!("  ql project graph [file-or-dir]");
     eprintln!("  ql project emit-interface [file-or-dir] [-o <output>]");

@@ -22,7 +22,7 @@
 
 - Phase 1 到 Phase 6 地基已经落地：lexer、parser、formatter、diagnostics、HIR、resolve、typeck、MIR、borrowck、LLVM backend、driver、CLI、same-file LSP/query、FFI header projection 都已进入真实工程主干。
 - 当前活跃主线是保守推进的 Phase 7：async/runtime/task-handle lowering、library/program build surface、Rust interop。
-- Phase 8 的前三条入口切片已继续向前推进：仓库现已具备最小 `qlang.toml` manifest graph loader、`ql project graph` 调试入口、`.qi` V1 emit 入口 `ql project emit-interface`，以及 package-aware `ql check <package-dir>` 对引用 `.qi` 的 syntax-aware 加载；`ql-analysis::analyze_package` 现也已把 dependency `.qi` 的公开符号收进 package 级查询面，并接通 imported dependency symbol 的最小 cross-file hover / definition / references、`use ...` 导入路径和平铺 / grouped import 位置里的 dependency package path segment / public symbol completion，以及 imported dependency enum variant / explicit struct field-label 的最小非导入路径 completion contract；真实 dependency build graph 与更广义 cross-file LSP 仍未开放。
+- Phase 8 的前三条入口切片已继续向前推进：仓库现已具备最小 `qlang.toml` manifest graph loader、`ql project graph` 调试入口、`.qi` V1 emit 入口 `ql project emit-interface`、build-side `.qi` 写出开关 `ql build --emit-interface`，以及 package-aware `ql check <package-dir>` 对引用 `.qi` 的 syntax-aware 加载；`ql-analysis::analyze_package` 现也已把 dependency `.qi` 的公开符号收进 package 级查询面，并接通 imported dependency symbol 的最小 cross-file hover / definition / references、`use ...` 导入路径和平铺 / grouped import 位置里的 dependency package path segment / public symbol completion，以及 imported dependency enum variant / explicit struct field-label 的最小非导入路径 completion contract；真实 dependency build graph 与更广义 cross-file LSP 仍未开放。
 - 外部稳定互操作边界仍是 C ABI；Rust 继续走 `build.rs + staticlib + header` 路线。
 - async 已经不是“只有语法”，而是有真实 build、真实样例和真实回归的受控子集；但 broader async ABI、broader runtime semantics 仍然刻意关闭。
 - sync backend 的首个 `String` build 子集现已进入真实 build surface：UTF-8 string literal 现可 lowering 为 `{ ptr, i64 }`，并经过 local binding、const/static materialization、普通参数传递、返回值、`==` / `!=` 比较与 fixed-shape aggregate transport 进入当前 LLVM/object build；string ordering compare、string-pattern match lowering 与 C header `String` 导出仍保持保守关闭。
@@ -54,6 +54,7 @@
 - `[references].packages`
 - `ql project graph [file-or-dir]` 文本输出当前 manifest graph
 - `ql project emit-interface [file-or-dir] [-o <output>]`
+- `ql build <file> --emit-interface`：在构建成功后顺手写出当前包的默认 `<package>.qi`
 - `.qi` V1 emit：当前仅支持 package manifest；默认扫描 `manifest_dir/src/**/*.ql`，逐文件通过 `ql-analysis` 后生成 `<package>.qi`
 - `.qi` V1 文本当前只保留 public surface：去掉 function body、`const`/`static` value、struct field default，并按源文件分段写入 `// source: ...` section
 - `ql check <package-dir>` 当前已在 package-aware 路径上加载 `[references].packages` 指向的 `<dependency>.qi`，并在缺失 interface artifact 时显式失败

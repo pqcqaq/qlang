@@ -9,7 +9,7 @@
 
 - P1 到 P6 已完成，并且已经形成可持续扩展的工程主干。
 - P7 正在进行，但主线不是“重新设计 async”，而是在既有 compiler/runtime/build 真相源上保守扩面。
-- P8 已进入前三条工程入口切片：最小 `qlang.toml` manifest graph、`ql project graph`、`.qi` V1 emit、package-aware dependency `.qi` syntax-load、dependency public symbol index，以及 imported dependency symbol 的最小 cross-file hover / definition / references、`use ...` 导入路径和平铺 / grouped import 位置里的 package path segment / public symbol completion、dependency enum variant completion、dependency struct explicit field-label completion 已落地；更完整的 cross-file editor semantics 仍未开始实现。
+- P8 已进入前三条工程入口切片：最小 `qlang.toml` manifest graph、`ql project graph`、`.qi` V1 emit、`ql build --emit-interface`、package-aware dependency `.qi` syntax-load、dependency public symbol index，以及 imported dependency symbol 的最小 cross-file hover / definition / references、`use ...` 导入路径和平铺 / grouped import 位置里的 package path segment / public symbol completion、dependency enum variant completion、dependency struct explicit field-label completion 已落地；更完整的 cross-file editor semantics 仍未开始实现。
 - 当前最重要的治理要求仍然是三者一致：
   - 代码里的真实实现
   - 测试里的真实合同
@@ -71,6 +71,7 @@
 - 当前真实 contract 已锁定在 `[package].name`、`[workspace].members`、`[references].packages`。
 - `ql project graph [file-or-dir]` 已可向上发现 manifest 并输出当前 package/workspace/reference graph。
 - `ql project emit-interface [file-or-dir] [-o <output>]` 已可对 package manifest 的 `src/**/*.ql` 做逐文件分析，并输出 text-based `.qi` public interface artifact。
+- `ql build <file> --emit-interface` 现也可在构建成功后顺手写出当前包默认 `<package>.qi`，让声明文件生成不再只挂在单独的 project 子命令上。
 - `ql-analysis::analyze_package` 与 package-aware `ql check <package-dir>` 现已开始加载 `[references].packages` 指向的 dependency `.qi` artifact，并在 interface 缺失时显式失败。
 - 当前 dependency `.qi` load 已推进到 syntax-aware section parse：每个 `// source: ...` module section 都会进入 interface-mode AST，支持 bodyless `fn` / `impl` / `extend` 声明以及无值 `const` / `static` 接口声明；`ql-analysis::analyze_package` 现也已把公开 dependency symbols 收进 package 级 truth surface，并接通 imported dependency symbol 的 cross-file hover / definition / references 到 `.qi` declaration；这条查询链当前也已显式覆盖 grouped import alias 形态。与此同时，`use ...` 导入路径和平铺 / grouped import 位置里的 dependency package path segment / public symbol completion 也已打通，且 grouped import 的空补全位会过滤已写过的 dependency item，减少重复提示；rename、更广义 completion 与真实 dependency build graph 仍未开放。
 - dependency import completion 现在还带有最小编辑期容错：当当前文档自身暂时分析失败时，LSP 仍会走 dependency-only package load 回退，继续提供 `use ...` 导入路径上的 dependency path segment / public symbol completion；该回退当前不扩大到 hover / definition / references 或其它同文件补全。

@@ -46,7 +46,7 @@ Detailed design merges and archived slice notes live under [`docs/plans/`](./doc
 Current user-facing executable smoke surface:
 
 - `60` sync executable examples under `ramdon_tests/executable_examples/`
-- `220` async executable examples under `ramdon_tests/async_program_surface_examples/`
+- `222` async executable examples under `ramdon_tests/async_program_surface_examples/`
 
 Current library/codegen surface is locked in `crates/ql-cli/tests/codegen.rs`.
 
@@ -56,6 +56,7 @@ Current library/codegen surface is locked in `crates/ql-cli/tests/codegen.rs`.
 cargo test
 cargo run -p ql-cli -- check fixtures/codegen/pass/minimal_build.ql
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir
+cargo run -p ql-cli -- build path/to/package/src/lib.ql --emit llvm-ir --emit-interface
 cargo run -p ql-cli -- fmt fixtures/parser/pass/basic.ql
 ```
 

@@ -2,8 +2,8 @@ mod support;
 
 use support::{
     TempDir, expect_empty_stdout, expect_exit_code, expect_file_exists, expect_snapshot_matches,
-    expect_stderr_contains, expect_success, ql_command, read_normalized_file, run_command_capture,
-    workspace_root,
+    expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
+    read_normalized_file, run_command_capture, workspace_root,
 };
 
 #[test]
@@ -212,4 +212,108 @@ members = ["packages/app"]
         "does not declare `[package].name`",
     )
     .expect("workspace-only manifest failure should mention the package contract");
+}
+
+#[test]
+fn build_with_emit_interface_writes_default_package_qi() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for build interface test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub struct Buffer {
+    value: Int,
+}
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    return exported(1)
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let output_path = project_root.join("build").join("app.ll");
+    let interface_path = project_root.join("app.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(&mut command, "`ql build --emit-interface`");
+    let (stdout, stderr) = expect_success(
+        "build-emit-interface-success",
+        "build with interface emission",
+        &output,
+    )
+    .expect("build with interface emission should succeed");
+    expect_stdout_contains_all(
+        "build-emit-interface-success",
+        &stdout,
+        &[
+            &format!("wrote llvm-ir: {}", output_path.display()),
+            "wrote interface:",
+            "app.qi",
+        ],
+    )
+    .expect("build with interface emission should report both output artifacts");
+    expect_snapshot_matches(
+        "build-emit-interface-success",
+        "build with interface emission stderr",
+        "",
+        &stderr,
+    )
+    .expect("successful build with interface emission should stay silent on stderr");
+    expect_file_exists(
+        "build-emit-interface-success",
+        &output_path,
+        "generated llvm ir",
+        "build with interface emission",
+    )
+    .expect("build with interface emission should create the requested build artifact");
+    expect_file_exists(
+        "build-emit-interface-success",
+        &interface_path,
+        "generated interface",
+        "build with interface emission",
+    )
+    .expect("build with interface emission should create the default package qi artifact");
+
+    let expected = "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub struct Buffer {
+    value: Int,
+}
+
+pub fn exported(value: Int) -> Int
+";
+    let actual = read_normalized_file(&interface_path, "generated qi artifact");
+    expect_snapshot_matches(
+        "build-emit-interface-success",
+        "generated qi artifact",
+        expected,
+        &actual,
+    )
+    .expect("generated qi artifact should match the build-side public interface snapshot");
 }
