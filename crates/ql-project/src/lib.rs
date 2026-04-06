@@ -1,6 +1,6 @@
 use std::fmt;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use ql_ast::{
     EnumDecl, ExtendBlock, ExternBlock, FunctionDecl, GenericParam, GlobalDecl, ImplBlock, Item,
@@ -163,6 +163,7 @@ pub fn load_project_manifest(path: &Path) -> Result<ProjectManifest, ProjectErro
 
 pub fn render_project_graph(manifest: &ProjectManifest) -> String {
     let mut output = String::new();
+    let manifest_dir = manifest_dir(manifest);
     output.push_str(&format!(
         "manifest: {}\n",
         display_path(&manifest.manifest_path)
@@ -194,6 +195,13 @@ pub fn render_project_graph(manifest: &ProjectManifest) -> String {
         }
     }
 
+    if manifest.package.is_some() {
+        let interface_path =
+            default_interface_path(manifest).expect("package manifests have a default interface");
+        append_interface_summary(&mut output, manifest_dir, &interface_path, "");
+        append_reference_interface_summaries(&mut output, manifest_dir, manifest, "");
+    }
+
     output
 }
 
@@ -222,10 +230,7 @@ pub fn render_project_graph_resolved(manifest: &ProjectManifest) -> Result<Strin
             relative_display_path(manifest_dir, &member_manifest.manifest_path)
         ));
         output.push_str(&format!("    package: {package}\n"));
-        output.push_str(&format!(
-            "    interface: {}\n",
-            relative_display_path(manifest_dir, &interface_path)
-        ));
+        append_interface_summary(&mut output, manifest_dir, &interface_path, "    ");
 
         if member_manifest.references.packages.is_empty() {
             output.push_str("    references: []\n");
@@ -235,9 +240,83 @@ pub fn render_project_graph_resolved(manifest: &ProjectManifest) -> Result<Strin
                 output.push_str(&format!("      - {reference}\n"));
             }
         }
+
+        append_reference_interface_summaries(&mut output, manifest_dir, &member_manifest, "    ");
     }
 
     Ok(output)
+}
+
+fn append_interface_summary(output: &mut String, root: &Path, interface_path: &Path, indent: &str) {
+    output.push_str(&format!("{indent}interface:\n"));
+    output.push_str(&format!(
+        "{indent}  path: {}\n",
+        relative_display_path(root, interface_path)
+    ));
+    output.push_str(&format!(
+        "{indent}  status: {}\n",
+        interface_artifact_status(interface_path)
+    ));
+}
+
+fn append_reference_interface_summaries(
+    output: &mut String,
+    root: &Path,
+    manifest: &ProjectManifest,
+    indent: &str,
+) {
+    if manifest.references.packages.is_empty() {
+        output.push_str(&format!("{indent}reference_interfaces: []\n"));
+        return;
+    }
+
+    let manifest_dir = manifest_dir(manifest);
+    output.push_str(&format!("{indent}reference_interfaces:\n"));
+    for reference in &manifest.references.packages {
+        output.push_str(&format!("{indent}  - reference: {reference}\n"));
+        match load_project_manifest(&manifest_dir.join(reference)) {
+            Ok(reference_manifest) => match default_interface_path(&reference_manifest) {
+                Ok(interface_path) => {
+                    let package = reference_manifest
+                        .package
+                        .as_ref()
+                        .map(|package| package.name.as_str())
+                        .unwrap_or("<unresolved>");
+                    output.push_str(&format!("{indent}    package: {package}\n"));
+                    output.push_str(&format!(
+                        "{indent}    path: {}\n",
+                        relative_display_path(root, &interface_path)
+                    ));
+                    output.push_str(&format!(
+                        "{indent}    status: {}\n",
+                        interface_artifact_status(&interface_path)
+                    ));
+                }
+                Err(_) => {
+                    output.push_str(&format!("{indent}    package: <unresolved>\n"));
+                    output.push_str(&format!("{indent}    path: <unresolved>\n"));
+                    output.push_str(&format!("{indent}    status: unresolved-package\n"));
+                }
+            },
+            Err(_) => {
+                output.push_str(&format!("{indent}    package: <unresolved>\n"));
+                output.push_str(&format!("{indent}    path: <unresolved>\n"));
+                output.push_str(&format!("{indent}    status: unresolved-manifest\n"));
+            }
+        }
+    }
+}
+
+fn interface_artifact_status(path: &Path) -> &'static str {
+    if !path.is_file() {
+        return "missing";
+    }
+
+    match load_interface_artifact(path) {
+        Ok(_) => "valid",
+        Err(InterfaceError::Parse { .. }) => "invalid",
+        Err(InterfaceError::Read { .. }) => "unreadable",
+    }
 }
 
 pub fn manifest_dir(manifest: &ProjectManifest) -> &Path {
@@ -1089,6 +1168,33 @@ fn display_path(path: &Path) -> String {
 
 fn relative_display_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
-        .map(display_path)
+        .map(normalize_display_path)
         .unwrap_or_else(|_| display_path(path))
+}
+
+fn normalize_display_path(path: &Path) -> String {
+    display_path(&normalize_path(path))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        normalized
+    }
 }
