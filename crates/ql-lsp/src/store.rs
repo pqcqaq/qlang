@@ -13,6 +13,15 @@ impl DocumentStore {
         self.docs.write().await.insert(uri, source);
     }
 
+    pub(crate) async fn entries(&self) -> Vec<(Url, String)> {
+        self.docs
+            .read()
+            .await
+            .iter()
+            .map(|(uri, source)| (uri.clone(), source.clone()))
+            .collect()
+    }
+
     pub(crate) async fn get(&self, uri: &Url) -> Option<String> {
         self.docs.read().await.get(uri).cloned()
     }

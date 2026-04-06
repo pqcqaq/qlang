@@ -14,8 +14,8 @@ use tower_lsp::lsp_types::{
     CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
     DocumentSymbol, DocumentSymbolResponse, GotoDefinitionResponse, Hover, HoverContents, Location,
     MarkupContent, MarkupKind, Position, PrepareRenameResponse, Range, SemanticToken,
-    SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult, TextEdit, Url,
-    WorkspaceEdit,
+    SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult,
+    SymbolInformation, TextEdit, Url, WorkspaceEdit,
 };
 
 pub fn position_to_offset(source: &str, position: Position) -> Option<usize> {
@@ -884,6 +884,39 @@ pub fn document_symbols_for_analysis(source: &str, analysis: &Analysis) -> Docum
         .map(|symbol| document_symbol(source, symbol))
         .collect::<Vec<_>>()
         .into()
+}
+
+#[allow(deprecated)]
+pub fn workspace_symbols_for_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    query: &str,
+) -> Vec<SymbolInformation> {
+    let query = query.trim().to_ascii_lowercase();
+    let mut symbols = analysis
+        .document_symbols()
+        .into_iter()
+        .filter(|symbol| {
+            query.is_empty() || symbol.name.to_ascii_lowercase().contains(query.as_str())
+        })
+        .map(|symbol| SymbolInformation {
+            name: symbol.name,
+            kind: document_symbol_kind(symbol.kind),
+            tags: None,
+            deprecated: None,
+            location: Location::new(uri.clone(), span_to_range(source, symbol.span)),
+            container_name: None,
+        })
+        .collect::<Vec<_>>();
+    symbols.sort_by_key(|symbol| {
+        (
+            symbol.name.to_ascii_lowercase(),
+            symbol.location.range.start.line,
+            symbol.location.range.start.character,
+        )
+    });
+    symbols
 }
 
 pub fn prepare_rename_for_analysis(

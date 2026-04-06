@@ -7,14 +7,14 @@ use ql_lsp::bridge::{
     diagnostics_to_lsp, document_symbols_for_analysis, hover_for_analysis,
     loop_control_context_for_analysis, position_to_offset, prepare_rename_for_analysis,
     references_for_analysis, rename_for_analysis, semantic_tokens_for_analysis,
-    semantic_tokens_legend, span_to_range,
+    semantic_tokens_legend, span_to_range, workspace_symbols_for_analysis,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
     CompletionItemKind, CompletionResponse, DiagnosticSeverity, DocumentSymbolResponse,
     GotoDefinitionResponse, HoverContents, Location, Position, PrepareRenameResponse,
-    SemanticTokenType, SemanticTokensResult, SymbolKind as LspSymbolKind, TextEdit, Url,
-    WorkspaceEdit,
+    SemanticTokenType, SemanticTokensResult, SymbolInformation, SymbolKind as LspSymbolKind,
+    TextEdit, Url, WorkspaceEdit,
 };
 
 fn nth_span(source: &str, needle: &str, occurrence: usize) -> Span {
@@ -324,6 +324,42 @@ fn main() -> Int {
     assert_eq!(
         symbols[8].range,
         span_to_range(source, nth_span(source, "main", 1))
+    );
+}
+
+#[allow(deprecated)]
+#[test]
+fn workspace_symbols_bridge_filters_same_file_declarations_case_insensitively() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+struct Point {
+    x: Int,
+    y: Int,
+}
+
+impl Point {
+    fn area(self) -> Int {
+        return self.x + self.y
+    }
+}
+
+fn main() -> Int {
+    return 0
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+    let symbols = workspace_symbols_for_analysis(&uri, source, &analysis, "AR");
+
+    assert_eq!(
+        symbols,
+        vec![SymbolInformation {
+            name: "area".to_owned(),
+            kind: LspSymbolKind::METHOD,
+            tags: None,
+            deprecated: None,
+            location: Location::new(uri, span_to_range(source, nth_span(source, "area", 1))),
+            container_name: None,
+        }]
     );
 }
 

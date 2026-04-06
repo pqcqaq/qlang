@@ -11,8 +11,9 @@ use tower_lsp::lsp_types::{
     InitializedParams, Location, MessageType, OneOf, PrepareRenameResponse, ReferenceParams,
     RenameOptions, RenameParams, SemanticTokensFullOptions, SemanticTokensOptions,
     SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
-    ServerCapabilities, ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, Url, WorkspaceEdit,
+    ServerCapabilities, ServerInfo, SymbolInformation, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, Url, WorkspaceEdit,
+    WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -31,7 +32,7 @@ use crate::bridge::{
     references_for_analysis, references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_variants,
     references_for_package_analysis, rename_for_analysis, semantic_tokens_for_analysis,
-    semantic_tokens_legend,
+    semantic_tokens_legend, workspace_symbols_for_analysis,
 };
 use crate::store::DocumentStore;
 
@@ -99,6 +100,7 @@ impl LanguageServer for Backend {
                 declaration_provider: Some(DeclarationCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions::default()),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
@@ -405,6 +407,37 @@ impl LanguageServer for Backend {
         };
 
         Ok(Some(document_symbols_for_analysis(&source, &analysis)))
+    }
+
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Result<Option<Vec<SymbolInformation>>> {
+        let mut symbols = self
+            .documents
+            .entries()
+            .await
+            .into_iter()
+            .filter_map(|(uri, source)| {
+                let analysis = analyze_source(&source).ok()?;
+                Some(workspace_symbols_for_analysis(
+                    &uri,
+                    &source,
+                    &analysis,
+                    &params.query,
+                ))
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        symbols.sort_by_key(|symbol| {
+            (
+                symbol.name.to_ascii_lowercase(),
+                symbol.location.uri.to_string(),
+                symbol.location.range.start.line,
+                symbol.location.range.start.character,
+            )
+        });
+        Ok(Some(symbols))
     }
 
     async fn semantic_tokens_full(
