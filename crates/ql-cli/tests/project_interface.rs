@@ -242,6 +242,71 @@ pub fn exported() -> Int
 }
 
 #[test]
+fn project_emit_interface_check_accepts_valid_package_interface() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-package");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for interface check test");
+    let interface_path = project_root.join("app.qi");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/app.qi",
+        "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--check"])
+        .arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql project emit-interface --check` package");
+    let (stdout, stderr) = expect_success(
+        "project-interface-check-package",
+        "package interface check",
+        &output,
+    )
+    .expect("package interface check should succeed");
+    expect_snapshot_matches(
+        "project-interface-check-package",
+        "package interface check stdout",
+        &format!("ok interface: {}\n", interface_path.display()),
+        &stdout,
+    )
+    .expect("package interface check should report a valid interface");
+    expect_snapshot_matches(
+        "project-interface-check-package",
+        "package interface check stderr",
+        "",
+        &stderr,
+    )
+    .expect("package interface check should stay silent on stderr");
+}
+
+#[test]
 fn project_emit_interface_writes_member_qi_for_workspace_only_manifest() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-workspace-only");
@@ -475,6 +540,122 @@ pub fn newer() -> Int {
         tool_actual.contains("pub fn newer() -> Int"),
         "expected stale workspace member interface to be regenerated, got:\n{tool_actual}"
     );
+}
+
+#[test]
+fn project_emit_interface_check_rejects_stale_workspace_member_interface() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-workspace");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let tool_root = project_root.join("packages").join("tool");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for workspace interface check test");
+    std::fs::create_dir_all(tool_root.join("src"))
+        .expect("create tool package source directory for workspace interface check test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/app.qi",
+        "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+",
+    );
+    temp.write(
+        "workspace-only/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/tool.qi",
+        "\
+// qlang interface v1
+// package: tool
+
+// source: src/lib.ql
+package demo.tool
+
+pub fn exported() -> Int
+",
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    temp.write(
+        "workspace-only/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn exported() -> Int {
+    return 1
+}
+
+pub fn newer() -> Int {
+    return 2
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--check"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --check` workspace-only manifest",
+    );
+    let (_stdout, stderr) = expect_exit_code(
+        "project-interface-check-workspace",
+        "workspace interface check with stale member",
+        &output,
+        1,
+    )
+    .expect("workspace interface check with stale member should fail");
+    expect_stderr_contains(
+        "project-interface-check-workspace",
+        "workspace interface check with stale member",
+        &stderr,
+        "is stale",
+    )
+    .expect("workspace interface check should surface stale member interface status");
 }
 
 #[test]

@@ -219,6 +219,7 @@ fn run() -> Result<(), u8> {
                     let mut path = None;
                     let mut output = None;
                     let mut changed_only = false;
+                    let mut check_only = false;
                     let mut index = 0;
 
                     while index < remaining.len() {
@@ -235,6 +236,9 @@ fn run() -> Result<(), u8> {
                             }
                             "--changed-only" => {
                                 changed_only = true;
+                            }
+                            "--check" => {
+                                check_only = true;
                             }
                             other if other.starts_with('-') => {
                                 eprintln!(
@@ -259,7 +263,7 @@ fn run() -> Result<(), u8> {
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_emit_interface_path(&path, output.as_deref(), changed_only)
+                    project_emit_interface_path(&path, output.as_deref(), changed_only, check_only)
                 }
                 other => {
                     eprintln!("error: unknown `ql project` subcommand `{other}`");
@@ -685,13 +689,26 @@ fn project_emit_interface_path(
     path: &Path,
     output: Option<&Path>,
     changed_only: bool,
+    check_only: bool,
 ) -> Result<(), u8> {
     let manifest = load_project_manifest(path).map_err(|error| {
         eprintln!("error: {error}");
         1
     })?;
 
+    if check_only && output.is_some() {
+        eprintln!("error: `ql project emit-interface --check` does not support `--output`");
+        return Err(1);
+    }
+
     if manifest.package.is_some() {
+        if check_only {
+            report_check_interface_result(check_package_interface_artifact(
+                &manifest,
+                "`ql project emit-interface --check`",
+            )?);
+            return Ok(());
+        }
         report_emit_interface_result(emit_package_interface_path(
             path,
             output,
@@ -713,12 +730,24 @@ fn project_emit_interface_path(
 
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
     for member in &workspace.members {
-        report_emit_interface_result(emit_package_interface_path(
-            &manifest_dir.join(member),
-            None,
-            "`ql project emit-interface`",
-            changed_only,
-        )?);
+        let member_manifest =
+            load_project_manifest(&manifest_dir.join(member)).map_err(|error| {
+                eprintln!("error: {error}");
+                1
+            })?;
+        if check_only {
+            report_check_interface_result(check_package_interface_artifact(
+                &member_manifest,
+                "`ql project emit-interface --check`",
+            )?);
+        } else {
+            report_emit_interface_result(emit_package_interface_path(
+                &manifest_dir.join(member),
+                None,
+                "`ql project emit-interface`",
+                changed_only,
+            )?);
+        }
     }
 
     Ok(())
@@ -727,6 +756,10 @@ fn project_emit_interface_path(
 enum EmitPackageInterfaceResult {
     Wrote(PathBuf),
     UpToDate(PathBuf),
+}
+
+enum CheckPackageInterfaceResult {
+    Ok(PathBuf),
 }
 
 fn emit_package_interface_path(
@@ -811,6 +844,38 @@ fn report_emit_interface_result(result: EmitPackageInterfaceResult) {
         }
         EmitPackageInterfaceResult::UpToDate(path) => {
             println!("up-to-date interface: {}", path.display());
+        }
+    }
+}
+
+fn check_package_interface_artifact(
+    manifest: &ql_project::ProjectManifest,
+    command_label: &str,
+) -> Result<CheckPackageInterfaceResult, u8> {
+    let output_path = default_interface_path(manifest).map_err(|error| {
+        eprintln!("error: {command_label} {error}");
+        1
+    })?;
+    let status = interface_artifact_status(manifest, &output_path);
+    if status != InterfaceArtifactStatus::Valid {
+        eprintln!(
+            "error: interface artifact `{}` is {}",
+            output_path.display(),
+            status.label()
+        );
+        eprintln!(
+            "hint: rerun `ql project emit-interface {}` to regenerate it",
+            manifest.manifest_path.display()
+        );
+        return Err(1);
+    }
+    Ok(CheckPackageInterfaceResult::Ok(output_path))
+}
+
+fn report_check_interface_result(result: CheckPackageInterfaceResult) {
+    match result {
+        CheckPackageInterfaceResult::Ok(path) => {
+            println!("ok interface: {}", path.display());
         }
     }
 }
@@ -1115,7 +1180,7 @@ fn print_usage() {
         "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
     );
     eprintln!("  ql project graph [file-or-dir]");
-    eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only]");
+    eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]");
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
     eprintln!("  ql mir <file>");
