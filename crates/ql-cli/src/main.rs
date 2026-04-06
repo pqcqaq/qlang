@@ -218,6 +218,7 @@ fn run() -> Result<(), u8> {
                     let remaining = args.collect::<Vec<_>>();
                     let mut path = None;
                     let mut output = None;
+                    let mut changed_only = false;
                     let mut index = 0;
 
                     while index < remaining.len() {
@@ -231,6 +232,9 @@ fn run() -> Result<(), u8> {
                                     return Err(1);
                                 };
                                 output = Some(PathBuf::from(value));
+                            }
+                            "--changed-only" => {
+                                changed_only = true;
                             }
                             other if other.starts_with('-') => {
                                 eprintln!(
@@ -255,7 +259,7 @@ fn run() -> Result<(), u8> {
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_emit_interface_path(&path, output.as_deref())
+                    project_emit_interface_path(&path, output.as_deref(), changed_only)
                 }
                 other => {
                     eprintln!("error: unknown `ql project` subcommand `{other}`");
@@ -598,9 +602,12 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                 println!("wrote c-header: {}", header.path.display());
             }
             if emit_interface {
-                let interface_path =
-                    emit_package_interface_path(path, None, "`ql build --emit-interface`")?;
-                println!("wrote interface: {}", interface_path.display());
+                report_emit_interface_result(emit_package_interface_path(
+                    path,
+                    None,
+                    "`ql build --emit-interface`",
+                    false,
+                )?);
             }
             Ok(())
         }
@@ -674,15 +681,23 @@ fn project_graph_path(path: &Path) -> Result<(), u8> {
     Ok(())
 }
 
-fn project_emit_interface_path(path: &Path, output: Option<&Path>) -> Result<(), u8> {
+fn project_emit_interface_path(
+    path: &Path,
+    output: Option<&Path>,
+    changed_only: bool,
+) -> Result<(), u8> {
     let manifest = load_project_manifest(path).map_err(|error| {
         eprintln!("error: {error}");
         1
     })?;
 
     if manifest.package.is_some() {
-        let output_path = emit_package_interface_path(path, output, "`ql project emit-interface`")?;
-        println!("wrote interface: {}", output_path.display());
+        report_emit_interface_result(emit_package_interface_path(
+            path,
+            output,
+            "`ql project emit-interface`",
+            changed_only,
+        )?);
         return Ok(());
     }
 
@@ -698,22 +713,28 @@ fn project_emit_interface_path(path: &Path, output: Option<&Path>) -> Result<(),
 
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
     for member in &workspace.members {
-        let output_path = emit_package_interface_path(
+        report_emit_interface_result(emit_package_interface_path(
             &manifest_dir.join(member),
             None,
             "`ql project emit-interface`",
-        )?;
-        println!("wrote interface: {}", output_path.display());
+            changed_only,
+        )?);
     }
 
     Ok(())
+}
+
+enum EmitPackageInterfaceResult {
+    Wrote(PathBuf),
+    UpToDate(PathBuf),
 }
 
 fn emit_package_interface_path(
     path: &Path,
     output: Option<&Path>,
     command_label: &str,
-) -> Result<PathBuf, u8> {
+    changed_only: bool,
+) -> Result<EmitPackageInterfaceResult, u8> {
     let manifest = load_project_manifest(path).map_err(|error| {
         eprintln!("error: {error}");
         1
@@ -722,6 +743,15 @@ fn emit_package_interface_path(
         eprintln!("error: {command_label} {error}");
         1
     })?;
+    let output_path = output.map(Path::to_path_buf).unwrap_or_else(|| {
+        default_interface_path(&manifest).expect("package emit should have a default qi path")
+    });
+    if changed_only
+        && interface_artifact_status(&manifest, &output_path) == InterfaceArtifactStatus::Valid
+    {
+        return Ok(EmitPackageInterfaceResult::UpToDate(output_path));
+    }
+
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
     let files = collect_package_sources(&manifest).map_err(|error| {
         eprintln!("error: {error}");
@@ -751,9 +781,6 @@ fn emit_package_interface_path(
         }
     }
 
-    let output_path = output.map(Path::to_path_buf).unwrap_or_else(|| {
-        default_interface_path(&manifest).expect("package emit should have a default qi path")
-    });
     if let Some(parent) = output_path.parent()
         && !parent.as_os_str().is_empty()
     {
@@ -774,7 +801,18 @@ fn emit_package_interface_path(
         );
         1
     })?;
-    Ok(output_path)
+    Ok(EmitPackageInterfaceResult::Wrote(output_path))
+}
+
+fn report_emit_interface_result(result: EmitPackageInterfaceResult) {
+    match result {
+        EmitPackageInterfaceResult::Wrote(path) => {
+            println!("wrote interface: {}", path.display());
+        }
+        EmitPackageInterfaceResult::UpToDate(path) => {
+            println!("up-to-date interface: {}", path.display());
+        }
+    }
 }
 
 fn sync_reference_interfaces(
@@ -800,11 +838,15 @@ fn sync_reference_interfaces(
             visited,
         )?);
         if should_sync_interface_artifact(&dependency_manifest)? {
-            written.push(emit_package_interface_path(
+            let result = emit_package_interface_path(
                 &dependency_manifest.manifest_path,
                 None,
                 "`ql check --sync-interfaces`",
-            )?);
+                false,
+            )?;
+            if let EmitPackageInterfaceResult::Wrote(path) = result {
+                written.push(path);
+            }
         }
     }
     Ok(written)
@@ -1073,7 +1115,7 @@ fn print_usage() {
         "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
     );
     eprintln!("  ql project graph [file-or-dir]");
-    eprintln!("  ql project emit-interface [file-or-dir] [-o <output>]");
+    eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only]");
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
     eprintln!("  ql mir <file>");
