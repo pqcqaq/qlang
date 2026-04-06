@@ -597,8 +597,37 @@ fn project_graph_path(path: &Path) -> Result<(), u8> {
 }
 
 fn project_emit_interface_path(path: &Path, output: Option<&Path>) -> Result<(), u8> {
-    let output_path = emit_package_interface_path(path, output, "`ql project emit-interface`")?;
-    println!("wrote interface: {}", output_path.display());
+    let manifest = load_project_manifest(path).map_err(|error| {
+        eprintln!("error: {error}");
+        1
+    })?;
+
+    if manifest.package.is_some() {
+        let output_path = emit_package_interface_path(path, output, "`ql project emit-interface`")?;
+        println!("wrote interface: {}", output_path.display());
+        return Ok(());
+    }
+
+    if output.is_some() {
+        eprintln!("error: `ql project emit-interface --output` only supports package manifests");
+        return Err(1);
+    }
+
+    let Some(workspace) = &manifest.workspace else {
+        eprintln!("error: `ql project emit-interface` requires `[package]` or `[workspace]`");
+        return Err(1);
+    };
+
+    let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    for member in &workspace.members {
+        let output_path = emit_package_interface_path(
+            &manifest_dir.join(member),
+            None,
+            "`ql project emit-interface`",
+        )?;
+        println!("wrote interface: {}", output_path.display());
+    }
+
     Ok(())
 }
 
