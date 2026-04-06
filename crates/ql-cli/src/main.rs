@@ -16,7 +16,7 @@ use ql_driver::{
 use ql_fmt::format_source;
 use ql_project::{
     collect_package_sources, default_interface_path, load_project_manifest, package_name,
-    package_source_root, render_module_interface, render_project_graph,
+    package_source_root, render_module_interface, render_project_graph_resolved,
 };
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 
@@ -654,7 +654,11 @@ fn project_graph_path(path: &Path) -> Result<(), u8> {
         eprintln!("error: {error}");
         1
     })?;
-    print!("{}", render_project_graph(&manifest));
+    let rendered = render_project_graph_resolved(&manifest).map_err(|error| {
+        eprintln!("error: {error}");
+        1
+    })?;
+    print!("{rendered}");
     Ok(())
 }
 

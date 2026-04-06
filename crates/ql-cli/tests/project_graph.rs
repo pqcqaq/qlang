@@ -88,3 +88,67 @@ packages = ["../core"]
     )
     .expect("invalid manifest diagnostic should mention the minimum section contract");
 }
+
+#[test]
+fn project_graph_expands_workspace_root_members() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-workspace-root");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages").join("app").join("src"))
+        .expect("create workspace app directory");
+    std::fs::create_dir_all(project_root.join("packages").join("tool").join("src"))
+        .expect("create workspace tool directory");
+
+    let manifest_path = temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "graph"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql project graph` workspace root");
+    let (stdout, stderr) = expect_success(
+        "project-graph-workspace-root",
+        "workspace root project graph rendering",
+        &output,
+    )
+    .expect("workspace root project graph rendering should succeed");
+    expect_empty_stderr(
+        "project-graph-workspace-root",
+        "workspace root project graph rendering",
+        &stderr,
+    )
+    .expect("workspace root project graph rendering should stay silent on stderr");
+
+    let expected = format!(
+        "manifest: {}\npackage: <none>\nworkspace_members:\n  - packages/app\n  - packages/tool\nreferences: []\nworkspace_packages:\n  - member: packages/app\n    manifest: packages/app/qlang.toml\n    package: app\n    interface: packages/app/app.qi\n    references:\n      - ../../dep\n  - member: packages/tool\n    manifest: packages/tool/qlang.toml\n    package: tool\n    interface: packages/tool/tool.qi\n    references: []\n",
+        manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-graph-workspace-root",
+        "workspace root project graph stdout",
+        &expected,
+        &stdout,
+    )
+    .expect("workspace root project graph stdout should match resolved member graph");
+}

@@ -197,6 +197,49 @@ pub fn render_project_graph(manifest: &ProjectManifest) -> String {
     output
 }
 
+pub fn render_project_graph_resolved(manifest: &ProjectManifest) -> Result<String, ProjectError> {
+    let mut output = render_project_graph(manifest);
+
+    if manifest.package.is_some() || manifest.workspace.is_none() {
+        return Ok(output);
+    }
+
+    let manifest_dir = manifest_dir(manifest);
+    output.push_str("workspace_packages:\n");
+    for member in &manifest
+        .workspace
+        .as_ref()
+        .expect("workspace exists")
+        .members
+    {
+        let member_manifest = load_project_manifest(&manifest_dir.join(member))?;
+        let package = package_name(&member_manifest)?;
+        let interface_path = default_interface_path(&member_manifest)?;
+
+        output.push_str(&format!("  - member: {member}\n"));
+        output.push_str(&format!(
+            "    manifest: {}\n",
+            relative_display_path(manifest_dir, &member_manifest.manifest_path)
+        ));
+        output.push_str(&format!("    package: {package}\n"));
+        output.push_str(&format!(
+            "    interface: {}\n",
+            relative_display_path(manifest_dir, &interface_path)
+        ));
+
+        if member_manifest.references.packages.is_empty() {
+            output.push_str("    references: []\n");
+        } else {
+            output.push_str("    references:\n");
+            for reference in &member_manifest.references.packages {
+                output.push_str(&format!("      - {reference}\n"));
+            }
+        }
+    }
+
+    Ok(output)
+}
+
 pub fn manifest_dir(manifest: &ProjectManifest) -> &Path {
     manifest.manifest_path.parent().unwrap_or(Path::new("."))
 }
@@ -1042,4 +1085,10 @@ fn parse_error(manifest_path: &Path, message: impl Into<String>) -> ProjectError
 
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+fn relative_display_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .map(display_path)
+        .unwrap_or_else(|_| display_path(path))
 }
