@@ -2774,6 +2774,7 @@ fn dependency_member_completion_binding_in_function(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     function: &ql_ast::FunctionDecl,
+    receiver_binding: Option<&DependencyStructBinding>,
     source: &str,
     offset: usize,
     kind: DependencyMemberCompletionKind,
@@ -2782,9 +2783,15 @@ fn dependency_member_completion_binding_in_function(
     let body = function.body.as_ref()?;
     scopes.push(HashMap::new());
     for param in &function.params {
-        let binding =
-            dependency_member_completion_binding_for_param(package, module, param, offset, kind);
-        bind_dependency_struct_param(package, module, param, scopes);
+        let binding = dependency_member_completion_binding_for_param(
+            package,
+            module,
+            param,
+            receiver_binding,
+            offset,
+            kind,
+        );
+        bind_dependency_struct_param(package, module, param, receiver_binding, scopes);
         if binding.is_some() {
             scopes.pop();
             return binding;
@@ -2808,7 +2815,7 @@ fn dependency_member_completion_binding_in_item(
 ) -> Option<DependencyStructBinding> {
     match &item.kind {
         AstItemKind::Function(function) => dependency_member_completion_binding_in_function(
-            package, module, function, source, offset, kind, scopes,
+            package, module, function, None, source, offset, kind, scopes,
         ),
         AstItemKind::Const(global) | AstItemKind::Static(global) => {
             dependency_member_completion_binding_in_expr(
@@ -2831,7 +2838,7 @@ fn dependency_member_completion_binding_in_item(
         AstItemKind::Trait(trait_decl) => {
             for method in &trait_decl.methods {
                 let binding = dependency_member_completion_binding_in_function(
-                    package, module, method, source, offset, kind, scopes,
+                    package, module, method, None, source, offset, kind, scopes,
                 );
                 if binding.is_some() {
                     return binding;
@@ -2840,9 +2847,18 @@ fn dependency_member_completion_binding_in_item(
             None
         }
         AstItemKind::Impl(impl_block) => {
+            let receiver_binding =
+                dependency_struct_binding_for_type_expr(package, module, &impl_block.target);
             for method in &impl_block.methods {
                 let binding = dependency_member_completion_binding_in_function(
-                    package, module, method, source, offset, kind, scopes,
+                    package,
+                    module,
+                    method,
+                    receiver_binding.as_ref(),
+                    source,
+                    offset,
+                    kind,
+                    scopes,
                 );
                 if binding.is_some() {
                     return binding;
@@ -2851,9 +2867,18 @@ fn dependency_member_completion_binding_in_item(
             None
         }
         AstItemKind::Extend(extend_block) => {
+            let receiver_binding =
+                dependency_struct_binding_for_type_expr(package, module, &extend_block.target);
             for method in &extend_block.methods {
                 let binding = dependency_member_completion_binding_in_function(
-                    package, module, method, source, offset, kind, scopes,
+                    package,
+                    module,
+                    method,
+                    receiver_binding.as_ref(),
+                    source,
+                    offset,
+                    kind,
+                    scopes,
                 );
                 if binding.is_some() {
                     return binding;
@@ -2869,18 +2894,25 @@ fn dependency_member_completion_binding_for_param(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     param: &ql_ast::Param,
+    receiver_binding: Option<&DependencyStructBinding>,
     offset: usize,
     kind: DependencyMemberCompletionKind,
 ) -> Option<DependencyStructBinding> {
     if !matches!(kind, DependencyMemberCompletionKind::ValueType) {
         return None;
     }
-    let ql_ast::Param::Regular { name_span, ty, .. } = param else {
-        return None;
-    };
-    dependency_struct_field_completion_span_contains(*name_span, offset)
-        .then(|| dependency_struct_binding_for_type_expr(package, module, ty))
-        .flatten()
+    match param {
+        ql_ast::Param::Regular { name_span, ty, .. } => {
+            dependency_struct_field_completion_span_contains(*name_span, offset)
+                .then(|| dependency_struct_binding_for_type_expr(package, module, ty))
+                .flatten()
+        }
+        ql_ast::Param::Receiver { span, .. } => {
+            dependency_struct_field_completion_span_contains(*span, offset)
+                .then(|| receiver_binding.cloned())
+                .flatten()
+        }
+    }
 }
 
 fn dependency_member_completion_binding_for_closure_param(
@@ -4103,7 +4135,7 @@ fn collect_dependency_method_occurrences_in_item(
             if let Some(body) = &function.body {
                 scopes.push(HashMap::new());
                 for param in &function.params {
-                    bind_dependency_struct_param(package, module, param, scopes);
+                    bind_dependency_struct_param(package, module, param, None, scopes);
                 }
                 collect_dependency_method_occurrences_in_block(
                     package,
@@ -4142,7 +4174,7 @@ fn collect_dependency_method_occurrences_in_item(
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
                     for param in &method.params {
-                        bind_dependency_struct_param(package, module, param, scopes);
+                        bind_dependency_struct_param(package, module, param, None, scopes);
                     }
                     collect_dependency_method_occurrences_in_block(
                         package,
@@ -4156,11 +4188,19 @@ fn collect_dependency_method_occurrences_in_item(
             }
         }
         AstItemKind::Impl(impl_block) => {
+            let receiver_binding =
+                dependency_struct_binding_for_type_expr(package, module, &impl_block.target);
             for method in &impl_block.methods {
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
                     for param in &method.params {
-                        bind_dependency_struct_param(package, module, param, scopes);
+                        bind_dependency_struct_param(
+                            package,
+                            module,
+                            param,
+                            receiver_binding.as_ref(),
+                            scopes,
+                        );
                     }
                     collect_dependency_method_occurrences_in_block(
                         package,
@@ -4174,11 +4214,19 @@ fn collect_dependency_method_occurrences_in_item(
             }
         }
         AstItemKind::Extend(extend_block) => {
+            let receiver_binding =
+                dependency_struct_binding_for_type_expr(package, module, &extend_block.target);
             for method in &extend_block.methods {
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
                     for param in &method.params {
-                        bind_dependency_struct_param(package, module, param, scopes);
+                        bind_dependency_struct_param(
+                            package,
+                            module,
+                            param,
+                            receiver_binding.as_ref(),
+                            scopes,
+                        );
                     }
                     collect_dependency_method_occurrences_in_block(
                         package,
@@ -4522,7 +4570,7 @@ fn collect_dependency_struct_field_occurrences_in_item(
             if let Some(body) = &function.body {
                 scopes.push(HashMap::new());
                 for param in &function.params {
-                    bind_dependency_struct_param(package, module, param, scopes);
+                    bind_dependency_struct_param(package, module, param, None, scopes);
                 }
                 collect_dependency_struct_field_occurrences_in_block(
                     package,
@@ -4561,7 +4609,7 @@ fn collect_dependency_struct_field_occurrences_in_item(
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
                     for param in &method.params {
-                        bind_dependency_struct_param(package, module, param, scopes);
+                        bind_dependency_struct_param(package, module, param, None, scopes);
                     }
                     collect_dependency_struct_field_occurrences_in_block(
                         package,
@@ -4575,11 +4623,19 @@ fn collect_dependency_struct_field_occurrences_in_item(
             }
         }
         AstItemKind::Impl(impl_block) => {
+            let receiver_binding =
+                dependency_struct_binding_for_type_expr(package, module, &impl_block.target);
             for method in &impl_block.methods {
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
                     for param in &method.params {
-                        bind_dependency_struct_param(package, module, param, scopes);
+                        bind_dependency_struct_param(
+                            package,
+                            module,
+                            param,
+                            receiver_binding.as_ref(),
+                            scopes,
+                        );
                     }
                     collect_dependency_struct_field_occurrences_in_block(
                         package,
@@ -4593,11 +4649,19 @@ fn collect_dependency_struct_field_occurrences_in_item(
             }
         }
         AstItemKind::Extend(extend_block) => {
+            let receiver_binding =
+                dependency_struct_binding_for_type_expr(package, module, &extend_block.target);
             for method in &extend_block.methods {
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
                     for param in &method.params {
-                        bind_dependency_struct_param(package, module, param, scopes);
+                        bind_dependency_struct_param(
+                            package,
+                            module,
+                            param,
+                            receiver_binding.as_ref(),
+                            scopes,
+                        );
                     }
                     collect_dependency_struct_field_occurrences_in_block(
                         package,
@@ -5347,18 +5411,24 @@ fn bind_dependency_struct_param(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     param: &ql_ast::Param,
+    receiver_binding: Option<&DependencyStructBinding>,
     scopes: &mut [HashMap<String, DependencyStructBinding>],
 ) {
-    let ql_ast::Param::Regular { name, ty, .. } = param else {
-        return;
-    };
-    let Some(binding) = dependency_struct_binding_for_type_expr(package, module, ty) else {
-        return;
-    };
-    scopes
-        .last_mut()
-        .expect("scope stack must be non-empty")
-        .insert(name.clone(), binding);
+    let scope = scopes.last_mut().expect("scope stack must be non-empty");
+    match param {
+        ql_ast::Param::Regular { name, ty, .. } => {
+            let Some(binding) = dependency_struct_binding_for_type_expr(package, module, ty) else {
+                return;
+            };
+            scope.insert(name.clone(), binding);
+        }
+        ql_ast::Param::Receiver { .. } => {
+            let Some(binding) = receiver_binding else {
+                return;
+            };
+            scope.insert(String::from("self"), binding.clone());
+        }
+    }
 }
 
 fn bind_dependency_struct_pattern(
