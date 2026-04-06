@@ -1074,7 +1074,7 @@ fn symbol_kind_name(kind: SymbolKind) -> &'static str {
     }
 }
 
-const fn document_symbol_kind(kind: SymbolKind) -> tower_lsp::lsp_types::SymbolKind {
+pub(crate) const fn document_symbol_kind(kind: SymbolKind) -> tower_lsp::lsp_types::SymbolKind {
     match kind {
         SymbolKind::Function => tower_lsp::lsp_types::SymbolKind::FUNCTION,
         SymbolKind::Const | SymbolKind::Static => tower_lsp::lsp_types::SymbolKind::CONSTANT,

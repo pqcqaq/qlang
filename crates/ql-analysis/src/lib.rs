@@ -169,6 +169,10 @@ impl DependencyInterface {
             .collect()
     }
 
+    pub fn definition_span_for_symbol(&self, symbol: &DependencySymbol) -> Option<Span> {
+        self.artifact_span_for(symbol)
+    }
+
     fn import_path_variants(&self) -> Vec<Vec<String>> {
         let mut variants = self
             .artifact
