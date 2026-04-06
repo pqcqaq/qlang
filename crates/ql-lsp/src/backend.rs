@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ql_analysis::{
     Analysis, DependencyInterface, PackageAnalysisError, analyze_package,
     analyze_package_dependencies, analyze_source,
 };
+use ql_project::load_project_manifest;
 use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::request::{
     GotoDeclarationParams, GotoDeclarationResponse, GotoTypeDefinitionParams,
@@ -91,6 +92,108 @@ impl Backend {
     }
 }
 
+fn canonicalize_or_clone(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn workspace_member_manifest_paths_for_package(package_manifest_path: &Path) -> Vec<PathBuf> {
+    let package_manifest_canonical = canonicalize_or_clone(package_manifest_path);
+    let mut candidate_manifests = vec![package_manifest_path.to_path_buf()];
+    let mut current = package_manifest_path.parent().and_then(Path::parent);
+    while let Some(dir) = current {
+        let candidate = dir.join("qlang.toml");
+        if candidate.is_file() {
+            candidate_manifests.push(candidate);
+        }
+        current = dir.parent();
+    }
+
+    for candidate in candidate_manifests {
+        let Ok(manifest) = load_project_manifest(&candidate) else {
+            continue;
+        };
+        let Some(workspace) = manifest.workspace.as_ref() else {
+            continue;
+        };
+
+        let workspace_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+        let mut contains_current =
+            canonicalize_or_clone(&manifest.manifest_path) == package_manifest_canonical;
+        let mut member_manifests = Vec::new();
+
+        for member in &workspace.members {
+            let Ok(member_manifest) = load_project_manifest(&workspace_dir.join(member)) else {
+                continue;
+            };
+            if member_manifest.package.is_none() {
+                continue;
+            }
+
+            let member_manifest_path = member_manifest.manifest_path;
+            if canonicalize_or_clone(&member_manifest_path) == package_manifest_canonical {
+                contains_current = true;
+            } else {
+                member_manifests.push(member_manifest_path);
+            }
+        }
+
+        if contains_current {
+            member_manifests.sort();
+            member_manifests.dedup();
+            return member_manifests;
+        }
+    }
+
+    Vec::new()
+}
+
+#[allow(deprecated)]
+fn append_package_workspace_symbols(
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &HashMap<PathBuf, (Url, String)>,
+    covered_files: &mut HashSet<PathBuf>,
+    symbols: &mut Vec<SymbolInformation>,
+    query: &str,
+    include_dependencies: bool,
+) {
+    for module in package.modules() {
+        let module_path = module.path().to_path_buf();
+        covered_files.insert(module_path.clone());
+
+        if let Some((open_uri, open_source)) = open_docs.get(&module_path)
+            && let Ok(analysis) = analyze_source(open_source)
+        {
+            symbols.extend(workspace_symbols_for_analysis(
+                open_uri,
+                open_source,
+                &analysis,
+                query,
+            ));
+            continue;
+        }
+
+        let Ok(module_uri) = Url::from_file_path(&module_path) else {
+            continue;
+        };
+        let Ok(module_source) = fs::read_to_string(&module_path) else {
+            continue;
+        };
+        symbols.extend(workspace_symbols_for_analysis(
+            &module_uri,
+            &module_source,
+            module.analysis(),
+            query,
+        ));
+    }
+
+    if include_dependencies {
+        symbols.extend(workspace_symbols_for_dependencies(
+            package.dependencies(),
+            query,
+        ));
+    }
+}
+
 fn workspace_symbols_for_documents(
     documents: Vec<(Url, String)>,
     query: &str,
@@ -128,41 +231,33 @@ fn workspace_symbols_for_documents(
                 if !searched_packages.insert(manifest_path) {
                     continue;
                 }
+                append_package_workspace_symbols(
+                    &package,
+                    &open_docs,
+                    &mut covered_files,
+                    &mut symbols,
+                    &normalized_query,
+                    true,
+                );
 
-                for module in package.modules() {
-                    let module_path = module.path().to_path_buf();
-                    covered_files.insert(module_path.clone());
-
-                    if let Some((open_uri, open_source)) = open_docs.get(&module_path)
-                        && let Ok(analysis) = analyze_source(open_source)
-                    {
-                        symbols.extend(workspace_symbols_for_analysis(
-                            open_uri,
-                            open_source,
-                            &analysis,
-                            &normalized_query,
-                        ));
+                for member_manifest_path in workspace_member_manifest_paths_for_package(
+                    package.manifest().manifest_path.as_path(),
+                ) {
+                    if !searched_packages.insert(member_manifest_path.clone()) {
                         continue;
                     }
-
-                    let Ok(module_uri) = Url::from_file_path(&module_path) else {
+                    let Ok(member_package) = analyze_package(&member_manifest_path) else {
                         continue;
                     };
-                    let Ok(module_source) = fs::read_to_string(&module_path) else {
-                        continue;
-                    };
-                    symbols.extend(workspace_symbols_for_analysis(
-                        &module_uri,
-                        &module_source,
-                        module.analysis(),
+                    append_package_workspace_symbols(
+                        &member_package,
+                        &open_docs,
+                        &mut covered_files,
+                        &mut symbols,
                         &normalized_query,
-                    ));
+                        false,
+                    );
                 }
-
-                symbols.extend(workspace_symbols_for_dependencies(
-                    package.dependencies(),
-                    &normalized_query,
-                ));
             }
             Err(_) => {
                 covered_files.insert(path.clone());
@@ -759,6 +854,72 @@ fn helper_value() -> Int {
         );
 
         let _ = root;
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_includes_workspace_member_modules_for_open_documents() {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-members");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+"#,
+        );
+        let helper_path = temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "helper");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "tool_helper".to_owned(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(&helper_path).expect("helper path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(1, 3),
+                        tower_lsp::lsp_types::Position::new(1, 14),
+                    ),
+                ),
+                container_name: None,
+            }]
+        );
     }
 
     #[allow(deprecated)]

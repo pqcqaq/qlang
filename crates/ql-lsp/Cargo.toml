@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 ql-analysis.workspace = true
 ql-diagnostics.workspace = true
+ql-project.workspace = true
 ql-span.workspace = true
 tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "sync"] }
 tower-lsp = "0.20"

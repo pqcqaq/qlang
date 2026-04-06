@@ -528,6 +528,7 @@ version = "0.1.0"
 dependencies = [
  "ql-analysis",
  "ql-diagnostics",
+ "ql-project",
  "ql-span",
  "tokio",
  "tower-lsp",
