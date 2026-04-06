@@ -160,3 +160,102 @@ pub fn main() -> Int {
     assert!(markup.value.contains("field flag: Bool"));
     assert!(markup.value.contains("Type: `Bool`"));
 }
+
+#[test]
+fn completion_bridge_surfaces_type_markdown_for_dependency_member_items() {
+    let temp = TempDir::new("ql-lsp-member-completion-documentation");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    child: Child,
+}
+
+impl Config {
+    pub fn get(self) -> Child
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let current = config.chi
+    let next = config.ge
+    1
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let Some(CompletionResponse::Array(field_items)) = completion_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, ".chi", 1) + ".chi".len()),
+    ) else {
+        panic!("dependency member field completion should exist")
+    };
+    let field = field_items
+        .into_iter()
+        .find(|item| item.label == "child")
+        .expect("member field completion should exist");
+    let Some(Documentation::MarkupContent(field_markup)) = field.documentation else {
+        panic!("member field documentation should use markdown")
+    };
+    assert_eq!(field_markup.kind, MarkupKind::Markdown);
+    assert!(field_markup.value.contains("field child: Child"));
+    assert!(field_markup.value.contains("Type: `Child`"));
+
+    let Some(CompletionResponse::Array(method_items)) = completion_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, ".ge", 1) + ".ge".len()),
+    ) else {
+        panic!("dependency member method completion should exist")
+    };
+    let method = method_items
+        .into_iter()
+        .find(|item| item.label == "get")
+        .expect("member method completion should exist");
+    let Some(Documentation::MarkupContent(method_markup)) = method.documentation else {
+        panic!("member method documentation should use markdown")
+    };
+    assert_eq!(method_markup.kind, MarkupKind::Markdown);
+    assert!(method_markup.value.contains("fn get(self) -> Child"));
+    assert!(method_markup.value.contains("Type: `Child`"));
+}

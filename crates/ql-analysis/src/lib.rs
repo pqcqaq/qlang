@@ -403,6 +403,10 @@ impl DependencyInterface {
                                         method.span,
                                         &method.name,
                                     ),
+                                    return_type: method
+                                        .return_type
+                                        .as_ref()
+                                        .map(render_dependency_type_expr),
                                     definition_span,
                                     return_type_definition: method
                                         .return_type
@@ -438,6 +442,10 @@ impl DependencyInterface {
                                         method.span,
                                         &method.name,
                                     ),
+                                    return_type: method
+                                        .return_type
+                                        .as_ref()
+                                        .map(render_dependency_type_expr),
                                     definition_span,
                                     return_type_definition: method
                                         .return_type
@@ -590,7 +598,7 @@ impl PackageAnalysis {
                 insert_text: method.name.clone(),
                 kind: SymbolKind::Method,
                 detail: method.detail.clone(),
-                ty: None,
+                ty: method.return_type.clone(),
             })
             .collect::<Vec<_>>();
         if items.is_empty() {
@@ -625,7 +633,7 @@ impl PackageAnalysis {
                 insert_text: field.name.clone(),
                 kind: SymbolKind::Field,
                 detail: field.detail.clone(),
-                ty: None,
+                ty: Some(field.ty.clone()),
             })
             .collect::<Vec<_>>();
         if items.is_empty() {
@@ -1645,6 +1653,7 @@ struct DependencyStructBinding {
 struct DependencyStructResolvedField {
     name: String,
     detail: String,
+    ty: String,
     definition_span: Span,
 }
 
@@ -1653,6 +1662,7 @@ struct DependencyStructResolvedMethod {
     name: String,
     source_path: String,
     detail: String,
+    return_type: Option<String>,
     definition_span: Span,
     return_type_definition: Option<DependencyDefinitionTarget>,
 }
@@ -4818,6 +4828,7 @@ fn dependency_struct_binding_for_symbol(
                 DependencyStructResolvedField {
                     name: field.name.clone(),
                     detail: dependency_struct_field_detail(field),
+                    ty: render_dependency_type_expr(&field.ty),
                     definition_span,
                 },
             ))
