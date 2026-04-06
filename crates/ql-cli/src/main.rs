@@ -703,11 +703,10 @@ fn project_emit_interface_path(
 
     if manifest.package.is_some() {
         if check_only {
-            report_check_interface_result(check_package_interface_artifact(
+            return report_package_interface_check(check_package_interface_artifact(
                 &manifest,
                 "`ql project emit-interface --check`",
             )?);
-            return Ok(());
         }
         report_emit_interface_result(emit_package_interface_path(
             path,
@@ -729,6 +728,7 @@ fn project_emit_interface_path(
     };
 
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let mut invalid_count = 0usize;
     for member in &workspace.members {
         let member_manifest =
             load_project_manifest(&manifest_dir.join(member)).map_err(|error| {
@@ -736,10 +736,13 @@ fn project_emit_interface_path(
                 1
             })?;
         if check_only {
-            report_check_interface_result(check_package_interface_artifact(
+            let result = check_package_interface_artifact(
                 &member_manifest,
                 "`ql project emit-interface --check`",
-            )?);
+            )?;
+            if report_package_interface_check(result).is_err() {
+                invalid_count += 1;
+            }
         } else {
             report_emit_interface_result(emit_package_interface_path(
                 &manifest_dir.join(member),
@@ -748,6 +751,11 @@ fn project_emit_interface_path(
                 changed_only,
             )?);
         }
+    }
+
+    if check_only && invalid_count > 0 {
+        eprintln!("error: interface check found {invalid_count} invalid artifact(s)");
+        return Err(1);
     }
 
     Ok(())
@@ -760,6 +768,11 @@ enum EmitPackageInterfaceResult {
 
 enum CheckPackageInterfaceResult {
     Ok(PathBuf),
+    Invalid {
+        path: PathBuf,
+        status: InterfaceArtifactStatus,
+        manifest_path: PathBuf,
+    },
 }
 
 fn emit_package_interface_path(
@@ -858,24 +871,36 @@ fn check_package_interface_artifact(
     })?;
     let status = interface_artifact_status(manifest, &output_path);
     if status != InterfaceArtifactStatus::Valid {
-        eprintln!(
-            "error: interface artifact `{}` is {}",
-            output_path.display(),
-            status.label()
-        );
-        eprintln!(
-            "hint: rerun `ql project emit-interface {}` to regenerate it",
-            manifest.manifest_path.display()
-        );
-        return Err(1);
+        return Ok(CheckPackageInterfaceResult::Invalid {
+            path: output_path,
+            status,
+            manifest_path: manifest.manifest_path.clone(),
+        });
     }
     Ok(CheckPackageInterfaceResult::Ok(output_path))
 }
 
-fn report_check_interface_result(result: CheckPackageInterfaceResult) {
+fn report_package_interface_check(result: CheckPackageInterfaceResult) -> Result<(), u8> {
     match result {
         CheckPackageInterfaceResult::Ok(path) => {
             println!("ok interface: {}", path.display());
+            Ok(())
+        }
+        CheckPackageInterfaceResult::Invalid {
+            path,
+            status,
+            manifest_path,
+        } => {
+            eprintln!(
+                "error: interface artifact `{}` is {}",
+                path.display(),
+                status.label()
+            );
+            eprintln!(
+                "hint: rerun `ql project emit-interface {}` to regenerate it",
+                manifest_path.display()
+            );
+            Err(1)
         }
     }
 }

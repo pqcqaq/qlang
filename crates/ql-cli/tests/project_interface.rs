@@ -549,15 +549,18 @@ fn project_emit_interface_check_rejects_stale_workspace_member_interface() {
     let project_root = temp.path().join("workspace-only");
     let app_root = project_root.join("packages").join("app");
     let tool_root = project_root.join("packages").join("tool");
+    let broken_root = project_root.join("packages").join("broken");
     std::fs::create_dir_all(app_root.join("src"))
         .expect("create app package source directory for workspace interface check test");
     std::fs::create_dir_all(tool_root.join("src"))
         .expect("create tool package source directory for workspace interface check test");
+    std::fs::create_dir_all(broken_root.join("src"))
+        .expect("create broken package source directory for workspace interface check test");
     temp.write(
         "workspace-only/qlang.toml",
         r#"
 [workspace]
-members = ["packages/app", "packages/tool"]
+members = ["packages/app", "packages/tool", "packages/broken"]
 "#,
     );
     temp.write(
@@ -618,6 +621,23 @@ package demo.tool
 pub fn exported() -> Int
 ",
     );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[package]
+name = "broken"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/broken/src/lib.ql",
+        r#"
+package demo.broken
+
+pub fn exported() -> Int {
+    return 3
+}
+"#,
+    );
     std::thread::sleep(std::time::Duration::from_millis(1200));
     temp.write(
         "workspace-only/packages/tool/src/lib.ql",
@@ -642,13 +662,25 @@ pub fn newer() -> Int {
         &mut command,
         "`ql project emit-interface --check` workspace-only manifest",
     );
-    let (_stdout, stderr) = expect_exit_code(
+    let (stdout, stderr) = expect_exit_code(
         "project-interface-check-workspace",
         "workspace interface check with stale member",
         &output,
         1,
     )
     .expect("workspace interface check with stale member should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_app_interface = app_root
+        .join("app.qi")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-check-workspace",
+        &normalized_stdout,
+        &[&format!("ok interface: {normalized_app_interface}")],
+    )
+    .expect("workspace interface check should still report valid members");
     expect_stderr_contains(
         "project-interface-check-workspace",
         "workspace interface check with stale member",
@@ -656,6 +688,20 @@ pub fn newer() -> Int {
         "is stale",
     )
     .expect("workspace interface check should surface stale member interface status");
+    expect_stderr_contains(
+        "project-interface-check-workspace",
+        "workspace interface check with stale member",
+        &stderr,
+        "is missing",
+    )
+    .expect("workspace interface check should also surface missing member interface status");
+    expect_stderr_contains(
+        "project-interface-check-workspace",
+        "workspace interface check with stale member",
+        &stderr,
+        "found 2 invalid artifact(s)",
+    )
+    .expect("workspace interface check should summarize all invalid artifacts");
 }
 
 #[test]
