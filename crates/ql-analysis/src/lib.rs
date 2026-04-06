@@ -4826,6 +4826,40 @@ fn dependency_struct_binding_for_name(
         .find_map(|scope| scope.get(name).cloned())
 }
 
+fn dependency_struct_binding_for_definition_target(
+    package: &PackageAnalysis,
+    target: &DependencyDefinitionTarget,
+) -> Option<DependencyStructBinding> {
+    if target.kind != SymbolKind::Struct {
+        return None;
+    }
+    let dependency = package
+        .dependencies
+        .iter()
+        .find(|dependency| dependency.interface_path == target.path)?;
+    let symbol = dependency.symbols.iter().find(|symbol| {
+        symbol.kind == SymbolKind::Struct
+            && symbol.source_path == target.source_path
+            && symbol.name == target.name
+    })?;
+    dependency_struct_binding_for_symbol(dependency, symbol)
+}
+
+fn dependency_struct_binding_for_call_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    callee: &ql_ast::Expr,
+    scopes: &[HashMap<String, DependencyStructBinding>],
+) -> Option<DependencyStructBinding> {
+    let ql_ast::ExprKind::Member { object, field, .. } = &callee.kind else {
+        return None;
+    };
+    let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
+    let method = binding.methods.get(field)?;
+    let return_type = method.return_type_definition.as_ref()?;
+    dependency_struct_binding_for_definition_target(package, return_type)
+}
+
 fn dependency_struct_binding_for_expr(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -4839,6 +4873,9 @@ fn dependency_struct_binding_for_expr(
                 return None;
             };
             dependency_struct_binding_for_local_name(package, module, root_name)
+        }
+        ql_ast::ExprKind::Call { callee, .. } => {
+            dependency_struct_binding_for_call_expr(package, module, callee, scopes)
         }
         ql_ast::ExprKind::Question(inner) => {
             dependency_struct_binding_for_expr(package, module, inner, scopes)
