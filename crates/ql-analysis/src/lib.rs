@@ -404,6 +404,10 @@ impl DependencyInterface {
                                         &method.name,
                                     ),
                                     definition_span,
+                                    return_type_definition: method
+                                        .return_type
+                                        .as_ref()
+                                        .and_then(|ty| self.public_type_target_for_type_expr(ty)),
                                 });
                         }
                     }
@@ -435,6 +439,10 @@ impl DependencyInterface {
                                         &method.name,
                                     ),
                                     definition_span,
+                                    return_type_definition: method
+                                        .return_type
+                                        .as_ref()
+                                        .and_then(|ty| self.public_type_target_for_type_expr(ty)),
                                 });
                         }
                     }
@@ -1173,6 +1181,31 @@ impl PackageAnalysis {
         dependency.public_type_target_for_type_expr(&field.ty)
     }
 
+    pub fn dependency_method_type_definition_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyDefinitionTarget> {
+        let target = self.dependency_method_target_in_source_at(source, offset)?;
+        let dependency = self
+            .dependencies
+            .iter()
+            .find(|dependency| dependency.interface_path == target.path)?;
+        dependency
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.kind == SymbolKind::Struct && symbol.name == target.struct_name)
+            .find_map(|symbol| {
+                let mut methods = dependency.struct_methods_for(symbol);
+                let method = methods.get(&target.name)?;
+                (method.source_path == target.source_path
+                    && method.definition_span == target.definition_span)
+                    .then(|| methods.remove(&target.name))
+                    .flatten()
+            })?
+            .return_type_definition
+    }
+
     pub fn dependency_references_in_source_at(
         &self,
         source: &str,
@@ -1577,6 +1610,7 @@ struct DependencyStructResolvedMethod {
     source_path: String,
     detail: String,
     definition_span: Span,
+    return_type_definition: Option<DependencyDefinitionTarget>,
 }
 
 impl Analysis {
