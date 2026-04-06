@@ -4451,7 +4451,15 @@ fn collect_dependency_method_occurrences_in_stmt(
                 occurrences,
             );
         }
-        ql_ast::StmtKind::For { iterable, body, .. } => {
+        ql_ast::StmtKind::For {
+            pattern,
+            iterable,
+            body,
+            ..
+        } => {
+            let iterable_binding = dependency_struct_element_binding_for_iterable_expr(
+                package, module, iterable, scopes,
+            );
             collect_dependency_method_occurrences_in_expr(
                 package,
                 module,
@@ -4459,6 +4467,10 @@ fn collect_dependency_method_occurrences_in_stmt(
                 scopes,
                 occurrences,
             );
+            scopes.push(HashMap::new());
+            if let Some(binding) = &iterable_binding {
+                bind_dependency_struct_pattern(package, pattern, binding, scopes);
+            }
             collect_dependency_method_occurrences_in_block(
                 package,
                 module,
@@ -4466,6 +4478,7 @@ fn collect_dependency_method_occurrences_in_stmt(
                 scopes,
                 occurrences,
             );
+            scopes.pop();
         }
         ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {}
     }
@@ -4924,7 +4937,18 @@ fn collect_dependency_value_occurrences_in_stmt(
                 occurrences,
             );
         }
-        ql_ast::StmtKind::For { iterable, body, .. } => {
+        ql_ast::StmtKind::For {
+            pattern,
+            iterable,
+            body,
+            ..
+        } => {
+            let iterable_binding = dependency_struct_element_binding_for_iterable_expr(
+                package,
+                module,
+                iterable,
+                binding_scopes,
+            );
             collect_dependency_value_occurrences_in_expr(
                 package,
                 module,
@@ -4933,6 +4957,18 @@ fn collect_dependency_value_occurrences_in_stmt(
                 value_scopes,
                 occurrences,
             );
+            binding_scopes.push(HashMap::new());
+            value_scopes.push(HashMap::new());
+            if let Some(binding) = &iterable_binding {
+                bind_dependency_value_pattern(
+                    package,
+                    pattern,
+                    binding,
+                    binding_scopes,
+                    value_scopes,
+                    occurrences,
+                );
+            }
             collect_dependency_value_occurrences_in_block(
                 package,
                 module,
@@ -4941,6 +4977,8 @@ fn collect_dependency_value_occurrences_in_stmt(
                 value_scopes,
                 occurrences,
             );
+            value_scopes.pop();
+            binding_scopes.pop();
         }
         ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {}
     }
@@ -5416,6 +5454,9 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
             body,
             ..
         } => {
+            let iterable_binding = dependency_struct_element_binding_for_iterable_expr(
+                package, module, iterable, scopes,
+            );
             collect_dependency_struct_field_occurrences_in_pattern(
                 package,
                 module,
@@ -5430,6 +5471,10 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 scopes,
                 occurrences,
             );
+            scopes.push(HashMap::new());
+            if let Some(binding) = &iterable_binding {
+                bind_dependency_struct_pattern(package, pattern, binding, scopes);
+            }
             collect_dependency_struct_field_occurrences_in_block(
                 package,
                 module,
@@ -5437,6 +5482,7 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 scopes,
                 occurrences,
             );
+            scopes.pop();
         }
         ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {}
     }
