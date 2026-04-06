@@ -363,13 +363,15 @@ impl PackageAnalysis {
 
     pub fn dependency_variant_completions_at(
         &self,
-        analysis: &Analysis,
         source: &str,
         offset: usize,
     ) -> Option<Vec<CompletionItem>> {
+        let module = parse_source(source).ok()?;
         let root_offset = dependency_variant_completion_root_offset(source, offset)?;
-        let (binding, _) = analysis.import_binding_at(root_offset)?;
-        let (dependency, symbol) = self.resolve_dependency_import_binding(&binding)?;
+        let root_end = dependency_identifier_end(source, root_offset);
+        let root_name = source.get(root_offset..root_end)?;
+        let (dependency, symbol) =
+            dependency_import_binding_for_local_name(self, &module, root_name)?;
         dependency.variant_completions_for(symbol)
     }
 
@@ -2171,12 +2173,21 @@ fn dependency_struct_import_binding_for_local_name<'a>(
     module: &ql_ast::Module,
     local_name: &str,
 ) -> Option<(&'a DependencyInterface, &'a DependencySymbol)> {
+    let (dependency, symbol) =
+        dependency_import_binding_for_local_name(package, module, local_name)?;
+    (symbol.kind == SymbolKind::Struct).then_some((dependency, symbol))
+}
+
+fn dependency_import_binding_for_local_name<'a>(
+    package: &'a PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<(&'a DependencyInterface, &'a DependencySymbol)> {
     let mut matches = module
         .uses
         .iter()
         .flat_map(|use_decl| dependency_import_bindings_for_local_name(use_decl, local_name))
         .filter_map(|binding| package.resolve_dependency_import_binding(&binding))
-        .filter(|(_, symbol)| symbol.kind == SymbolKind::Struct)
         .collect::<Vec<_>>();
     if matches.len() != 1 {
         return None;

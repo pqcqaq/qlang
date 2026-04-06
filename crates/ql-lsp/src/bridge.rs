@@ -355,6 +355,16 @@ pub fn completion_for_dependency_struct_fields(
     completion_response(source, offset, items)
 }
 
+pub fn completion_for_dependency_variants(
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<CompletionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let items = package.dependency_variant_completions_at(source, offset)?;
+    completion_response(source, offset, items)
+}
+
 pub fn completion_for_package_analysis(
     source: &str,
     analysis: &Analysis,
@@ -369,11 +379,11 @@ pub fn completion_for_package_analysis(
         return Some(completion);
     }
 
-    let offset = position_to_offset(source, position)?;
-    if let Some(items) = package.dependency_variant_completions_at(analysis, source, offset) {
-        return completion_response(source, offset, items);
+    if let Some(completion) = completion_for_dependency_variants(source, package, position) {
+        return Some(completion);
     }
 
+    let offset = position_to_offset(source, position)?;
     completion_response(source, offset, analysis.completions_at(offset)?)
 }
 

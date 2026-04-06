@@ -6,8 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
     completion_for_dependency_imports, completion_for_dependency_struct_fields,
-    completion_for_package_analysis, definition_for_package_analysis, hover_for_package_analysis,
-    references_for_package_analysis, span_to_range,
+    completion_for_dependency_variants, completion_for_package_analysis,
+    definition_for_package_analysis, hover_for_package_analysis, references_for_package_analysis,
+    span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
@@ -736,6 +737,78 @@ pub fn main() -> Int {
     assert!(items.iter().any(|item| {
         item.label == "Retry" && item.detail.as_deref() == Some("variant Command.Retry(Int)")
     }));
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_variant_completion_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-package-variant-broken-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+
+pub fn main(flag: Bool) -> Int {
+    if flag {
+        return Cmd.Re()
+    }
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_dependency_variants(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".Re", 1) + 3),
+    ) else {
+        panic!("dependency variant completion should exist even without semantic analysis")
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "Retry");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::ENUM_MEMBER));
+    assert_eq!(
+        items[0].detail.as_deref(),
+        Some("variant Command.Retry(Int)")
+    );
 }
 
 #[test]

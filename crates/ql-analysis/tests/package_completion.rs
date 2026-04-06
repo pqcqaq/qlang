@@ -336,9 +336,8 @@ pub fn main() -> Int {
     temp.write("workspace/app/src/lib.ql", source);
 
     let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = ql_analysis::analyze_source(source).expect("source should analyze");
     let completions = package
-        .dependency_variant_completions_at(&analysis, source, nth_offset(source, ".Re", 1) + 3)
+        .dependency_variant_completions_at(source, nth_offset(source, ".Re", 1) + 3)
         .expect("dependency variant completions should exist");
 
     assert_eq!(
