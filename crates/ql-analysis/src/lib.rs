@@ -666,6 +666,37 @@ impl PackageAnalysis {
         Some(references)
     }
 
+    pub fn dependency_struct_field_references_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<ReferenceTarget>> {
+        let module = parse_source(source).ok()?;
+        let target = self.dependency_struct_field_target_in_source_at(source, offset)?;
+        let mut references = self
+            .dependency_struct_field_occurrences(&module)
+            .into_iter()
+            .filter(|occurrence| {
+                occurrence.package_name == target.package_name
+                    && occurrence.source_path == target.source_path
+                    && occurrence.struct_name == target.struct_name
+                    && occurrence.name == target.name
+                    && occurrence.path == target.path
+            })
+            .map(|occurrence| ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: occurrence.name,
+                span: occurrence.reference_span,
+                is_definition: false,
+            })
+            .collect::<Vec<_>>();
+        if references.is_empty() {
+            return None;
+        }
+        references.sort_by_key(|reference| (reference.span.start, reference.span.end));
+        Some(references)
+    }
+
     pub fn dependency_hover_at(
         &self,
         analysis: &Analysis,

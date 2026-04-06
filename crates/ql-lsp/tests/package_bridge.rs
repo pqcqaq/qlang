@@ -11,7 +11,8 @@ use ql_lsp::bridge::{
     definition_for_dependency_variants, definition_for_package_analysis,
     hover_for_dependency_imports, hover_for_dependency_struct_fields,
     hover_for_dependency_variants, hover_for_package_analysis, references_for_dependency_imports,
-    references_for_dependency_variants, references_for_package_analysis, span_to_range,
+    references_for_dependency_struct_fields, references_for_dependency_variants,
+    references_for_package_analysis, span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
@@ -1814,6 +1815,111 @@ pub fn current(flag: Bool) -> Int {
         false,
     )
     .expect("dependency variant references should exist without declaration");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_struct_field_references_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-package-struct-field-broken-references");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    match config {
+        Cfg { value: current, limit: 3 } => current,
+    }
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let with_declaration = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 1)),
+        true,
+    )
+    .expect("dependency struct field references should exist even without semantic analysis");
+    assert_eq!(with_declaration.len(), 3);
+    assert_eq!(
+        with_declaration[0]
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    assert!(
+        with_declaration[1..]
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+
+    let without_declaration = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 2)),
+        false,
+    )
+    .expect("dependency struct field references should exist without declaration");
     assert_eq!(without_declaration.len(), 2);
     assert!(
         without_declaration

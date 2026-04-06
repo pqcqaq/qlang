@@ -28,7 +28,7 @@
 - 当前主线工作是保守的 Phase 7：async/runtime/library-build/program-build/Rust interop
 - 现阶段最重要的目标不是盲目扩语法，而是沿着现有边界持续扩展，不推翻已有真相源
 - 文档、测试、实现必须继续保持同一事实面，否则项目会重新退化成“代码和路线图各说各话”
-- 当前 Phase 8 的 editor 侧策略继续保持保守：优先补导入链路上真正阻塞编辑体验的 `.qi` 消费与回退路径，例如当前文档临时报错时真实 `ql-lsp` backend 上的 dependency import / variant / explicit struct-field completion，以及 imported dependency local name / dependency variant 的最小 hover / definition / references 回退与 explicit struct-field 的最小 hover / definition 回退，而不是提前扩写 full workspace rename / code action
+- 当前 Phase 8 的 editor 侧策略继续保持保守：优先补导入链路上真正阻塞编辑体验的 `.qi` 消费与回退路径，例如当前文档临时报错时真实 `ql-lsp` backend 上的 dependency import / variant / explicit struct-field completion，以及 imported dependency local name / dependency variant / explicit struct-field 的最小 hover / definition / references 回退，而不是提前扩写 full workspace rename / code action
 - 当前 Phase 8 的 cross-file completion 扩面也继续遵守同一原则：优先补 imported dependency root 上真正可消费的 public surface，例如 public enum variant completion 与 explicit struct field-label completion，而不是直接承诺完整 dependency member/type-space completion
 - 同一条 Phase 8 路线也继续要求 query contract 成片推进：某个 imported dependency root 一旦开放 completion，就优先把同一层级上最基本的 hover / definition 一并补齐，再决定是否继续扩 references
 - sync backend 的首个 `String` 闭环现已扩到真实 build 面：UTF-8 string literal 现可 lowering 为 `{ ptr, i64 }` 并经过 local/const/static/param/return/`==`/`!=`/aggregate transport 进入 LLVM/object build；后续关于 `String` 的推进应优先放在 string `match`、runtime/ABI 与更完整数据模型等真实语言能力，而不是继续扩写 cleanup coverage-only 变体
