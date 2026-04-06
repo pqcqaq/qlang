@@ -1995,7 +1995,7 @@ fn dependency_struct_pattern_field_completion_site(
     })?;
     let mut excluded_field_names = fields
         .iter()
-        .filter(|field| field.pattern.is_some() && field.name != current.name)
+        .filter(|field| field.name != current.name)
         .map(|field| field.name.clone())
         .collect::<Vec<_>>();
     excluded_field_names.sort();
@@ -2020,7 +2020,7 @@ fn dependency_struct_literal_field_completion_site(
     })?;
     let mut excluded_field_names = fields
         .iter()
-        .filter(|field| field.value.is_some() && field.name != current.name)
+        .filter(|field| field.name != current.name)
         .map(|field| field.name.clone())
         .collect::<Vec<_>>();
     excluded_field_names.sort();
@@ -2609,16 +2609,14 @@ fn collect_dependency_struct_field_occurrences_in_pattern(
         }
         ql_ast::PatternKind::Struct { path, fields, .. } => {
             for field in fields {
-                if field.pattern.is_some() {
-                    push_dependency_struct_field_occurrence_for_path(
-                        package,
-                        module,
-                        path,
-                        &field.name,
-                        field.name_span,
-                        occurrences,
-                    );
-                }
+                push_dependency_struct_field_occurrence_for_path(
+                    package,
+                    module,
+                    path,
+                    &field.name,
+                    field.name_span,
+                    occurrences,
+                );
                 if let Some(pattern) = &field.pattern {
                     collect_dependency_struct_field_occurrences_in_pattern(
                         package,
@@ -2777,16 +2775,14 @@ fn collect_dependency_struct_field_occurrences_in_expr(
         }
         ql_ast::ExprKind::StructLiteral { path, fields } => {
             for field in fields {
-                if field.value.is_some() {
-                    push_dependency_struct_field_occurrence_for_path(
-                        package,
-                        module,
-                        path,
-                        &field.name,
-                        field.name_span,
-                        occurrences,
-                    );
-                }
+                push_dependency_struct_field_occurrence_for_path(
+                    package,
+                    module,
+                    path,
+                    &field.name,
+                    field.name_span,
+                    occurrences,
+                );
                 if let Some(value) = &field.value {
                     collect_dependency_struct_field_occurrences_in_expr(
                         package,
