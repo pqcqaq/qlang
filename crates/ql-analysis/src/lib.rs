@@ -1251,6 +1251,7 @@ impl PackageAnalysis {
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
         let target = self.dependency_struct_field_target_in_source_at(source, offset)?;
+        let module = parse_source(source).ok()?;
         let dependency = self
             .dependencies
             .iter()
@@ -1261,7 +1262,13 @@ impl PackageAnalysis {
                 && symbol.name == target.struct_name
         })?;
         let field = dependency.struct_field_for(symbol, &target.name)?;
-        dependency.public_type_target_for_type_expr(&field.ty)
+        if dependency_question_wrapped_field_reference_in_module(&module, offset) {
+            dependency
+                .public_question_inner_type_target_for_type_expr(&field.ty)
+                .or_else(|| dependency.public_type_target_for_type_expr(&field.ty))
+        } else {
+            dependency.public_type_target_for_type_expr(&field.ty)
+        }
     }
 
     pub fn dependency_method_type_definition_in_source_at(
@@ -1270,11 +1277,12 @@ impl PackageAnalysis {
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
         let target = self.dependency_method_target_in_source_at(source, offset)?;
+        let module = parse_source(source).ok()?;
         let dependency = self
             .dependencies
             .iter()
             .find(|dependency| dependency.interface_path == target.path)?;
-        dependency
+        let method = dependency
             .symbols
             .iter()
             .filter(|symbol| symbol.kind == SymbolKind::Struct && symbol.name == target.struct_name)
@@ -1285,8 +1293,14 @@ impl PackageAnalysis {
                     && method.definition_span == target.definition_span)
                     .then(|| methods.remove(&target.name))
                     .flatten()
-            })?
-            .return_type_definition
+            })?;
+        if dependency_question_wrapped_method_reference_in_module(&module, offset) {
+            method
+                .question_return_type_definition
+                .or(method.return_type_definition)
+        } else {
+            method.return_type_definition
+        }
     }
 
     pub fn dependency_references_in_source_at(
@@ -3226,6 +3240,207 @@ fn dependency_member_completion_binding_matches(
             method_prefix_match && (next_non_whitespace == Some('(') || !field_prefix_match)
         }
         DependencyMemberCompletionKind::ValueType => false,
+    }
+}
+
+fn dependency_question_wrapped_field_reference_in_module(
+    module: &ql_ast::Module,
+    offset: usize,
+) -> bool {
+    module.items.iter().any(|item| {
+        dependency_question_wrapped_reference_in_item(
+            item,
+            offset,
+            DependencyQuestionWrappedReferenceKind::Field,
+        )
+    })
+}
+
+fn dependency_question_wrapped_method_reference_in_module(
+    module: &ql_ast::Module,
+    offset: usize,
+) -> bool {
+    module.items.iter().any(|item| {
+        dependency_question_wrapped_reference_in_item(
+            item,
+            offset,
+            DependencyQuestionWrappedReferenceKind::Method,
+        )
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DependencyQuestionWrappedReferenceKind {
+    Field,
+    Method,
+}
+
+fn dependency_question_wrapped_reference_in_item(
+    item: &ql_ast::Item,
+    offset: usize,
+    kind: DependencyQuestionWrappedReferenceKind,
+) -> bool {
+    match &item.kind {
+        ql_ast::ItemKind::Function(function) => function
+            .body
+            .as_ref()
+            .is_some_and(|body| dependency_question_wrapped_reference_in_block(body, offset, kind)),
+        ql_ast::ItemKind::Const(global) | ql_ast::ItemKind::Static(global) => {
+            dependency_question_wrapped_reference_in_expr(&global.value, offset, kind)
+        }
+        ql_ast::ItemKind::Impl(block) => block.methods.iter().any(|method| {
+            method.body.as_ref().is_some_and(|body| {
+                dependency_question_wrapped_reference_in_block(body, offset, kind)
+            })
+        }),
+        ql_ast::ItemKind::Extend(block) => block.methods.iter().any(|method| {
+            method.body.as_ref().is_some_and(|body| {
+                dependency_question_wrapped_reference_in_block(body, offset, kind)
+            })
+        }),
+        _ => false,
+    }
+}
+
+fn dependency_question_wrapped_reference_in_block(
+    block: &ql_ast::Block,
+    offset: usize,
+    kind: DependencyQuestionWrappedReferenceKind,
+) -> bool {
+    block
+        .statements
+        .iter()
+        .any(|stmt| dependency_question_wrapped_reference_in_stmt(stmt, offset, kind))
+        || block
+            .tail
+            .as_ref()
+            .is_some_and(|expr| dependency_question_wrapped_reference_in_expr(expr, offset, kind))
+}
+
+fn dependency_question_wrapped_reference_in_stmt(
+    stmt: &ql_ast::Stmt,
+    offset: usize,
+    kind: DependencyQuestionWrappedReferenceKind,
+) -> bool {
+    match &stmt.kind {
+        ql_ast::StmtKind::Let { value, .. }
+        | ql_ast::StmtKind::Return(Some(value))
+        | ql_ast::StmtKind::Defer(value)
+        | ql_ast::StmtKind::Expr { expr: value, .. } => {
+            dependency_question_wrapped_reference_in_expr(value, offset, kind)
+        }
+        ql_ast::StmtKind::While { condition, body } => {
+            dependency_question_wrapped_reference_in_expr(condition, offset, kind)
+                || dependency_question_wrapped_reference_in_block(body, offset, kind)
+        }
+        ql_ast::StmtKind::Loop { body } => {
+            dependency_question_wrapped_reference_in_block(body, offset, kind)
+        }
+        ql_ast::StmtKind::For { iterable, body, .. } => {
+            dependency_question_wrapped_reference_in_expr(iterable, offset, kind)
+                || dependency_question_wrapped_reference_in_block(body, offset, kind)
+        }
+        ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {
+            false
+        }
+    }
+}
+
+fn dependency_question_wrapped_reference_in_expr(
+    expr: &ql_ast::Expr,
+    offset: usize,
+    kind: DependencyQuestionWrappedReferenceKind,
+) -> bool {
+    match &expr.kind {
+        ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => items
+            .iter()
+            .any(|item| dependency_question_wrapped_reference_in_expr(item, offset, kind)),
+        ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
+            dependency_question_wrapped_reference_in_block(block, offset, kind)
+        }
+        ql_ast::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            dependency_question_wrapped_reference_in_expr(condition, offset, kind)
+                || dependency_question_wrapped_reference_in_block(then_branch, offset, kind)
+                || else_branch.as_ref().is_some_and(|expr| {
+                    dependency_question_wrapped_reference_in_expr(expr, offset, kind)
+                })
+        }
+        ql_ast::ExprKind::Match { value, arms } => {
+            dependency_question_wrapped_reference_in_expr(value, offset, kind)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().is_some_and(|guard| {
+                        dependency_question_wrapped_reference_in_expr(guard, offset, kind)
+                    }) || dependency_question_wrapped_reference_in_expr(&arm.body, offset, kind)
+                })
+        }
+        ql_ast::ExprKind::Closure { body, .. } => {
+            dependency_question_wrapped_reference_in_expr(body, offset, kind)
+        }
+        ql_ast::ExprKind::Call { callee, args } => {
+            dependency_question_wrapped_reference_in_expr(callee, offset, kind)
+                || args.iter().any(|arg| match arg {
+                    ql_ast::CallArg::Positional(expr) => {
+                        dependency_question_wrapped_reference_in_expr(expr, offset, kind)
+                    }
+                    ql_ast::CallArg::Named { value, .. } => {
+                        dependency_question_wrapped_reference_in_expr(value, offset, kind)
+                    }
+                })
+        }
+        ql_ast::ExprKind::Member { object, .. } => {
+            dependency_question_wrapped_reference_in_expr(object, offset, kind)
+        }
+        ql_ast::ExprKind::Question(inner) => {
+            dependency_question_wrapped_reference_matches(inner, offset, kind)
+                || dependency_question_wrapped_reference_in_expr(inner, offset, kind)
+        }
+        ql_ast::ExprKind::Bracket { target, items } => {
+            dependency_question_wrapped_reference_in_expr(target, offset, kind)
+                || items
+                    .iter()
+                    .any(|item| dependency_question_wrapped_reference_in_expr(item, offset, kind))
+        }
+        ql_ast::ExprKind::StructLiteral { fields, .. } => fields.iter().any(|field| {
+            field.value.as_ref().is_some_and(|value| {
+                dependency_question_wrapped_reference_in_expr(value, offset, kind)
+            })
+        }),
+        ql_ast::ExprKind::Binary { left, right, .. } => {
+            dependency_question_wrapped_reference_in_expr(left, offset, kind)
+                || dependency_question_wrapped_reference_in_expr(right, offset, kind)
+        }
+        ql_ast::ExprKind::Unary { expr, .. } => {
+            dependency_question_wrapped_reference_in_expr(expr, offset, kind)
+        }
+        ql_ast::ExprKind::Name(_)
+        | ql_ast::ExprKind::Integer(_)
+        | ql_ast::ExprKind::String { .. }
+        | ql_ast::ExprKind::Bool(_)
+        | ql_ast::ExprKind::NoneLiteral => false,
+    }
+}
+
+fn dependency_question_wrapped_reference_matches(
+    expr: &ql_ast::Expr,
+    offset: usize,
+    kind: DependencyQuestionWrappedReferenceKind,
+) -> bool {
+    match kind {
+        DependencyQuestionWrappedReferenceKind::Field => {
+            matches!(&expr.kind, ql_ast::ExprKind::Member { field_span, .. } if field_span.contains(offset))
+        }
+        DependencyQuestionWrappedReferenceKind::Method => matches!(
+            &expr.kind,
+            ql_ast::ExprKind::Call { callee, .. }
+                if matches!(
+                    &callee.kind,
+                    ql_ast::ExprKind::Member { field_span, .. } if field_span.contains(offset)
+                )
+        ),
     }
 }
 
