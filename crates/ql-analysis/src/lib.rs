@@ -211,6 +211,25 @@ impl DependencyInterface {
         })
     }
 
+    fn public_question_inner_type_target_for_type_expr(
+        &self,
+        ty: &ql_ast::TypeExpr,
+    ) -> Option<DependencyDefinitionTarget> {
+        let ql_ast::TypeExprKind::Named { path, args } = &ty.kind else {
+            return None;
+        };
+        let [type_name] = path.segments.as_slice() else {
+            return None;
+        };
+        let inner = match (type_name.as_str(), args.as_slice()) {
+            ("Option", [inner]) => inner,
+            ("Result", [inner, ..]) => inner,
+            _ => return None,
+        };
+        self.public_type_target_for_type_expr(inner)
+            .or_else(|| self.public_question_inner_type_target_for_type_expr(inner))
+    }
+
     fn import_path_variants(&self) -> Vec<Vec<String>> {
         let mut variants = self
             .artifact
@@ -412,6 +431,12 @@ impl DependencyInterface {
                                         .return_type
                                         .as_ref()
                                         .and_then(|ty| self.public_type_target_for_type_expr(ty)),
+                                    question_return_type_definition: method
+                                        .return_type
+                                        .as_ref()
+                                        .and_then(|ty| {
+                                            self.public_question_inner_type_target_for_type_expr(ty)
+                                        }),
                                 });
                         }
                     }
@@ -451,6 +476,12 @@ impl DependencyInterface {
                                         .return_type
                                         .as_ref()
                                         .and_then(|ty| self.public_type_target_for_type_expr(ty)),
+                                    question_return_type_definition: method
+                                        .return_type
+                                        .as_ref()
+                                        .and_then(|ty| {
+                                            self.public_question_inner_type_target_for_type_expr(ty)
+                                        }),
                                 });
                         }
                     }
@@ -1656,6 +1687,7 @@ struct DependencyStructResolvedField {
     ty: String,
     definition_span: Span,
     type_definition: Option<DependencyDefinitionTarget>,
+    question_type_definition: Option<DependencyDefinitionTarget>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1666,6 +1698,7 @@ struct DependencyStructResolvedMethod {
     return_type: Option<String>,
     definition_span: Span,
     return_type_definition: Option<DependencyDefinitionTarget>,
+    question_return_type_definition: Option<DependencyDefinitionTarget>,
 }
 
 impl Analysis {
@@ -4854,6 +4887,8 @@ fn dependency_struct_binding_for_symbol(
                     ty: render_dependency_type_expr(&field.ty),
                     definition_span,
                     type_definition: dependency.public_type_target_for_type_expr(&field.ty),
+                    question_type_definition: dependency
+                        .public_question_inner_type_target_for_type_expr(&field.ty),
                 },
             ))
         })
@@ -4950,6 +4985,36 @@ fn dependency_struct_binding_for_member_expr(
     let field = binding.fields.get(field)?;
     let type_definition = field.type_definition.as_ref()?;
     dependency_struct_binding_for_definition_target(package, type_definition)
+}
+
+fn dependency_struct_binding_for_question_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    inner: &ql_ast::Expr,
+    scopes: &[HashMap<String, DependencyStructBinding>],
+) -> Option<DependencyStructBinding> {
+    if let Some(binding) = dependency_struct_binding_for_expr(package, module, inner, scopes) {
+        return Some(binding);
+    }
+
+    match &inner.kind {
+        ql_ast::ExprKind::Member { object, field, .. } => {
+            let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
+            let field = binding.fields.get(field)?;
+            let type_definition = field.question_type_definition.as_ref()?;
+            dependency_struct_binding_for_definition_target(package, type_definition)
+        }
+        ql_ast::ExprKind::Call { callee, .. } => {
+            let ql_ast::ExprKind::Member { object, field, .. } = &callee.kind else {
+                return None;
+            };
+            let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
+            let method = binding.methods.get(field)?;
+            let return_type = method.question_return_type_definition.as_ref()?;
+            dependency_struct_binding_for_definition_target(package, return_type)
+        }
+        _ => None,
+    }
 }
 
 fn dependency_struct_binding_for_resolved_field(
@@ -5057,7 +5122,7 @@ fn dependency_struct_binding_for_expr(
             dependency_struct_binding_for_call_expr(package, module, callee, scopes)
         }
         ql_ast::ExprKind::Question(inner) => {
-            dependency_struct_binding_for_expr(package, module, inner, scopes)
+            dependency_struct_binding_for_question_expr(package, module, inner, scopes)
         }
         _ => None,
     }
