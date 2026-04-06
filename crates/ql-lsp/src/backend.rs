@@ -22,8 +22,8 @@ use crate::bridge::{
     definition_for_package_analysis, diagnostics_to_lsp, hover_for_dependency_imports,
     hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
     prepare_rename_for_analysis, references_for_analysis, references_for_dependency_imports,
-    references_for_package_analysis, rename_for_analysis, semantic_tokens_for_analysis,
-    semantic_tokens_legend,
+    references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
+    semantic_tokens_for_analysis, semantic_tokens_legend,
 };
 use crate::store::DocumentStore;
 
@@ -228,7 +228,16 @@ impl LanguageServer for Backend {
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
             let Ok(analysis) = analyze_source(&source) else {
-                return Ok(references_for_dependency_imports(
+                if let Some(references) = references_for_dependency_imports(
+                    &uri,
+                    &source,
+                    &package,
+                    position,
+                    params.context.include_declaration,
+                ) {
+                    return Ok(Some(references));
+                }
+                return Ok(references_for_dependency_variants(
                     &uri,
                     &source,
                     &package,

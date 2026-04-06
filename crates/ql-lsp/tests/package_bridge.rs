@@ -11,7 +11,7 @@ use ql_lsp::bridge::{
     definition_for_dependency_variants, definition_for_package_analysis,
     hover_for_dependency_imports, hover_for_dependency_struct_fields,
     hover_for_dependency_variants, hover_for_package_analysis, references_for_dependency_imports,
-    references_for_package_analysis, span_to_range,
+    references_for_dependency_variants, references_for_package_analysis, span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::{
@@ -1708,6 +1708,112 @@ pub fn later() -> Int {
         false,
     )
     .expect("dependency import references should exist without declaration");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_variant_references_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-package-variant-broken-references");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry,
+    Stop,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+
+pub fn current(flag: Bool) -> Int {
+    let command = if flag { Cmd.Retry } else { Cmd.Stop }
+    match command {
+        Cmd.Retry => 1,
+        Cmd.Stop => 0,
+    }
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let with_declaration = references_for_dependency_variants(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "Retry", 1)),
+        true,
+    )
+    .expect("dependency variant references should exist even without semantic analysis");
+    assert_eq!(with_declaration.len(), 3);
+    assert_eq!(
+        with_declaration[0]
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    assert!(
+        with_declaration[1..]
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+
+    let without_declaration = references_for_dependency_variants(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "Retry", 2)),
+        false,
+    )
+    .expect("dependency variant references should exist without declaration");
     assert_eq!(without_declaration.len(), 2);
     assert!(
         without_declaration
