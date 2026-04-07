@@ -7,9 +7,9 @@ use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source}
 use ql_lsp::bridge::{
     completion_for_dependency_member_fields, completion_for_dependency_methods,
     completion_for_package_analysis, declaration_for_dependency_methods,
-    declaration_for_package_analysis, definition_for_dependency_methods,
-    definition_for_dependency_struct_fields, hover_for_dependency_methods,
-    hover_for_dependency_struct_fields, hover_for_package_analysis,
+    declaration_for_dependency_struct_fields, declaration_for_package_analysis,
+    definition_for_dependency_methods, definition_for_dependency_struct_fields,
+    hover_for_dependency_methods, hover_for_dependency_struct_fields, hover_for_package_analysis,
     references_for_dependency_methods, references_for_dependency_struct_fields,
     references_for_package_analysis, span_to_range, type_definition_for_dependency_method_types,
     type_definition_for_dependency_struct_field_types, type_definition_for_package_analysis,
@@ -2107,6 +2107,42 @@ pub fn read(flag: Bool) -> Int {
     assert!(markup.value.contains("**field** `value`"));
     assert!(markup.value.contains("field value: Int"));
 
+    let declaration = declaration_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, second_field),
+    )
+    .expect("grouped structured question function iterable field declaration should exist");
+    let GotoDeclarationResponse::Scalar(Location {
+        uri: declaration_uri,
+        range,
+    }) = declaration
+    else {
+        panic!("declaration should be one location")
+    };
+    assert_eq!(
+        declaration_uri
+            .to_file_path()
+            .expect("declaration URI should convert to a file path")
+            .canonicalize()
+            .expect("declaration path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let start = artifact
+        .find("value")
+        .expect("field name should exist in dependency artifact");
+    assert_eq!(
+        range,
+        span_to_range(&artifact, ql_span::Span::new(start, start + "value".len()))
+    );
+
     let with_declaration = references_for_package_analysis(
         &uri,
         source,
@@ -2240,6 +2276,40 @@ pub fn read(flag: Bool) -> Int {
     };
     assert!(markup.value.contains("**field** `value`"));
     assert!(markup.value.contains("field value: Int"));
+
+    let declaration = declaration_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, second_field),
+    )
+    .expect("grouped structured question function iterable field declaration should exist");
+    let GotoDeclarationResponse::Scalar(Location {
+        uri: declaration_uri,
+        range,
+    }) = declaration
+    else {
+        panic!("declaration should be one location")
+    };
+    assert_eq!(
+        declaration_uri
+            .to_file_path()
+            .expect("declaration URI should convert to a file path")
+            .canonicalize()
+            .expect("declaration path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let start = artifact
+        .find("value")
+        .expect("field name should exist in dependency artifact");
+    assert_eq!(
+        range,
+        span_to_range(&artifact, ql_span::Span::new(start, start + "value".len()))
+    );
 
     let with_declaration = references_for_dependency_struct_fields(
         &uri,
