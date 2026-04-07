@@ -6370,6 +6370,48 @@ fn dependency_struct_binding_for_type_expr(
     dependency_struct_binding_for_local_name(package, module, root_name)
 }
 
+fn dependency_struct_common_binding_for_type_exprs(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    items: &[ql_ast::TypeExpr],
+) -> Option<DependencyStructBinding> {
+    let mut items = items.iter();
+    let first = dependency_struct_binding_for_type_expr(package, module, items.next()?)?;
+    for item in items {
+        let binding = dependency_struct_binding_for_type_expr(package, module, item)?;
+        if binding != first {
+            return None;
+        }
+    }
+    Some(first)
+}
+
+fn dependency_struct_element_binding_for_type_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    ty: &ql_ast::TypeExpr,
+) -> Option<DependencyStructBinding> {
+    match &ty.kind {
+        ql_ast::TypeExprKind::Array { element, .. } => {
+            dependency_struct_binding_for_type_expr(package, module, element)
+        }
+        ql_ast::TypeExprKind::Tuple(items) => {
+            dependency_struct_common_binding_for_type_exprs(package, module, items)
+        }
+        _ => None,
+    }
+}
+
+fn local_function_decl_for_name<'a>(
+    module: &'a ql_ast::Module,
+    name: &str,
+) -> Option<&'a ql_ast::FunctionDecl> {
+    module.items.iter().find_map(|item| match &item.kind {
+        AstItemKind::Function(function) if function.name == name => Some(function),
+        _ => None,
+    })
+}
+
 fn dependency_struct_binding_for_name(
     scopes: &[HashMap<String, DependencyStructBinding>],
     name: &str,
@@ -6657,6 +6699,19 @@ fn dependency_struct_element_binding_for_match_expr(
     resolved
 }
 
+fn dependency_struct_element_binding_for_call_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    callee: &ql_ast::Expr,
+) -> Option<DependencyStructBinding> {
+    let ql_ast::ExprKind::Name(name) = &callee.kind else {
+        return None;
+    };
+    let function = local_function_decl_for_name(module, name)?;
+    let return_type = function.return_type.as_ref()?;
+    dependency_struct_element_binding_for_type_expr(package, module, return_type)
+}
+
 fn dependency_struct_element_binding_for_iterable_expr(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -6701,6 +6756,9 @@ fn dependency_struct_element_binding_for_iterable_expr(
                 scopes,
                 iterable_scopes,
             )
+        }
+        ql_ast::ExprKind::Call { callee, .. } => {
+            dependency_struct_element_binding_for_call_expr(package, module, callee)
         }
         _ => None,
     }
