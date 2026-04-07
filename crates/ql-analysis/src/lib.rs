@@ -1870,6 +1870,7 @@ struct DependencyStructResolvedField {
     definition_span: Span,
     type_definition: Option<DependencyDefinitionTarget>,
     question_type_definition: Option<DependencyDefinitionTarget>,
+    iterable_element_type_definition: Option<DependencyDefinitionTarget>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -6375,6 +6376,8 @@ fn dependency_struct_binding_for_symbol(
                     type_definition: dependency.public_type_target_for_type_expr(&field.ty),
                     question_type_definition: dependency
                         .public_question_inner_type_target_for_type_expr(&field.ty),
+                    iterable_element_type_definition: dependency
+                        .public_iterable_element_type_target_for_type_expr(&field.ty),
                 },
             ))
         })
@@ -6768,6 +6771,19 @@ fn dependency_struct_element_binding_for_call_expr(
     }
 }
 
+fn dependency_struct_element_binding_for_member_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    object: &ql_ast::Expr,
+    field: &str,
+    scopes: &[HashMap<String, DependencyStructBinding>],
+) -> Option<DependencyStructBinding> {
+    let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
+    let field = binding.fields.get(field)?;
+    let target = field.iterable_element_type_definition.as_ref()?;
+    dependency_struct_binding_for_definition_target(package, target)
+}
+
 fn dependency_struct_element_binding_for_iterable_expr(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -6815,6 +6831,11 @@ fn dependency_struct_element_binding_for_iterable_expr(
         }
         ql_ast::ExprKind::Call { callee, .. } => {
             dependency_struct_element_binding_for_call_expr(package, module, callee, scopes)
+        }
+        ql_ast::ExprKind::Member { object, field, .. } => {
+            dependency_struct_element_binding_for_member_expr(
+                package, module, object, field, scopes,
+            )
         }
         _ => None,
     }
