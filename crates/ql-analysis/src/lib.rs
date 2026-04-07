@@ -1590,6 +1590,7 @@ impl PackageAnalysis {
         module: &ql_ast::Module,
     ) -> Vec<DependencyValueOccurrence> {
         let mut binding_scopes = vec![HashMap::new()];
+        let mut iterable_scopes = vec![HashMap::new()];
         let mut value_scopes = vec![HashMap::new()];
         let mut occurrences = Vec::new();
         for item in &module.items {
@@ -1598,6 +1599,7 @@ impl PackageAnalysis {
                 module,
                 item,
                 &mut binding_scopes,
+                &mut iterable_scopes,
                 &mut value_scopes,
                 &mut occurrences,
             );
@@ -1693,12 +1695,14 @@ impl PackageAnalysis {
     ) -> Vec<DependencyStructFieldOccurrence> {
         let mut occurrences = Vec::new();
         let mut scopes = vec![HashMap::new()];
+        let mut iterable_scopes = vec![HashMap::new()];
         for item in &module.items {
             collect_dependency_struct_field_occurrences_in_item(
                 self,
                 module,
                 item,
                 &mut scopes,
+                &mut iterable_scopes,
                 &mut occurrences,
             );
         }
@@ -1711,12 +1715,14 @@ impl PackageAnalysis {
     ) -> Vec<DependencyMethodOccurrence> {
         let mut occurrences = Vec::new();
         let mut scopes = vec![HashMap::new()];
+        let mut iterable_scopes = vec![HashMap::new()];
         for item in &module.items {
             collect_dependency_method_occurrences_in_item(
                 self,
                 module,
                 item,
                 &mut scopes,
+                &mut iterable_scopes,
                 &mut occurrences,
             );
         }
@@ -1830,6 +1836,8 @@ struct DependencyStructResolvedMethod {
     return_type_definition: Option<DependencyDefinitionTarget>,
     question_return_type_definition: Option<DependencyDefinitionTarget>,
 }
+
+type DependencyIterableScopes = Vec<HashMap<String, Option<DependencyStructBinding>>>;
 
 impl Analysis {
     pub fn ast(&self) -> &ql_ast::Module {
@@ -2870,6 +2878,7 @@ fn dependency_member_completion_binding(
     kind: DependencyMemberCompletionKind,
 ) -> Option<DependencyStructBinding> {
     let mut scopes = vec![HashMap::new()];
+    let mut iterable_scopes = vec![HashMap::new()];
     for item in &module.items {
         if let Some(binding) = dependency_member_completion_binding_in_item(
             package,
@@ -2879,6 +2888,7 @@ fn dependency_member_completion_binding(
             offset,
             kind,
             &mut scopes,
+            &mut iterable_scopes,
         ) {
             return Some(binding);
         }
@@ -2895,9 +2905,11 @@ fn dependency_member_completion_binding_in_function(
     offset: usize,
     kind: DependencyMemberCompletionKind,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
 ) -> Option<DependencyStructBinding> {
     let body = function.body.as_ref()?;
     scopes.push(HashMap::new());
+    iterable_scopes.push(HashMap::new());
     for param in &function.params {
         let binding = dependency_member_completion_binding_for_param(
             package,
@@ -2908,14 +2920,24 @@ fn dependency_member_completion_binding_in_function(
             kind,
         );
         bind_dependency_struct_param(package, module, param, receiver_binding, scopes);
+        bind_dependency_iterable_param(param, iterable_scopes);
         if binding.is_some() {
+            iterable_scopes.pop();
             scopes.pop();
             return binding;
         }
     }
     let binding = dependency_member_completion_binding_in_block(
-        package, module, body, source, offset, kind, scopes,
+        package,
+        module,
+        body,
+        source,
+        offset,
+        kind,
+        scopes,
+        iterable_scopes,
     );
+    iterable_scopes.pop();
     scopes.pop();
     binding
 }
@@ -2928,10 +2950,19 @@ fn dependency_member_completion_binding_in_item(
     offset: usize,
     kind: DependencyMemberCompletionKind,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
 ) -> Option<DependencyStructBinding> {
     match &item.kind {
         AstItemKind::Function(function) => dependency_member_completion_binding_in_function(
-            package, module, function, None, source, offset, kind, scopes,
+            package,
+            module,
+            function,
+            None,
+            source,
+            offset,
+            kind,
+            scopes,
+            iterable_scopes,
         ),
         AstItemKind::Const(global) | AstItemKind::Static(global) => {
             dependency_member_completion_binding_in_expr(
@@ -2942,19 +2973,35 @@ fn dependency_member_completion_binding_in_item(
                 offset,
                 kind,
                 scopes,
+                iterable_scopes,
             )
         }
         AstItemKind::Struct(struct_decl) => struct_decl.fields.iter().find_map(|field| {
             field.default.as_ref().and_then(|default| {
                 dependency_member_completion_binding_in_expr(
-                    package, module, default, source, offset, kind, scopes,
+                    package,
+                    module,
+                    default,
+                    source,
+                    offset,
+                    kind,
+                    scopes,
+                    iterable_scopes,
                 )
             })
         }),
         AstItemKind::Trait(trait_decl) => {
             for method in &trait_decl.methods {
                 let binding = dependency_member_completion_binding_in_function(
-                    package, module, method, None, source, offset, kind, scopes,
+                    package,
+                    module,
+                    method,
+                    None,
+                    source,
+                    offset,
+                    kind,
+                    scopes,
+                    iterable_scopes,
                 );
                 if binding.is_some() {
                     return binding;
@@ -2975,6 +3022,7 @@ fn dependency_member_completion_binding_in_item(
                     offset,
                     kind,
                     scopes,
+                    iterable_scopes,
                 );
                 if binding.is_some() {
                     return binding;
@@ -2995,6 +3043,7 @@ fn dependency_member_completion_binding_in_item(
                     offset,
                     kind,
                     scopes,
+                    iterable_scopes,
                 );
                 if binding.is_some() {
                     return binding;
@@ -3089,21 +3138,39 @@ fn dependency_member_completion_binding_in_block(
     offset: usize,
     kind: DependencyMemberCompletionKind,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
 ) -> Option<DependencyStructBinding> {
     scopes.push(HashMap::new());
+    iterable_scopes.push(HashMap::new());
     for stmt in &block.statements {
         if let Some(binding) = dependency_member_completion_binding_in_stmt(
-            package, module, stmt, source, offset, kind, scopes,
+            package,
+            module,
+            stmt,
+            source,
+            offset,
+            kind,
+            scopes,
+            iterable_scopes,
         ) {
+            iterable_scopes.pop();
             scopes.pop();
             return Some(binding);
         }
     }
     let binding = block.tail.as_ref().and_then(|tail| {
         dependency_member_completion_binding_in_expr(
-            package, module, tail, source, offset, kind, scopes,
+            package,
+            module,
+            tail,
+            source,
+            offset,
+            kind,
+            scopes,
+            iterable_scopes,
         )
     });
+    iterable_scopes.pop();
     scopes.pop();
     binding
 }
@@ -3116,13 +3183,21 @@ fn dependency_member_completion_binding_in_stmt(
     offset: usize,
     kind: DependencyMemberCompletionKind,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
 ) -> Option<DependencyStructBinding> {
     match &stmt.kind {
         ql_ast::StmtKind::Let {
             pattern, ty, value, ..
         } => {
             let expr_binding = dependency_member_completion_binding_in_expr(
-                package, module, value, source, offset, kind, scopes,
+                package,
+                module,
+                value,
+                source,
+                offset,
+                kind,
+                scopes,
+                iterable_scopes,
             );
             let let_binding = ty
                 .as_ref()
@@ -3134,25 +3209,54 @@ fn dependency_member_completion_binding_in_stmt(
                 )
             });
             bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, scopes);
+            bind_dependency_iterable_let(package, module, pattern, value, scopes, iterable_scopes);
             expr_binding.or(pattern_binding)
         }
         ql_ast::StmtKind::Return(Some(expr))
         | ql_ast::StmtKind::Defer(expr)
         | ql_ast::StmtKind::Expr { expr, .. } => dependency_member_completion_binding_in_expr(
-            package, module, expr, source, offset, kind, scopes,
+            package,
+            module,
+            expr,
+            source,
+            offset,
+            kind,
+            scopes,
+            iterable_scopes,
         ),
         ql_ast::StmtKind::While { condition, body } => {
             dependency_member_completion_binding_in_expr(
-                package, module, condition, source, offset, kind, scopes,
+                package,
+                module,
+                condition,
+                source,
+                offset,
+                kind,
+                scopes,
+                iterable_scopes,
             )
             .or_else(|| {
                 dependency_member_completion_binding_in_block(
-                    package, module, body, source, offset, kind, scopes,
+                    package,
+                    module,
+                    body,
+                    source,
+                    offset,
+                    kind,
+                    scopes,
+                    iterable_scopes,
                 )
             })
         }
         ql_ast::StmtKind::Loop { body } => dependency_member_completion_binding_in_block(
-            package, module, body, source, offset, kind, scopes,
+            package,
+            module,
+            body,
+            source,
+            offset,
+            kind,
+            scopes,
+            iterable_scopes,
         ),
         ql_ast::StmtKind::For {
             pattern,
@@ -3161,10 +3265,21 @@ fn dependency_member_completion_binding_in_stmt(
             ..
         } => {
             let iterable_binding = dependency_struct_element_binding_for_iterable_expr(
-                package, module, iterable, scopes,
+                package,
+                module,
+                iterable,
+                scopes,
+                iterable_scopes,
             );
             let expr_binding = dependency_member_completion_binding_in_expr(
-                package, module, iterable, source, offset, kind, scopes,
+                package,
+                module,
+                iterable,
+                source,
+                offset,
+                kind,
+                scopes,
+                iterable_scopes,
             );
             let pattern_binding = iterable_binding.as_ref().and_then(|binding| {
                 dependency_member_completion_binding_for_pattern(
@@ -3173,12 +3288,22 @@ fn dependency_member_completion_binding_in_stmt(
             });
 
             scopes.push(HashMap::new());
+            iterable_scopes.push(HashMap::new());
             if let Some(binding) = &iterable_binding {
                 bind_dependency_struct_pattern(package, pattern, binding, scopes);
             }
+            shadow_dependency_iterable_pattern(pattern, iterable_scopes);
             let body_binding = dependency_member_completion_binding_in_block(
-                package, module, body, source, offset, kind, scopes,
+                package,
+                module,
+                body,
+                source,
+                offset,
+                kind,
+                scopes,
+                iterable_scopes,
             );
+            iterable_scopes.pop();
             scopes.pop();
 
             expr_binding.or(pattern_binding).or(body_binding)
@@ -3197,18 +3322,33 @@ fn dependency_member_completion_binding_in_expr(
     offset: usize,
     kind: DependencyMemberCompletionKind,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
 ) -> Option<DependencyStructBinding> {
     match &expr.kind {
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
             items.iter().find_map(|item| {
                 dependency_member_completion_binding_in_expr(
-                    package, module, item, source, offset, kind, scopes,
+                    package,
+                    module,
+                    item,
+                    source,
+                    offset,
+                    kind,
+                    scopes,
+                    iterable_scopes,
                 )
             })
         }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             dependency_member_completion_binding_in_block(
-                package, module, block, source, offset, kind, scopes,
+                package,
+                module,
+                block,
+                source,
+                offset,
+                kind,
+                scopes,
+                iterable_scopes,
             )
         }
         ql_ast::ExprKind::If {
@@ -3216,7 +3356,14 @@ fn dependency_member_completion_binding_in_expr(
             then_branch,
             else_branch,
         } => dependency_member_completion_binding_in_expr(
-            package, module, condition, source, offset, kind, scopes,
+            package,
+            module,
+            condition,
+            source,
+            offset,
+            kind,
+            scopes,
+            iterable_scopes,
         )
         .or_else(|| {
             dependency_member_completion_binding_in_block(
@@ -3227,22 +3374,38 @@ fn dependency_member_completion_binding_in_expr(
                 offset,
                 kind,
                 scopes,
+                iterable_scopes,
             )
         })
         .or_else(|| {
             else_branch.as_ref().and_then(|expr| {
                 dependency_member_completion_binding_in_expr(
-                    package, module, expr, source, offset, kind, scopes,
+                    package,
+                    module,
+                    expr,
+                    source,
+                    offset,
+                    kind,
+                    scopes,
+                    iterable_scopes,
                 )
             })
         }),
         ql_ast::ExprKind::Match { value, arms } => dependency_member_completion_binding_in_expr(
-            package, module, value, source, offset, kind, scopes,
+            package,
+            module,
+            value,
+            source,
+            offset,
+            kind,
+            scopes,
+            iterable_scopes,
         )
         .or_else(|| {
             let value_binding = dependency_struct_binding_for_expr(package, module, value, scopes);
             for arm in arms {
                 scopes.push(HashMap::new());
+                iterable_scopes.push(HashMap::new());
                 let pattern_binding = value_binding.as_ref().and_then(|binding| {
                     dependency_member_completion_binding_for_pattern(
                         package,
@@ -3255,20 +3418,36 @@ fn dependency_member_completion_binding_in_expr(
                 if let Some(binding) = &value_binding {
                     bind_dependency_struct_match_pattern(package, &arm.pattern, binding, scopes);
                 }
+                shadow_dependency_iterable_pattern(&arm.pattern, iterable_scopes);
                 let binding = pattern_binding.or_else(|| {
                     arm.guard
                         .as_ref()
                         .and_then(|guard| {
                             dependency_member_completion_binding_in_expr(
-                                package, module, guard, source, offset, kind, scopes,
+                                package,
+                                module,
+                                guard,
+                                source,
+                                offset,
+                                kind,
+                                scopes,
+                                iterable_scopes,
                             )
                         })
                         .or_else(|| {
                             dependency_member_completion_binding_in_expr(
-                                package, module, &arm.body, source, offset, kind, scopes,
+                                package,
+                                module,
+                                &arm.body,
+                                source,
+                                offset,
+                                kind,
+                                scopes,
+                                iterable_scopes,
                             )
                         })
                 });
+                iterable_scopes.pop();
                 scopes.pop();
                 if binding.is_some() {
                     return binding;
@@ -3278,33 +3457,65 @@ fn dependency_member_completion_binding_in_expr(
         }),
         ql_ast::ExprKind::Closure { params, body, .. } => {
             scopes.push(HashMap::new());
+            iterable_scopes.push(HashMap::new());
             for param in params {
                 let binding = dependency_member_completion_binding_for_closure_param(
                     package, module, param, offset, kind,
                 );
                 bind_dependency_struct_closure_param(package, module, param, scopes);
+                bind_dependency_iterable_closure_param(param, iterable_scopes);
                 if binding.is_some() {
+                    iterable_scopes.pop();
                     scopes.pop();
                     return binding;
                 }
             }
             let binding = dependency_member_completion_binding_in_expr(
-                package, module, body, source, offset, kind, scopes,
+                package,
+                module,
+                body,
+                source,
+                offset,
+                kind,
+                scopes,
+                iterable_scopes,
             );
+            iterable_scopes.pop();
             scopes.pop();
             binding
         }
         ql_ast::ExprKind::Call { callee, args } => dependency_member_completion_binding_in_expr(
-            package, module, callee, source, offset, kind, scopes,
+            package,
+            module,
+            callee,
+            source,
+            offset,
+            kind,
+            scopes,
+            iterable_scopes,
         )
         .or_else(|| {
             args.iter().find_map(|arg| match arg {
                 ql_ast::CallArg::Positional(expr) => dependency_member_completion_binding_in_expr(
-                    package, module, expr, source, offset, kind, scopes,
+                    package,
+                    module,
+                    expr,
+                    source,
+                    offset,
+                    kind,
+                    scopes,
+                    iterable_scopes,
                 ),
                 ql_ast::CallArg::Named { value, .. } => {
                     dependency_member_completion_binding_in_expr(
-                        package, module, value, source, offset, kind, scopes,
+                        package,
+                        module,
+                        value,
+                        source,
+                        offset,
+                        kind,
+                        scopes,
+                        iterable_scopes,
                     )
                 }
             })
@@ -3322,7 +3533,14 @@ fn dependency_member_completion_binding_in_expr(
             field,
             field_span,
         } => dependency_member_completion_binding_in_expr(
-            package, module, object, source, offset, kind, scopes,
+            package,
+            module,
+            object,
+            source,
+            offset,
+            kind,
+            scopes,
+            iterable_scopes,
         )
         .or_else(|| {
             let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
@@ -3338,12 +3556,26 @@ fn dependency_member_completion_binding_in_expr(
         }),
         ql_ast::ExprKind::Bracket { target, items } => {
             dependency_member_completion_binding_in_expr(
-                package, module, target, source, offset, kind, scopes,
+                package,
+                module,
+                target,
+                source,
+                offset,
+                kind,
+                scopes,
+                iterable_scopes,
             )
             .or_else(|| {
                 items.iter().find_map(|item| {
                     dependency_member_completion_binding_in_expr(
-                        package, module, item, source, offset, kind, scopes,
+                        package,
+                        module,
+                        item,
+                        source,
+                        offset,
+                        kind,
+                        scopes,
+                        iterable_scopes,
                     )
                 })
             })
@@ -3351,23 +3583,51 @@ fn dependency_member_completion_binding_in_expr(
         ql_ast::ExprKind::StructLiteral { fields, .. } => fields.iter().find_map(|field| {
             field.value.as_ref().and_then(|value| {
                 dependency_member_completion_binding_in_expr(
-                    package, module, value, source, offset, kind, scopes,
+                    package,
+                    module,
+                    value,
+                    source,
+                    offset,
+                    kind,
+                    scopes,
+                    iterable_scopes,
                 )
             })
         }),
         ql_ast::ExprKind::Binary { left, right, .. } => {
             dependency_member_completion_binding_in_expr(
-                package, module, left, source, offset, kind, scopes,
+                package,
+                module,
+                left,
+                source,
+                offset,
+                kind,
+                scopes,
+                iterable_scopes,
             )
             .or_else(|| {
                 dependency_member_completion_binding_in_expr(
-                    package, module, right, source, offset, kind, scopes,
+                    package,
+                    module,
+                    right,
+                    source,
+                    offset,
+                    kind,
+                    scopes,
+                    iterable_scopes,
                 )
             })
         }
         ql_ast::ExprKind::Unary { expr, .. } | ql_ast::ExprKind::Question(expr) => {
             dependency_member_completion_binding_in_expr(
-                package, module, expr, source, offset, kind, scopes,
+                package,
+                module,
+                expr,
+                source,
+                offset,
+                kind,
+                scopes,
+                iterable_scopes,
             )
         }
         ql_ast::ExprKind::Integer(_)
@@ -4263,22 +4523,27 @@ fn collect_dependency_method_occurrences_in_item(
     module: &ql_ast::Module,
     item: &ql_ast::Item,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     occurrences: &mut Vec<DependencyMethodOccurrence>,
 ) {
     match &item.kind {
         AstItemKind::Function(function) => {
             if let Some(body) = &function.body {
                 scopes.push(HashMap::new());
+                iterable_scopes.push(HashMap::new());
                 for param in &function.params {
                     bind_dependency_struct_param(package, module, param, None, scopes);
+                    bind_dependency_iterable_param(param, iterable_scopes);
                 }
                 collect_dependency_method_occurrences_in_block(
                     package,
                     module,
                     body,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
+                iterable_scopes.pop();
                 scopes.pop();
             }
         }
@@ -4288,6 +4553,7 @@ fn collect_dependency_method_occurrences_in_item(
                 module,
                 &global.value,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -4299,6 +4565,7 @@ fn collect_dependency_method_occurrences_in_item(
                         module,
                         default,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
                 }
@@ -4308,16 +4575,20 @@ fn collect_dependency_method_occurrences_in_item(
             for method in &trait_decl.methods {
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
+                    iterable_scopes.push(HashMap::new());
                     for param in &method.params {
                         bind_dependency_struct_param(package, module, param, None, scopes);
+                        bind_dependency_iterable_param(param, iterable_scopes);
                     }
                     collect_dependency_method_occurrences_in_block(
                         package,
                         module,
                         body,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
+                    iterable_scopes.pop();
                     scopes.pop();
                 }
             }
@@ -4328,6 +4599,7 @@ fn collect_dependency_method_occurrences_in_item(
             for method in &impl_block.methods {
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
+                    iterable_scopes.push(HashMap::new());
                     for param in &method.params {
                         bind_dependency_struct_param(
                             package,
@@ -4336,14 +4608,17 @@ fn collect_dependency_method_occurrences_in_item(
                             receiver_binding.as_ref(),
                             scopes,
                         );
+                        bind_dependency_iterable_param(param, iterable_scopes);
                     }
                     collect_dependency_method_occurrences_in_block(
                         package,
                         module,
                         body,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
+                    iterable_scopes.pop();
                     scopes.pop();
                 }
             }
@@ -4354,6 +4629,7 @@ fn collect_dependency_method_occurrences_in_item(
             for method in &extend_block.methods {
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
+                    iterable_scopes.push(HashMap::new());
                     for param in &method.params {
                         bind_dependency_struct_param(
                             package,
@@ -4362,14 +4638,17 @@ fn collect_dependency_method_occurrences_in_item(
                             receiver_binding.as_ref(),
                             scopes,
                         );
+                        bind_dependency_iterable_param(param, iterable_scopes);
                     }
                     collect_dependency_method_occurrences_in_block(
                         package,
                         module,
                         body,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
+                    iterable_scopes.pop();
                     scopes.pop();
                 }
             }
@@ -4383,15 +4662,32 @@ fn collect_dependency_method_occurrences_in_block(
     module: &ql_ast::Module,
     block: &ql_ast::Block,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     occurrences: &mut Vec<DependencyMethodOccurrence>,
 ) {
     scopes.push(HashMap::new());
+    iterable_scopes.push(HashMap::new());
     for stmt in &block.statements {
-        collect_dependency_method_occurrences_in_stmt(package, module, stmt, scopes, occurrences);
+        collect_dependency_method_occurrences_in_stmt(
+            package,
+            module,
+            stmt,
+            scopes,
+            iterable_scopes,
+            occurrences,
+        );
     }
     if let Some(tail) = &block.tail {
-        collect_dependency_method_occurrences_in_expr(package, module, tail, scopes, occurrences);
+        collect_dependency_method_occurrences_in_expr(
+            package,
+            module,
+            tail,
+            scopes,
+            iterable_scopes,
+            occurrences,
+        );
     }
+    iterable_scopes.pop();
     scopes.pop();
 }
 
@@ -4400,6 +4696,7 @@ fn collect_dependency_method_occurrences_in_stmt(
     module: &ql_ast::Module,
     stmt: &ql_ast::Stmt,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     occurrences: &mut Vec<DependencyMethodOccurrence>,
 ) {
     match &stmt.kind {
@@ -4411,9 +4708,11 @@ fn collect_dependency_method_occurrences_in_stmt(
                 module,
                 value,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, scopes);
+            bind_dependency_iterable_let(package, module, pattern, value, scopes, iterable_scopes);
         }
         ql_ast::StmtKind::Return(Some(expr))
         | ql_ast::StmtKind::Defer(expr)
@@ -4423,6 +4722,7 @@ fn collect_dependency_method_occurrences_in_stmt(
                 module,
                 expr,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -4432,6 +4732,7 @@ fn collect_dependency_method_occurrences_in_stmt(
                 module,
                 condition,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             collect_dependency_method_occurrences_in_block(
@@ -4439,6 +4740,7 @@ fn collect_dependency_method_occurrences_in_stmt(
                 module,
                 body,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -4448,6 +4750,7 @@ fn collect_dependency_method_occurrences_in_stmt(
                 module,
                 body,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -4458,26 +4761,35 @@ fn collect_dependency_method_occurrences_in_stmt(
             ..
         } => {
             let iterable_binding = dependency_struct_element_binding_for_iterable_expr(
-                package, module, iterable, scopes,
+                package,
+                module,
+                iterable,
+                scopes,
+                iterable_scopes,
             );
             collect_dependency_method_occurrences_in_expr(
                 package,
                 module,
                 iterable,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             scopes.push(HashMap::new());
+            iterable_scopes.push(HashMap::new());
             if let Some(binding) = &iterable_binding {
                 bind_dependency_struct_pattern(package, pattern, binding, scopes);
             }
+            shadow_dependency_iterable_pattern(pattern, iterable_scopes);
             collect_dependency_method_occurrences_in_block(
                 package,
                 module,
                 body,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
+            iterable_scopes.pop();
             scopes.pop();
         }
         ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {}
@@ -4489,6 +4801,7 @@ fn collect_dependency_method_occurrences_in_expr(
     module: &ql_ast::Module,
     expr: &ql_ast::Expr,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     occurrences: &mut Vec<DependencyMethodOccurrence>,
 ) {
     match &expr.kind {
@@ -4499,6 +4812,7 @@ fn collect_dependency_method_occurrences_in_expr(
                     module,
                     item,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
             }
@@ -4509,6 +4823,7 @@ fn collect_dependency_method_occurrences_in_expr(
                 module,
                 block,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -4522,6 +4837,7 @@ fn collect_dependency_method_occurrences_in_expr(
                 module,
                 condition,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             collect_dependency_method_occurrences_in_block(
@@ -4529,6 +4845,7 @@ fn collect_dependency_method_occurrences_in_expr(
                 module,
                 then_branch,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             if let Some(expr) = else_branch {
@@ -4537,6 +4854,7 @@ fn collect_dependency_method_occurrences_in_expr(
                     module,
                     expr,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
             }
@@ -4547,20 +4865,24 @@ fn collect_dependency_method_occurrences_in_expr(
                 module,
                 value,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             let value_binding = dependency_struct_binding_for_expr(package, module, value, scopes);
             for arm in arms {
                 scopes.push(HashMap::new());
+                iterable_scopes.push(HashMap::new());
                 if let Some(binding) = &value_binding {
                     bind_dependency_struct_match_pattern(package, &arm.pattern, binding, scopes);
                 }
+                shadow_dependency_iterable_pattern(&arm.pattern, iterable_scopes);
                 if let Some(guard) = &arm.guard {
                     collect_dependency_method_occurrences_in_expr(
                         package,
                         module,
                         guard,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
                 }
@@ -4569,23 +4891,29 @@ fn collect_dependency_method_occurrences_in_expr(
                     module,
                     &arm.body,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
+                iterable_scopes.pop();
                 scopes.pop();
             }
         }
         ql_ast::ExprKind::Closure { params, body, .. } => {
             scopes.push(HashMap::new());
+            iterable_scopes.push(HashMap::new());
             for param in params {
                 bind_dependency_struct_closure_param(package, module, param, scopes);
+                bind_dependency_iterable_closure_param(param, iterable_scopes);
             }
             collect_dependency_method_occurrences_in_expr(
                 package,
                 module,
                 body,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
+            iterable_scopes.pop();
             scopes.pop();
         }
         ql_ast::ExprKind::Call { callee, args } => {
@@ -4594,6 +4922,7 @@ fn collect_dependency_method_occurrences_in_expr(
                 module,
                 callee,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             for arg in args {
@@ -4604,6 +4933,7 @@ fn collect_dependency_method_occurrences_in_expr(
                             module,
                             expr,
                             scopes,
+                            iterable_scopes,
                             occurrences,
                         );
                     }
@@ -4613,6 +4943,7 @@ fn collect_dependency_method_occurrences_in_expr(
                             module,
                             value,
                             scopes,
+                            iterable_scopes,
                             occurrences,
                         );
                     }
@@ -4629,6 +4960,7 @@ fn collect_dependency_method_occurrences_in_expr(
                 module,
                 object,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             if let Some(binding) =
@@ -4648,6 +4980,7 @@ fn collect_dependency_method_occurrences_in_expr(
                 module,
                 target,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             for item in items {
@@ -4656,6 +4989,7 @@ fn collect_dependency_method_occurrences_in_expr(
                     module,
                     item,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
             }
@@ -4668,6 +5002,7 @@ fn collect_dependency_method_occurrences_in_expr(
                         module,
                         value,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
                 }
@@ -4679,6 +5014,7 @@ fn collect_dependency_method_occurrences_in_expr(
                 module,
                 left,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             collect_dependency_method_occurrences_in_expr(
@@ -4686,6 +5022,7 @@ fn collect_dependency_method_occurrences_in_expr(
                 module,
                 right,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -4695,6 +5032,7 @@ fn collect_dependency_method_occurrences_in_expr(
                 module,
                 expr,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -4711,6 +5049,7 @@ fn collect_dependency_value_occurrences_in_item(
     module: &ql_ast::Module,
     item: &ql_ast::Item,
     binding_scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     value_scopes: &mut Vec<HashMap<String, DependencyValueBinding>>,
     occurrences: &mut Vec<DependencyValueOccurrence>,
 ) {
@@ -4721,6 +5060,7 @@ fn collect_dependency_value_occurrences_in_item(
             function,
             None,
             binding_scopes,
+            iterable_scopes,
             value_scopes,
             occurrences,
         ),
@@ -4730,6 +5070,7 @@ fn collect_dependency_value_occurrences_in_item(
                 module,
                 &global.value,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -4742,6 +5083,7 @@ fn collect_dependency_value_occurrences_in_item(
                         module,
                         default,
                         binding_scopes,
+                        iterable_scopes,
                         value_scopes,
                         occurrences,
                     );
@@ -4756,6 +5098,7 @@ fn collect_dependency_value_occurrences_in_item(
                     method,
                     None,
                     binding_scopes,
+                    iterable_scopes,
                     value_scopes,
                     occurrences,
                 );
@@ -4771,6 +5114,7 @@ fn collect_dependency_value_occurrences_in_item(
                     method,
                     receiver_binding.as_ref(),
                     binding_scopes,
+                    iterable_scopes,
                     value_scopes,
                     occurrences,
                 );
@@ -4786,6 +5130,7 @@ fn collect_dependency_value_occurrences_in_item(
                     method,
                     receiver_binding.as_ref(),
                     binding_scopes,
+                    iterable_scopes,
                     value_scopes,
                     occurrences,
                 );
@@ -4801,6 +5146,7 @@ fn collect_dependency_value_occurrences_in_function(
     function: &ql_ast::FunctionDecl,
     receiver_binding: Option<&DependencyStructBinding>,
     binding_scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     value_scopes: &mut Vec<HashMap<String, DependencyValueBinding>>,
     occurrences: &mut Vec<DependencyValueOccurrence>,
 ) {
@@ -4808,6 +5154,7 @@ fn collect_dependency_value_occurrences_in_function(
         return;
     };
     binding_scopes.push(HashMap::new());
+    iterable_scopes.push(HashMap::new());
     value_scopes.push(HashMap::new());
     for param in &function.params {
         bind_dependency_value_param(
@@ -4819,16 +5166,19 @@ fn collect_dependency_value_occurrences_in_function(
             value_scopes,
             occurrences,
         );
+        bind_dependency_iterable_param(param, iterable_scopes);
     }
     collect_dependency_value_occurrences_in_block(
         package,
         module,
         body,
         binding_scopes,
+        iterable_scopes,
         value_scopes,
         occurrences,
     );
     value_scopes.pop();
+    iterable_scopes.pop();
     binding_scopes.pop();
 }
 
@@ -4837,10 +5187,12 @@ fn collect_dependency_value_occurrences_in_block(
     module: &ql_ast::Module,
     block: &ql_ast::Block,
     binding_scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     value_scopes: &mut Vec<HashMap<String, DependencyValueBinding>>,
     occurrences: &mut Vec<DependencyValueOccurrence>,
 ) {
     binding_scopes.push(HashMap::new());
+    iterable_scopes.push(HashMap::new());
     value_scopes.push(HashMap::new());
     for stmt in &block.statements {
         collect_dependency_value_occurrences_in_stmt(
@@ -4848,6 +5200,7 @@ fn collect_dependency_value_occurrences_in_block(
             module,
             stmt,
             binding_scopes,
+            iterable_scopes,
             value_scopes,
             occurrences,
         );
@@ -4858,11 +5211,13 @@ fn collect_dependency_value_occurrences_in_block(
             module,
             tail,
             binding_scopes,
+            iterable_scopes,
             value_scopes,
             occurrences,
         );
     }
     value_scopes.pop();
+    iterable_scopes.pop();
     binding_scopes.pop();
 }
 
@@ -4871,6 +5226,7 @@ fn collect_dependency_value_occurrences_in_stmt(
     module: &ql_ast::Module,
     stmt: &ql_ast::Stmt,
     binding_scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     value_scopes: &mut Vec<HashMap<String, DependencyValueBinding>>,
     occurrences: &mut Vec<DependencyValueOccurrence>,
 ) {
@@ -4883,6 +5239,7 @@ fn collect_dependency_value_occurrences_in_stmt(
                 module,
                 value,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -4896,6 +5253,14 @@ fn collect_dependency_value_occurrences_in_stmt(
                 value_scopes,
                 occurrences,
             );
+            bind_dependency_iterable_let(
+                package,
+                module,
+                pattern,
+                value,
+                binding_scopes,
+                iterable_scopes,
+            );
         }
         ql_ast::StmtKind::Return(Some(expr))
         | ql_ast::StmtKind::Defer(expr)
@@ -4905,6 +5270,7 @@ fn collect_dependency_value_occurrences_in_stmt(
                 module,
                 expr,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -4915,6 +5281,7 @@ fn collect_dependency_value_occurrences_in_stmt(
                 module,
                 condition,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -4923,6 +5290,7 @@ fn collect_dependency_value_occurrences_in_stmt(
                 module,
                 body,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -4933,6 +5301,7 @@ fn collect_dependency_value_occurrences_in_stmt(
                 module,
                 body,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -4948,16 +5317,19 @@ fn collect_dependency_value_occurrences_in_stmt(
                 module,
                 iterable,
                 binding_scopes,
+                iterable_scopes,
             );
             collect_dependency_value_occurrences_in_expr(
                 package,
                 module,
                 iterable,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
             binding_scopes.push(HashMap::new());
+            iterable_scopes.push(HashMap::new());
             value_scopes.push(HashMap::new());
             if let Some(binding) = &iterable_binding {
                 bind_dependency_value_pattern(
@@ -4969,15 +5341,18 @@ fn collect_dependency_value_occurrences_in_stmt(
                     occurrences,
                 );
             }
+            shadow_dependency_iterable_pattern(pattern, iterable_scopes);
             collect_dependency_value_occurrences_in_block(
                 package,
                 module,
                 body,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
             value_scopes.pop();
+            iterable_scopes.pop();
             binding_scopes.pop();
         }
         ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {}
@@ -4989,6 +5364,7 @@ fn collect_dependency_value_occurrences_in_expr(
     module: &ql_ast::Module,
     expr: &ql_ast::Expr,
     binding_scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     value_scopes: &mut Vec<HashMap<String, DependencyValueBinding>>,
     occurrences: &mut Vec<DependencyValueOccurrence>,
 ) {
@@ -5000,6 +5376,7 @@ fn collect_dependency_value_occurrences_in_expr(
                     module,
                     item,
                     binding_scopes,
+                    iterable_scopes,
                     value_scopes,
                     occurrences,
                 );
@@ -5011,6 +5388,7 @@ fn collect_dependency_value_occurrences_in_expr(
                 module,
                 block,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -5025,6 +5403,7 @@ fn collect_dependency_value_occurrences_in_expr(
                 module,
                 condition,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -5033,6 +5412,7 @@ fn collect_dependency_value_occurrences_in_expr(
                 module,
                 then_branch,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -5042,6 +5422,7 @@ fn collect_dependency_value_occurrences_in_expr(
                     module,
                     expr,
                     binding_scopes,
+                    iterable_scopes,
                     value_scopes,
                     occurrences,
                 );
@@ -5053,6 +5434,7 @@ fn collect_dependency_value_occurrences_in_expr(
                 module,
                 value,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -5060,6 +5442,7 @@ fn collect_dependency_value_occurrences_in_expr(
                 dependency_struct_binding_for_expr(package, module, value, binding_scopes);
             for arm in arms {
                 binding_scopes.push(HashMap::new());
+                iterable_scopes.push(HashMap::new());
                 value_scopes.push(HashMap::new());
                 if let Some(binding) = &value_binding {
                     bind_dependency_value_match_pattern(
@@ -5071,12 +5454,14 @@ fn collect_dependency_value_occurrences_in_expr(
                         occurrences,
                     );
                 }
+                shadow_dependency_iterable_pattern(&arm.pattern, iterable_scopes);
                 if let Some(guard) = &arm.guard {
                     collect_dependency_value_occurrences_in_expr(
                         package,
                         module,
                         guard,
                         binding_scopes,
+                        iterable_scopes,
                         value_scopes,
                         occurrences,
                     );
@@ -5086,15 +5471,18 @@ fn collect_dependency_value_occurrences_in_expr(
                     module,
                     &arm.body,
                     binding_scopes,
+                    iterable_scopes,
                     value_scopes,
                     occurrences,
                 );
                 value_scopes.pop();
+                iterable_scopes.pop();
                 binding_scopes.pop();
             }
         }
         ql_ast::ExprKind::Closure { params, body, .. } => {
             binding_scopes.push(HashMap::new());
+            iterable_scopes.push(HashMap::new());
             value_scopes.push(HashMap::new());
             for param in params {
                 bind_dependency_value_closure_param(
@@ -5105,16 +5493,19 @@ fn collect_dependency_value_occurrences_in_expr(
                     value_scopes,
                     occurrences,
                 );
+                bind_dependency_iterable_closure_param(param, iterable_scopes);
             }
             collect_dependency_value_occurrences_in_expr(
                 package,
                 module,
                 body,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
             value_scopes.pop();
+            iterable_scopes.pop();
             binding_scopes.pop();
         }
         ql_ast::ExprKind::Call { callee, args } => {
@@ -5123,6 +5514,7 @@ fn collect_dependency_value_occurrences_in_expr(
                 module,
                 callee,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -5134,6 +5526,7 @@ fn collect_dependency_value_occurrences_in_expr(
                             module,
                             expr,
                             binding_scopes,
+                            iterable_scopes,
                             value_scopes,
                             occurrences,
                         );
@@ -5144,6 +5537,7 @@ fn collect_dependency_value_occurrences_in_expr(
                             module,
                             value,
                             binding_scopes,
+                            iterable_scopes,
                             value_scopes,
                             occurrences,
                         );
@@ -5157,6 +5551,7 @@ fn collect_dependency_value_occurrences_in_expr(
                 module,
                 object,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -5167,6 +5562,7 @@ fn collect_dependency_value_occurrences_in_expr(
                 module,
                 target,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -5176,6 +5572,7 @@ fn collect_dependency_value_occurrences_in_expr(
                     module,
                     item,
                     binding_scopes,
+                    iterable_scopes,
                     value_scopes,
                     occurrences,
                 );
@@ -5189,6 +5586,7 @@ fn collect_dependency_value_occurrences_in_expr(
                         module,
                         value,
                         binding_scopes,
+                        iterable_scopes,
                         value_scopes,
                         occurrences,
                     );
@@ -5201,6 +5599,7 @@ fn collect_dependency_value_occurrences_in_expr(
                 module,
                 left,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -5209,6 +5608,7 @@ fn collect_dependency_value_occurrences_in_expr(
                 module,
                 right,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -5219,6 +5619,7 @@ fn collect_dependency_value_occurrences_in_expr(
                 module,
                 expr,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -5241,22 +5642,27 @@ fn collect_dependency_struct_field_occurrences_in_item(
     module: &ql_ast::Module,
     item: &ql_ast::Item,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
     match &item.kind {
         AstItemKind::Function(function) => {
             if let Some(body) = &function.body {
                 scopes.push(HashMap::new());
+                iterable_scopes.push(HashMap::new());
                 for param in &function.params {
                     bind_dependency_struct_param(package, module, param, None, scopes);
+                    bind_dependency_iterable_param(param, iterable_scopes);
                 }
                 collect_dependency_struct_field_occurrences_in_block(
                     package,
                     module,
                     body,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
+                iterable_scopes.pop();
                 scopes.pop();
             }
         }
@@ -5266,6 +5672,7 @@ fn collect_dependency_struct_field_occurrences_in_item(
                 module,
                 &global.value,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -5277,6 +5684,7 @@ fn collect_dependency_struct_field_occurrences_in_item(
                         module,
                         default,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
                 }
@@ -5286,16 +5694,20 @@ fn collect_dependency_struct_field_occurrences_in_item(
             for method in &trait_decl.methods {
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
+                    iterable_scopes.push(HashMap::new());
                     for param in &method.params {
                         bind_dependency_struct_param(package, module, param, None, scopes);
+                        bind_dependency_iterable_param(param, iterable_scopes);
                     }
                     collect_dependency_struct_field_occurrences_in_block(
                         package,
                         module,
                         body,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
+                    iterable_scopes.pop();
                     scopes.pop();
                 }
             }
@@ -5306,6 +5718,7 @@ fn collect_dependency_struct_field_occurrences_in_item(
             for method in &impl_block.methods {
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
+                    iterable_scopes.push(HashMap::new());
                     for param in &method.params {
                         bind_dependency_struct_param(
                             package,
@@ -5314,14 +5727,17 @@ fn collect_dependency_struct_field_occurrences_in_item(
                             receiver_binding.as_ref(),
                             scopes,
                         );
+                        bind_dependency_iterable_param(param, iterable_scopes);
                     }
                     collect_dependency_struct_field_occurrences_in_block(
                         package,
                         module,
                         body,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
+                    iterable_scopes.pop();
                     scopes.pop();
                 }
             }
@@ -5332,6 +5748,7 @@ fn collect_dependency_struct_field_occurrences_in_item(
             for method in &extend_block.methods {
                 if let Some(body) = &method.body {
                     scopes.push(HashMap::new());
+                    iterable_scopes.push(HashMap::new());
                     for param in &method.params {
                         bind_dependency_struct_param(
                             package,
@@ -5340,14 +5757,17 @@ fn collect_dependency_struct_field_occurrences_in_item(
                             receiver_binding.as_ref(),
                             scopes,
                         );
+                        bind_dependency_iterable_param(param, iterable_scopes);
                     }
                     collect_dependency_struct_field_occurrences_in_block(
                         package,
                         module,
                         body,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
+                    iterable_scopes.pop();
                     scopes.pop();
                 }
             }
@@ -5361,15 +5781,18 @@ fn collect_dependency_struct_field_occurrences_in_block(
     module: &ql_ast::Module,
     block: &ql_ast::Block,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
     scopes.push(HashMap::new());
+    iterable_scopes.push(HashMap::new());
     for stmt in &block.statements {
         collect_dependency_struct_field_occurrences_in_stmt(
             package,
             module,
             stmt,
             scopes,
+            iterable_scopes,
             occurrences,
         );
     }
@@ -5379,9 +5802,11 @@ fn collect_dependency_struct_field_occurrences_in_block(
             module,
             tail,
             scopes,
+            iterable_scopes,
             occurrences,
         );
     }
+    iterable_scopes.pop();
     scopes.pop();
 }
 
@@ -5390,6 +5815,7 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
     module: &ql_ast::Module,
     stmt: &ql_ast::Stmt,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
     match &stmt.kind {
@@ -5401,6 +5827,7 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 module,
                 pattern,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             collect_dependency_struct_field_occurrences_in_expr(
@@ -5408,9 +5835,11 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 module,
                 value,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, scopes);
+            bind_dependency_iterable_let(package, module, pattern, value, scopes, iterable_scopes);
         }
         ql_ast::StmtKind::Return(Some(expr))
         | ql_ast::StmtKind::Defer(expr)
@@ -5420,6 +5849,7 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 module,
                 expr,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -5429,6 +5859,7 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 module,
                 condition,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             collect_dependency_struct_field_occurrences_in_block(
@@ -5436,6 +5867,7 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 module,
                 body,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -5445,6 +5877,7 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 module,
                 body,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -5455,13 +5888,18 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
             ..
         } => {
             let iterable_binding = dependency_struct_element_binding_for_iterable_expr(
-                package, module, iterable, scopes,
+                package,
+                module,
+                iterable,
+                scopes,
+                iterable_scopes,
             );
             collect_dependency_struct_field_occurrences_in_pattern(
                 package,
                 module,
                 pattern,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             collect_dependency_struct_field_occurrences_in_expr(
@@ -5469,19 +5907,24 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 module,
                 iterable,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             scopes.push(HashMap::new());
+            iterable_scopes.push(HashMap::new());
             if let Some(binding) = &iterable_binding {
                 bind_dependency_struct_pattern(package, pattern, binding, scopes);
             }
+            shadow_dependency_iterable_pattern(pattern, iterable_scopes);
             collect_dependency_struct_field_occurrences_in_block(
                 package,
                 module,
                 body,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
+            iterable_scopes.pop();
             scopes.pop();
         }
         ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {}
@@ -5493,6 +5936,7 @@ fn collect_dependency_struct_field_occurrences_in_pattern(
     module: &ql_ast::Module,
     pattern: &ql_ast::Pattern,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
     match &pattern.kind {
@@ -5503,6 +5947,7 @@ fn collect_dependency_struct_field_occurrences_in_pattern(
                     module,
                     item,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
             }
@@ -5523,6 +5968,7 @@ fn collect_dependency_struct_field_occurrences_in_pattern(
                         module,
                         pattern,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
                 }
@@ -5543,6 +5989,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
     module: &ql_ast::Module,
     expr: &ql_ast::Expr,
     scopes: &mut Vec<HashMap<String, DependencyStructBinding>>,
+    iterable_scopes: &mut DependencyIterableScopes,
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
     match &expr.kind {
@@ -5553,6 +6000,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                     module,
                     item,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
             }
@@ -5563,6 +6011,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 module,
                 block,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -5576,6 +6025,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 module,
                 condition,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             collect_dependency_struct_field_occurrences_in_block(
@@ -5583,6 +6033,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 module,
                 then_branch,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             if let Some(expr) = else_branch {
@@ -5591,6 +6042,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                     module,
                     expr,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
             }
@@ -5601,19 +6053,23 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 module,
                 value,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             let value_binding = dependency_struct_binding_for_expr(package, module, value, scopes);
             for arm in arms {
                 scopes.push(HashMap::new());
+                iterable_scopes.push(HashMap::new());
                 if let Some(binding) = &value_binding {
                     bind_dependency_struct_match_pattern(package, &arm.pattern, binding, scopes);
                 }
+                shadow_dependency_iterable_pattern(&arm.pattern, iterable_scopes);
                 collect_dependency_struct_field_occurrences_in_pattern(
                     package,
                     module,
                     &arm.pattern,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
                 if let Some(guard) = &arm.guard {
@@ -5622,6 +6078,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                         module,
                         guard,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
                 }
@@ -5630,23 +6087,29 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                     module,
                     &arm.body,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
+                iterable_scopes.pop();
                 scopes.pop();
             }
         }
         ql_ast::ExprKind::Closure { params, body, .. } => {
             scopes.push(HashMap::new());
+            iterable_scopes.push(HashMap::new());
             for param in params {
                 bind_dependency_struct_closure_param(package, module, param, scopes);
+                bind_dependency_iterable_closure_param(param, iterable_scopes);
             }
             collect_dependency_struct_field_occurrences_in_expr(
                 package,
                 module,
                 body,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
+            iterable_scopes.pop();
             scopes.pop();
         }
         ql_ast::ExprKind::Call { callee, args } => {
@@ -5655,6 +6118,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 module,
                 callee,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             for arg in args {
@@ -5665,6 +6129,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                             module,
                             expr,
                             scopes,
+                            iterable_scopes,
                             occurrences,
                         );
                     }
@@ -5674,6 +6139,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                             module,
                             value,
                             scopes,
+                            iterable_scopes,
                             occurrences,
                         );
                     }
@@ -5690,6 +6156,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 module,
                 object,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             if let Some(binding) =
@@ -5711,6 +6178,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 module,
                 object,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -5720,6 +6188,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 module,
                 target,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             for item in items {
@@ -5728,6 +6197,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                     module,
                     item,
                     scopes,
+                    iterable_scopes,
                     occurrences,
                 );
             }
@@ -5748,6 +6218,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                         module,
                         value,
                         scopes,
+                        iterable_scopes,
                         occurrences,
                     );
                 }
@@ -5759,6 +6230,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 module,
                 left,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
             collect_dependency_struct_field_occurrences_in_expr(
@@ -5766,6 +6238,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 module,
                 right,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -5775,6 +6248,7 @@ fn collect_dependency_struct_field_occurrences_in_expr(
                 module,
                 expr,
                 scopes,
+                iterable_scopes,
                 occurrences,
             );
         }
@@ -5904,6 +6378,18 @@ fn dependency_struct_binding_for_name(
         .iter()
         .rev()
         .find_map(|scope| scope.get(name).cloned())
+}
+
+fn dependency_struct_element_binding_for_name(
+    scopes: &DependencyIterableScopes,
+    name: &str,
+) -> Option<DependencyStructBinding> {
+    for scope in scopes.iter().rev() {
+        if let Some(binding) = scope.get(name) {
+            return binding.clone();
+        }
+    }
+    None
 }
 
 fn dependency_struct_binding_for_definition_target(
@@ -6076,19 +6562,36 @@ fn dependency_struct_element_binding_for_block_expr(
     module: &ql_ast::Module,
     block: &ql_ast::Block,
     scopes: &[HashMap<String, DependencyStructBinding>],
+    iterable_scopes: &DependencyIterableScopes,
 ) -> Option<DependencyStructBinding> {
     let mut scopes = scopes.to_vec();
     scopes.push(HashMap::new());
+    let mut iterable_scopes = iterable_scopes.to_vec();
+    iterable_scopes.push(HashMap::new());
     for stmt in &block.statements {
         if let ql_ast::StmtKind::Let {
             pattern, ty, value, ..
         } = &stmt.kind
         {
             bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, &mut scopes);
+            bind_dependency_iterable_let(
+                package,
+                module,
+                pattern,
+                value,
+                &scopes,
+                &mut iterable_scopes,
+            );
         }
     }
     block.tail.as_ref().and_then(|tail| {
-        dependency_struct_element_binding_for_iterable_expr(package, module, tail, &scopes)
+        dependency_struct_element_binding_for_iterable_expr(
+            package,
+            module,
+            tail,
+            &scopes,
+            &iterable_scopes,
+        )
     })
 }
 
@@ -6098,11 +6601,22 @@ fn dependency_struct_element_binding_for_if_expr(
     then_branch: &ql_ast::Block,
     else_branch: &ql_ast::Expr,
     scopes: &[HashMap<String, DependencyStructBinding>],
+    iterable_scopes: &DependencyIterableScopes,
 ) -> Option<DependencyStructBinding> {
-    let then_binding =
-        dependency_struct_element_binding_for_block_expr(package, module, then_branch, scopes)?;
-    let else_binding =
-        dependency_struct_element_binding_for_iterable_expr(package, module, else_branch, scopes)?;
+    let then_binding = dependency_struct_element_binding_for_block_expr(
+        package,
+        module,
+        then_branch,
+        scopes,
+        iterable_scopes,
+    )?;
+    let else_binding = dependency_struct_element_binding_for_iterable_expr(
+        package,
+        module,
+        else_branch,
+        scopes,
+        iterable_scopes,
+    )?;
     (then_binding == else_binding).then_some(then_binding)
 }
 
@@ -6112,20 +6626,25 @@ fn dependency_struct_element_binding_for_match_expr(
     value: &ql_ast::Expr,
     arms: &[ql_ast::MatchArm],
     scopes: &[HashMap<String, DependencyStructBinding>],
+    iterable_scopes: &DependencyIterableScopes,
 ) -> Option<DependencyStructBinding> {
     let value_binding = dependency_struct_binding_for_expr(package, module, value, scopes);
     let mut resolved = None;
     for arm in arms {
         let mut arm_scopes = scopes.to_vec();
         arm_scopes.push(HashMap::new());
+        let mut arm_iterable_scopes = iterable_scopes.to_vec();
+        arm_iterable_scopes.push(HashMap::new());
         if let Some(binding) = &value_binding {
             bind_dependency_struct_match_pattern(package, &arm.pattern, binding, &mut arm_scopes);
         }
+        shadow_dependency_iterable_pattern(&arm.pattern, &mut arm_iterable_scopes);
         let body_binding = dependency_struct_element_binding_for_iterable_expr(
             package,
             module,
             &arm.body,
             &arm_scopes,
+            &arm_iterable_scopes,
         )?;
         if resolved
             .as_ref()
@@ -6143,13 +6662,23 @@ fn dependency_struct_element_binding_for_iterable_expr(
     module: &ql_ast::Module,
     expr: &ql_ast::Expr,
     scopes: &[HashMap<String, DependencyStructBinding>],
+    iterable_scopes: &DependencyIterableScopes,
 ) -> Option<DependencyStructBinding> {
     match &expr.kind {
+        ql_ast::ExprKind::Name(name) => {
+            dependency_struct_element_binding_for_name(iterable_scopes, name)
+        }
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
             dependency_struct_common_binding_for_exprs(package, module, items, scopes)
         }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
-            dependency_struct_element_binding_for_block_expr(package, module, block, scopes)
+            dependency_struct_element_binding_for_block_expr(
+                package,
+                module,
+                block,
+                scopes,
+                iterable_scopes,
+            )
         }
         ql_ast::ExprKind::If {
             then_branch,
@@ -6161,9 +6690,17 @@ fn dependency_struct_element_binding_for_iterable_expr(
             then_branch,
             else_branch,
             scopes,
+            iterable_scopes,
         ),
         ql_ast::ExprKind::Match { value, arms } => {
-            dependency_struct_element_binding_for_match_expr(package, module, value, arms, scopes)
+            dependency_struct_element_binding_for_match_expr(
+                package,
+                module,
+                value,
+                arms,
+                scopes,
+                iterable_scopes,
+            )
         }
         _ => None,
     }
@@ -6287,6 +6824,80 @@ fn bind_dependency_struct_closure_param(
         .insert(param.name.clone(), binding);
 }
 
+fn shadow_dependency_iterable_pattern(
+    pattern: &ql_ast::Pattern,
+    scopes: &mut DependencyIterableScopes,
+) {
+    match &pattern.kind {
+        ql_ast::PatternKind::Name(name) => {
+            scopes
+                .last_mut()
+                .expect("iterable scope stack must be non-empty")
+                .insert(name.clone(), None);
+        }
+        ql_ast::PatternKind::Tuple(items) | ql_ast::PatternKind::TupleStruct { items, .. } => {
+            for item in items {
+                shadow_dependency_iterable_pattern(item, scopes);
+            }
+        }
+        ql_ast::PatternKind::Struct { fields, .. } => {
+            for field in fields {
+                if let Some(pattern) = &field.pattern {
+                    shadow_dependency_iterable_pattern(pattern, scopes);
+                } else {
+                    scopes
+                        .last_mut()
+                        .expect("iterable scope stack must be non-empty")
+                        .insert(field.name.clone(), None);
+                }
+            }
+        }
+        ql_ast::PatternKind::Path(_)
+        | ql_ast::PatternKind::Integer(_)
+        | ql_ast::PatternKind::String(_)
+        | ql_ast::PatternKind::Bool(_)
+        | ql_ast::PatternKind::NoneLiteral
+        | ql_ast::PatternKind::Wildcard => {}
+    }
+}
+
+fn bind_dependency_iterable_alias_pattern(
+    pattern: &ql_ast::Pattern,
+    binding: &DependencyStructBinding,
+    scopes: &mut DependencyIterableScopes,
+) {
+    match &pattern.kind {
+        ql_ast::PatternKind::Name(name) => {
+            scopes
+                .last_mut()
+                .expect("iterable scope stack must be non-empty")
+                .insert(name.clone(), Some(binding.clone()));
+        }
+        _ => shadow_dependency_iterable_pattern(pattern, scopes),
+    }
+}
+
+fn bind_dependency_iterable_param(param: &ql_ast::Param, scopes: &mut DependencyIterableScopes) {
+    let name = match param {
+        ql_ast::Param::Regular { name, .. } => name,
+        ql_ast::Param::Receiver { .. } => "self",
+    };
+    scopes
+        .last_mut()
+        .expect("iterable scope stack must be non-empty")
+        .insert(String::from(name), None);
+}
+
+fn bind_dependency_iterable_closure_param(
+    param: &ql_ast::ClosureParam,
+    scopes: &mut DependencyIterableScopes,
+) {
+    scopes
+        .last_mut()
+        .expect("iterable scope stack must be non-empty")
+        .insert(param.name.clone(), None);
+}
+
 fn bind_dependency_struct_let(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -6302,6 +6913,28 @@ fn bind_dependency_struct_let(
         return;
     };
     bind_dependency_struct_pattern(package, pattern, &binding, scopes);
+}
+
+fn bind_dependency_iterable_let(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    pattern: &ql_ast::Pattern,
+    value: &ql_ast::Expr,
+    binding_scopes: &[HashMap<String, DependencyStructBinding>],
+    iterable_scopes: &mut DependencyIterableScopes,
+) {
+    let binding = dependency_struct_element_binding_for_iterable_expr(
+        package,
+        module,
+        value,
+        binding_scopes,
+        iterable_scopes,
+    );
+    if let Some(binding) = &binding {
+        bind_dependency_iterable_alias_pattern(pattern, binding, iterable_scopes);
+    } else {
+        shadow_dependency_iterable_pattern(pattern, iterable_scopes);
+    }
 }
 
 fn bind_dependency_struct_match_pattern(
