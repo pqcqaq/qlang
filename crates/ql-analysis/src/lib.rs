@@ -1421,15 +1421,11 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
-        let binding = self.dependency_value_binding_in_source_at(source, offset)?;
-        Some(DependencyDefinitionTarget {
-            package_name: binding.package_name,
-            source_path: binding.source_path,
-            kind: SymbolKind::Struct,
-            name: binding.struct_name,
-            path: binding.path,
-            span: binding.definition_span,
-        })
+        if let Some(binding) = self.dependency_value_binding_in_source_at(source, offset) {
+            return Some(dependency_definition_target_for_struct_binding(&binding));
+        }
+        let module = parse_source(source).ok()?;
+        dependency_value_type_definition_root_in_module(self, &module, offset)
     }
 
     pub fn dependency_value_definition_in_source_at(
@@ -2052,6 +2048,19 @@ struct DependencyStructResolvedMethod {
 }
 
 type DependencyIterableScopes = Vec<HashMap<String, Option<DependencyStructBinding>>>;
+
+fn dependency_definition_target_for_struct_binding(
+    binding: &DependencyStructBinding,
+) -> DependencyDefinitionTarget {
+    DependencyDefinitionTarget {
+        package_name: binding.package_name.clone(),
+        source_path: binding.source_path.clone(),
+        kind: SymbolKind::Struct,
+        name: binding.struct_name.clone(),
+        path: binding.path.clone(),
+        span: binding.definition_span,
+    }
+}
 
 impl Analysis {
     pub fn ast(&self) -> &ql_ast::Module {
@@ -7983,6 +7992,225 @@ fn dependency_import_bindings_for_local_name(
         } else {
             Vec::new()
         }
+    }
+}
+
+fn dependency_value_type_definition_root_in_module(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    offset: usize,
+) -> Option<DependencyDefinitionTarget> {
+    module.items.iter().find_map(|item| {
+        dependency_value_type_definition_root_in_item(package, module, item, offset)
+    })
+}
+
+fn dependency_value_type_definition_root_in_item(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    item: &ql_ast::Item,
+    offset: usize,
+) -> Option<DependencyDefinitionTarget> {
+    match &item.kind {
+        ql_ast::ItemKind::Function(function) => function.body.as_ref().and_then(|body| {
+            dependency_value_type_definition_root_in_block(package, module, body, offset)
+        }),
+        ql_ast::ItemKind::Const(global) | ql_ast::ItemKind::Static(global) => {
+            dependency_value_type_definition_root_in_expr(package, module, &global.value, offset)
+        }
+        ql_ast::ItemKind::Impl(impl_block) => impl_block.methods.iter().find_map(|method| {
+            method.body.as_ref().and_then(|body| {
+                dependency_value_type_definition_root_in_block(package, module, body, offset)
+            })
+        }),
+        ql_ast::ItemKind::Extend(extend_block) => extend_block.methods.iter().find_map(|method| {
+            method.body.as_ref().and_then(|body| {
+                dependency_value_type_definition_root_in_block(package, module, body, offset)
+            })
+        }),
+        _ => None,
+    }
+}
+
+fn dependency_value_type_definition_root_in_block(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    block: &ql_ast::Block,
+    offset: usize,
+) -> Option<DependencyDefinitionTarget> {
+    block
+        .statements
+        .iter()
+        .find_map(|stmt| {
+            dependency_value_type_definition_root_in_stmt(package, module, stmt, offset)
+        })
+        .or_else(|| {
+            block.tail.as_ref().and_then(|expr| {
+                dependency_value_type_definition_root_in_expr(package, module, expr, offset)
+            })
+        })
+}
+
+fn dependency_value_type_definition_root_in_stmt(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    stmt: &ql_ast::Stmt,
+    offset: usize,
+) -> Option<DependencyDefinitionTarget> {
+    match &stmt.kind {
+        ql_ast::StmtKind::Let { value, .. }
+        | ql_ast::StmtKind::Expr { expr: value, .. }
+        | ql_ast::StmtKind::Defer(value)
+        | ql_ast::StmtKind::Return(Some(value)) => {
+            dependency_value_type_definition_root_in_expr(package, module, value, offset)
+        }
+        ql_ast::StmtKind::While { condition, body } => {
+            dependency_value_type_definition_root_in_expr(package, module, condition, offset)
+                .or_else(|| {
+                    dependency_value_type_definition_root_in_block(package, module, body, offset)
+                })
+        }
+        ql_ast::StmtKind::Loop { body } => {
+            dependency_value_type_definition_root_in_block(package, module, body, offset)
+        }
+        ql_ast::StmtKind::For { iterable, body, .. } => {
+            dependency_value_type_definition_root_in_expr(package, module, iterable, offset)
+                .or_else(|| {
+                    dependency_value_type_definition_root_in_block(package, module, body, offset)
+                })
+        }
+        ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {
+            None
+        }
+    }
+}
+
+fn dependency_value_type_definition_root_in_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    expr: &ql_ast::Expr,
+    offset: usize,
+) -> Option<DependencyDefinitionTarget> {
+    match &expr.kind {
+        ql_ast::ExprKind::Name(name)
+            if dependency_struct_field_completion_span_contains(expr.span, offset) =>
+        {
+            dependency_global_binding_for_local_name(package, module, name)
+                .map(|binding| dependency_definition_target_for_struct_binding(&binding))
+        }
+        ql_ast::ExprKind::Name(_) => None,
+        ql_ast::ExprKind::Call { callee, args } => {
+            if let ql_ast::ExprKind::Name(name) = &callee.kind
+                && dependency_struct_field_completion_span_contains(callee.span, offset)
+                && let Some(binding) =
+                    dependency_function_return_binding_for_local_name(package, module, name)
+            {
+                return Some(dependency_definition_target_for_struct_binding(&binding));
+            }
+
+            dependency_value_type_definition_root_in_expr(package, module, callee, offset).or_else(
+                || {
+                    args.iter().find_map(|arg| match arg {
+                        ql_ast::CallArg::Positional(expr) => {
+                            dependency_value_type_definition_root_in_expr(
+                                package, module, expr, offset,
+                            )
+                        }
+                        ql_ast::CallArg::Named { value, .. } => {
+                            dependency_value_type_definition_root_in_expr(
+                                package, module, value, offset,
+                            )
+                        }
+                    })
+                },
+            )
+        }
+        ql_ast::ExprKind::Question(inner) => match &inner.kind {
+            ql_ast::ExprKind::Name(name)
+                if dependency_struct_field_completion_span_contains(inner.span, offset) =>
+            {
+                dependency_global_question_binding_for_local_name(package, module, name)
+                    .map(|binding| dependency_definition_target_for_struct_binding(&binding))
+            }
+            ql_ast::ExprKind::Call { callee, .. }
+                if matches!(&callee.kind, ql_ast::ExprKind::Name(_))
+                    && dependency_struct_field_completion_span_contains(callee.span, offset) =>
+            {
+                let ql_ast::ExprKind::Name(name) = &callee.kind else {
+                    unreachable!()
+                };
+                dependency_function_question_return_binding_for_local_name(package, module, name)
+                    .map(|binding| dependency_definition_target_for_struct_binding(&binding))
+            }
+            _ => dependency_value_type_definition_root_in_expr(package, module, inner, offset),
+        },
+        ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
+            items.iter().find_map(|expr| {
+                dependency_value_type_definition_root_in_expr(package, module, expr, offset)
+            })
+        }
+        ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
+            dependency_value_type_definition_root_in_block(package, module, block, offset)
+        }
+        ql_ast::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => dependency_value_type_definition_root_in_expr(package, module, condition, offset)
+            .or_else(|| {
+                dependency_value_type_definition_root_in_block(package, module, then_branch, offset)
+            })
+            .or_else(|| {
+                else_branch.as_ref().and_then(|expr| {
+                    dependency_value_type_definition_root_in_expr(package, module, expr, offset)
+                })
+            }),
+        ql_ast::ExprKind::Match { value, arms } => dependency_value_type_definition_root_in_expr(
+            package, module, value, offset,
+        )
+        .or_else(|| {
+            arms.iter().find_map(|arm| {
+                arm.guard
+                    .as_ref()
+                    .and_then(|expr| {
+                        dependency_value_type_definition_root_in_expr(package, module, expr, offset)
+                    })
+                    .or_else(|| {
+                        dependency_value_type_definition_root_in_expr(
+                            package, module, &arm.body, offset,
+                        )
+                    })
+            })
+        }),
+        ql_ast::ExprKind::Closure { body, .. } => {
+            dependency_value_type_definition_root_in_expr(package, module, body, offset)
+        }
+        ql_ast::ExprKind::Member { object, .. } | ql_ast::ExprKind::Unary { expr: object, .. } => {
+            dependency_value_type_definition_root_in_expr(package, module, object, offset)
+        }
+        ql_ast::ExprKind::Bracket { target, items } => {
+            dependency_value_type_definition_root_in_expr(package, module, target, offset).or_else(
+                || {
+                    items.iter().find_map(|expr| {
+                        dependency_value_type_definition_root_in_expr(package, module, expr, offset)
+                    })
+                },
+            )
+        }
+        ql_ast::ExprKind::StructLiteral { fields, .. } => fields.iter().find_map(|field| {
+            field.value.as_ref().and_then(|expr| {
+                dependency_value_type_definition_root_in_expr(package, module, expr, offset)
+            })
+        }),
+        ql_ast::ExprKind::Binary { left, right, .. } => {
+            dependency_value_type_definition_root_in_expr(package, module, left, offset).or_else(
+                || dependency_value_type_definition_root_in_expr(package, module, right, offset),
+            )
+        }
+        ql_ast::ExprKind::Integer(_)
+        | ql_ast::ExprKind::String { .. }
+        | ql_ast::ExprKind::Bool(_)
+        | ql_ast::ExprKind::NoneLiteral => None,
     }
 }
 
