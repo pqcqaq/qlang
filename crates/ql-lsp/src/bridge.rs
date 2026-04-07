@@ -150,6 +150,10 @@ pub fn hover_for_package_analysis(
         });
     }
 
+    if let Some(hover) = hover_for_dependency_values(source, package, position) {
+        return Some(hover);
+    }
+
     if let Some(info) = package.dependency_hover_at(analysis, offset) {
         let hover = HoverInfo {
             span: info.span,
@@ -389,6 +393,10 @@ pub fn definition_for_package_analysis(
             target_uri,
             span_to_range(&target_source, target.span),
         )));
+    }
+
+    if let Some(definition) = definition_for_dependency_values(source, package, position) {
+        return Some(definition);
     }
 
     if let Some(target) = package.dependency_definition_at(analysis, offset) {
@@ -720,6 +728,16 @@ pub fn references_for_package_analysis(
                 .map(|reference| Location::new(uri.clone(), span_to_range(source, reference.span))),
         );
         return Some(locations);
+    }
+
+    if let Some(references) = references_for_dependency_values(
+        uri,
+        source,
+        package,
+        position,
+        include_declaration,
+    ) {
+        return Some(references);
     }
 
     if let Some(target) = package.dependency_target_at(analysis, offset) {

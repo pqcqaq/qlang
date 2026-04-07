@@ -237,3 +237,143 @@ pub fn main(config: Cfg) -> Int {
         "pub struct Config {\n    value: Int,\n}",
     );
 }
+
+#[test]
+fn type_definition_bridge_follows_dependency_struct_types_for_closure_parameters() {
+    let temp = TempDir::new("ql-lsp-value-type-definition-closure-param");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let project = (current: Cfg) => current.value
+    return project(config)
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let definition = type_definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "current", 2)),
+    )
+    .expect("dependency closure param type definition should exist");
+    assert_targets_dependency_struct(
+        definition,
+        &dep_qi,
+        "pub struct Config {\n    value: Int,\n}",
+    );
+}
+
+#[test]
+fn type_definition_bridge_follows_dependency_struct_types_for_closure_parameters_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-value-type-definition-closure-param-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let project = (current: Cfg) => current.value
+    let broken: Int = "oops"
+    return project(config)
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let definition = type_definition_for_dependency_values(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "current", 2)),
+    )
+    .expect("dependency closure param type definition should exist without semantic analysis");
+    assert_targets_dependency_struct(
+        definition,
+        &dep_qi,
+        "pub struct Config {\n    value: Int,\n}",
+    );
+}

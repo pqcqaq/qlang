@@ -8,11 +8,12 @@ use ql_lsp::bridge::{
     completion_for_dependency_imports, completion_for_dependency_member_fields,
     completion_for_dependency_methods, completion_for_dependency_struct_fields,
     completion_for_dependency_variants, completion_for_package_analysis,
-    declaration_for_dependency_methods, definition_for_dependency_imports,
-    definition_for_dependency_methods, definition_for_dependency_struct_fields,
-    definition_for_dependency_variants, definition_for_package_analysis,
-    hover_for_dependency_imports, hover_for_dependency_methods, hover_for_dependency_struct_fields,
-    hover_for_dependency_variants, hover_for_package_analysis, references_for_dependency_imports,
+    declaration_for_dependency_methods, declaration_for_package_analysis,
+    definition_for_dependency_imports, definition_for_dependency_methods,
+    definition_for_dependency_struct_fields, definition_for_dependency_variants,
+    definition_for_package_analysis, hover_for_dependency_imports, hover_for_dependency_methods,
+    hover_for_dependency_struct_fields, hover_for_dependency_variants,
+    hover_for_package_analysis, references_for_dependency_imports,
     references_for_dependency_methods, references_for_dependency_struct_fields,
     references_for_dependency_variants, references_for_package_analysis, span_to_range,
 };
@@ -2303,6 +2304,358 @@ packages = ["../dep"]
     assert_eq!(items[0].label, "value");
     assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
     assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
+}
+
+#[test]
+fn package_bridge_completes_dependency_struct_member_fields_for_closure_parameters() {
+    let temp = TempDir::new("ql-lsp-package-struct-member-field-closure-param");
+    let app_root = temp.path().join("workspace").join("app");
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let project = (current: Cfg) => current.va
+    return project(config)
+}
+"#;
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let analysis = analyze_source(source).expect("analysis should succeed for completion query");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
+    ) else {
+        panic!("dependency closure param field completion should exist");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "value");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_value_root_queries_for_closure_parameters() {
+    let temp = TempDir::new("ql-lsp-package-value-root-closure-param");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let project = (current: Cfg) => current.value + current.value
+    return project(config)
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let current_usage = nth_offset(source, "current", 2);
+
+    let hover = hover_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, current_usage),
+    )
+    .expect("dependency value root hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**struct** `Config`"));
+    assert!(markup.value.contains("struct Config"));
+
+    let definition = definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, current_usage),
+    )
+    .expect("dependency value root definition should exist");
+    let GotoDefinitionResponse::Scalar(Location {
+        uri: definition_uri,
+        range: definition_range,
+    }) = definition
+    else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        definition_uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let snippet = "pub struct Config {\n    value: Int,\n}";
+    let start = artifact
+        .find(snippet)
+        .expect("struct declaration should exist in dependency artifact");
+    assert_eq!(
+        definition_range,
+        span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
+
+    let declaration = declaration_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, current_usage),
+    )
+    .expect("dependency value root declaration should exist");
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_eq!(declaration_location.uri, definition_uri);
+    assert_eq!(declaration_location.range, definition_range);
+
+    let without_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, current_usage),
+        false,
+    )
+    .expect("dependency value root references should exist");
+    assert_eq!(
+        without_declaration,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "current", 2),
+                        nth_offset(source, "current", 2) + "current".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "current", 3),
+                        nth_offset(source, "current", 3) + "current".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, current_usage),
+        true,
+    )
+    .expect("dependency value root references with declaration should exist");
+    assert_eq!(with_declaration.len(), 4);
+    assert_eq!(
+        with_declaration[0],
+        Location::new(
+            definition_uri.clone(),
+            span_to_range(&artifact, Span::new(start, start + snippet.len())),
+        ),
+    );
+    assert_eq!(
+        with_declaration[1..],
+        [
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "current", 1),
+                        nth_offset(source, "current", 1) + "current".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "current", 2),
+                        nth_offset(source, "current", 2) + "current".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "current", 3),
+                        nth_offset(source, "current", 3) + "current".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn package_bridge_completes_dependency_struct_member_methods_for_closure_parameters_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-package-struct-member-method-closure-param-broken");
+    let app_root = temp.path().join("workspace").join("app");
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let project = (current: Cfg) => current.ge()
+    let broken: Int = "oops"
+    return project(config)
+}
+"#;
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".ge", 1) + ".ge".len()),
+    ) else {
+        panic!("dependency closure param method completion should exist without semantic analysis");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "get");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
 }
 
 #[test]
