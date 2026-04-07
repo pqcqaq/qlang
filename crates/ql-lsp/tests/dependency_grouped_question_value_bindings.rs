@@ -195,6 +195,150 @@ packages = ["../dep"]
 }
 
 #[test]
+fn package_bridge_completes_dependency_fields_for_grouped_question_function_receivers_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-grouped-question-function-value-field-broken-completion");
+    let app_root = temp.path().join("workspace").join("app");
+    let source = r#"
+package demo.app
+
+use demo.dep.{maybe_load as load_cfg}
+
+pub fn read() -> Int {
+    return load_cfg()?.va
+}
+
+pub fn broken() -> Int {
+    return "oops"
+}
+"#;
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_load() -> Option[Child]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_dependency_member_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
+    ) else {
+        panic!("grouped question function value field completion should exist");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "value");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
+}
+
+#[test]
+fn package_bridge_completes_dependency_methods_for_grouped_question_function_receivers_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-grouped-question-function-value-method-broken-completion");
+    let app_root = temp.path().join("workspace").join("app");
+    let source = r#"
+package demo.app
+
+use demo.dep.{maybe_load as load_cfg}
+
+pub fn read() -> Int {
+    return load_cfg()?.ge
+}
+
+pub fn broken() -> Int {
+    return "oops"
+}
+"#;
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_load() -> Option[Child]
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".ge", 1) + ".ge".len()),
+    ) else {
+        panic!("grouped question function value method completion should exist");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "get");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+}
+
+#[test]
 fn package_bridge_completes_dependency_fields_for_grouped_question_static_receivers_without_semantic_analysis(
 ) {
     let temp = TempDir::new("ql-lsp-grouped-question-static-value-field-broken-completion");
