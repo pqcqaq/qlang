@@ -1885,6 +1885,282 @@ pub fn read(flag: Bool) -> Int {
 }
 
 #[test]
+fn dependency_field_definition_works_on_for_loop_grouped_match_question_static_iterables() {
+    let temp = TempDir::new("ql-lsp-for-loop-grouped-question-static-structured-field-query");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub static MAYBE_ITEMS: Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{MAYBE_ITEMS as maybe_items}
+
+pub fn read(flag: Bool) -> Int {
+    for current in match flag {
+        true => maybe_items?,
+        false => maybe_items?,
+    } {
+        return current.value
+    }
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let definition = definition_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".value", 1) + 1),
+    )
+    .expect("grouped match question static iterable field definition should exist");
+
+    assert_targets_dependency_snippet(definition, &dep_qi, "value");
+}
+
+#[test]
+fn dependency_field_definition_works_on_for_loop_grouped_match_question_static_iterables_without_semantic_analysis()
+ {
+    let temp =
+        TempDir::new("ql-lsp-for-loop-grouped-question-static-structured-field-query-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub static MAYBE_ITEMS: Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{MAYBE_ITEMS as maybe_items}
+
+pub fn read(flag: Bool) -> Int {
+    for current in match flag {
+        true => maybe_items?,
+        false => maybe_items?,
+    } {
+        return current.value
+    }
+    let broken: Int = "oops"
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let definition = definition_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".value", 1) + 1),
+    )
+    .expect("grouped match question static iterable field definition should exist");
+
+    assert_targets_dependency_snippet(definition, &dep_qi, "value");
+}
+
+#[test]
+fn dependency_method_definition_works_on_for_loop_grouped_if_question_function_iterables() {
+    let temp = TempDir::new("ql-lsp-for-loop-grouped-question-function-structured-method-query");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{maybe_children as kids}
+
+pub fn read(flag: Bool) -> Int {
+    for current in (if flag { kids()? } else { kids()? }) {
+        let value = current.get()
+    }
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let definition = definition_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "get", 1)),
+    )
+    .expect("grouped structured question function iterable method definition should exist");
+
+    assert_targets_dependency_snippet(definition, &dep_qi, "get");
+}
+
+#[test]
+fn dependency_method_definition_works_on_for_loop_grouped_if_question_function_iterables_without_semantic_analysis()
+ {
+    let temp =
+        TempDir::new("ql-lsp-for-loop-grouped-question-function-structured-method-query-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{maybe_children as kids}
+
+pub fn read(flag: Bool) -> Int {
+    for current in (if flag { kids()? } else { kids()? }) {
+        let value = current.get()
+    }
+    let broken: Int = "oops"
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let definition = definition_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "get", 1)),
+    )
+    .expect("grouped structured question function iterable method definition should exist");
+
+    assert_targets_dependency_snippet(definition, &dep_qi, "get");
+}
+
+#[test]
 fn dependency_method_definition_works_on_for_loop_grouped_match_question_static_iterables() {
     let temp = TempDir::new("ql-lsp-for-loop-grouped-question-static-structured-method-query");
     let app_root = temp.path().join("workspace").join("app");
