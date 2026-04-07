@@ -5860,6 +5860,175 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn root_query_bridge_surfaces_grouped_import_structured_question_wrapped_dependency_static_roots(
+) {
+    let temp = TempDir::new("ql-lsp-grouped-structured-question-static-root-queries");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+pub static MAYBE: Option[Config]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{MAYBE as maybe_cfg}
+
+pub fn main(flag: Bool) -> Int {
+    return (if flag { maybe_cfg? } else { maybe_cfg? }).value
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let root_position = offset_to_position(source, nth_offset(source, "maybe_cfg", 2));
+    let hover = hover_for_package_analysis(source, &analysis, &package, root_position)
+        .expect("grouped structured dependency question static root hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**struct** `Config`"));
+    assert!(markup.value.contains("struct Config"));
+
+    let definition =
+        definition_for_package_analysis(&uri, source, &analysis, &package, root_position)
+            .expect("grouped structured dependency question static root definition should exist");
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_dependency_location(
+        &location,
+        &dep_qi,
+        "pub struct Config {\n    value: Int,\n}",
+    );
+
+    let declaration =
+        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position)
+            .expect("grouped structured dependency question static root declaration should exist");
+    let GotoDeclarationResponse::Scalar(location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_dependency_location(
+        &location,
+        &dep_qi,
+        "pub struct Config {\n    value: Int,\n}",
+    );
+
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect("grouped structured dependency question static root references should exist");
+    assert_eq!(
+        without_declaration,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_cfg", 2),
+                        nth_offset(source, "maybe_cfg", 2) + "maybe_cfg".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_cfg", 3),
+                        nth_offset(source, "maybe_cfg", 3) + "maybe_cfg".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+
+    let with_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
+            .expect(
+                "grouped structured dependency question static root references with declaration should exist",
+            );
+    assert_eq!(with_declaration.len(), 4);
+    assert_dependency_location(
+        &with_declaration[0],
+        &dep_qi,
+        "pub struct Config {\n    value: Int,\n}",
+    );
+    assert_eq!(
+        with_declaration[1..],
+        [
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_cfg", 1),
+                        nth_offset(source, "maybe_cfg", 1) + "maybe_cfg".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_cfg", 2),
+                        nth_offset(source, "maybe_cfg", 2) + "maybe_cfg".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_cfg", 3),
+                        nth_offset(source, "maybe_cfg", 3) + "maybe_cfg".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn root_query_fallback_surfaces_grouped_import_match_structured_question_wrapped_dependency_function_roots_without_semantic_analysis(
 ) {
     let temp = TempDir::new("ql-lsp-grouped-match-question-function-root-queries-broken");
@@ -6155,6 +6324,175 @@ pub fn main() -> Int {
     let with_declaration =
         references_for_dependency_values(&uri, source, &package, root_position, true)
             .expect("grouped dependency question static root references with declaration should exist");
+    assert_eq!(with_declaration.len(), 4);
+    assert_dependency_location(
+        &with_declaration[0],
+        &dep_qi,
+        "pub struct Config {\n    value: Int,\n}",
+    );
+    assert_eq!(
+        with_declaration[1..],
+        [
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_cfg", 1),
+                        nth_offset(source, "maybe_cfg", 1) + "maybe_cfg".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_cfg", 2),
+                        nth_offset(source, "maybe_cfg", 2) + "maybe_cfg".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_cfg", 3),
+                        nth_offset(source, "maybe_cfg", 3) + "maybe_cfg".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn root_query_fallback_surfaces_grouped_import_structured_question_wrapped_dependency_static_roots_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-grouped-structured-question-static-root-queries-broken");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+pub static MAYBE: Option[Config]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{MAYBE as maybe_cfg}
+
+pub fn main(flag: Bool) -> Int {
+    let next = (if flag { maybe_cfg? } else { maybe_cfg? }).value
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let root_position = offset_to_position(source, nth_offset(source, "maybe_cfg", 2));
+    let hover = hover_for_dependency_values(source, &package, root_position)
+        .expect("grouped structured dependency question static root hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**struct** `Config`"));
+    assert!(markup.value.contains("struct Config"));
+
+    let definition = definition_for_dependency_values(source, &package, root_position)
+        .expect("grouped structured dependency question static root definition should exist");
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_dependency_location(
+        &location,
+        &dep_qi,
+        "pub struct Config {\n    value: Int,\n}",
+    );
+
+    let declaration = declaration_for_dependency_values(source, &package, root_position)
+        .expect("grouped structured dependency question static root declaration should exist");
+    let GotoDeclarationResponse::Scalar(location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_dependency_location(
+        &location,
+        &dep_qi,
+        "pub struct Config {\n    value: Int,\n}",
+    );
+
+    let without_declaration =
+        references_for_dependency_values(&uri, source, &package, root_position, false)
+            .expect("grouped structured dependency question static root references should exist");
+    assert_eq!(
+        without_declaration,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_cfg", 2),
+                        nth_offset(source, "maybe_cfg", 2) + "maybe_cfg".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_cfg", 3),
+                        nth_offset(source, "maybe_cfg", 3) + "maybe_cfg".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+
+    let with_declaration =
+        references_for_dependency_values(&uri, source, &package, root_position, true)
+            .expect(
+                "grouped structured dependency question static root references with declaration should exist",
+            );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
