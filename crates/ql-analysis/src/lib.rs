@@ -243,6 +243,36 @@ impl DependencyInterface {
             .or_else(|| self.public_question_inner_type_target_for_type_expr(inner))
     }
 
+    fn public_common_type_target_for_type_exprs(
+        &self,
+        items: &[ql_ast::TypeExpr],
+    ) -> Option<DependencyDefinitionTarget> {
+        let mut items = items.iter();
+        let first = self.public_type_target_for_type_expr(items.next()?)?;
+        for item in items {
+            let target = self.public_type_target_for_type_expr(item)?;
+            if target != first {
+                return None;
+            }
+        }
+        Some(first)
+    }
+
+    fn public_iterable_element_type_target_for_type_expr(
+        &self,
+        ty: &ql_ast::TypeExpr,
+    ) -> Option<DependencyDefinitionTarget> {
+        match &ty.kind {
+            ql_ast::TypeExprKind::Array { element, .. } => {
+                self.public_type_target_for_type_expr(element)
+            }
+            ql_ast::TypeExprKind::Tuple(items) => {
+                self.public_common_type_target_for_type_exprs(items)
+            }
+            _ => None,
+        }
+    }
+
     fn import_path_variants(&self) -> Vec<Vec<String>> {
         let mut variants = self
             .artifact
@@ -450,6 +480,14 @@ impl DependencyInterface {
                                         .and_then(|ty| {
                                             self.public_question_inner_type_target_for_type_expr(ty)
                                         }),
+                                    iterable_element_type_definition: method
+                                        .return_type
+                                        .as_ref()
+                                        .and_then(|ty| {
+                                            self.public_iterable_element_type_target_for_type_expr(
+                                                ty,
+                                            )
+                                        }),
                                 });
                         }
                     }
@@ -494,6 +532,14 @@ impl DependencyInterface {
                                         .as_ref()
                                         .and_then(|ty| {
                                             self.public_question_inner_type_target_for_type_expr(ty)
+                                        }),
+                                    iterable_element_type_definition: method
+                                        .return_type
+                                        .as_ref()
+                                        .and_then(|ty| {
+                                            self.public_iterable_element_type_target_for_type_expr(
+                                                ty,
+                                            )
                                         }),
                                 });
                         }
@@ -1835,6 +1881,7 @@ struct DependencyStructResolvedMethod {
     definition_span: Span,
     return_type_definition: Option<DependencyDefinitionTarget>,
     question_return_type_definition: Option<DependencyDefinitionTarget>,
+    iterable_element_type_definition: Option<DependencyDefinitionTarget>,
 }
 
 type DependencyIterableScopes = Vec<HashMap<String, Option<DependencyStructBinding>>>;
@@ -6703,13 +6750,22 @@ fn dependency_struct_element_binding_for_call_expr(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
     callee: &ql_ast::Expr,
+    scopes: &[HashMap<String, DependencyStructBinding>],
 ) -> Option<DependencyStructBinding> {
-    let ql_ast::ExprKind::Name(name) = &callee.kind else {
-        return None;
-    };
-    let function = local_function_decl_for_name(module, name)?;
-    let return_type = function.return_type.as_ref()?;
-    dependency_struct_element_binding_for_type_expr(package, module, return_type)
+    match &callee.kind {
+        ql_ast::ExprKind::Name(name) => {
+            let function = local_function_decl_for_name(module, name)?;
+            let return_type = function.return_type.as_ref()?;
+            dependency_struct_element_binding_for_type_expr(package, module, return_type)
+        }
+        ql_ast::ExprKind::Member { object, field, .. } => {
+            let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
+            let method = binding.methods.get(field)?;
+            let target = method.iterable_element_type_definition.as_ref()?;
+            dependency_struct_binding_for_definition_target(package, target)
+        }
+        _ => None,
+    }
 }
 
 fn dependency_struct_element_binding_for_iterable_expr(
@@ -6758,7 +6814,7 @@ fn dependency_struct_element_binding_for_iterable_expr(
             )
         }
         ql_ast::ExprKind::Call { callee, .. } => {
-            dependency_struct_element_binding_for_call_expr(package, module, callee)
+            dependency_struct_element_binding_for_call_expr(package, module, callee, scopes)
         }
         _ => None,
     }
