@@ -542,7 +542,9 @@ pub fn main(flag: Bool) -> Int {
 
     let with_declaration =
         references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
-            .expect("structured dependency question static root references with declaration should exist");
+            .expect(
+            "structured dependency question static root references with declaration should exist",
+        );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -709,9 +711,17 @@ pub fn main(flag: Bool) -> Int {
         ]
     );
 
-    let with_declaration =
-        references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
-            .expect("match structured dependency question static root references with declaration should exist");
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        true,
+    )
+    .expect(
+        "match structured dependency question static root references with declaration should exist",
+    );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -1077,8 +1087,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_question_wrapped_dependency_static_roots_without_semantic_analysis()
+{
     let temp = TempDir::new("ql-lsp-question-static-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -1365,8 +1375,9 @@ pub fn main(flag: Bool) -> Int {
     );
 
     let with_declaration =
-        references_for_dependency_values(&uri, source, &package, root_position, true)
-            .expect("structured dependency question static root references with declaration should exist");
+        references_for_dependency_values(&uri, source, &package, root_position, true).expect(
+            "structured dependency question static root references with declaration should exist",
+        );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -1534,9 +1545,16 @@ pub fn main(flag: Bool) -> Int {
         ]
     );
 
-    let with_declaration =
-        references_for_dependency_values(&uri, source, &package, root_position, true)
-            .expect("match structured dependency question static root references with declaration should exist");
+    let with_declaration = references_for_dependency_values(
+        &uri,
+        source,
+        &package,
+        root_position,
+        true,
+    )
+    .expect(
+        "match structured dependency question static root references with declaration should exist",
+    );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -2327,15 +2345,9 @@ pub fn total() -> Int {
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        false,
-    )
-    .expect("grouped dependency iterable function root references should exist");
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect("grouped dependency iterable function root references should exist");
     assert_eq!(
         without_declaration,
         vec![
@@ -2362,15 +2374,11 @@ pub fn total() -> Int {
         ]
     );
 
-    let with_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        true,
-    )
-    .expect("grouped dependency iterable function root references with declaration should exist");
+    let with_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
+            .expect(
+            "grouped dependency iterable function root references with declaration should exist",
+        );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -2503,15 +2511,9 @@ pub fn total() -> Int {
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        false,
-    )
-    .expect("grouped dependency iterable const root references should exist");
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect("grouped dependency iterable const root references should exist");
     assert_eq!(
         without_declaration,
         vec![
@@ -2538,15 +2540,11 @@ pub fn total() -> Int {
         ]
     );
 
-    let with_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        true,
-    )
-    .expect("grouped dependency iterable const root references with declaration should exist");
+    let with_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
+            .expect(
+                "grouped dependency iterable const root references with declaration should exist",
+            );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -2709,8 +2707,9 @@ pub fn total() -> Int {
     );
 
     let with_declaration =
-        references_for_dependency_values(&uri, source, &package, root_position, true)
-            .expect("grouped dependency iterable const root references with declaration should exist");
+        references_for_dependency_values(&uri, source, &package, root_position, true).expect(
+            "grouped dependency iterable const root references with declaration should exist",
+        );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -2843,15 +2842,9 @@ pub fn total() -> Int {
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        false,
-    )
-    .expect("dependency question iterable function root references should exist");
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect("dependency question iterable function root references should exist");
     assert_eq!(
         without_declaration,
         vec![
@@ -2878,17 +2871,11 @@ pub fn total() -> Int {
         ]
     );
 
-    let with_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        true,
-    )
-    .expect(
-        "dependency question iterable function root references with declaration should exist",
-    );
+    let with_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
+            .expect(
+            "dependency question iterable function root references with declaration should exist",
+        );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -3021,15 +3008,9 @@ pub fn total() -> Int {
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        false,
-    )
-    .expect("dependency question iterable static root references should exist");
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect("dependency question iterable static root references should exist");
     assert_eq!(
         without_declaration,
         vec![
@@ -3056,15 +3037,11 @@ pub fn total() -> Int {
         ]
     );
 
-    let with_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        true,
-    )
-    .expect("dependency question iterable static root references with declaration should exist");
+    let with_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
+            .expect(
+                "dependency question iterable static root references with declaration should exist",
+            );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -3194,15 +3171,9 @@ pub fn total(flag: Bool) -> Int {
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        false,
-    )
-    .expect("structured dependency question iterable static root references should exist");
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect("structured dependency question iterable static root references should exist");
     assert_eq!(
         without_declaration,
         vec![
@@ -3284,8 +3255,7 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_bridge_surfaces_match_structured_question_wrapped_dependency_static_iterable_roots(
-) {
+fn root_query_bridge_surfaces_match_structured_question_wrapped_dependency_static_iterable_roots() {
     let temp = TempDir::new("ql-lsp-match-question-static-iterable-root-queries");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -3358,30 +3328,28 @@ pub fn total(flag: Bool) -> Int {
     assert!(markup.value.contains("struct Child"));
 
     let definition =
-        definition_for_package_analysis(&uri, source, &analysis, &package, root_position)
-            .expect("match structured dependency question iterable static root definition should exist");
+        definition_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "match structured dependency question iterable static root definition should exist",
+        );
     let GotoDefinitionResponse::Scalar(location) = definition else {
         panic!("definition should be one location")
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
     let declaration =
-        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position)
-            .expect("match structured dependency question iterable static root declaration should exist");
+        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "match structured dependency question iterable static root declaration should exist",
+        );
     let GotoDeclarationResponse::Scalar(location) = declaration else {
         panic!("declaration should be one location")
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        false,
-    )
-    .expect("match structured dependency question iterable static root references should exist");
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect(
+                "match structured dependency question iterable static root references should exist",
+            );
     assert_eq!(
         without_declaration,
         vec![
@@ -3533,30 +3501,28 @@ pub fn total(flag: Bool) -> Int {
     assert!(markup.value.contains("struct Child"));
 
     let definition =
-        definition_for_package_analysis(&uri, source, &analysis, &package, root_position)
-            .expect("structured dependency question iterable function root definition should exist");
+        definition_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "structured dependency question iterable function root definition should exist",
+        );
     let GotoDefinitionResponse::Scalar(location) = definition else {
         panic!("definition should be one location")
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
     let declaration =
-        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position)
-            .expect("structured dependency question iterable function root declaration should exist");
+        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "structured dependency question iterable function root declaration should exist",
+        );
     let GotoDeclarationResponse::Scalar(location) = declaration else {
         panic!("declaration should be one location")
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        false,
-    )
-    .expect("structured dependency question iterable function root references should exist");
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect(
+                "structured dependency question iterable function root references should exist",
+            );
     assert_eq!(
         without_declaration,
         vec![
@@ -3638,8 +3604,8 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_bridge_surfaces_match_structured_question_wrapped_dependency_function_iterable_roots(
-) {
+fn root_query_bridge_surfaces_match_structured_question_wrapped_dependency_function_iterable_roots()
+{
     let temp = TempDir::new("ql-lsp-match-structured-question-function-iterable-root-queries");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -3729,15 +3695,11 @@ pub fn total(flag: Bool) -> Int {
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        false,
-    )
-    .expect("match structured dependency question iterable function root references should exist");
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect(
+            "match structured dependency question iterable function root references should exist",
+        );
     assert_eq!(
         without_declaration,
         vec![
@@ -3937,10 +3899,9 @@ pub fn total() -> Int {
     );
 
     let with_declaration =
-        references_for_dependency_values(&uri, source, &package, root_position, true)
-            .expect(
-                "dependency question iterable function root references with declaration should exist",
-            );
+        references_for_dependency_values(&uri, source, &package, root_position, true).expect(
+            "dependency question iterable function root references with declaration should exist",
+        );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -4071,10 +4032,9 @@ pub fn total(flag: Bool) -> Int {
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
     let without_declaration =
-        references_for_dependency_values(&uri, source, &package, root_position, false)
-            .expect(
-                "structured dependency question iterable function root references should exist",
-            );
+        references_for_dependency_values(&uri, source, &package, root_position, false).expect(
+            "structured dependency question iterable function root references should exist",
+        );
     assert_eq!(
         without_declaration,
         vec![
@@ -4225,15 +4185,17 @@ pub fn total(flag: Bool) -> Int {
     assert!(markup.value.contains("**struct** `Child`"));
     assert!(markup.value.contains("struct Child"));
 
-    let definition = definition_for_dependency_values(source, &package, root_position)
-        .expect("match structured dependency question iterable function root definition should exist");
+    let definition = definition_for_dependency_values(source, &package, root_position).expect(
+        "match structured dependency question iterable function root definition should exist",
+    );
     let GotoDefinitionResponse::Scalar(location) = definition else {
         panic!("definition should be one location")
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let declaration = declaration_for_dependency_values(source, &package, root_position)
-        .expect("match structured dependency question iterable function root declaration should exist");
+    let declaration = declaration_for_dependency_values(source, &package, root_position).expect(
+        "match structured dependency question iterable function root declaration should exist",
+    );
     let GotoDeclarationResponse::Scalar(location) = declaration else {
         panic!("declaration should be one location")
     };
@@ -4435,10 +4397,9 @@ pub fn total() -> Int {
     );
 
     let with_declaration =
-        references_for_dependency_values(&uri, source, &package, root_position, true)
-            .expect(
-                "dependency question iterable static root references with declaration should exist",
-            );
+        references_for_dependency_values(&uri, source, &package, root_position, true).expect(
+            "dependency question iterable static root references with declaration should exist",
+        );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -4720,15 +4681,17 @@ pub fn total(flag: Bool) -> Int {
     assert!(markup.value.contains("**struct** `Child`"));
     assert!(markup.value.contains("struct Child"));
 
-    let definition = definition_for_dependency_values(source, &package, root_position)
-        .expect("match structured dependency question iterable static root definition should exist");
+    let definition = definition_for_dependency_values(source, &package, root_position).expect(
+        "match structured dependency question iterable static root definition should exist",
+    );
     let GotoDefinitionResponse::Scalar(location) = definition else {
         panic!("definition should be one location")
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let declaration = declaration_for_dependency_values(source, &package, root_position)
-        .expect("match structured dependency question iterable static root declaration should exist");
+    let declaration = declaration_for_dependency_values(source, &package, root_position).expect(
+        "match structured dependency question iterable static root declaration should exist",
+    );
     let GotoDeclarationResponse::Scalar(location) = declaration else {
         panic!("declaration should be one location")
     };
@@ -4900,15 +4863,9 @@ pub fn total() -> Int {
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        false,
-    )
-    .expect("grouped dependency question iterable function root references should exist");
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect("grouped dependency question iterable function root references should exist");
     assert_eq!(
         without_declaration,
         vec![
@@ -5061,36 +5018,34 @@ pub fn total(flag: Bool) -> Int {
     assert!(markup.value.contains("struct Child"));
 
     let definition =
-        definition_for_package_analysis(&uri, source, &analysis, &package, root_position)
-            .expect(
-                "grouped structured dependency question iterable function root definition should exist",
-            );
+        definition_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "grouped structured dependency question iterable function root definition should exist",
+        );
     let GotoDefinitionResponse::Scalar(location) = definition else {
         panic!("definition should be one location")
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let declaration =
-        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position)
-            .expect(
-                "grouped structured dependency question iterable function root declaration should exist",
-            );
-    let GotoDeclarationResponse::Scalar(location) = declaration else {
-        panic!("declaration should be one location")
-    };
-    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
-
-    let without_declaration = references_for_package_analysis(
+    let declaration = declaration_for_package_analysis(
         &uri,
         source,
         &analysis,
         &package,
         root_position,
-        false,
     )
     .expect(
-        "grouped structured dependency question iterable function root references should exist",
+        "grouped structured dependency question iterable function root declaration should exist",
     );
+    let GotoDeclarationResponse::Scalar(location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect(
+            "grouped structured dependency question iterable function root references should exist",
+        );
     assert_eq!(
         without_declaration,
         vec![
@@ -5237,8 +5192,9 @@ pub fn total(flag: Bool) -> Int {
     let analysis = analyze_source(source).expect("source should analyze");
     let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
     let root_position = offset_to_position(source, nth_offset(source, "kids", 2));
-    let hover = hover_for_package_analysis(source, &analysis, &package, root_position)
-        .expect("grouped match structured dependency question iterable function root hover should exist");
+    let hover = hover_for_package_analysis(source, &analysis, &package, root_position).expect(
+        "grouped match structured dependency question iterable function root hover should exist",
+    );
     let HoverContents::Markup(markup) = hover.contents else {
         panic!("hover should use markdown")
     };
@@ -5445,15 +5401,9 @@ pub fn total() -> Int {
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        root_position,
-        false,
-    )
-    .expect("grouped dependency question iterable static root references should exist");
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect("grouped dependency question iterable static root references should exist");
     assert_eq!(
         without_declaration,
         vec![
@@ -5490,6 +5440,371 @@ pub fn total() -> Int {
     )
     .expect(
         "grouped dependency question iterable static root references with declaration should exist",
+    );
+    assert_eq!(with_declaration.len(), 4);
+    assert_dependency_location(
+        &with_declaration[0],
+        &dep_qi,
+        "pub struct Child {\n    value: Int,\n}",
+    );
+    assert_eq!(
+        with_declaration[1..],
+        [
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 1),
+                        nth_offset(source, "maybe_items", 1) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 2),
+                        nth_offset(source, "maybe_items", 2) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 3),
+                        nth_offset(source, "maybe_items", 3) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn root_query_bridge_surfaces_grouped_import_structured_question_wrapped_dependency_static_iterable_roots(
+) {
+    let temp = TempDir::new("ql-lsp-grouped-structured-question-static-iterable-root-queries");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub static MAYBE_ITEMS: Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{MAYBE_ITEMS as maybe_items}
+
+pub fn total(flag: Bool) -> Int {
+    for current in (if flag { maybe_items? } else { maybe_items? }) {
+        let first = current.value
+    }
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let root_position = offset_to_position(source, nth_offset(source, "maybe_items", 2));
+    let hover = hover_for_package_analysis(source, &analysis, &package, root_position)
+        .expect("grouped structured dependency question iterable static root hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**struct** `Child`"));
+    assert!(markup.value.contains("struct Child"));
+
+    let definition =
+        definition_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "grouped structured dependency question iterable static root definition should exist",
+        );
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let declaration =
+        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "grouped structured dependency question iterable static root declaration should exist",
+        );
+    let GotoDeclarationResponse::Scalar(location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let without_declaration =
+        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
+            .expect(
+            "grouped structured dependency question iterable static root references should exist",
+        );
+    assert_eq!(
+        without_declaration,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 2),
+                        nth_offset(source, "maybe_items", 2) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 3),
+                        nth_offset(source, "maybe_items", 3) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        true,
+    )
+    .expect(
+        "grouped structured dependency question iterable static root references with declaration should exist",
+    );
+    assert_eq!(with_declaration.len(), 4);
+    assert_dependency_location(
+        &with_declaration[0],
+        &dep_qi,
+        "pub struct Child {\n    value: Int,\n}",
+    );
+    assert_eq!(
+        with_declaration[1..],
+        [
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 1),
+                        nth_offset(source, "maybe_items", 1) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 2),
+                        nth_offset(source, "maybe_items", 2) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 3),
+                        nth_offset(source, "maybe_items", 3) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn root_query_bridge_surfaces_grouped_import_match_structured_question_wrapped_dependency_static_iterable_roots(
+) {
+    let temp = TempDir::new("ql-lsp-grouped-match-question-static-iterable-root-queries");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub static MAYBE_ITEMS: Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{MAYBE_ITEMS as maybe_items}
+
+pub fn total(flag: Bool) -> Int {
+    for current in match flag {
+        true => maybe_items?,
+        false => maybe_items?,
+    } {
+        let first = current.value
+    }
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let root_position = offset_to_position(source, nth_offset(source, "maybe_items", 2));
+    let hover = hover_for_package_analysis(source, &analysis, &package, root_position).expect(
+        "grouped match structured dependency question iterable static root hover should exist",
+    );
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**struct** `Child`"));
+    assert!(markup.value.contains("struct Child"));
+
+    let definition = definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+    )
+    .expect(
+        "grouped match structured dependency question iterable static root definition should exist",
+    );
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let declaration =
+        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position)
+            .expect(
+                "grouped match structured dependency question iterable static root declaration should exist",
+            );
+    let GotoDeclarationResponse::Scalar(location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let without_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        false,
+    )
+    .expect(
+        "grouped match structured dependency question iterable static root references should exist",
+    );
+    assert_eq!(
+        without_declaration,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 2),
+                        nth_offset(source, "maybe_items", 2) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 3),
+                        nth_offset(source, "maybe_items", 3) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        true,
+    )
+    .expect(
+        "grouped match structured dependency question iterable static root references with declaration should exist",
     );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
@@ -5703,9 +6018,8 @@ pub fn total() -> Int {
 #[test]
 fn root_query_fallback_surfaces_grouped_import_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
 ) {
-    let temp = TempDir::new(
-        "ql-lsp-grouped-structured-question-function-iterable-root-queries-broken",
-    );
+    let temp =
+        TempDir::new("ql-lsp-grouped-structured-question-function-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
         .path()
@@ -5766,9 +6080,8 @@ pub fn total(flag: Bool) -> Int {
         .expect("dependency-only package analysis should succeed");
     let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
     let root_position = offset_to_position(source, nth_offset(source, "kids", 2));
-    let hover = hover_for_dependency_values(source, &package, root_position).expect(
-        "grouped structured dependency question iterable function root hover should exist",
-    );
+    let hover = hover_for_dependency_values(source, &package, root_position)
+        .expect("grouped structured dependency question iterable function root hover should exist");
     let HoverContents::Markup(markup) = hover.contents else {
         panic!("hover should use markdown")
     };
@@ -5871,9 +6184,7 @@ pub fn total(flag: Bool) -> Int {
 #[test]
 fn root_query_fallback_surfaces_grouped_import_match_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
 ) {
-    let temp = TempDir::new(
-        "ql-lsp-grouped-match-question-function-iterable-root-queries-broken",
-    );
+    let temp = TempDir::new("ql-lsp-grouped-match-question-function-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
         .path()
@@ -6157,11 +6468,357 @@ pub fn total() -> Int {
         ]
     );
 
+    let with_declaration = references_for_dependency_values(
+        &uri,
+        source,
+        &package,
+        root_position,
+        true,
+    )
+    .expect(
+        "grouped dependency question iterable static root references with declaration should exist",
+    );
+    assert_eq!(with_declaration.len(), 4);
+    assert_dependency_location(
+        &with_declaration[0],
+        &dep_qi,
+        "pub struct Child {\n    value: Int,\n}",
+    );
+    assert_eq!(
+        with_declaration[1..],
+        [
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 1),
+                        nth_offset(source, "maybe_items", 1) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 2),
+                        nth_offset(source, "maybe_items", 2) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 3),
+                        nth_offset(source, "maybe_items", 3) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn root_query_fallback_surfaces_grouped_import_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
+) {
+    let temp =
+        TempDir::new("ql-lsp-grouped-structured-question-static-iterable-root-queries-broken");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub static MAYBE_ITEMS: Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{MAYBE_ITEMS as maybe_items}
+
+pub fn total(flag: Bool) -> Int {
+    for current in (if flag { maybe_items? } else { maybe_items? }) {
+        let first = current.value
+    }
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let root_position = offset_to_position(source, nth_offset(source, "maybe_items", 2));
+    let hover = hover_for_dependency_values(source, &package, root_position)
+        .expect("grouped structured dependency question iterable static root hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**struct** `Child`"));
+    assert!(markup.value.contains("struct Child"));
+
+    let definition = definition_for_dependency_values(source, &package, root_position).expect(
+        "grouped structured dependency question iterable static root definition should exist",
+    );
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let declaration = declaration_for_dependency_values(source, &package, root_position).expect(
+        "grouped structured dependency question iterable static root declaration should exist",
+    );
+    let GotoDeclarationResponse::Scalar(location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let without_declaration =
+        references_for_dependency_values(&uri, source, &package, root_position, false).expect(
+            "grouped structured dependency question iterable static root references should exist",
+        );
+    assert_eq!(
+        without_declaration,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 2),
+                        nth_offset(source, "maybe_items", 2) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 3),
+                        nth_offset(source, "maybe_items", 3) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+
     let with_declaration =
-        references_for_dependency_values(&uri, source, &package, root_position, true)
-            .expect(
-                "grouped dependency question iterable static root references with declaration should exist",
-            );
+        references_for_dependency_values(&uri, source, &package, root_position, true).expect(
+            "grouped structured dependency question iterable static root references with declaration should exist",
+        );
+    assert_eq!(with_declaration.len(), 4);
+    assert_dependency_location(
+        &with_declaration[0],
+        &dep_qi,
+        "pub struct Child {\n    value: Int,\n}",
+    );
+    assert_eq!(
+        with_declaration[1..],
+        [
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 1),
+                        nth_offset(source, "maybe_items", 1) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 2),
+                        nth_offset(source, "maybe_items", 2) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 3),
+                        nth_offset(source, "maybe_items", 3) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn root_query_fallback_surfaces_grouped_import_match_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-grouped-match-question-static-iterable-root-queries-broken");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub static MAYBE_ITEMS: Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{MAYBE_ITEMS as maybe_items}
+
+pub fn total(flag: Bool) -> Int {
+    for current in match flag {
+        true => maybe_items?,
+        false => maybe_items?,
+    } {
+        let first = current.value
+    }
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let root_position = offset_to_position(source, nth_offset(source, "maybe_items", 2));
+    let hover = hover_for_dependency_values(source, &package, root_position).expect(
+        "grouped match structured dependency question iterable static root hover should exist",
+    );
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**struct** `Child`"));
+    assert!(markup.value.contains("struct Child"));
+
+    let definition = definition_for_dependency_values(source, &package, root_position).expect(
+        "grouped match structured dependency question iterable static root definition should exist",
+    );
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let declaration = declaration_for_dependency_values(source, &package, root_position).expect(
+        "grouped match structured dependency question iterable static root declaration should exist",
+    );
+    let GotoDeclarationResponse::Scalar(location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let without_declaration = references_for_dependency_values(
+        &uri,
+        source,
+        &package,
+        root_position,
+        false,
+    )
+    .expect(
+        "grouped match structured dependency question iterable static root references should exist",
+    );
+    assert_eq!(
+        without_declaration,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 2),
+                        nth_offset(source, "maybe_items", 2) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_items", 3),
+                        nth_offset(source, "maybe_items", 3) + "maybe_items".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+
+    let with_declaration =
+        references_for_dependency_values(&uri, source, &package, root_position, true).expect(
+            "grouped match structured dependency question iterable static root references with declaration should exist",
+        );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -6327,7 +6984,9 @@ pub fn main() -> Int {
 
     let with_declaration =
         references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
-            .expect("grouped dependency question function root references with declaration should exist");
+            .expect(
+            "grouped dependency question function root references with declaration should exist",
+        );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -6372,8 +7031,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn root_query_bridge_surfaces_grouped_import_structured_question_wrapped_dependency_function_roots(
-) {
+fn root_query_bridge_surfaces_grouped_import_structured_question_wrapped_dependency_function_roots()
+{
     let temp = TempDir::new("ql-lsp-grouped-structured-question-function-root-queries");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -6452,8 +7111,9 @@ pub fn main(flag: Bool) -> Int {
     );
 
     let declaration =
-        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position)
-            .expect("grouped structured dependency question function root declaration should exist");
+        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "grouped structured dependency question function root declaration should exist",
+        );
     let GotoDeclarationResponse::Scalar(location) = declaration else {
         panic!("declaration should be one location")
     };
@@ -6612,8 +7272,9 @@ pub fn main(flag: Bool) -> Int {
     assert!(markup.value.contains("struct Config"));
 
     let definition =
-        definition_for_package_analysis(&uri, source, &analysis, &package, root_position)
-            .expect("grouped match structured dependency question function root definition should exist");
+        definition_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "grouped match structured dependency question function root definition should exist",
+        );
     let GotoDefinitionResponse::Scalar(location) = definition else {
         panic!("definition should be one location")
     };
@@ -6624,8 +7285,9 @@ pub fn main(flag: Bool) -> Int {
     );
 
     let declaration =
-        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position)
-            .expect("grouped match structured dependency question function root declaration should exist");
+        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "grouped match structured dependency question function root declaration should exist",
+        );
     let GotoDeclarationResponse::Scalar(location) = declaration else {
         panic!("declaration should be one location")
     };
@@ -6637,7 +7299,9 @@ pub fn main(flag: Bool) -> Int {
 
     let without_declaration =
         references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
-            .expect("grouped match structured dependency question function root references should exist");
+            .expect(
+            "grouped match structured dependency question function root references should exist",
+        );
     assert_eq!(
         without_declaration,
         vec![
@@ -6834,8 +7498,9 @@ pub fn main() -> Int {
     );
 
     let with_declaration =
-        references_for_dependency_values(&uri, source, &package, root_position, true)
-            .expect("grouped dependency question function root references with declaration should exist");
+        references_for_dependency_values(&uri, source, &package, root_position, true).expect(
+            "grouped dependency question function root references with declaration should exist",
+        );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -7170,7 +7835,9 @@ pub fn main() -> Int {
 
     let with_declaration =
         references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
-            .expect("grouped dependency question static root references with declaration should exist");
+            .expect(
+                "grouped dependency question static root references with declaration should exist",
+            );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -7215,8 +7882,7 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn root_query_bridge_surfaces_grouped_import_structured_question_wrapped_dependency_static_roots(
-) {
+fn root_query_bridge_surfaces_grouped_import_structured_question_wrapped_dependency_static_roots() {
     let temp = TempDir::new("ql-lsp-grouped-structured-question-static-root-queries");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -7455,8 +8121,9 @@ pub fn main(flag: Bool) -> Int {
     assert!(markup.value.contains("struct Config"));
 
     let definition =
-        definition_for_package_analysis(&uri, source, &analysis, &package, root_position)
-            .expect("grouped match structured dependency question static root definition should exist");
+        definition_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "grouped match structured dependency question static root definition should exist",
+        );
     let GotoDefinitionResponse::Scalar(location) = definition else {
         panic!("definition should be one location")
     };
@@ -7467,8 +8134,9 @@ pub fn main(flag: Bool) -> Int {
     );
 
     let declaration =
-        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position)
-            .expect("grouped match structured dependency question static root declaration should exist");
+        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position).expect(
+            "grouped match structured dependency question static root declaration should exist",
+        );
     let GotoDeclarationResponse::Scalar(location) = declaration else {
         panic!("declaration should be one location")
     };
@@ -7480,7 +8148,9 @@ pub fn main(flag: Bool) -> Int {
 
     let without_declaration =
         references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
-            .expect("grouped match structured dependency question static root references should exist");
+            .expect(
+                "grouped match structured dependency question static root references should exist",
+            );
     assert_eq!(
         without_declaration,
         vec![
@@ -7628,8 +8298,9 @@ pub fn main(flag: Bool) -> Int {
     assert!(markup.value.contains("**struct** `Config`"));
     assert!(markup.value.contains("struct Config"));
 
-    let definition = definition_for_dependency_values(source, &package, root_position)
-        .expect("grouped match structured dependency question function root definition should exist");
+    let definition = definition_for_dependency_values(source, &package, root_position).expect(
+        "grouped match structured dependency question function root definition should exist",
+    );
     let GotoDefinitionResponse::Scalar(location) = definition else {
         panic!("definition should be one location")
     };
@@ -7639,8 +8310,9 @@ pub fn main(flag: Bool) -> Int {
         "pub struct Config {\n    value: Int,\n}",
     );
 
-    let declaration = declaration_for_dependency_values(source, &package, root_position)
-        .expect("grouped match structured dependency question function root declaration should exist");
+    let declaration = declaration_for_dependency_values(source, &package, root_position).expect(
+        "grouped match structured dependency question function root declaration should exist",
+    );
     let GotoDeclarationResponse::Scalar(location) = declaration else {
         panic!("declaration should be one location")
     };
@@ -7651,8 +8323,9 @@ pub fn main(flag: Bool) -> Int {
     );
 
     let without_declaration =
-        references_for_dependency_values(&uri, source, &package, root_position, false)
-            .expect("grouped match structured dependency question function root references should exist");
+        references_for_dependency_values(&uri, source, &package, root_position, false).expect(
+            "grouped match structured dependency question function root references should exist",
+        );
     assert_eq!(
         without_declaration,
         vec![
@@ -7849,8 +8522,9 @@ pub fn main() -> Int {
     );
 
     let with_declaration =
-        references_for_dependency_values(&uri, source, &package, root_position, true)
-            .expect("grouped dependency question static root references with declaration should exist");
+        references_for_dependency_values(&uri, source, &package, root_position, true).expect(
+            "grouped dependency question static root references with declaration should exist",
+        );
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -8147,8 +8821,9 @@ pub fn main(flag: Bool) -> Int {
         "pub struct Config {\n    value: Int,\n}",
     );
 
-    let declaration = declaration_for_dependency_values(source, &package, root_position)
-        .expect("grouped match structured dependency question static root declaration should exist");
+    let declaration = declaration_for_dependency_values(source, &package, root_position).expect(
+        "grouped match structured dependency question static root declaration should exist",
+    );
     let GotoDeclarationResponse::Scalar(location) = declaration else {
         panic!("declaration should be one location")
     };
@@ -8159,8 +8834,9 @@ pub fn main(flag: Bool) -> Int {
     );
 
     let without_declaration =
-        references_for_dependency_values(&uri, source, &package, root_position, false)
-            .expect("grouped match structured dependency question static root references should exist");
+        references_for_dependency_values(&uri, source, &package, root_position, false).expect(
+            "grouped match structured dependency question static root references should exist",
+        );
     assert_eq!(
         without_declaration,
         vec![
