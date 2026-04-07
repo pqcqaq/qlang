@@ -6516,6 +6516,26 @@ fn dependency_struct_question_element_binding_for_type_expr(
     })
 }
 
+fn dependency_struct_question_binding_for_type_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    ty: &ql_ast::TypeExpr,
+) -> Option<DependencyStructBinding> {
+    let ql_ast::TypeExprKind::Named { path, args } = &ty.kind else {
+        return None;
+    };
+    let [type_name] = path.segments.as_slice() else {
+        return None;
+    };
+    let inner = match (type_name.as_str(), args.as_slice()) {
+        ("Option", [inner]) => inner,
+        ("Result", [inner, ..]) => inner,
+        _ => return None,
+    };
+    dependency_struct_binding_for_type_expr(package, module, inner)
+        .or_else(|| dependency_struct_question_binding_for_type_expr(package, module, inner))
+}
+
 fn local_function_decl_for_name<'a>(
     module: &'a ql_ast::Module,
     name: &str,
@@ -6524,6 +6544,45 @@ fn local_function_decl_for_name<'a>(
         AstItemKind::Function(function) if function.name == name => Some(function),
         _ => None,
     })
+}
+
+fn local_receiver_method_decl_for_name<'a>(
+    package: &PackageAnalysis,
+    module: &'a ql_ast::Module,
+    receiver_binding: &DependencyStructBinding,
+    name: &str,
+) -> Option<&'a ql_ast::FunctionDecl> {
+    let mut matches = module
+        .items
+        .iter()
+        .flat_map(|item| match &item.kind {
+            AstItemKind::Impl(impl_block) => impl_block
+                .methods
+                .iter()
+                .filter(move |method| method.name == name)
+                .filter(move |_| {
+                    dependency_struct_binding_for_type_expr(package, module, &impl_block.target)
+                        .as_ref()
+                        .is_some_and(|binding| binding == receiver_binding)
+                })
+                .collect::<Vec<_>>(),
+            AstItemKind::Extend(extend_block) => extend_block
+                .methods
+                .iter()
+                .filter(move |method| method.name == name)
+                .filter(move |_| {
+                    dependency_struct_binding_for_type_expr(package, module, &extend_block.target)
+                        .as_ref()
+                        .is_some_and(|binding| binding == receiver_binding)
+                })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return None;
+    }
+    matches.pop()
 }
 
 fn dependency_struct_binding_for_name(
@@ -6577,9 +6636,13 @@ fn dependency_struct_binding_for_call_expr(
         return None;
     };
     let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
-    let method = binding.methods.get(field)?;
-    let return_type = method.return_type_definition.as_ref()?;
-    dependency_struct_binding_for_definition_target(package, return_type)
+    if let Some(method) = binding.methods.get(field) {
+        let return_type = method.return_type_definition.as_ref()?;
+        return dependency_struct_binding_for_definition_target(package, return_type);
+    }
+    let method = local_receiver_method_decl_for_name(package, module, &binding, field)?;
+    let return_type = method.return_type.as_ref()?;
+    dependency_struct_binding_for_type_expr(package, module, return_type)
 }
 
 fn dependency_struct_binding_for_member_expr(
@@ -6617,9 +6680,13 @@ fn dependency_struct_binding_for_question_expr(
                 return None;
             };
             let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
-            let method = binding.methods.get(field)?;
-            let return_type = method.question_return_type_definition.as_ref()?;
-            dependency_struct_binding_for_definition_target(package, return_type)
+            if let Some(method) = binding.methods.get(field) {
+                let return_type = method.question_return_type_definition.as_ref()?;
+                return dependency_struct_binding_for_definition_target(package, return_type);
+            }
+            let method = local_receiver_method_decl_for_name(package, module, &binding, field)?;
+            let return_type = method.return_type.as_ref()?;
+            dependency_struct_question_binding_for_type_expr(package, module, return_type)
         }
         _ => None,
     }
@@ -6827,9 +6894,13 @@ fn dependency_struct_element_binding_for_call_expr(
         }
         ql_ast::ExprKind::Member { object, field, .. } => {
             let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
-            let method = binding.methods.get(field)?;
-            let target = method.iterable_element_type_definition.as_ref()?;
-            dependency_struct_binding_for_definition_target(package, target)
+            if let Some(method) = binding.methods.get(field) {
+                let target = method.iterable_element_type_definition.as_ref()?;
+                return dependency_struct_binding_for_definition_target(package, target);
+            }
+            let method = local_receiver_method_decl_for_name(package, module, &binding, field)?;
+            let return_type = method.return_type.as_ref()?;
+            dependency_struct_element_binding_for_type_expr(package, module, return_type)
         }
         _ => None,
     }
@@ -6884,9 +6955,17 @@ fn dependency_struct_element_binding_for_question_expr(
             }
             ql_ast::ExprKind::Member { object, field, .. } => {
                 let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
-                let method = binding.methods.get(field)?;
-                let target = method.question_iterable_element_type_definition.as_ref()?;
-                dependency_struct_binding_for_definition_target(package, target)
+                if let Some(method) = binding.methods.get(field) {
+                    let target = method.question_iterable_element_type_definition.as_ref()?;
+                    return dependency_struct_binding_for_definition_target(package, target);
+                }
+                let method = local_receiver_method_decl_for_name(package, module, &binding, field)?;
+                let return_type = method.return_type.as_ref()?;
+                dependency_struct_question_element_binding_for_type_expr(
+                    package,
+                    module,
+                    return_type,
+                )
             }
             _ => None,
         },
