@@ -6,7 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
     completion_for_dependency_member_fields, completion_for_dependency_methods,
-    completion_for_package_analysis, definition_for_dependency_methods, span_to_range,
+    completion_for_package_analysis, definition_for_dependency_methods,
+    definition_for_dependency_struct_fields, span_to_range,
 };
 use tower_lsp::lsp_types::{
     CompletionItemKind, CompletionResponse, GotoDefinitionResponse, Location, Position,
@@ -320,6 +321,140 @@ packages = ["../dep"]
     assert_eq!(items[0].label, "get");
     assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
     assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+}
+
+#[test]
+fn dependency_field_definition_works_on_for_loop_if_question_field_iterables() {
+    let temp = TempDir::new("ql-lsp-for-loop-question-structured-field-query");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    children: Option[[Child; 2]],
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg, flag: Bool) -> Int {
+    for current in (if flag { config.children? } else { config.children? }) {
+        return current.value
+    }
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let definition = definition_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".value", 1) + 1),
+    )
+    .expect("question structured iterable field definition should exist");
+
+    assert_targets_dependency_snippet(definition, &dep_qi, "value");
+}
+
+#[test]
+fn dependency_field_definition_works_on_for_loop_if_question_field_iterables_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-for-loop-question-structured-field-query-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    children: Option[[Child; 2]],
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg, flag: Bool) -> Int {
+    for current in (if flag { config.children? } else { config.children? }) {
+        return current.value
+    }
+    let broken: Int = "oops"
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let definition = definition_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".value", 1) + 1),
+    )
+    .expect("question structured iterable field definition should exist");
+
+    assert_targets_dependency_snippet(definition, &dep_qi, "value");
 }
 
 #[test]
