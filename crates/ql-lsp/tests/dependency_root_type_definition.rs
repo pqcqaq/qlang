@@ -1208,3 +1208,219 @@ pub fn main() -> Int {
         "pub struct Child {\n    value: Int,\n}",
     );
 }
+
+#[test]
+fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_function_roots() {
+    let temp = TempDir::new("ql-lsp-grouped-question-function-root-type-definition");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn maybe_load() -> Option[Config]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{maybe_load as load_cfg}
+
+pub fn main() -> Int {
+    return load_cfg()?.value
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let definition = type_definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "load_cfg", 2)),
+    )
+    .expect("grouped dependency question function root type definition should exist");
+    assert_targets_dependency_struct(
+        definition,
+        &dep_qi,
+        "pub struct Config {\n    value: Int,\n}",
+    );
+}
+
+#[test]
+fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_static_roots() {
+    let temp = TempDir::new("ql-lsp-grouped-question-static-root-type-definition");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+pub static MAYBE: Option[Config]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{MAYBE as maybe_cfg}
+
+pub fn main() -> Int {
+    return maybe_cfg?.value
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let definition = type_definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "maybe_cfg", 2)),
+    )
+    .expect("grouped dependency question static root type definition should exist");
+    assert_targets_dependency_struct(
+        definition,
+        &dep_qi,
+        "pub struct Config {\n    value: Int,\n}",
+    );
+}
+
+#[test]
+fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_static_roots_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-grouped-question-static-root-type-definition-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+pub static MAYBE: Option[Config]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{MAYBE as maybe_cfg}
+
+pub fn main() -> Int {
+    let next = maybe_cfg?.value
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let definition = type_definition_for_dependency_values(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "maybe_cfg", 2)),
+    )
+    .expect("grouped dependency question static root type definition should exist");
+    assert_targets_dependency_struct(
+        definition,
+        &dep_qi,
+        "pub struct Config {\n    value: Int,\n}",
+    );
+}
