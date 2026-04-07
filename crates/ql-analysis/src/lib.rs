@@ -510,6 +510,66 @@ impl DependencyInterface {
         self.public_question_inner_iterable_element_type_target_for_type_expr(return_type)
     }
 
+    fn global_decl_for<'a>(&'a self, symbol: &DependencySymbol) -> Option<&'a ql_ast::GlobalDecl> {
+        if !matches!(symbol.kind, SymbolKind::Const | SymbolKind::Static) {
+            return None;
+        }
+
+        self.artifact
+            .modules
+            .iter()
+            .find(|module| module.source_path == symbol.source_path)?
+            .syntax
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                AstItemKind::Const(global)
+                    if symbol.kind == SymbolKind::Const
+                        && is_public(&global.visibility)
+                        && global.name == symbol.name =>
+                {
+                    Some(global)
+                }
+                AstItemKind::Static(global)
+                    if symbol.kind == SymbolKind::Static
+                        && is_public(&global.visibility)
+                        && global.name == symbol.name =>
+                {
+                    Some(global)
+                }
+                _ => None,
+            })
+    }
+
+    fn global_type_target(&self, symbol: &DependencySymbol) -> Option<DependencyDefinitionTarget> {
+        let global = self.global_decl_for(symbol)?;
+        self.public_type_target_for_type_expr(&global.ty)
+    }
+
+    fn global_question_type_target(
+        &self,
+        symbol: &DependencySymbol,
+    ) -> Option<DependencyDefinitionTarget> {
+        let global = self.global_decl_for(symbol)?;
+        self.public_question_inner_type_target_for_type_expr(&global.ty)
+    }
+
+    fn global_iterable_element_type_target(
+        &self,
+        symbol: &DependencySymbol,
+    ) -> Option<DependencyDefinitionTarget> {
+        let global = self.global_decl_for(symbol)?;
+        self.public_iterable_element_type_target_for_type_expr(&global.ty)
+    }
+
+    fn global_question_iterable_element_type_target(
+        &self,
+        symbol: &DependencySymbol,
+    ) -> Option<DependencyDefinitionTarget> {
+        let global = self.global_decl_for(symbol)?;
+        self.public_question_inner_iterable_element_type_target_for_type_expr(&global.ty)
+    }
+
     fn struct_methods_for(
         &self,
         symbol: &DependencySymbol,
@@ -6560,6 +6620,50 @@ fn dependency_function_question_iterable_element_binding_for_local_name(
     dependency_struct_binding_for_definition_target(package, &target)
 }
 
+fn dependency_global_binding_for_local_name(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<DependencyStructBinding> {
+    let (dependency, symbol) =
+        dependency_import_binding_for_local_name(package, module, local_name)?;
+    let target = dependency.global_type_target(symbol)?;
+    dependency_struct_binding_for_definition_target(package, &target)
+}
+
+fn dependency_global_question_binding_for_local_name(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<DependencyStructBinding> {
+    let (dependency, symbol) =
+        dependency_import_binding_for_local_name(package, module, local_name)?;
+    let target = dependency.global_question_type_target(symbol)?;
+    dependency_struct_binding_for_definition_target(package, &target)
+}
+
+fn dependency_global_iterable_element_binding_for_local_name(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<DependencyStructBinding> {
+    let (dependency, symbol) =
+        dependency_import_binding_for_local_name(package, module, local_name)?;
+    let target = dependency.global_iterable_element_type_target(symbol)?;
+    dependency_struct_binding_for_definition_target(package, &target)
+}
+
+fn dependency_global_question_iterable_element_binding_for_local_name(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<DependencyStructBinding> {
+    let (dependency, symbol) =
+        dependency_import_binding_for_local_name(package, module, local_name)?;
+    let target = dependency.global_question_iterable_element_type_target(symbol)?;
+    dependency_struct_binding_for_definition_target(package, &target)
+}
+
 fn dependency_struct_binding_for_type_expr(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -6790,6 +6894,9 @@ fn dependency_struct_binding_for_question_expr(
     }
 
     match &inner.kind {
+        ql_ast::ExprKind::Name(name) => {
+            dependency_global_question_binding_for_local_name(package, module, name)
+        }
         ql_ast::ExprKind::Member { object, field, .. } => {
             let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
             let field = binding.fields.get(field)?;
@@ -6805,6 +6912,9 @@ fn dependency_struct_binding_for_question_expr(
                     dependency_function_question_return_binding_for_local_name(
                         package, module, name,
                     )
+                    .or_else(|| {
+                        dependency_global_question_binding_for_local_name(package, module, name)
+                    })
                 }
             }
             ql_ast::ExprKind::Member { object, field, .. } => {
@@ -7124,6 +7234,11 @@ fn dependency_struct_element_binding_for_call_expr(
                 dependency_struct_element_binding_for_type_expr(package, module, return_type)
             } else {
                 dependency_function_iterable_element_binding_for_local_name(package, module, name)
+                    .or_else(|| {
+                        dependency_global_iterable_element_binding_for_local_name(
+                            package, module, name,
+                        )
+                    })
             }
         }
         ql_ast::ExprKind::Member { object, field, .. } => {
@@ -7171,6 +7286,11 @@ fn dependency_struct_element_binding_for_question_expr(
     }
 
     match &inner.kind {
+        ql_ast::ExprKind::Name(name) => {
+            dependency_global_question_iterable_element_binding_for_local_name(
+                package, module, name,
+            )
+        }
         ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
             dependency_struct_question_element_binding_for_block_expr(
                 package,
@@ -7221,6 +7341,11 @@ fn dependency_struct_element_binding_for_question_expr(
                     dependency_function_question_iterable_element_binding_for_local_name(
                         package, module, name,
                     )
+                    .or_else(|| {
+                        dependency_global_question_iterable_element_binding_for_local_name(
+                            package, module, name,
+                        )
+                    })
                 }
             }
             ql_ast::ExprKind::Member { object, field, .. } => {
@@ -7252,7 +7377,9 @@ fn dependency_struct_element_binding_for_iterable_expr(
 ) -> Option<DependencyStructBinding> {
     match &expr.kind {
         ql_ast::ExprKind::Name(name) => {
-            dependency_struct_element_binding_for_name(iterable_scopes, name)
+            dependency_struct_element_binding_for_name(iterable_scopes, name).or_else(|| {
+                dependency_global_iterable_element_binding_for_local_name(package, module, name)
+            })
         }
         ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
             dependency_struct_common_binding_for_exprs(package, module, items, scopes)
@@ -7314,7 +7441,8 @@ fn dependency_struct_binding_for_expr(
     scopes: &[HashMap<String, DependencyStructBinding>],
 ) -> Option<DependencyStructBinding> {
     match &expr.kind {
-        ql_ast::ExprKind::Name(name) => dependency_struct_binding_for_name(scopes, name),
+        ql_ast::ExprKind::Name(name) => dependency_struct_binding_for_name(scopes, name)
+            .or_else(|| dependency_global_binding_for_local_name(package, module, name)),
         ql_ast::ExprKind::StructLiteral { path, .. } => {
             let [root_name] = path.segments.as_slice() else {
                 return None;
