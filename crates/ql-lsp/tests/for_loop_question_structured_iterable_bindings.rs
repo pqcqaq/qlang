@@ -241,6 +241,87 @@ packages = ["../dep"]
 }
 
 #[test]
+fn package_bridge_completes_dependency_methods_for_for_loop_match_question_method_iterables() {
+    let temp = TempDir::new("ql-lsp-for-loop-question-structured-method-completion");
+    let app_root = temp.path().join("workspace").join("app");
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg, flag: Bool) -> Int {
+    for current in match flag {
+        true => config.pair()?,
+        false => config.pair()?,
+    } {
+        let value = current.ge
+    }
+    return 0
+}
+"#;
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn pair(self) -> Option[(Child, Child)]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("analysis should succeed for completion query");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, ".ge", 1) + ".ge".len()),
+    ) else {
+        panic!("question structured iterable method completion should exist");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "get");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+}
+
+#[test]
 fn package_bridge_completes_dependency_methods_for_for_loop_match_question_method_iterables_without_semantic_analysis(
 ) {
     let temp = TempDir::new("ql-lsp-for-loop-question-structured-method-broken-completion");
@@ -455,6 +536,82 @@ pub fn read(config: Cfg, flag: Bool) -> Int {
     .expect("question structured iterable field definition should exist");
 
     assert_targets_dependency_snippet(definition, &dep_qi, "value");
+}
+
+#[test]
+fn dependency_method_definition_works_on_for_loop_match_question_method_iterables() {
+    let temp = TempDir::new("ql-lsp-for-loop-question-structured-method-query");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn pair(self) -> Option[(Child, Child)]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg, flag: Bool) -> Int {
+    for current in match flag {
+        true => config.pair()?,
+        false => config.pair()?,
+    } {
+        let value = current.get()
+    }
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let definition = definition_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "get", 1)),
+    )
+    .expect("question structured iterable method definition should exist");
+
+    assert_targets_dependency_snippet(definition, &dep_qi, "get");
 }
 
 #[test]
