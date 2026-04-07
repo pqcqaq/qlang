@@ -6,6 +6,8 @@
 
 如果你需要追溯旧版长文、逐轮切片记录和被收口掉的历史入口页，请看：[路线图归档](/roadmap/archive/index)。
 
+> 说明：本文保留了大量阶段推进时记录下来的样例路径。文中出现的 `ramdon_tests/...` 指向的是 `crates/ql-cli/tests/executable_examples.rs` 约定的本地忽略 smoke 目录，不是当前 checkout 自带的已提交目录；当前真实基线请以代码、测试矩阵和 [当前支持基线](/roadmap/current-supported-surface) 为准。
+
 这份文档的职责不是重复阶段归档，而是统一回答四个问题：
 
 1. Qlang 现在到底处于什么阶段

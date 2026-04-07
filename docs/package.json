@@ -2,7 +2,7 @@
   "name": "qlang",
   "version": "0.1.0",
   "private": true,
-  "description": "Research and design repository for the Qlang programming language.",
+  "description": "Documentation site for the Qlang compiler, toolchain, and roadmap.",
   "type": "module",
   "scripts": {
     "dev": "vitepress dev . --port 7530",

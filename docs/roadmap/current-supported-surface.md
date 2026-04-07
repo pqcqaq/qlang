@@ -13,10 +13,11 @@
 - executable 真运行矩阵：`crates/ql-cli/tests/executable_examples.rs`
 - library build / codegen pass 矩阵：`crates/ql-cli/tests/codegen.rs`、`crates/ql-cli/tests/string_codegen.rs`、`crates/ql-cli/tests/string_compare_codegen.rs`
 - project/workspace graph 矩阵：`crates/ql-cli/tests/project_graph.rs`
-- sync 样例：`ramdon_tests/executable_examples/`
-- async 样例：`ramdon_tests/async_program_surface_examples/`
+- 本地 executable smoke 样例约定：忽略的 `ramdon_tests/executable_examples/` 与 `ramdon_tests/async_program_surface_examples/`，是否存在以开发者本地环境为准
 
 如果文档和这些文件不一致，以代码与回归矩阵为准，再回头修正文档。
+
+说明：当前 checkout 不提交 `ramdon_tests/`。本文若继续出现 `ramdon_tests/...` 路径，它们表示 `crates/ql-cli/tests/executable_examples.rs` 约定的本地忽略 smoke 目录或历史样例命名，不应当被当成仓库自带内容。
 
 ## 一页结论
 
@@ -336,13 +337,15 @@
 
 截至当前代码：
 
-- sync executable examples：`60`
-- async executable examples：`222`
+- `crates/ql-cli/tests/executable_examples.rs` 当前编码了 executable smoke contract
+- 其中 sync local executable cases：`60`
+- 其中 async local executable cases：`222`
+- 这些 case 默认指向本地忽略的 `ramdon_tests/...` 目录；当前 checkout 不提交该目录
 
 注意：
 
-- async 目录文件编号从 `04` 编到 `225`，但真实 `.ql` 文件数是 `222`，不是 `225`
-- `crates/ql-cli/tests/executable_examples.rs` 当前也只注册了 `222` 个 async executable case 和 `60` 个 sync executable case
+- async 本地样例的历史命名编号从 `04` 编到 `225`，但编号最大值不等于当前注册 case 数
+- `crates/ql-cli/tests/executable_examples.rs` 当前注册了 `222` 个 async local executable case 和 `60` 个 sync local executable case
 
 ## 当前明确未开放
 

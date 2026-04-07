@@ -105,10 +105,10 @@
 
 本轮已按代码和测试重新核对当前入口文档，结果如下：
 
-- `ramdon_tests/executable_examples/` 当前真实有 `60` 个 sync executable 样例。
-- `ramdon_tests/async_program_surface_examples/` 当前真实有 `222` 个 async executable 样例。
-- `crates/ql-cli/tests/executable_examples.rs` 的注册数量与目录数量一致。
-- async 目录当前最新编号是 `225`，但真实样例数是 `222`；入口文档已经统一按真实文件数描述。
+- `crates/ql-cli/tests/executable_examples.rs` 当前编码了 `60` 个 sync local executable case。
+- `crates/ql-cli/tests/executable_examples.rs` 当前编码了 `222` 个 async local executable case。
+- 这些 case 默认指向本地忽略的 `ramdon_tests/...` smoke 目录；当前 checkout 不提交该目录。
+- async 本地样例的历史命名编号曾走到 `225`，但编号最大值不等于当前注册 case 数；入口文档已经统一按测试矩阵表述。
 
 ## 当前最值得继续推进的方向
 

@@ -6,7 +6,7 @@ The current compiler and tools are implemented in a Rust workspace, but Qlang is
 ## Current Reality
 
 - Language-facing source of truth lives in `docs/design/` and `docs/vision.md`.
-- Compiler/runtime/build truth lives in `crates/`, `fixtures/`, `ramdon_tests/`, and the regression matrix.
+- Compiler/runtime/build truth lives in `crates/`, `tests/`, `fixtures/`, and the regression matrix.
 - If implementation convenience conflicts with Qlang language design, the design docs win and the implementation must be corrected.
 
 - Phase 1 through Phase 6 foundations are already landed.
@@ -38,15 +38,16 @@ Detailed design merges and archived slice notes live under [`docs/plans/`](./doc
 - `crates/`: compiler, runtime, CLI, LSP, diagnostics, and supporting layers
 - `docs/`: VitePress documentation site
 - `fixtures/`: parser/codegen/pass-fail fixtures
-- `ramdon_tests/`: real executable surface examples
+- `tests/`: committed integration and host-interop test inputs
+- `crates/ql-cli/tests/executable_examples.rs`: executable smoke contract; local ignored `ramdon_tests/` examples may be used when present
 - `examples/ffi-c/`, `examples/ffi-c-dylib/`, `examples/ffi-rust/`: committed host interop examples
 
 ## Regression Truth
 
-Current user-facing executable smoke surface:
+Current user-facing executable smoke contract lives in `crates/ql-cli/tests/executable_examples.rs`.
 
-- `60` sync executable examples under `ramdon_tests/executable_examples/`
-- `222` async executable examples under `ramdon_tests/async_program_surface_examples/`
+- This checkout does not commit a `ramdon_tests/` directory.
+- Local ignored `ramdon_tests/executable_examples/` and `ramdon_tests/async_program_surface_examples/` directories may be used to back executable smoke runs when present.
 
 Current library/codegen surface is locked in `crates/ql-cli/tests/codegen.rs`.
 

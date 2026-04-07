@@ -1,5 +1,7 @@
 # Phase 7 并发、异步与 Rust 互操作
 
+> 说明：本文保留了阶段推进时的大量样例路径记录。文中出现的 `ramdon_tests/...` 路径指向 `crates/ql-cli/tests/executable_examples.rs` 使用的本地忽略 smoke 目录，不是当前 checkout 自带的已提交样例目录。
+
 ## 目标
 
 - 在不破坏 P1-P6 边界的前提下，把 `async fn`、`await`、`spawn` 从“语法存在”推进到“可分析、可诊断、可逐步降级”
