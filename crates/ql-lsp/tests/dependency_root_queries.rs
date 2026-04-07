@@ -2437,6 +2437,181 @@ pub fn total() -> Int {
 }
 
 #[test]
+fn root_query_bridge_surfaces_structured_question_wrapped_dependency_function_iterable_roots() {
+    let temp = TempDir::new("ql-lsp-structured-question-function-iterable-root-queries");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.maybe_children
+
+pub fn total(flag: Bool) -> Int {
+    for current in (if flag { maybe_children()? } else { maybe_children()? }) {
+        let first = current.value
+    }
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let root_position = offset_to_position(source, nth_offset(source, "maybe_children", 2));
+    let hover = hover_for_package_analysis(source, &analysis, &package, root_position)
+        .expect("structured dependency question iterable function root hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**struct** `Child`"));
+    assert!(markup.value.contains("struct Child"));
+
+    let definition =
+        definition_for_package_analysis(&uri, source, &analysis, &package, root_position)
+            .expect("structured dependency question iterable function root definition should exist");
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let declaration =
+        declaration_for_package_analysis(&uri, source, &analysis, &package, root_position)
+            .expect("structured dependency question iterable function root declaration should exist");
+    let GotoDeclarationResponse::Scalar(location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let without_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        false,
+    )
+    .expect("structured dependency question iterable function root references should exist");
+    assert_eq!(
+        without_declaration,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_children", 2),
+                        nth_offset(source, "maybe_children", 2) + "maybe_children".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_children", 3),
+                        nth_offset(source, "maybe_children", 3) + "maybe_children".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        true,
+    )
+    .expect(
+        "structured dependency question iterable function root references with declaration should exist",
+    );
+    assert_eq!(with_declaration.len(), 4);
+    assert_dependency_location(
+        &with_declaration[0],
+        &dep_qi,
+        "pub struct Child {\n    value: Int,\n}",
+    );
+    assert_eq!(
+        with_declaration[1..],
+        [
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_children", 1),
+                        nth_offset(source, "maybe_children", 1) + "maybe_children".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_children", 2),
+                        nth_offset(source, "maybe_children", 2) + "maybe_children".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "maybe_children", 3),
+                        nth_offset(source, "maybe_children", 3) + "maybe_children".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn root_query_fallback_surfaces_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
 ) {
     let temp = TempDir::new("ql-lsp-question-function-iterable-root-queries-broken");
