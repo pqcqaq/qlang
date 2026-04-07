@@ -443,6 +443,73 @@ impl DependencyInterface {
             })
     }
 
+    fn function_decl_for<'a>(
+        &'a self,
+        symbol: &DependencySymbol,
+    ) -> Option<&'a ql_ast::FunctionDecl> {
+        if symbol.kind != SymbolKind::Function {
+            return None;
+        }
+
+        self.artifact
+            .modules
+            .iter()
+            .find(|module| module.source_path == symbol.source_path)?
+            .syntax
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                AstItemKind::Function(function)
+                    if is_public(&function.visibility) && function.name == symbol.name =>
+                {
+                    Some(function)
+                }
+                AstItemKind::ExternBlock(extern_block) if is_public(&extern_block.visibility) => {
+                    extern_block
+                        .functions
+                        .iter()
+                        .find(|function| function.name == symbol.name)
+                }
+                _ => None,
+            })
+    }
+
+    fn function_return_type_target(
+        &self,
+        symbol: &DependencySymbol,
+    ) -> Option<DependencyDefinitionTarget> {
+        let function = self.function_decl_for(symbol)?;
+        let return_type = function.return_type.as_ref()?;
+        self.public_type_target_for_type_expr(return_type)
+    }
+
+    fn function_question_return_type_target(
+        &self,
+        symbol: &DependencySymbol,
+    ) -> Option<DependencyDefinitionTarget> {
+        let function = self.function_decl_for(symbol)?;
+        let return_type = function.return_type.as_ref()?;
+        self.public_question_inner_type_target_for_type_expr(return_type)
+    }
+
+    fn function_iterable_element_type_target(
+        &self,
+        symbol: &DependencySymbol,
+    ) -> Option<DependencyDefinitionTarget> {
+        let function = self.function_decl_for(symbol)?;
+        let return_type = function.return_type.as_ref()?;
+        self.public_iterable_element_type_target_for_type_expr(return_type)
+    }
+
+    fn function_question_iterable_element_type_target(
+        &self,
+        symbol: &DependencySymbol,
+    ) -> Option<DependencyDefinitionTarget> {
+        let function = self.function_decl_for(symbol)?;
+        let return_type = function.return_type.as_ref()?;
+        self.public_question_inner_iterable_element_type_target_for_type_expr(return_type)
+    }
+
     fn struct_methods_for(
         &self,
         symbol: &DependencySymbol,
@@ -6449,6 +6516,50 @@ fn dependency_struct_binding_for_local_name(
     dependency_struct_binding_for_symbol(dependency, symbol)
 }
 
+fn dependency_function_return_binding_for_local_name(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<DependencyStructBinding> {
+    let (dependency, symbol) =
+        dependency_import_binding_for_local_name(package, module, local_name)?;
+    let target = dependency.function_return_type_target(symbol)?;
+    dependency_struct_binding_for_definition_target(package, &target)
+}
+
+fn dependency_function_question_return_binding_for_local_name(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<DependencyStructBinding> {
+    let (dependency, symbol) =
+        dependency_import_binding_for_local_name(package, module, local_name)?;
+    let target = dependency.function_question_return_type_target(symbol)?;
+    dependency_struct_binding_for_definition_target(package, &target)
+}
+
+fn dependency_function_iterable_element_binding_for_local_name(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<DependencyStructBinding> {
+    let (dependency, symbol) =
+        dependency_import_binding_for_local_name(package, module, local_name)?;
+    let target = dependency.function_iterable_element_type_target(symbol)?;
+    dependency_struct_binding_for_definition_target(package, &target)
+}
+
+fn dependency_function_question_iterable_element_binding_for_local_name(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<DependencyStructBinding> {
+    let (dependency, symbol) =
+        dependency_import_binding_for_local_name(package, module, local_name)?;
+    let target = dependency.function_question_iterable_element_type_target(symbol)?;
+    dependency_struct_binding_for_definition_target(package, &target)
+}
+
 fn dependency_struct_binding_for_type_expr(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -6632,17 +6743,27 @@ fn dependency_struct_binding_for_call_expr(
     callee: &ql_ast::Expr,
     scopes: &[HashMap<String, DependencyStructBinding>],
 ) -> Option<DependencyStructBinding> {
-    let ql_ast::ExprKind::Member { object, field, .. } = &callee.kind else {
-        return None;
-    };
-    let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
-    if let Some(method) = binding.methods.get(field) {
-        let return_type = method.return_type_definition.as_ref()?;
-        return dependency_struct_binding_for_definition_target(package, return_type);
+    match &callee.kind {
+        ql_ast::ExprKind::Name(name) => {
+            if let Some(function) = local_function_decl_for_name(module, name) {
+                let return_type = function.return_type.as_ref()?;
+                dependency_struct_binding_for_type_expr(package, module, return_type)
+            } else {
+                dependency_function_return_binding_for_local_name(package, module, name)
+            }
+        }
+        ql_ast::ExprKind::Member { object, field, .. } => {
+            let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
+            if let Some(method) = binding.methods.get(field) {
+                let return_type = method.return_type_definition.as_ref()?;
+                return dependency_struct_binding_for_definition_target(package, return_type);
+            }
+            let method = local_receiver_method_decl_for_name(package, module, &binding, field)?;
+            let return_type = method.return_type.as_ref()?;
+            dependency_struct_binding_for_type_expr(package, module, return_type)
+        }
+        _ => None,
     }
-    let method = local_receiver_method_decl_for_name(package, module, &binding, field)?;
-    let return_type = method.return_type.as_ref()?;
-    dependency_struct_binding_for_type_expr(package, module, return_type)
 }
 
 fn dependency_struct_binding_for_member_expr(
@@ -6675,19 +6796,29 @@ fn dependency_struct_binding_for_question_expr(
             let type_definition = field.question_type_definition.as_ref()?;
             dependency_struct_binding_for_definition_target(package, type_definition)
         }
-        ql_ast::ExprKind::Call { callee, .. } => {
-            let ql_ast::ExprKind::Member { object, field, .. } = &callee.kind else {
-                return None;
-            };
-            let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
-            if let Some(method) = binding.methods.get(field) {
-                let return_type = method.question_return_type_definition.as_ref()?;
-                return dependency_struct_binding_for_definition_target(package, return_type);
+        ql_ast::ExprKind::Call { callee, .. } => match &callee.kind {
+            ql_ast::ExprKind::Name(name) => {
+                if let Some(function) = local_function_decl_for_name(module, name) {
+                    let return_type = function.return_type.as_ref()?;
+                    dependency_struct_question_binding_for_type_expr(package, module, return_type)
+                } else {
+                    dependency_function_question_return_binding_for_local_name(
+                        package, module, name,
+                    )
+                }
             }
-            let method = local_receiver_method_decl_for_name(package, module, &binding, field)?;
-            let return_type = method.return_type.as_ref()?;
-            dependency_struct_question_binding_for_type_expr(package, module, return_type)
-        }
+            ql_ast::ExprKind::Member { object, field, .. } => {
+                let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
+                if let Some(method) = binding.methods.get(field) {
+                    let return_type = method.question_return_type_definition.as_ref()?;
+                    return dependency_struct_binding_for_definition_target(package, return_type);
+                }
+                let method = local_receiver_method_decl_for_name(package, module, &binding, field)?;
+                let return_type = method.return_type.as_ref()?;
+                dependency_struct_question_binding_for_type_expr(package, module, return_type)
+            }
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -6988,9 +7119,12 @@ fn dependency_struct_element_binding_for_call_expr(
 ) -> Option<DependencyStructBinding> {
     match &callee.kind {
         ql_ast::ExprKind::Name(name) => {
-            let function = local_function_decl_for_name(module, name)?;
-            let return_type = function.return_type.as_ref()?;
-            dependency_struct_element_binding_for_type_expr(package, module, return_type)
+            if let Some(function) = local_function_decl_for_name(module, name) {
+                let return_type = function.return_type.as_ref()?;
+                dependency_struct_element_binding_for_type_expr(package, module, return_type)
+            } else {
+                dependency_function_iterable_element_binding_for_local_name(package, module, name)
+            }
         }
         ql_ast::ExprKind::Member { object, field, .. } => {
             let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
@@ -7076,13 +7210,18 @@ fn dependency_struct_element_binding_for_question_expr(
         }
         ql_ast::ExprKind::Call { callee, .. } => match &callee.kind {
             ql_ast::ExprKind::Name(name) => {
-                let function = local_function_decl_for_name(module, name)?;
-                let return_type = function.return_type.as_ref()?;
-                dependency_struct_question_element_binding_for_type_expr(
-                    package,
-                    module,
-                    return_type,
-                )
+                if let Some(function) = local_function_decl_for_name(module, name) {
+                    let return_type = function.return_type.as_ref()?;
+                    dependency_struct_question_element_binding_for_type_expr(
+                        package,
+                        module,
+                        return_type,
+                    )
+                } else {
+                    dependency_function_question_iterable_element_binding_for_local_name(
+                        package, module, name,
+                    )
+                }
             }
             ql_ast::ExprKind::Member { object, field, .. } => {
                 let binding = dependency_struct_binding_for_expr(package, module, object, scopes)?;
