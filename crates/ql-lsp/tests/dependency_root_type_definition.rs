@@ -759,3 +759,227 @@ pub fn main() -> Int {
         "pub struct Child {\n    value: Int,\n}",
     );
 }
+
+#[test]
+fn type_definition_bridge_follows_question_wrapped_dependency_function_iterable_roots() {
+    let temp = TempDir::new("ql-lsp-question-function-iterable-root-type-definition");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.maybe_children
+
+pub fn main() -> Int {
+    for current in maybe_children()? {
+        let first = current.value
+    }
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let definition = type_definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "maybe_children", 2)),
+    )
+    .expect("dependency question iterable function root type definition should exist");
+    assert_targets_dependency_struct(
+        definition,
+        &dep_qi,
+        "pub struct Child {\n    value: Int,\n}",
+    );
+}
+
+#[test]
+fn type_definition_bridge_follows_question_wrapped_dependency_static_iterable_roots() {
+    let temp = TempDir::new("ql-lsp-question-static-iterable-root-type-definition");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub static MAYBE_ITEMS: Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.MAYBE_ITEMS as items
+
+pub fn main() -> Int {
+    for current in items? {
+        let first = current.value
+    }
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let definition = type_definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "items", 2)),
+    )
+    .expect("dependency question iterable static root type definition should exist");
+    assert_targets_dependency_struct(
+        definition,
+        &dep_qi,
+        "pub struct Child {\n    value: Int,\n}",
+    );
+}
+
+#[test]
+fn type_definition_bridge_follows_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-question-static-iterable-root-type-definition-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub static MAYBE_ITEMS: Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.MAYBE_ITEMS as items
+
+pub fn main() -> Int {
+    for current in items? {
+        let first = current.value
+    }
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let definition = type_definition_for_dependency_values(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "items", 2)),
+    )
+    .expect("dependency question iterable static root type definition should exist");
+    assert_targets_dependency_struct(
+        definition,
+        &dep_qi,
+        "pub struct Child {\n    value: Int,\n}",
+    );
+}
