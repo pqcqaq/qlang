@@ -5,9 +5,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{analyze_package, analyze_package_dependencies};
 use ql_lsp::bridge::{
-    definition_for_dependency_methods, definition_for_dependency_struct_fields, span_to_range,
+    declaration_for_dependency_methods, declaration_for_dependency_struct_fields,
+    definition_for_dependency_methods, definition_for_dependency_struct_fields,
+    hover_for_dependency_methods, hover_for_dependency_struct_fields,
+    references_for_dependency_methods, references_for_dependency_struct_fields, span_to_range,
 };
-use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position};
+use tower_lsp::lsp_types::request::GotoDeclarationResponse;
+use tower_lsp::lsp_types::{GotoDefinitionResponse, HoverContents, Location, Position, Url};
 
 struct TempDir {
     path: PathBuf,
@@ -94,6 +98,43 @@ fn assert_targets_dependency_snippet(
     );
 }
 
+fn dependency_name_range(dep_qi: &Path, anchor: &str, name: &str) -> tower_lsp::lsp_types::Range {
+    let artifact = fs::read_to_string(dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let anchor_start = artifact
+        .find(anchor)
+        .expect("anchor should exist in dependency artifact");
+    let name_start = anchor_start
+        + anchor
+            .find(name)
+            .expect("member name should exist inside dependency anchor");
+    span_to_range(
+        &artifact,
+        ql_span::Span::new(name_start, name_start + name.len()),
+    )
+}
+
+fn assert_location_targets_dependency_name(
+    location: &Location,
+    dep_qi: &Path,
+    anchor: &str,
+    name: &str,
+) {
+    assert_eq!(
+        location
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    assert_eq!(location.range, dependency_name_range(dep_qi, anchor, name));
+}
+
 #[test]
 fn dependency_field_definition_works_on_question_unwrapped_dependency_field_receiver() {
     let temp = TempDir::new("ql-lsp-question-field");
@@ -157,8 +198,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn dependency_field_definition_works_on_question_unwrapped_dependency_field_receiver_without_semantic_analysis()
- {
+fn dependency_field_definition_works_on_question_unwrapped_dependency_field_receiver_without_semantic_analysis(
+) {
     let temp = TempDir::new("ql-lsp-question-field-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -220,6 +261,280 @@ pub fn read(config: Cfg) -> Int {
     .expect("dependency field definition should exist without semantic analysis");
 
     assert_targets_dependency_snippet(definition, &dep_qi, "value");
+}
+
+#[test]
+fn dependency_field_queries_work_on_question_unwrapped_dependency_field_receiver() {
+    let temp = TempDir::new("ql-lsp-question-field-query");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    child: Option[Child],
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config.child?.value
+    return config.child?.value + current
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let first_field = nth_offset(source, "value", 1);
+    let second_field = nth_offset(source, "value", 2);
+
+    let hover = hover_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, first_field),
+    )
+    .expect("dependency field hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**field** `value`"));
+    assert!(markup.value.contains("field value: Int"));
+
+    let declaration = declaration_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, second_field),
+    )
+    .expect("dependency field declaration should exist");
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_location_targets_dependency_name(&declaration_location, &dep_qi, "value: Int", "value");
+
+    let with_declaration = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, second_field),
+        true,
+    )
+    .expect("dependency field references should exist");
+    assert_eq!(with_declaration.len(), 3);
+    assert_location_targets_dependency_name(&with_declaration[0], &dep_qi, "value: Int", "value");
+    let local_ranges = with_declaration[1..]
+        .iter()
+        .map(|location| location.range)
+        .collect::<Vec<_>>();
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(first_field, first_field + "value".len())
+    )));
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(second_field, second_field + "value".len())
+    )));
+
+    let without_declaration = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, first_field),
+        false,
+    )
+    .expect("dependency field references should exist without declaration");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(without_declaration
+        .iter()
+        .all(|location| location.uri == uri));
+    let local_ranges = without_declaration
+        .iter()
+        .map(|location| location.range)
+        .collect::<Vec<_>>();
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(first_field, first_field + "value".len())
+    )));
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(second_field, second_field + "value".len())
+    )));
+}
+
+#[test]
+fn dependency_field_queries_work_on_question_unwrapped_dependency_field_receiver_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-question-field-broken-query");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    child: Option[Child],
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let first = config.child?.value
+    let second = config.child?.value
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let first_field = nth_offset(source, "value", 1);
+    let second_field = nth_offset(source, "value", 2);
+
+    let hover = hover_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, first_field),
+    )
+    .expect("dependency field hover should exist without semantic analysis");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**field** `value`"));
+    assert!(markup.value.contains("field value: Int"));
+
+    let declaration = declaration_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, second_field),
+    )
+    .expect("dependency field declaration should exist without semantic analysis");
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_location_targets_dependency_name(&declaration_location, &dep_qi, "value: Int", "value");
+
+    let with_declaration = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, second_field),
+        true,
+    )
+    .expect("dependency field references should exist without semantic analysis");
+    assert_eq!(with_declaration.len(), 3);
+    assert_location_targets_dependency_name(&with_declaration[0], &dep_qi, "value: Int", "value");
+    let local_ranges = with_declaration[1..]
+        .iter()
+        .map(|location| location.range)
+        .collect::<Vec<_>>();
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(first_field, first_field + "value".len())
+    )));
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(second_field, second_field + "value".len())
+    )));
+
+    let without_declaration = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, first_field),
+        false,
+    )
+    .expect("dependency field references should exist without declaration");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(without_declaration
+        .iter()
+        .all(|location| location.uri == uri));
+    let local_ranges = without_declaration
+        .iter()
+        .map(|location| location.range)
+        .collect::<Vec<_>>();
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(first_field, first_field + "value".len())
+    )));
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(second_field, second_field + "value".len())
+    )));
 }
 
 #[test]
@@ -297,8 +612,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn dependency_method_definition_works_on_question_unwrapped_dependency_method_receiver_without_semantic_analysis()
- {
+fn dependency_method_definition_works_on_question_unwrapped_dependency_method_receiver_without_semantic_analysis(
+) {
     let temp = TempDir::new("ql-lsp-question-method-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -372,4 +687,316 @@ pub fn read(config: Cfg) -> Int {
     .expect("dependency method definition should exist");
 
     assert_targets_dependency_snippet(definition, &dep_qi, "get");
+}
+
+#[test]
+fn dependency_method_queries_work_on_question_unwrapped_dependency_method_receiver() {
+    let temp = TempDir::new("ql-lsp-question-method-query");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config.child()?.get()
+    return config.child()?.get() + current
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let first_method = nth_offset(source, "get", 1);
+    let second_method = nth_offset(source, "get", 2);
+
+    let hover =
+        hover_for_dependency_methods(source, &package, offset_to_position(source, first_method))
+            .expect("dependency method hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**method** `get`"));
+    assert!(markup.value.contains("fn get(self) -> Int"));
+
+    let declaration = declaration_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, second_method),
+    )
+    .expect("dependency method declaration should exist");
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_location_targets_dependency_name(
+        &declaration_location,
+        &dep_qi,
+        "pub fn get(self) -> Int",
+        "get",
+    );
+
+    let with_declaration = references_for_dependency_methods(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, second_method),
+        true,
+    )
+    .expect("dependency method references should exist");
+    assert_eq!(with_declaration.len(), 3);
+    assert_location_targets_dependency_name(
+        &with_declaration[0],
+        &dep_qi,
+        "pub fn get(self) -> Int",
+        "get",
+    );
+    let local_ranges = with_declaration[1..]
+        .iter()
+        .map(|location| location.range)
+        .collect::<Vec<_>>();
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(first_method, first_method + "get".len())
+    )));
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(second_method, second_method + "get".len())
+    )));
+
+    let without_declaration = references_for_dependency_methods(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, first_method),
+        false,
+    )
+    .expect("dependency method references should exist without declaration");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(without_declaration
+        .iter()
+        .all(|location| location.uri == uri));
+    let local_ranges = without_declaration
+        .iter()
+        .map(|location| location.range)
+        .collect::<Vec<_>>();
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(first_method, first_method + "get".len())
+    )));
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(second_method, second_method + "get".len())
+    )));
+}
+
+#[test]
+fn dependency_method_queries_work_on_question_unwrapped_dependency_method_receiver_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-question-method-broken-query");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let first = config.child()?.get()
+    let second = config.child()?.get()
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let first_method = nth_offset(source, "get", 1);
+    let second_method = nth_offset(source, "get", 2);
+
+    let hover =
+        hover_for_dependency_methods(source, &package, offset_to_position(source, first_method))
+            .expect("dependency method hover should exist without semantic analysis");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**method** `get`"));
+    assert!(markup.value.contains("fn get(self) -> Int"));
+
+    let declaration = declaration_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, second_method),
+    )
+    .expect("dependency method declaration should exist without semantic analysis");
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_location_targets_dependency_name(
+        &declaration_location,
+        &dep_qi,
+        "pub fn get(self) -> Int",
+        "get",
+    );
+
+    let with_declaration = references_for_dependency_methods(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, second_method),
+        true,
+    )
+    .expect("dependency method references should exist without semantic analysis");
+    assert_eq!(with_declaration.len(), 3);
+    assert_location_targets_dependency_name(
+        &with_declaration[0],
+        &dep_qi,
+        "pub fn get(self) -> Int",
+        "get",
+    );
+    let local_ranges = with_declaration[1..]
+        .iter()
+        .map(|location| location.range)
+        .collect::<Vec<_>>();
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(first_method, first_method + "get".len())
+    )));
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(second_method, second_method + "get".len())
+    )));
+
+    let without_declaration = references_for_dependency_methods(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, first_method),
+        false,
+    )
+    .expect("dependency method references should exist without declaration");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(without_declaration
+        .iter()
+        .all(|location| location.uri == uri));
+    let local_ranges = without_declaration
+        .iter()
+        .map(|location| location.range)
+        .collect::<Vec<_>>();
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(first_method, first_method + "get".len())
+    )));
+    assert!(local_ranges.contains(&span_to_range(
+        source,
+        ql_span::Span::new(second_method, second_method + "get".len())
+    )));
 }
