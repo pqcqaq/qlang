@@ -176,6 +176,91 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
+fn type_definition_bridge_follows_question_unwrapped_dependency_method_return_types() {
+    let temp = TempDir::new("ql-lsp-question-method-type-definition");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config.child()?
+    return current.value
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let definition = type_definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "child", 1)),
+    )
+    .expect("dependency method return type definition should exist");
+    assert_targets_dependency_type(
+        definition,
+        &dep_qi,
+        "pub struct Child {\n    value: Int,\n}",
+    );
+}
+
+#[test]
 fn type_definition_bridge_follows_question_unwrapped_dependency_method_return_types_without_semantic_analysis()
  {
     let temp = TempDir::new("ql-lsp-question-method-type-definition-broken");
