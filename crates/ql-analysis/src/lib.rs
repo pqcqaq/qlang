@@ -6480,14 +6480,28 @@ fn collect_dependency_struct_field_occurrences_in_expr(
             scopes.pop();
         }
         ql_ast::ExprKind::Call { callee, args } => {
-            collect_dependency_struct_field_occurrences_in_expr(
-                package,
-                module,
-                callee,
-                scopes,
-                iterable_scopes,
-                occurrences,
-            );
+            match &callee.kind {
+                ql_ast::ExprKind::Member { object, .. } => {
+                    collect_dependency_struct_field_occurrences_in_expr(
+                        package,
+                        module,
+                        object,
+                        scopes,
+                        iterable_scopes,
+                        occurrences,
+                    );
+                }
+                _ => {
+                    collect_dependency_struct_field_occurrences_in_expr(
+                        package,
+                        module,
+                        callee,
+                        scopes,
+                        iterable_scopes,
+                        occurrences,
+                    );
+                }
+            }
             for arg in args {
                 match arg {
                     ql_ast::CallArg::Positional(expr) => {
@@ -6529,14 +6543,12 @@ fn collect_dependency_struct_field_occurrences_in_expr(
             if let Some(binding) =
                 dependency_struct_binding_for_expr(package, module, object, scopes)
             {
-                if !binding.methods.contains_key(field) {
-                    push_dependency_struct_field_occurrence_for_binding(
-                        &binding,
-                        field,
-                        *field_span,
-                        occurrences,
-                    );
-                }
+                push_dependency_struct_field_occurrence_for_binding(
+                    &binding,
+                    field,
+                    *field_span,
+                    occurrences,
+                );
             }
         }
         ql_ast::ExprKind::Question(object) => {
