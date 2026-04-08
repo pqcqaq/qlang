@@ -1433,7 +1433,7 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
-        if let Some(binding) = self.dependency_value_binding_in_source_at(source, offset) {
+        if let Some(binding) = self.dependency_value_root_binding_in_source_at(source, offset) {
             return Some(dependency_definition_target_for_struct_binding(&binding));
         }
         let module = parse_source(source).ok()?;
@@ -3903,7 +3903,37 @@ fn dependency_member_completion_binding_in_expr(
                 )
             })
         }
-        ql_ast::ExprKind::Unary { expr, .. } | ql_ast::ExprKind::Question(expr) => {
+        ql_ast::ExprKind::Unary { expr, .. } => dependency_member_completion_binding_in_expr(
+            package,
+            module,
+            expr,
+            source,
+            offset,
+            kind,
+            scopes,
+            iterable_scopes,
+        ),
+        ql_ast::ExprKind::Question(expr) => {
+            if matches!(kind, DependencyMemberCompletionKind::ValueType) {
+                match &expr.kind {
+                    ql_ast::ExprKind::Member { field_span, .. } if field_span.contains(offset) => {
+                        return dependency_struct_binding_for_question_expr(
+                            package, module, expr, scopes,
+                        );
+                    }
+                    ql_ast::ExprKind::Call { callee, .. }
+                        if matches!(
+                            &callee.kind,
+                            ql_ast::ExprKind::Member { field_span, .. } if field_span.contains(offset)
+                        ) =>
+                    {
+                        return dependency_struct_binding_for_question_expr(
+                            package, module, expr, scopes,
+                        );
+                    }
+                    _ => {}
+                }
+            }
             dependency_member_completion_binding_in_expr(
                 package,
                 module,
@@ -5830,11 +5860,63 @@ fn collect_dependency_value_occurrences_in_expr(
                 }
             }
         }
-        ql_ast::ExprKind::Member { object, .. } | ql_ast::ExprKind::Question(object) => {
+        ql_ast::ExprKind::Member { object, .. } => {
             collect_dependency_value_occurrences_in_expr(
                 package,
                 module,
                 object,
+                binding_scopes,
+                iterable_scopes,
+                value_scopes,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::Question(inner) => {
+            match &inner.kind {
+                ql_ast::ExprKind::Member {
+                    field, field_span, ..
+                } => {
+                    if let Some(binding) = dependency_struct_binding_for_question_expr(
+                        package,
+                        module,
+                        inner,
+                        binding_scopes,
+                    ) {
+                        push_dependency_value_root_occurrence(
+                            SymbolKind::Field,
+                            field,
+                            *field_span,
+                            &binding,
+                            occurrences,
+                        );
+                    }
+                }
+                ql_ast::ExprKind::Call { callee, .. } => {
+                    if let ql_ast::ExprKind::Member {
+                        field, field_span, ..
+                    } = &callee.kind
+                        && let Some(binding) = dependency_struct_binding_for_question_expr(
+                            package,
+                            module,
+                            inner,
+                            binding_scopes,
+                        )
+                    {
+                        push_dependency_value_root_occurrence(
+                            SymbolKind::Method,
+                            field,
+                            *field_span,
+                            &binding,
+                            occurrences,
+                        );
+                    }
+                }
+                _ => {}
+            }
+            collect_dependency_value_occurrences_in_expr(
+                package,
+                module,
+                inner,
                 binding_scopes,
                 iterable_scopes,
                 value_scopes,
@@ -7795,6 +7877,22 @@ fn push_dependency_value_occurrence(
         path: binding.dependency.path.clone(),
         is_definition,
     });
+}
+
+fn push_dependency_value_root_occurrence(
+    kind: SymbolKind,
+    local_name: &str,
+    reference_span: Span,
+    dependency: &DependencyStructBinding,
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    let binding = DependencyValueBinding {
+        kind,
+        local_name: local_name.to_owned(),
+        definition_span: dependency.definition_span,
+        dependency: dependency.clone(),
+    };
+    push_dependency_value_occurrence(&binding, reference_span, false, occurrences);
 }
 
 fn bind_dependency_value_local(
