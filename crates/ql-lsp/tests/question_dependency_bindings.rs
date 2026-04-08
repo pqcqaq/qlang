@@ -3,15 +3,20 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_package_dependencies};
+use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    declaration_for_dependency_methods, declaration_for_dependency_struct_fields,
-    definition_for_dependency_methods, definition_for_dependency_struct_fields,
-    hover_for_dependency_methods, hover_for_dependency_struct_fields,
-    references_for_dependency_methods, references_for_dependency_struct_fields, span_to_range,
+    completion_for_dependency_member_fields, completion_for_dependency_methods,
+    completion_for_package_analysis, declaration_for_dependency_methods,
+    declaration_for_dependency_struct_fields, definition_for_dependency_methods,
+    definition_for_dependency_struct_fields, hover_for_dependency_methods,
+    hover_for_dependency_struct_fields, references_for_dependency_methods,
+    references_for_dependency_struct_fields, span_to_range,
 };
 use tower_lsp::lsp_types::request::GotoDeclarationResponse;
-use tower_lsp::lsp_types::{GotoDefinitionResponse, HoverContents, Location, Position, Url};
+use tower_lsp::lsp_types::{
+    CompletionItemKind, CompletionResponse, GotoDefinitionResponse, HoverContents, Location,
+    Position, Url,
+};
 
 struct TempDir {
     path: PathBuf,
@@ -538,6 +543,145 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
+fn dependency_field_completion_works_on_question_unwrapped_dependency_field_receiver() {
+    let temp = TempDir::new("ql-lsp-question-field-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    child: Option[Child],
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    return config.child?.va
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let analysis = analyze_source(source).expect("analysis should succeed for completion query");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
+    ) else {
+        panic!("dependency field completion should exist");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "value");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
+}
+
+#[test]
+fn dependency_field_completion_works_on_question_unwrapped_dependency_field_receiver_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-question-field-broken-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    child: Option[Child],
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let broken: Int = "oops"
+    return config.child?.va
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_dependency_member_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
+    ) else {
+        panic!("dependency field completion should exist without semantic analysis");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "value");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
+}
+
+#[test]
 fn dependency_method_definition_works_on_question_unwrapped_dependency_method_receiver() {
     let temp = TempDir::new("ql-lsp-question-method");
     let app_root = temp.path().join("workspace").join("app");
@@ -999,4 +1143,167 @@ pub fn read(config: Cfg) -> Int {
         source,
         ql_span::Span::new(second_method, second_method + "get".len())
     )));
+}
+
+#[test]
+fn dependency_method_completion_works_on_question_unwrapped_dependency_method_receiver() {
+    let temp = TempDir::new("ql-lsp-question-method-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    return config.child()?.ge
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let analysis = analyze_source(source).expect("analysis should succeed for completion query");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, ".ge", 1) + ".ge".len()),
+    ) else {
+        panic!("dependency method completion should exist");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "get");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+}
+
+#[test]
+fn dependency_method_completion_works_on_question_unwrapped_dependency_method_receiver_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-question-method-broken-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let broken: Int = "oops"
+    return config.child()?.ge
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let Some(CompletionResponse::Array(items)) = completion_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".ge", 1) + ".ge".len()),
+    ) else {
+        panic!("dependency method completion should exist without semantic analysis");
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "get");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
 }
