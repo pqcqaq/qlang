@@ -10805,6 +10805,60 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_cleanup_fixed_array_destructuring() {
+        let dir = TestDir::new("ql-driver-cleanup-fixed-array-destructuring");
+        let source = dir.write(
+            "cleanup_fixed_array_destructuring.ql",
+            r#"
+extern "c" fn sink(value: Int)
+
+async fn worker(value: Int) -> [Int; 2] {
+    return [value, value + 1]
+}
+
+async fn main() -> Int {
+    defer {
+        let [first, _, third] = [1, 2, 3]
+        sink(first + third)
+
+        for [left, right] in ([4, 5], [6, 7]) {
+            sink(left + right)
+        }
+
+        for await [left, right] in [worker(8), worker(10)] {
+            sink(left + right)
+        }
+    }
+
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/cleanup_fixed_array_destructuring.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup fixed-array destructuring should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("extractvalue [3 x i64]"));
+        assert!(rendered.contains("extractvalue [2 x i64]"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(rendered.contains("call void @sink"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_block_guard_scrutinee_and_value_lowering() {
         let dir = TestDir::new("ql-driver-cleanup-block-guard-scrutinee-value");
         let source = dir.write(
