@@ -3,8 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_source};
-use ql_lsp::bridge::{span_to_range, type_definition_for_package_analysis};
+use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
+use ql_lsp::bridge::{
+    span_to_range, type_definition_for_dependency_values, type_definition_for_package_analysis,
+};
 use ql_span::Span;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{Location, Position, Url};
@@ -91,9 +93,40 @@ fn assert_targets_dependency_type(
     assert_eq!(range, span_to_range(&artifact, Span::new(start, start + snippet.len())));
 }
 
-#[test]
-fn type_definition_bridge_follows_dependency_typed_closure_value_roots() {
-    let temp = TempDir::new("ql-lsp-typed-closure-value-root-type-definition");
+fn build_source(broken: bool) -> &'static str {
+    if broken {
+        r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let project = (current: Cfg) => {
+        let value = current.value
+        return "oops"
+    }
+    return project(config)
+}
+"#
+    } else {
+        r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let project = (current: Cfg) => current.value
+    return project(config)
+}
+"#
+    }
+}
+
+fn run_type_definition_case(broken: bool) {
+    let temp = TempDir::new(&format!(
+        "ql-lsp-typed-closure-value-root-type-definition{}",
+        if broken { "-broken" } else { "" }
+    ));
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
         .path()
@@ -133,34 +166,52 @@ name = "app"
 packages = ["../dep"]
 "#,
     );
-    let source = r#"
-package demo.app
-
-use demo.dep.Config as Cfg
-
-pub fn main(config: Cfg) -> Int {
-    let project = (current: Cfg) => current.value
-    return project(config)
-}
-"#;
+    let source = build_source(broken);
     temp.write("workspace/app/src/lib.ql", source);
-
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(source).expect("source should analyze");
-    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
     let current_usage = nth_offset(source, "current", 2);
 
-    let definition = type_definition_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        offset_to_position(source, current_usage),
-    )
-    .expect("dependency typed closure value root type definition should exist");
-    assert_targets_dependency_type(
-        definition,
-        &dep_qi,
-        "pub struct Config {\n    value: Int,\n}",
-    );
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let definition = type_definition_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("dependency typed closure value root type definition should exist");
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Config {\n    value: Int,\n}",
+        );
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(source).expect("source should analyze");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+        let definition = type_definition_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("dependency typed closure value root type definition should exist");
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Config {\n    value: Int,\n}",
+        );
+    }
+}
+
+#[test]
+fn type_definition_bridge_follows_dependency_typed_closure_value_roots() {
+    run_type_definition_case(false);
+}
+
+#[test]
+fn type_definition_fallback_follows_dependency_typed_closure_value_roots() {
+    run_type_definition_case(true);
 }
