@@ -3,8 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_source};
-use ql_lsp::bridge::{span_to_range, type_definition_for_package_analysis};
+use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
+use ql_lsp::bridge::{
+    span_to_range, type_definition_for_dependency_values, type_definition_for_package_analysis,
+};
 use ql_span::Span;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{Location, Position, Url};
@@ -104,9 +106,9 @@ impl Config {
         }
     }
 
-    fn build_source(self) -> &'static str {
-        match self {
-            Self::Tuple => {
+    fn build_source(self, broken: bool) -> &'static str {
+        match (self, broken) {
+            (Self::Tuple, false) => {
                 r#"
 package demo.app
 
@@ -120,7 +122,22 @@ pub fn read(config: Cfg) -> Int {
 }
 "#
             }
-            Self::Array => {
+            (Self::Tuple, true) => {
+                r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    for current in (config, config) {
+        let value = current.value
+        return "oops"
+    }
+    return 0
+}
+"#
+            }
+            (Self::Array, false) => {
                 r#"
 package demo.app
 
@@ -129,6 +146,21 @@ use demo.dep.Config as Cfg
 pub fn read(config: Cfg) -> Int {
     for current in [config.child(), config.child()] {
         return current.value
+    }
+    return 0
+}
+"#
+            }
+            (Self::Array, true) => {
+                r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    for current in [config.child(), config.child()] {
+        let value = current.value
+        return "oops"
     }
     return 0
 }
@@ -182,13 +214,17 @@ fn assert_targets_dependency_type(
     let start = artifact
         .find(snippet)
         .expect("type target should exist in dependency interface");
-    assert_eq!(range, span_to_range(&artifact, Span::new(start, start + snippet.len())));
+    assert_eq!(
+        range,
+        span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
 }
 
-fn run_type_definition_case(binding: BindingKind) {
+fn run_type_definition_case(binding: BindingKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-for-loop-{}-value-root-type-definition",
-        binding.label()
+        "ql-lsp-for-loop-{}-value-root-type-definition{}",
+        binding.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -216,31 +252,54 @@ name = "app"
 packages = ["../dep"]
 "#,
     );
-    let source = binding.build_source();
+    let source = binding.build_source(broken);
     temp.write("workspace/app/src/lib.ql", source);
-
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(source).expect("source should analyze");
-    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
     let current_usage = nth_offset(source, "current", 2);
 
-    let definition = type_definition_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        offset_to_position(source, current_usage),
-    )
-    .expect("dependency for-loop binding value root type definition should exist");
-    assert_targets_dependency_type(definition, &dep_qi, binding.dep_struct_snippet());
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let definition = type_definition_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("dependency for-loop binding value root type definition should exist");
+        assert_targets_dependency_type(definition, &dep_qi, binding.dep_struct_snippet());
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(source).expect("source should analyze");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+        let definition = type_definition_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("dependency for-loop binding value root type definition should exist");
+        assert_targets_dependency_type(definition, &dep_qi, binding.dep_struct_snippet());
+    }
 }
 
 #[test]
 fn type_definition_bridge_follows_dependency_for_loop_inline_tuple_bindings() {
-    run_type_definition_case(BindingKind::Tuple);
+    run_type_definition_case(BindingKind::Tuple, false);
 }
 
 #[test]
 fn type_definition_bridge_follows_dependency_for_loop_inline_array_bindings() {
-    run_type_definition_case(BindingKind::Array);
+    run_type_definition_case(BindingKind::Array, false);
+}
+
+#[test]
+fn type_definition_fallback_follows_dependency_for_loop_inline_tuple_bindings() {
+    run_type_definition_case(BindingKind::Tuple, true);
+}
+
+#[test]
+fn type_definition_fallback_follows_dependency_for_loop_inline_array_bindings() {
+    run_type_definition_case(BindingKind::Array, true);
 }
