@@ -5169,6 +5169,26 @@ fn cleanup_match_callable_guard_alias_codegen_case_matches() {
 }
 
 #[test]
+fn cleanup_string_match_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "cleanup_string_match_build",
+        source_relative: "fixtures/codegen/pass/cleanup_string_match_build.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("cleanup string match build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn cleanup_match_binding_arm_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {

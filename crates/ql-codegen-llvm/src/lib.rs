@@ -4548,6 +4548,27 @@ impl<'a> ModuleEmitter<'a> {
                 });
         }
 
+        if scrutinee_ty.compatible_with(&Ty::Builtin(BuiltinType::String)) {
+            return self.supports_cleanup_value_expr(value_expr, scrutinee_ty, body, local_types)
+                && arms.iter().all(|arm| {
+                    supported_cleanup_string_match_pattern(
+                        self.input.hir,
+                        self.input.resolution,
+                        arm.pattern,
+                    )
+                    .is_some()
+                        && arm.guard.is_none_or(|guard| {
+                            self.supports_cleanup_bool_expr(guard, body, local_types)
+                        })
+                        && self.supports_cleanup_expr_with_loop(
+                            arm.body,
+                            in_cleanup_loop,
+                            body,
+                            local_types,
+                        )
+                });
+        }
+
         self.supports_cleanup_value_expr(value_expr, scrutinee_ty, body, local_types)
             && arms.iter().all(|arm| {
                 self.supports_match_catch_all_pattern(arm.pattern, scrutinee_ty)
@@ -4847,6 +4868,31 @@ impl<'a> ModuleEmitter<'a> {
                                     local_types,
                                 )
                         });
+                }
+
+                if scrutinee_ty.compatible_with(&Ty::Builtin(BuiltinType::String)) {
+                    return self.supports_cleanup_value_expr(
+                        *value,
+                        scrutinee_ty,
+                        body,
+                        local_types,
+                    ) && arms.iter().all(|arm| {
+                        supported_cleanup_string_match_pattern(
+                            self.input.hir,
+                            self.input.resolution,
+                            arm.pattern,
+                        )
+                        .is_some()
+                            && arm.guard.is_none_or(|guard| {
+                                self.supports_cleanup_bool_expr(guard, body, local_types)
+                            })
+                            && self.supports_cleanup_value_expr(
+                                arm.body,
+                                expected_ty,
+                                body,
+                                local_types,
+                            )
+                    });
                 }
 
                 return self.supports_cleanup_value_expr(*value, scrutinee_ty, body, local_types)
@@ -8865,6 +8911,17 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             return;
         }
 
+        if scrutinee_ty.compatible_with(&Ty::Builtin(BuiltinType::String)) {
+            let scrutinee = self.render_cleanup_value_expr(
+                output,
+                value_expr,
+                &Ty::Builtin(BuiltinType::String),
+                span,
+            );
+            self.render_cleanup_string_match_expr(output, scrutinee, arms, span);
+            return;
+        }
+
         let scrutinee = self.render_cleanup_value_expr(output, value_expr, scrutinee_ty, span);
         self.render_cleanup_guard_only_match_expr(output, scrutinee, arms, span);
     }
@@ -9087,6 +9144,22 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 span,
             );
             return self.render_cleanup_value_integer_match_expr(
+                output,
+                scrutinee,
+                arms,
+                expected_ty,
+                span,
+            );
+        }
+
+        if scrutinee_ty.compatible_with(&Ty::Builtin(BuiltinType::String)) {
+            let scrutinee = self.render_cleanup_value_expr(
+                output,
+                value_expr,
+                &Ty::Builtin(BuiltinType::String),
+                span,
+            );
+            return self.render_cleanup_value_string_match_expr(
                 output,
                 scrutinee,
                 arms,
@@ -9332,6 +9405,120 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         self.render_loaded_pointer_value(output, result_slot, expected_ty.clone(), span)
     }
 
+    fn render_cleanup_value_string_match_expr(
+        &mut self,
+        output: &mut String,
+        scrutinee: LoweredValue,
+        arms: &[hir::MatchArm],
+        expected_ty: &Ty,
+        span: Span,
+    ) -> LoweredValue {
+        let result_llvm_ty = self
+            .emitter
+            .lower_llvm_type(expected_ty, span, "cleanup match value")
+            .expect("supported cleanup lowering should lower cleanup match values");
+        let result_slot = self.fresh_temp();
+        let end_label = self.fresh_label("cleanup_match_end");
+        let _ = writeln!(output, "  {result_slot} = alloca {result_llvm_ty}");
+
+        for (index, arm) in arms.iter().enumerate() {
+            let pattern = supported_cleanup_string_match_pattern(
+                self.emitter.input.hir,
+                self.emitter.input.resolution,
+                arm.pattern,
+            )
+            .unwrap_or_else(|| {
+                panic!("supported cleanup lowering at {span:?} should only render supported string cleanup-match patterns")
+            });
+            let body_label = self.fresh_label("cleanup_match_arm");
+            let next_label = if index + 1 == arms.len() {
+                end_label.clone()
+            } else {
+                self.fresh_label("cleanup_match_next")
+            };
+            let binding_local = match pattern_kind(self.emitter.input.hir, arm.pattern) {
+                PatternKind::Binding(local) => Some(*local),
+                _ => None,
+            };
+
+            if let Some(local) = binding_local {
+                self.cleanup_bindings.push(GuardBindingValue {
+                    local,
+                    value: scrutinee.clone(),
+                });
+            }
+
+            match &pattern {
+                SupportedStringMatchPattern::Literal(value) => {
+                    let matched_label = if arm.guard.is_some() {
+                        self.fresh_label("cleanup_match_guard")
+                    } else {
+                        body_label.clone()
+                    };
+                    let condition = self
+                        .render_string_match_literal_condition(
+                            output,
+                            scrutinee.clone(),
+                            value,
+                            span,
+                        )
+                        .repr;
+                    let _ = writeln!(
+                        output,
+                        "  br i1 {condition}, label %{matched_label}, label %{next_label}"
+                    );
+                    if let Some(guard) = arm.guard {
+                        let _ = writeln!(output, "{matched_label}:");
+                        let guard = self.render_bool_guard_expr(output, guard, span, None);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    }
+                }
+                SupportedStringMatchPattern::CatchAll => {
+                    if let Some(guard) = arm.guard {
+                        let guard = self.render_bool_guard_expr(output, guard, span, None);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    } else {
+                        let _ = writeln!(output, "  br label %{body_label}");
+                    }
+                }
+            }
+
+            let _ = writeln!(output, "{body_label}:");
+            self.cleanup_path_open = true;
+            let arm_value = self.render_cleanup_value_expr(output, arm.body, expected_ty, span);
+            let _ = writeln!(
+                output,
+                "  store {} {}, ptr {result_slot}",
+                arm_value.llvm_ty, arm_value.repr
+            );
+            let _ = writeln!(output, "  br label %{end_label}");
+
+            if binding_local.is_some() {
+                self.cleanup_bindings.pop();
+            }
+
+            if next_label != end_label {
+                let _ = writeln!(output, "{next_label}:");
+            }
+
+            if matches!(pattern, SupportedStringMatchPattern::CatchAll) && arm.guard.is_none() {
+                break;
+            }
+        }
+
+        let _ = writeln!(output, "{end_label}:");
+        self.cleanup_path_open = true;
+        self.render_loaded_pointer_value(output, result_slot, expected_ty.clone(), span)
+    }
+
     fn render_cleanup_bool_match_expr(
         &mut self,
         output: &mut String,
@@ -9535,6 +9722,109 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
 
             if matches!(pattern, SupportedIntegerMatchPattern::CatchAll) && arm.guard.is_none() {
+                break;
+            }
+        }
+
+        let _ = writeln!(output, "{end_label}:");
+        self.cleanup_path_open = true;
+    }
+
+    fn render_cleanup_string_match_expr(
+        &mut self,
+        output: &mut String,
+        scrutinee: LoweredValue,
+        arms: &[hir::MatchArm],
+        span: Span,
+    ) {
+        let end_label = self.fresh_label("cleanup_match_end");
+
+        for (index, arm) in arms.iter().enumerate() {
+            let pattern = supported_cleanup_string_match_pattern(
+                self.emitter.input.hir,
+                self.emitter.input.resolution,
+                arm.pattern,
+            )
+            .unwrap_or_else(|| {
+                panic!("supported cleanup lowering at {span:?} should only render supported string cleanup-match patterns")
+            });
+            let body_label = self.fresh_label("cleanup_match_arm");
+            let next_label = if index + 1 == arms.len() {
+                end_label.clone()
+            } else {
+                self.fresh_label("cleanup_match_next")
+            };
+            let binding_local = match pattern_kind(self.emitter.input.hir, arm.pattern) {
+                PatternKind::Binding(local) => Some(*local),
+                _ => None,
+            };
+
+            if let Some(local) = binding_local {
+                self.cleanup_bindings.push(GuardBindingValue {
+                    local,
+                    value: scrutinee.clone(),
+                });
+            }
+
+            match &pattern {
+                SupportedStringMatchPattern::Literal(value) => {
+                    let matched_label = if arm.guard.is_some() {
+                        self.fresh_label("cleanup_match_guard")
+                    } else {
+                        body_label.clone()
+                    };
+                    let condition = self
+                        .render_string_match_literal_condition(
+                            output,
+                            scrutinee.clone(),
+                            value,
+                            span,
+                        )
+                        .repr;
+                    let _ = writeln!(
+                        output,
+                        "  br i1 {condition}, label %{matched_label}, label %{next_label}"
+                    );
+                    if let Some(guard) = arm.guard {
+                        let _ = writeln!(output, "{matched_label}:");
+                        let guard = self.render_bool_guard_expr(output, guard, span, None);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    }
+                }
+                SupportedStringMatchPattern::CatchAll => {
+                    if let Some(guard) = arm.guard {
+                        let guard = self.render_bool_guard_expr(output, guard, span, None);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    } else {
+                        let _ = writeln!(output, "  br label %{body_label}");
+                    }
+                }
+            }
+
+            let _ = writeln!(output, "{body_label}:");
+            self.cleanup_path_open = true;
+            self.render_cleanup_expr(output, arm.body, span);
+            if self.cleanup_path_open {
+                let _ = writeln!(output, "  br label %{end_label}");
+            }
+
+            if binding_local.is_some() {
+                self.cleanup_bindings.pop();
+            }
+
+            if next_label != end_label {
+                let _ = writeln!(output, "{next_label}:");
+            }
+
+            if matches!(pattern, SupportedStringMatchPattern::CatchAll) && arm.guard.is_none() {
                 break;
             }
         }
@@ -9771,6 +10061,18 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 span,
             );
             return self.render_cleanup_call_integer_match_expr(
+                output, scrutinee, arms, args, return_ty, span,
+            );
+        }
+
+        if scrutinee_ty.compatible_with(&Ty::Builtin(BuiltinType::String)) {
+            let scrutinee = self.render_cleanup_value_expr(
+                output,
+                value_expr,
+                &Ty::Builtin(BuiltinType::String),
+                span,
+            );
+            return self.render_cleanup_call_string_match_expr(
                 output, scrutinee, arms, args, return_ty, span,
             );
         }
@@ -10027,6 +10329,133 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
 
             if matches!(pattern, SupportedIntegerMatchPattern::CatchAll) && arm.guard.is_none() {
+                break;
+            }
+        }
+
+        let _ = writeln!(output, "{end_label}:");
+        self.cleanup_path_open = true;
+        result_slot
+            .map(|slot| self.render_loaded_pointer_value(output, slot, return_ty.clone(), span))
+    }
+
+    fn render_cleanup_call_string_match_expr(
+        &mut self,
+        output: &mut String,
+        scrutinee: LoweredValue,
+        arms: &[hir::MatchArm],
+        args: &[hir::CallArg],
+        return_ty: &Ty,
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let result_llvm_ty = (!is_void_ty(return_ty)).then(|| {
+            self.emitter
+                .lower_llvm_type(return_ty, span, "cleanup call result")
+                .expect("supported cleanup lowering should lower cleanup-call match results")
+        });
+        let result_slot = result_llvm_ty.as_ref().map(|llvm_ty| {
+            let slot = self.fresh_temp();
+            let _ = writeln!(output, "  {slot} = alloca {llvm_ty}");
+            slot
+        });
+        let end_label = self.fresh_label("cleanup_call_match_end");
+
+        for (index, arm) in arms.iter().enumerate() {
+            let pattern = supported_cleanup_string_match_pattern(
+                self.emitter.input.hir,
+                self.emitter.input.resolution,
+                arm.pattern,
+            )
+            .unwrap_or_else(|| {
+                panic!("supported cleanup lowering at {span:?} should only render supported string cleanup-call match patterns")
+            });
+            let body_label = self.fresh_label("cleanup_call_match_arm");
+            let next_label = if index + 1 == arms.len() {
+                end_label.clone()
+            } else {
+                self.fresh_label("cleanup_call_match_next")
+            };
+            let binding_local = match pattern_kind(self.emitter.input.hir, arm.pattern) {
+                PatternKind::Binding(local) => Some(*local),
+                _ => None,
+            };
+
+            if let Some(local) = binding_local {
+                self.cleanup_bindings.push(GuardBindingValue {
+                    local,
+                    value: scrutinee.clone(),
+                });
+            }
+
+            match &pattern {
+                SupportedStringMatchPattern::Literal(value) => {
+                    let matched_label = if arm.guard.is_some() {
+                        self.fresh_label("cleanup_call_match_guard")
+                    } else {
+                        body_label.clone()
+                    };
+                    let condition = self
+                        .render_string_match_literal_condition(
+                            output,
+                            scrutinee.clone(),
+                            value,
+                            span,
+                        )
+                        .repr;
+                    let _ = writeln!(
+                        output,
+                        "  br i1 {condition}, label %{matched_label}, label %{next_label}"
+                    );
+                    if let Some(guard) = arm.guard {
+                        let _ = writeln!(output, "{matched_label}:");
+                        let guard = self.render_bool_guard_expr(output, guard, span, None);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    }
+                }
+                SupportedStringMatchPattern::CatchAll => {
+                    if let Some(guard) = arm.guard {
+                        let guard = self.render_bool_guard_expr(output, guard, span, None);
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {}, label %{body_label}, label %{next_label}",
+                            guard.repr
+                        );
+                    } else {
+                        let _ = writeln!(output, "  br label %{body_label}");
+                    }
+                }
+            }
+
+            let _ = writeln!(output, "{body_label}:");
+            self.cleanup_path_open = true;
+            let arm_value = self.render_cleanup_call(output, arm.body, args, span);
+            if let Some(result_slot) = result_slot.as_ref() {
+                let arm_value = arm_value.unwrap_or_else(|| {
+                    panic!(
+                        "supported cleanup lowering at {span:?} should only render valued cleanup-call match arms"
+                    )
+                });
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {result_slot}",
+                    arm_value.llvm_ty, arm_value.repr
+                );
+            }
+            let _ = writeln!(output, "  br label %{end_label}");
+
+            if binding_local.is_some() {
+                self.cleanup_bindings.pop();
+            }
+
+            if next_label != end_label {
+                let _ = writeln!(output, "{next_label}:");
+            }
+
+            if matches!(pattern, SupportedStringMatchPattern::CatchAll) && arm.guard.is_none() {
                 break;
             }
         }
@@ -16976,6 +17405,21 @@ fn supported_cleanup_integer_match_pattern(
             .map(|value| SupportedIntegerMatchPattern::Literal(value.to_string())),
         PatternKind::Binding(_) => Some(SupportedIntegerMatchPattern::CatchAll),
         PatternKind::Wildcard => Some(SupportedIntegerMatchPattern::CatchAll),
+        _ => None,
+    }
+}
+
+fn supported_cleanup_string_match_pattern(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    pattern: hir::PatternId,
+) -> Option<SupportedStringMatchPattern> {
+    match pattern_kind(module, pattern) {
+        PatternKind::String(value) => Some(SupportedStringMatchPattern::Literal(value.clone())),
+        PatternKind::Path(_) => pattern_literal_string(module, resolution, pattern)
+            .map(SupportedStringMatchPattern::Literal),
+        PatternKind::Binding(_) => Some(SupportedStringMatchPattern::CatchAll),
+        PatternKind::Wildcard => Some(SupportedStringMatchPattern::CatchAll),
         _ => None,
     }
 }

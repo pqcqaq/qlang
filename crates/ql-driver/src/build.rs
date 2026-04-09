@@ -8811,6 +8811,83 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_cleanup_string_match_lowering() {
+        let dir = TestDir::new("ql-driver-cleanup-string-match");
+        let source = dir.write(
+            "cleanup_string_match.ql",
+            r#"
+extern "c" fn first()
+extern "c" fn second()
+extern "c" fn third()
+
+fn enabled() -> Bool {
+    return true
+}
+
+fn score_first() -> Int {
+    first()
+    return 1
+}
+
+fn score_second() -> Int {
+    second()
+    return 2
+}
+
+fn score_third() -> Int {
+    third()
+    return 3
+}
+
+const ALPHA: String = "alpha"
+static BETA: String = "beta"
+const GAMMA: String = "gamma"
+static DELTA: String = "delta"
+
+const PICK_FIRST: () -> Int = score_first
+static PICK_SECOND: () -> Int = score_second
+const PICK_THIRD: () -> Int = score_third
+
+fn main() -> Int {
+    let cleanup_value = "beta"
+    let call_value = "delta"
+    defer match cleanup_value {
+        ALPHA if enabled() => first(),
+        BETA => second(),
+        _ => third(),
+    }
+    defer (match call_value {
+        GAMMA if enabled() => PICK_FIRST,
+        DELTA => PICK_SECOND,
+        _ => PICK_THIRD,
+    })()
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/cleanup_string_match.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup string match lowering should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered.matches("call i32 @memcmp").count(), 4);
+        assert!(rendered.contains("cleanup_match_arm"));
+        assert!(rendered.contains("cleanup_call_match_arm"));
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_block_sequence_lowering() {
         let dir = TestDir::new("ql-driver-cleanup-block-sequence");
         let source = dir.write(
