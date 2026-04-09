@@ -3,8 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_source};
-use ql_lsp::bridge::{span_to_range, type_definition_for_package_analysis};
+use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
+use ql_lsp::bridge::{
+    span_to_range, type_definition_for_dependency_values, type_definition_for_package_analysis,
+};
 use ql_span::Span;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{Location, Position, Url};
@@ -108,39 +110,44 @@ impl Child {
         }
     }
 
-    fn build_source(self) -> &'static str {
+    fn build_source(self, broken: bool) -> String {
+        let tail = if broken {
+            "    return \"oops\"\n"
+        } else {
+            "    return 0\n"
+        };
         match self {
-            Self::IfTuple => {
+            Self::IfTuple => format!(
                 r#"
 package demo.app
 
 use demo.dep.Config as Cfg
 
-pub fn read(config: Cfg, flag: Bool) -> Int {
-    for current in (if flag { (config, config) } else { (config, config) }) {
+pub fn read(config: Cfg, flag: Bool) -> Int {{
+    for current in (if flag {{ (config, config) }} else {{ (config, config) }}) {{
         return current.value
-    }
-    return 0
-}
-"#
-            }
-            Self::MatchArray => {
+    }}
+{tail}}}
+"#,
+                tail = tail,
+            ),
+            Self::MatchArray => format!(
                 r#"
 package demo.app
 
 use demo.dep.Config as Cfg
 
-pub fn read(config: Cfg, flag: Bool) -> Int {
-    for current in match flag {
+pub fn read(config: Cfg, flag: Bool) -> Int {{
+    for current in match flag {{
         true => [config.child(), config.child()],
         false => [config.child(), config.child()],
-    } {
+    }} {{
         return current.get()
-    }
-    return 0
-}
-"#
-            }
+    }}
+{tail}}}
+"#,
+                tail = tail,
+            ),
         }
     }
 }
@@ -195,10 +202,11 @@ fn assert_targets_dependency_type(
     );
 }
 
-fn run_type_definition_case(binding: BindingKind) {
+fn run_type_definition_case(binding: BindingKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-for-loop-structured-iterable-{}-value-root-type-definition",
-        binding.label()
+        "ql-lsp-for-loop-structured-iterable-{}-value-root-type-definition{}",
+        binding.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -226,31 +234,55 @@ name = "app"
 packages = ["../dep"]
 "#,
     );
-    let source = binding.build_source();
-    temp.write("workspace/app/src/lib.ql", source);
-
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(source).expect("source should analyze");
-    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let source = binding.build_source(broken);
+    temp.write("workspace/app/src/lib.ql", &source);
+    let source = source.as_str();
     let current_usage = nth_offset(source, "current", 2);
 
-    let definition = type_definition_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        offset_to_position(source, current_usage),
-    )
-    .expect("structured iterable value root type definition should exist");
-    assert_targets_dependency_type(definition, &dep_qi, binding.dep_struct_snippet());
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let definition = type_definition_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("structured iterable value root type definition should exist");
+        assert_targets_dependency_type(definition, &dep_qi, binding.dep_struct_snippet());
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(source).expect("source should analyze");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+        let definition = type_definition_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("structured iterable value root type definition should exist");
+        assert_targets_dependency_type(definition, &dep_qi, binding.dep_struct_snippet());
+    }
 }
 
 #[test]
 fn type_definition_bridge_follows_dependency_for_loop_if_tuple_structured_iterable_bindings() {
-    run_type_definition_case(BindingKind::IfTuple);
+    run_type_definition_case(BindingKind::IfTuple, false);
 }
 
 #[test]
 fn type_definition_bridge_follows_dependency_for_loop_match_array_structured_iterable_bindings() {
-    run_type_definition_case(BindingKind::MatchArray);
+    run_type_definition_case(BindingKind::MatchArray, false);
+}
+
+#[test]
+fn type_definition_fallback_follows_dependency_for_loop_if_tuple_structured_iterable_bindings() {
+    run_type_definition_case(BindingKind::IfTuple, true);
+}
+
+#[test]
+fn type_definition_fallback_follows_dependency_for_loop_match_array_structured_iterable_bindings() {
+    run_type_definition_case(BindingKind::MatchArray, true);
 }
