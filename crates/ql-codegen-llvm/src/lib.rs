@@ -1513,7 +1513,7 @@ impl<'a> ModuleEmitter<'a> {
         let body = closure.lowered_body.as_deref().ok_or_else(|| {
             vec![unsupported(
                 closure.span,
-                "LLVM IR backend foundation currently only supports direct local calls for non-`move` closures that capture immutable same-function scalar bindings",
+                "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset with immutable same-function scalar, `String`, and task-handle captures",
             )]
         })?;
         let closure_ty = self
@@ -1753,7 +1753,7 @@ impl<'a> ModuleEmitter<'a> {
     fn capturing_closure_diagnostic(&self, span: Span) -> Diagnostic {
         unsupported(
             span,
-            "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through the current ordinary local/same-target callable roots plus the shipped cleanup/guard-call paths",
+            "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar, `String`, and task-handle captures through the currently shipped ordinary/control-flow and cleanup/guard-call roots",
         )
     }
 

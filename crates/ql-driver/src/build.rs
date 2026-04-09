@@ -5273,13 +5273,9 @@ fn add_one(value: Int) -> Int {
             "unsupported.ql",
             r#"
 fn main() -> Int {
-    let first = 1
-    let second = 2
-    let capture_first = () => first
-    let capture_second = () => second
-    var alias = capture_first
-    alias = capture_second
-    return alias()
+    let base = 1
+    let capture = move () => base
+    return capture()
 }
 "#,
         );
@@ -5291,7 +5287,7 @@ fn main() -> Int {
 
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.message
-                == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through direct/local-alias calls plus the current direct cleanup/guard-call paths"
+                == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar, `String`, and task-handle captures through the currently shipped ordinary/control-flow and cleanup/guard-call roots"
         }));
         assert!(diagnostics.iter().all(|diagnostic| {
             !diagnostic
@@ -7458,6 +7454,52 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_task_handle_capturing_closure_values() {
+        let dir = TestDir::new("ql-driver-task-handle-capturing-closure-values");
+        let source = dir.write(
+            "task_handle_capturing_closure_values.ql",
+            r#"
+async fn worker(value: Int) -> Int {
+    return value + 1
+}
+
+async fn main() -> Int {
+    let first = spawn worker(41)
+    let second = spawn worker(1)
+    let direct = () => first
+    let fetch = () => second
+    let alias = fetch
+    return await direct() + await alias()
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/task_handle_capturing_closure_values.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("task-handle capturing closure values should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.matches("define ptr @ql_1_main__closure").count() >= 2);
+        assert!(rendered.matches("call ptr @ql_1_main__closure").count() >= 2);
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_callable_const_and_static_values() {
         let dir = TestDir::new("ql-driver-callable-const-static-values");
         let source = dir.write(
@@ -9480,12 +9522,8 @@ extern "c" fn first()
 fn main() -> Int {
     defer first()
     let base = 1
-    let next = 2
-    let capture_base = () => base
-    let capture_next = () => next
-    var alias = capture_base
-    alias = capture_next
-    return alias()
+    let capture = move () => base
+    return capture()
 }
 "#,
         );
@@ -9510,7 +9548,7 @@ fn main() -> Int {
                 .iter()
                 .filter(|diagnostic| {
                     diagnostic.message
-                        == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through direct/local-alias calls plus the current direct cleanup/guard-call paths"
+                        == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar, `String`, and task-handle captures through the currently shipped ordinary/control-flow and cleanup/guard-call roots"
                 })
                 .count(),
             1

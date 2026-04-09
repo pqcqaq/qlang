@@ -2620,13 +2620,9 @@ extern "c" fn first()
 
 fn main() -> Int {
 defer first()
-let first_value = 1
-let next_value = 2
-let capture_first = () => first_value
-let capture_next = () => next_value
-var alias = capture_first
-alias = capture_next
-return alias()
+let base = 1
+let capture = move () => base
+return capture()
 }
 "#,
     );
@@ -2646,7 +2642,7 @@ return alias()
             .iter()
             .filter(|message| {
                 message.as_str()
-                    == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar captures through the current ordinary local/same-target callable roots plus the shipped cleanup/guard-call paths"
+                    == "LLVM IR backend foundation currently only supports a narrow non-`move` capturing-closure subset: immutable same-function scalar, `String`, and task-handle captures through the currently shipped ordinary/control-flow and cleanup/guard-call roots"
             })
             .count(),
         1
