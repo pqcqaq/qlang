@@ -70,53 +70,6 @@ impl MemberKind {
             Self::Method => ".leaf().value",
         }
     }
-
-    fn dependency_qi(self) -> &'static str {
-        match self {
-            Self::Field => {
-                r#"
-// qlang interface v1
-// package: dep
-
-// source: src/lib.ql
-package demo.dep
-
-pub struct Leaf {
-    value: Int,
-}
-
-pub struct Child {
-    leaf: Leaf,
-}
-
-pub fn maybe_children() -> Option[[Child; 2]]
-"#
-            }
-            Self::Method => {
-                r#"
-// qlang interface v1
-// package: dep
-
-// source: src/lib.ql
-package demo.dep
-
-pub struct Leaf {
-    value: Int,
-}
-
-pub struct Child {
-    value: Int,
-}
-
-pub static MAYBE_ITEMS: Option[[Child; 2]]
-
-impl Child {
-    pub fn leaf(self) -> Leaf
-}
-"#
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -126,6 +79,13 @@ enum RootKind {
 }
 
 impl RootKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Function => "function",
+            Self::Static => "static",
+        }
+    }
+
     fn use_decl(self) -> &'static str {
         match self {
             Self::Function => "use demo.dep.{maybe_children as kids}",
@@ -137,6 +97,13 @@ impl RootKind {
         match self {
             Self::Function => "kids()?",
             Self::Static => "maybe_items?",
+        }
+    }
+
+    fn dep_decl(self) -> &'static str {
+        match self {
+            Self::Function => "pub fn maybe_children() -> Option[[Child; 2]]",
+            Self::Static => "pub static MAYBE_ITEMS: Option[[Child; 2]]",
         }
     }
 }
@@ -211,6 +178,44 @@ pub fn read(flag: Bool) -> Int {{
     )
 }
 
+fn build_dep_qi(member: MemberKind, root: RootKind) -> String {
+    format!(
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {{
+    value: Int,
+}}
+
+pub struct Child {{
+{child_body}
+}}
+
+{root_decl}{member_impl}
+"#,
+        child_body = match member {
+            MemberKind::Field => "    leaf: Leaf,",
+            MemberKind::Method => "    value: Int,",
+        },
+        root_decl = root.dep_decl(),
+        member_impl = match member {
+            MemberKind::Field => "",
+            MemberKind::Method => {
+                r#"
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
+"#
+            }
+        },
+    )
+}
+
 fn assert_targets_dependency_type(
     definition: GotoTypeDefinitionResponse,
     dep_qi: &Path,
@@ -259,10 +264,7 @@ fn run_type_definition_case(
         "ql-lsp-for-loop-grouped-question-structured-iterable-{}-{}-{}-member-type-definition{}",
         member.label(),
         structured.label(),
-        match root {
-            RootKind::Function => "function",
-            RootKind::Static => "static",
-        },
+        root.label(),
         if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
@@ -280,7 +282,7 @@ fn run_type_definition_case(
 name = "dep"
 "#,
     );
-    let dep_qi = temp.write("workspace/dep/dep.qi", member.dependency_qi());
+    let dep_qi = temp.write("workspace/dep/dep.qi", &build_dep_qi(member, root));
     temp.write(
         "workspace/app/qlang.toml",
         r#"
@@ -337,9 +339,69 @@ fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterab
 }
 
 #[test]
+fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterable_static_field_member_types(
+) {
+    run_type_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::If, false);
+}
+
+#[test]
 fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_field_member_types(
 ) {
     run_type_definition_case(MemberKind::Field, RootKind::Function, StructuredKind::If, true);
+}
+
+#[test]
+fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_static_field_member_types(
+) {
+    run_type_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::If, true);
+}
+
+#[test]
+fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_iterable_function_field_member_types(
+) {
+    run_type_definition_case(MemberKind::Field, RootKind::Function, StructuredKind::Match, false);
+}
+
+#[test]
+fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_function_field_member_types(
+) {
+    run_type_definition_case(MemberKind::Field, RootKind::Function, StructuredKind::Match, true);
+}
+
+#[test]
+fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_iterable_static_field_member_types(
+) {
+    run_type_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::Match, false);
+}
+
+#[test]
+fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_static_field_member_types(
+) {
+    run_type_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::Match, true);
+}
+
+#[test]
+fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterable_function_method_member_types(
+) {
+    run_type_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::If, false);
+}
+
+#[test]
+fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_function_method_member_types(
+) {
+    run_type_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::If, true);
+}
+
+#[test]
+fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterable_static_method_member_types(
+) {
+    run_type_definition_case(MemberKind::Method, RootKind::Static, StructuredKind::If, false);
+}
+
+#[test]
+fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_static_method_member_types(
+) {
+    run_type_definition_case(MemberKind::Method, RootKind::Static, StructuredKind::If, true);
 }
 
 #[test]
@@ -352,4 +414,16 @@ fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_ite
 fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_method_member_types(
 ) {
     run_type_definition_case(MemberKind::Method, RootKind::Static, StructuredKind::Match, true);
+}
+
+#[test]
+fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_iterable_function_method_member_types(
+) {
+    run_type_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::Match, false);
+}
+
+#[test]
+fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_function_method_member_types(
+) {
+    run_type_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::Match, true);
 }
