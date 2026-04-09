@@ -95,6 +95,13 @@ enum RootKind {
 }
 
 impl RootKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Function => "function",
+            Self::Static => "static",
+        }
+    }
+
     fn use_decl(self) -> &'static str {
         match self {
             Self::Function => "use demo.dep.{maybe_children as kids}",
@@ -204,10 +211,7 @@ fn run_completion_case(member: MemberKind, root: RootKind, broken: bool) {
     let temp = TempDir::new(&format!(
         "ql-lsp-for-loop-grouped-question-iterable-{}-{}-completion{}",
         member.label(),
-        match root {
-            RootKind::Function => "function",
-            RootKind::Static => "static",
-        },
+        root.label(),
         if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
@@ -265,23 +269,45 @@ packages = ["../dep"]
 }
 
 #[test]
-fn dependency_field_completion_works_on_for_loop_grouped_question_iterable_receivers() {
+fn dependency_field_completion_works_on_for_loop_grouped_question_function_iterables() {
     run_completion_case(MemberKind::Field, RootKind::Function, false);
 }
 
 #[test]
-fn dependency_field_completion_works_on_for_loop_grouped_question_iterable_receivers_without_semantic_analysis(
+fn dependency_field_completion_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis(
 ) {
     run_completion_case(MemberKind::Field, RootKind::Function, true);
 }
 
 #[test]
-fn dependency_method_completion_works_on_for_loop_grouped_question_iterable_receivers() {
+fn dependency_field_completion_works_on_for_loop_grouped_question_static_iterables() {
+    run_completion_case(MemberKind::Field, RootKind::Static, false);
+}
+
+#[test]
+fn dependency_field_completion_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis(
+) {
+    run_completion_case(MemberKind::Field, RootKind::Static, true);
+}
+
+#[test]
+fn dependency_method_completion_works_on_for_loop_grouped_question_function_iterables() {
+    run_completion_case(MemberKind::Method, RootKind::Function, false);
+}
+
+#[test]
+fn dependency_method_completion_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis(
+) {
+    run_completion_case(MemberKind::Method, RootKind::Function, true);
+}
+
+#[test]
+fn dependency_method_completion_works_on_for_loop_grouped_question_static_iterables() {
     run_completion_case(MemberKind::Method, RootKind::Static, false);
 }
 
 #[test]
-fn dependency_method_completion_works_on_for_loop_grouped_question_iterable_receivers_without_semantic_analysis(
+fn dependency_method_completion_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis(
 ) {
     run_completion_case(MemberKind::Method, RootKind::Static, true);
 }
