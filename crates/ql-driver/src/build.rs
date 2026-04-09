@@ -8226,6 +8226,127 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_awaited_projected_aggregate_match_catch_all() {
+        let dir = TestDir::new("ql-driver-awaited-projected-aggregate-match-catch-all");
+        let source = dir.write(
+            "awaited_projected_aggregate_match_catch_all.ql",
+            r#"
+extern "c" fn sink(value: Int)
+
+struct TuplePayload {
+    values: (Int, Int),
+}
+
+struct State {
+    value: Int,
+}
+
+struct StatePayload {
+    current: State,
+}
+
+struct ArrayPayload {
+    values: [Int; 3],
+}
+
+struct TupleEnvelope {
+    payload: TuplePayload,
+}
+
+struct StateEnvelope {
+    payload: StatePayload,
+}
+
+struct ArrayEnvelope {
+    payload: ArrayPayload,
+}
+
+async fn tuple_env(base: Int) -> TupleEnvelope {
+    return TupleEnvelope {
+        payload: TuplePayload {
+            values: (base, base + 1),
+        },
+    }
+}
+
+async fn state_env(base: Int) -> StateEnvelope {
+    return StateEnvelope {
+        payload: StatePayload {
+            current: State { value: base },
+        },
+    }
+}
+
+async fn array_env(base: Int) -> ArrayEnvelope {
+    return ArrayEnvelope {
+        payload: ArrayPayload {
+            values: [base, base + 1, base + 2],
+        },
+    }
+}
+
+async fn main() -> Int {
+    match (await tuple_env(1)).payload.values {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    match (await state_env(3)).payload.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    match (await array_env(4)).payload.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    defer match (await tuple_env(1)).payload.values {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    defer match (await state_env(3)).payload.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    defer match (await array_env(4)).payload.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/awaited_projected_aggregate_match_catch_all.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("awaited projected aggregate match catch-all should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("extractvalue { i64, i64 }"));
+        assert!(rendered.contains("extractvalue { i64 }"));
+        assert!(rendered.contains("extractvalue [3 x i64]"));
+        assert!(rendered.contains("cleanup_match_arm_"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 6);
+        assert!(rendered.matches("call void @sink").count() >= 12);
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_fixed_array_bind_patterns() {
         let dir = TestDir::new("ql-driver-fixed-array-bind-patterns");
         let source = dir.write(
