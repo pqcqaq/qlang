@@ -340,6 +340,14 @@ enum SupportedMatchLowering {
         arms: Vec<SupportedGuardedIntegerMatchArm>,
         fallback_target: mir::BasicBlockId,
     },
+    String {
+        arms: Vec<SupportedStringMatchArm>,
+        fallback_target: mir::BasicBlockId,
+    },
+    StringGuarded {
+        arms: Vec<SupportedGuardedStringMatchArm>,
+        fallback_target: mir::BasicBlockId,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -386,6 +394,26 @@ struct SupportedGuardedIntegerMatchArm {
 
 #[derive(Clone, Debug)]
 enum SupportedIntegerMatchPattern {
+    Literal(String),
+    CatchAll,
+}
+
+#[derive(Clone, Debug)]
+struct SupportedStringMatchArm {
+    value: String,
+    target: mir::BasicBlockId,
+}
+
+#[derive(Clone, Debug)]
+struct SupportedGuardedStringMatchArm {
+    pattern: SupportedStringMatchPattern,
+    binding_local: Option<hir::LocalId>,
+    guard: SupportedBoolGuard,
+    target: mir::BasicBlockId,
+}
+
+#[derive(Clone, Debug)]
+enum SupportedStringMatchPattern {
     Literal(String),
     CatchAll,
 }
@@ -762,6 +790,7 @@ impl<'a> ModuleEmitter<'a> {
             hir::ExprKind::Match { value, arms } => {
                 self.collect_string_literals_in_expr(*value, literals, next_index);
                 for arm in arms {
+                    self.collect_string_literals_in_pattern(arm.pattern, literals, next_index);
                     if let Some(guard) = arm.guard {
                         self.collect_string_literals_in_expr(guard, literals, next_index);
                     }
@@ -809,6 +838,43 @@ impl<'a> ModuleEmitter<'a> {
             | hir::ExprKind::Integer(_)
             | hir::ExprKind::Bool(_)
             | hir::ExprKind::NoneLiteral => {}
+        }
+    }
+
+    fn collect_string_literals_in_pattern(
+        &self,
+        pattern_id: hir::PatternId,
+        literals: &mut HashMap<StringLiteralKey, String>,
+        next_index: &mut usize,
+    ) {
+        match pattern_kind(self.input.hir, pattern_id) {
+            PatternKind::String(value) => {
+                let key = StringLiteralKey {
+                    value: value.clone(),
+                    is_format: false,
+                };
+                literals.entry(key).or_insert_with(|| {
+                    let llvm_name = format!("ql_str_{}", *next_index);
+                    *next_index += 1;
+                    llvm_name
+                });
+            }
+            PatternKind::Tuple(items) | PatternKind::TupleStruct { items, .. } => {
+                for item in items {
+                    self.collect_string_literals_in_pattern(*item, literals, next_index);
+                }
+            }
+            PatternKind::Struct { fields, .. } => {
+                for field in fields {
+                    self.collect_string_literals_in_pattern(field.pattern, literals, next_index);
+                }
+            }
+            PatternKind::Binding(_)
+            | PatternKind::Path(_)
+            | PatternKind::Integer(_)
+            | PatternKind::Bool(_)
+            | PatternKind::NoneLiteral
+            | PatternKind::Wildcard => {}
         }
     }
 
@@ -2201,7 +2267,9 @@ impl<'a> ModuleEmitter<'a> {
                         }
                         SupportedMatchLowering::GuardOnly { .. }
                         | SupportedMatchLowering::BoolGuarded { .. }
-                        | SupportedMatchLowering::IntegerGuarded { .. } => {}
+                        | SupportedMatchLowering::IntegerGuarded { .. }
+                        | SupportedMatchLowering::String { .. }
+                        | SupportedMatchLowering::StringGuarded { .. } => {}
                     }
                 }
                 TerminatorKind::Goto { .. }
@@ -3315,6 +3383,116 @@ impl<'a> ModuleEmitter<'a> {
                                         }
                                     }));
                                     Some(SupportedMatchLowering::Integer {
+                                        arms: lowered_arms,
+                                        fallback_target,
+                                    })
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        Some(Ty::Builtin(BuiltinType::String)) => {
+                            let mut lowered_arms = Vec::new();
+                            let mut ordered_arms = Vec::new();
+                            let mut fallback_target = *else_target;
+                            let mut dynamic_guard_seen = false;
+                            let mut supported = true;
+
+                            for arm in arms {
+                                let guard = match arm.guard {
+                                    None => SupportedBoolGuard::Always,
+                                    Some(guard) => match supported_bool_guard(
+                                        self.input.hir,
+                                        self.input.resolution,
+                                        self.input.typeck,
+                                        &self.signatures,
+                                        body,
+                                        &local_types,
+                                        &immutable_place_aliases,
+                                        scrutinee,
+                                        arm.pattern,
+                                        guard,
+                                    ) {
+                                        Some(SupportedBoolGuardAnalysis::Always) => {
+                                            SupportedBoolGuard::Always
+                                        }
+                                        Some(SupportedBoolGuardAnalysis::Skip) => continue,
+                                        Some(SupportedBoolGuardAnalysis::Dynamic(expr_id)) => {
+                                            dynamic_guard_seen = true;
+                                            SupportedBoolGuard::Dynamic(expr_id)
+                                        }
+                                        None => {
+                                            supported = false;
+                                            break;
+                                        }
+                                    },
+                                };
+                                match pattern_kind(self.input.hir, arm.pattern) {
+                                    PatternKind::String(_) => {
+                                        let Some(value) = supported_string_match_pattern(
+                                            self.input.hir,
+                                            arm.pattern,
+                                        ) else {
+                                            supported = false;
+                                            break;
+                                        };
+                                        ordered_arms.push(SupportedGuardedStringMatchArm {
+                                            pattern: SupportedStringMatchPattern::Literal(value),
+                                            binding_local: None,
+                                            guard,
+                                            target: arm.target,
+                                        });
+                                    }
+                                    PatternKind::Binding(local) => {
+                                        if matches!(guard, SupportedBoolGuard::Always) {
+                                            fallback_target = arm.target;
+                                            break;
+                                        }
+                                        ordered_arms.push(SupportedGuardedStringMatchArm {
+                                            pattern: SupportedStringMatchPattern::CatchAll,
+                                            binding_local: Some(*local),
+                                            guard,
+                                            target: arm.target,
+                                        });
+                                    }
+                                    PatternKind::Wildcard => {
+                                        if matches!(guard, SupportedBoolGuard::Always) {
+                                            fallback_target = arm.target;
+                                            break;
+                                        }
+                                        ordered_arms.push(SupportedGuardedStringMatchArm {
+                                            pattern: SupportedStringMatchPattern::CatchAll,
+                                            binding_local: None,
+                                            guard,
+                                            target: arm.target,
+                                        });
+                                    }
+                                    _ => {
+                                        supported = false;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if supported {
+                                if dynamic_guard_seen {
+                                    Some(SupportedMatchLowering::StringGuarded {
+                                        arms: ordered_arms,
+                                        fallback_target,
+                                    })
+                                } else {
+                                    lowered_arms.extend(ordered_arms.into_iter().map(|arm| {
+                                        SupportedStringMatchArm {
+                                            value: match arm.pattern {
+                                                SupportedStringMatchPattern::Literal(value) => value,
+                                                SupportedStringMatchPattern::CatchAll => unreachable!(
+                                                    "non-dynamic string match lowering should stop at the first unguarded catch-all arm"
+                                                ),
+                                            },
+                                            target: arm.target,
+                                        }
+                                    }));
+                                    Some(SupportedMatchLowering::String {
                                         arms: lowered_arms,
                                         fallback_target,
                                     })
@@ -6195,6 +6373,7 @@ impl<'a> ModuleEmitter<'a> {
         let supported = match pattern_kind(self.input.hir, pattern) {
             PatternKind::Binding(_)
             | PatternKind::Integer(_)
+            | PatternKind::String(_)
             | PatternKind::Bool(_)
             | PatternKind::Wildcard => true,
             PatternKind::Path(_) => {
@@ -6213,7 +6392,7 @@ impl<'a> ModuleEmitter<'a> {
         if !supported {
             diagnostics.push(unsupported(
                 span,
-                "LLVM IR backend foundation only supports single-name or tuple/struct destructuring binding patterns",
+                "LLVM IR backend foundation only supports binding, wildcard, literal, or tuple/struct destructuring binding patterns",
             ));
         }
     }
@@ -7272,6 +7451,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 }
                 PatternKind::Path(_)
                 | PatternKind::Integer(_)
+                | PatternKind::String(_)
                 | PatternKind::Bool(_)
                 | PatternKind::Wildcard => {}
                 _ => panic!("prepared patterns should only contain supported bind patterns"),
@@ -8199,6 +8379,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             PatternKind::Path(_)
             | PatternKind::Integer(_)
+            | PatternKind::String(_)
             | PatternKind::Bool(_)
             | PatternKind::Wildcard => {}
             _ => panic!(
@@ -11363,6 +11544,146 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                             }
                         }
                     }
+                    SupportedMatchLowering::String {
+                        arms,
+                        fallback_target,
+                    } => {
+                        if arms.is_empty() {
+                            let _ = writeln!(output, "  br label %bb{}", fallback_target.index());
+                            return;
+                        }
+
+                        for (index, arm) in arms.iter().enumerate() {
+                            if index > 0 {
+                                let _ = writeln!(
+                                    output,
+                                    "{}:",
+                                    integer_match_dispatch_block_name(block_id, index)
+                                );
+                            }
+                            let compare = self
+                                .render_string_match_literal_condition(
+                                    output,
+                                    rendered.clone(),
+                                    &arm.value,
+                                    terminator.span,
+                                )
+                                .repr;
+                            let false_target = if index + 1 == arms.len() {
+                                format!("bb{}", fallback_target.index())
+                            } else {
+                                integer_match_dispatch_block_name(block_id, index + 1)
+                            };
+                            let _ = writeln!(
+                                output,
+                                "  br i1 {compare}, label %bb{}, label %{false_target}",
+                                arm.target.index()
+                            );
+                        }
+                    }
+                    SupportedMatchLowering::StringGuarded {
+                        arms,
+                        fallback_target,
+                    } => {
+                        if arms.is_empty() {
+                            let _ = writeln!(output, "  br label %bb{}", fallback_target.index());
+                            return;
+                        }
+
+                        for (index, arm) in arms.iter().enumerate() {
+                            if index > 0 {
+                                let _ = writeln!(
+                                    output,
+                                    "{}:",
+                                    integer_match_dispatch_block_name(block_id, index)
+                                );
+                            }
+                            let false_target = if index + 1 == arms.len() {
+                                format!("bb{}", fallback_target.index())
+                            } else {
+                                integer_match_dispatch_block_name(block_id, index + 1)
+                            };
+                            let guard_target = match arm.guard {
+                                SupportedBoolGuard::Always => format!("bb{}", arm.target.index()),
+                                SupportedBoolGuard::Dynamic(_) => {
+                                    integer_match_guard_block_name(block_id, index)
+                                }
+                            };
+
+                            match &arm.pattern {
+                                SupportedStringMatchPattern::Literal(value) => {
+                                    let compare = self
+                                        .render_string_match_literal_condition(
+                                            output,
+                                            rendered.clone(),
+                                            value,
+                                            terminator.span,
+                                        )
+                                        .repr;
+                                    match arm.guard {
+                                        SupportedBoolGuard::Always => {
+                                            let _ = writeln!(
+                                                output,
+                                                "  br i1 {compare}, label %bb{}, label %{false_target}",
+                                                arm.target.index()
+                                            );
+                                        }
+                                        SupportedBoolGuard::Dynamic(_) => {
+                                            let _ = writeln!(
+                                                output,
+                                                "  br i1 {compare}, label %{guard_target}, label %{false_target}"
+                                            );
+                                        }
+                                    }
+                                }
+                                SupportedStringMatchPattern::CatchAll => match arm.guard {
+                                    SupportedBoolGuard::Always => {
+                                        let _ = writeln!(
+                                            output,
+                                            "  br label %bb{}",
+                                            arm.target.index()
+                                        );
+                                    }
+                                    SupportedBoolGuard::Dynamic(_) => {
+                                        let _ = writeln!(output, "  br label %{guard_target}");
+                                    }
+                                },
+                            }
+
+                            if let SupportedBoolGuard::Dynamic(expr_id) = arm.guard {
+                                let _ = writeln!(output, "{guard_target}:");
+                                let guard_binding =
+                                    arm.binding_local.map(|local| GuardBindingValue {
+                                        local,
+                                        value: rendered.clone(),
+                                    });
+                                if let Some(binding) = guard_binding.as_ref()
+                                    && let Some(local) =
+                                        mir_local_for_hir_local(self.body, binding.local)
+                                {
+                                    let _ = writeln!(
+                                        output,
+                                        "  store {} {}, ptr {}",
+                                        binding.value.llvm_ty,
+                                        binding.value.repr,
+                                        llvm_slot_name(self.body, local)
+                                    );
+                                }
+                                let condition = self.render_bool_guard_expr(
+                                    output,
+                                    expr_id,
+                                    terminator.span,
+                                    guard_binding.as_ref(),
+                                );
+                                let _ = writeln!(
+                                    output,
+                                    "  br i1 {}, label %bb{}, label %{false_target}",
+                                    condition.repr,
+                                    arm.target.index()
+                                );
+                            }
+                        }
+                    }
                 }
             }
             TerminatorKind::ForLoop { exit_target, .. } => {
@@ -12518,6 +12839,18 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             llvm_ty: "i1".to_owned(),
             repr: temp,
         })
+    }
+
+    fn render_string_match_literal_condition(
+        &mut self,
+        output: &mut String,
+        scrutinee: LoweredValue,
+        value: &str,
+        span: Span,
+    ) -> LoweredValue {
+        let literal = self.render_string_literal_value(output, value, false, span);
+        self.render_string_binary_comparison(output, BinaryOp::EqEq, scrutinee, literal)
+            .expect("string match literal comparison should lower to Bool")
     }
 
     fn render_item_constant(
@@ -16582,6 +16915,13 @@ fn supported_integer_match_pattern(
         PatternKind::Path(_) => {
             pattern_literal_int(module, resolution, pattern).map(|value| value.to_string())
         }
+        _ => None,
+    }
+}
+
+fn supported_string_match_pattern(module: &hir::Module, pattern: hir::PatternId) -> Option<String> {
+    match pattern_kind(module, pattern) {
+        PatternKind::String(value) => Some(value.clone()),
         _ => None,
     }
 }

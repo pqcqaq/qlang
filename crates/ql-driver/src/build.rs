@@ -13245,6 +13245,45 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_string_literal_match() {
+        let dir = TestDir::new("ql-driver-llvm-ir-string-literal-match");
+        let source = dir.write(
+            "string_literal_match.ql",
+            r#"
+fn choose(value: String, ready: Bool) -> Int {
+    return match value {
+        "alpha" if ready => 10,
+        "beta" => 20,
+        other => 0,
+    }
+}
+
+fn main() -> Int {
+    return choose("beta", false)
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/string_literal_match.ll");
+        let options = BuildOptions {
+            emit: BuildEmit::LlvmIr,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions::default(),
+        };
+
+        let artifact = build_file(&source, &options)
+            .expect("llvm-ir build with string literal match should succeed");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered.matches("call i32 @memcmp").count(), 2);
+        assert!(rendered.contains("alloca { ptr, i64 }"));
+        assert!(rendered.contains("bb0_match_guard0:"));
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_literal_guard_match() {
         let dir = TestDir::new("ql-driver-llvm-ir-literal-guard-match");
         let source = dir.write(
