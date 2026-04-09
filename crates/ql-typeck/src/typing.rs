@@ -1179,6 +1179,32 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn string_literal_expr(
+        &self,
+        expr_id: ExprId,
+        visited: &mut HashSet<ItemId>,
+    ) -> Option<String> {
+        match &self.module.expr(expr_id).kind {
+            ExprKind::String { value, .. } => Some(value.clone()),
+            ExprKind::Name(_)
+            | ExprKind::Member { .. }
+            | ExprKind::Bracket { .. }
+            | ExprKind::If { .. }
+            | ExprKind::Match { .. }
+            | ExprKind::Block(_)
+            | ExprKind::Unsafe(_)
+            | ExprKind::Question(_) => {
+                let source = self.const_source_expr(expr_id, visited)?;
+                if source == expr_id {
+                    None
+                } else {
+                    self.string_literal_expr(source, visited)
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn path_pattern_const_source_expr(&self, pattern_id: PatternId) -> Option<ExprId> {
         let item_id = self
             .resolution
@@ -1200,6 +1226,12 @@ impl<'a> Checker<'a> {
         self.int_literal_expr(source, &mut visited)
     }
 
+    fn path_pattern_string_literal(&self, pattern_id: PatternId) -> Option<String> {
+        let source = self.path_pattern_const_source_expr(pattern_id)?;
+        let mut visited = HashSet::new();
+        self.string_literal_expr(source, &mut visited)
+    }
+
     fn const_item_path_pattern_ty(&self, item_id: ItemId) -> Option<Ty> {
         let mut visited = HashSet::new();
         let source = self.const_source_item(item_id, &mut visited)?;
@@ -1210,14 +1242,20 @@ impl<'a> Checker<'a> {
         }
 
         let mut int_visited = HashSet::new();
-        self.int_literal_expr(source, &mut int_visited)
-            .map(|_| Ty::Builtin(ql_resolve::BuiltinType::Int))
+        if self.int_literal_expr(source, &mut int_visited).is_some() {
+            return Some(Ty::Builtin(ql_resolve::BuiltinType::Int));
+        }
+
+        let mut string_visited = HashSet::new();
+        self.string_literal_expr(source, &mut string_visited)
+            .map(|_| Ty::Builtin(ql_resolve::BuiltinType::String))
     }
 
     fn const_source_expr(&self, expr_id: ExprId, visited: &mut HashSet<ItemId>) -> Option<ExprId> {
         match &self.module.expr(expr_id).kind {
             ExprKind::Bool(_)
             | ExprKind::Integer(_)
+            | ExprKind::String { .. }
             | ExprKind::Unary {
                 op: ql_ast::UnaryOp::Not,
                 ..
@@ -1350,6 +1388,30 @@ impl<'a> Checker<'a> {
                     }
                     PatternKind::Path(_) => {
                         self.path_pattern_int_literal(arm.pattern)? == scrutinee
+                    }
+                    PatternKind::Binding(_) | PatternKind::Wildcard => true,
+                    _ => return None,
+                };
+                if !matches {
+                    continue;
+                }
+                let guard = arm
+                    .guard
+                    .map(|guard| self.bool_literal_expr(guard, visited))
+                    .unwrap_or(Some(true))?;
+                if guard {
+                    return self.const_source_expr(arm.body, visited).or(Some(arm.body));
+                }
+            }
+            return None;
+        }
+
+        if let Some(scrutinee) = self.string_literal_expr(value, visited) {
+            for arm in arms {
+                let matches = match self.module.pattern(arm.pattern).kind.clone() {
+                    PatternKind::String(pattern) => pattern == scrutinee,
+                    PatternKind::Path(_) => {
+                        self.path_pattern_string_literal(arm.pattern)? == scrutinee
                     }
                     PatternKind::Binding(_) | PatternKind::Wildcard => true,
                     _ => return None,
@@ -2617,6 +2679,13 @@ impl<'a> Checker<'a> {
                         pattern_id,
                         expected,
                         &Ty::Builtin(ql_resolve::BuiltinType::Int),
+                        "path pattern",
+                    );
+                } else if self.path_pattern_string_literal(pattern_id).is_some() {
+                    self.check_literal_pattern(
+                        pattern_id,
+                        expected,
+                        &Ty::Builtin(ql_resolve::BuiltinType::String),
                         "path pattern",
                     );
                 } else if let Some(message) = self.invalid_path_pattern_root_message(pattern_id) {

@@ -122,3 +122,44 @@ fn builds_object_for_program_using_string_literal_match() {
     )
     .expect("string literal match object build should produce an object artifact");
 }
+
+#[test]
+fn builds_object_for_program_using_string_path_match() {
+    let workspace_root = workspace_root();
+    let temp_dir = TempDir::new("ql-string-path-match-codegen");
+    let output_path = temp_dir.path().join("string_path_match_build.obj");
+
+    let output = run_ql_build_capture(
+        &workspace_root,
+        "fixtures/codegen/pass/string_path_match_build.ql",
+        "obj",
+        &output_path,
+        &[],
+    );
+
+    let (stdout, stderr) = expect_success(
+        "string_path_match_build_object",
+        "string path match object build",
+        &output,
+    )
+    .expect("string path match object build should succeed");
+    expect_stdout_contains_all(
+        "string_path_match_build_object",
+        &stdout,
+        &["wrote object:"],
+    )
+    .expect("successful string path match object build should report the emitted object artifact");
+    expect_empty_stderr(
+        "string_path_match_build_object",
+        "string path match object build",
+        &stderr,
+    )
+    .expect("successful string path match object build should stay silent on stderr");
+    expect_file_exists(
+        "string_path_match_build_object",
+        &output_path,
+        "object artifact",
+        "string path match object build",
+    )
+    .expect("string path match object build should produce an object artifact");
+}

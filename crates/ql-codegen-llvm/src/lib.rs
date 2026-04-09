@@ -3428,9 +3428,10 @@ impl<'a> ModuleEmitter<'a> {
                                     },
                                 };
                                 match pattern_kind(self.input.hir, arm.pattern) {
-                                    PatternKind::String(_) => {
+                                    PatternKind::String(_) | PatternKind::Path(_) => {
                                         let Some(value) = supported_string_match_pattern(
                                             self.input.hir,
+                                            self.input.resolution,
                                             arm.pattern,
                                         ) else {
                                             supported = false;
@@ -6379,6 +6380,8 @@ impl<'a> ModuleEmitter<'a> {
             PatternKind::Path(_) => {
                 pattern_literal_bool(self.input.hir, self.input.resolution, pattern).is_some()
                     || pattern_literal_int(self.input.hir, self.input.resolution, pattern).is_some()
+                    || pattern_literal_string(self.input.hir, self.input.resolution, pattern)
+                        .is_some()
             }
             PatternKind::Tuple(items) => items
                 .iter()
@@ -16283,6 +16286,16 @@ fn pattern_literal_int(
     guard_literal_int_expr(module, resolution, source, &mut visited)
 }
 
+fn pattern_literal_string(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    pattern: hir::PatternId,
+) -> Option<String> {
+    let source = pattern_literal_source_expr(module, resolution, pattern)?;
+    let mut visited = HashSet::new();
+    guard_literal_string_expr(module, resolution, source, &mut visited)
+}
+
 fn pattern_literal_source_expr(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -16919,9 +16932,14 @@ fn supported_integer_match_pattern(
     }
 }
 
-fn supported_string_match_pattern(module: &hir::Module, pattern: hir::PatternId) -> Option<String> {
+fn supported_string_match_pattern(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    pattern: hir::PatternId,
+) -> Option<String> {
     match pattern_kind(module, pattern) {
         PatternKind::String(value) => Some(value.clone()),
+        PatternKind::Path(_) => pattern_literal_string(module, resolution, pattern),
         _ => None,
     }
 }
@@ -17558,6 +17576,33 @@ fn guard_literal_int_expr(
     }
 }
 
+fn guard_literal_string_expr(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    expr_id: hir::ExprId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<String> {
+    match &module.expr(expr_id).kind {
+        hir::ExprKind::String { value, .. } => Some(value.clone()),
+        hir::ExprKind::Name(_)
+        | hir::ExprKind::Member { .. }
+        | hir::ExprKind::Bracket { .. }
+        | hir::ExprKind::If { .. }
+        | hir::ExprKind::Match { .. }
+        | hir::ExprKind::Block(_)
+        | hir::ExprKind::Unsafe(_)
+        | hir::ExprKind::Question(_) => {
+            let source = guard_literal_source_expr(module, resolution, expr_id, visited)?;
+            if source == expr_id {
+                None
+            } else {
+                guard_literal_string_expr(module, resolution, source, visited)
+            }
+        }
+        _ => None,
+    }
+}
+
 fn guard_literal_source_expr(
     module: &hir::Module,
     resolution: &ResolutionMap,
@@ -17567,6 +17612,7 @@ fn guard_literal_source_expr(
     match &module.expr(expr_id).kind {
         hir::ExprKind::Bool(_)
         | hir::ExprKind::Integer(_)
+        | hir::ExprKind::String { .. }
         | hir::ExprKind::Unary {
             op: UnaryOp::Not, ..
         }
@@ -17704,6 +17750,31 @@ fn guard_literal_match_source_expr(
                 PatternKind::Path(_) => {
                     pattern_literal_int(module, resolution, arm.pattern)? == scrutinee
                 }
+                PatternKind::Binding(_) | PatternKind::Wildcard => true,
+                _ => return None,
+            };
+            if !matches {
+                continue;
+            }
+            let guard = arm
+                .guard
+                .map(|guard| guard_literal_bool_expr(module, resolution, guard, visited))
+                .unwrap_or(Some(true))?;
+            if guard {
+                return guard_literal_source_expr(module, resolution, arm.body, visited)
+                    .or(Some(arm.body));
+            }
+        }
+        return None;
+    }
+
+    if let Some(scrutinee) = guard_literal_string_expr(module, resolution, value, visited) {
+        for arm in arms {
+            let matches = match pattern_kind(module, arm.pattern) {
+                PatternKind::String(pattern) => pattern == &scrutinee,
+                PatternKind::Path(_) => pattern_literal_string(module, resolution, arm.pattern)
+                    .as_ref()
+                    .is_some_and(|value| value == &scrutinee),
                 PatternKind::Binding(_) | PatternKind::Wildcard => true,
                 _ => return None,
             };
