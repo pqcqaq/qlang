@@ -8888,6 +8888,61 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_capturing_closure_string_match_call_roots() {
+        let dir = TestDir::new("ql-driver-capturing-closure-string-match");
+        let source = dir.write(
+            "capturing_closure_string_match.ql",
+            r#"
+const ALPHA: String = "alpha"
+static BETA: String = "beta"
+
+fn main() -> Int {
+    let offset = 40
+    let left = (value: Int) => value + offset
+    let right = (value: Int) => value + offset + 10
+    let fallback = (value: Int) => value + offset + 20
+    let direct_key = "delta"
+    let binding_key = "beta"
+    let chosen = match binding_key {
+        ALPHA => left,
+        BETA => right,
+        _ => fallback,
+    }
+    let alias = chosen
+    return (match direct_key {
+        ALPHA => left,
+        BETA => right,
+        _ => fallback,
+    })(1) + alias(2)
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/capturing_closure_string_match.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("capturing closure string match call roots should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered.matches("call i32 @memcmp").count(), 8);
+        assert!(rendered.contains("ordinary_call_match_arm"));
+        assert!(
+            !rendered.contains("does not support capturing-closure control-flow call lowering yet")
+        );
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_block_sequence_lowering() {
         let dir = TestDir::new("ql-driver-cleanup-block-sequence");
         let source = dir.write(

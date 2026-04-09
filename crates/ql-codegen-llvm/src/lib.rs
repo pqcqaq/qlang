@@ -435,10 +435,21 @@ enum SupportedOrdinaryCapturingClosureCall {
         arms: Vec<SupportedOrdinaryIntegerCapturingClosureCallArm>,
         fallback_closure: mir::ClosureId,
     },
+    StringMatch {
+        scrutinee: Operand,
+        arms: Vec<SupportedOrdinaryStringCapturingClosureCallArm>,
+        fallback_closure: mir::ClosureId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SupportedOrdinaryIntegerCapturingClosureCallArm {
+    value: String,
+    closure_id: mir::ClosureId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SupportedOrdinaryStringCapturingClosureCallArm {
     value: String,
     closure_id: mir::ClosureId,
 }
@@ -2265,10 +2276,70 @@ impl<'a> ModuleEmitter<'a> {
                                 closure_spans,
                             );
                         }
+                        SupportedMatchLowering::String {
+                            arms,
+                            fallback_target,
+                        } => {
+                            let Some((join_target, local, fallback_closure)) =
+                                control_flow_capturing_closure_block_assignment(
+                                    body,
+                                    *fallback_target,
+                                    staged,
+                                    supported,
+                                    closure_spans,
+                                )
+                            else {
+                                continue;
+                            };
+                            if !conflicting_temps.contains(&local) {
+                                continue;
+                            }
+
+                            let mut lowered_arms = Vec::with_capacity(arms.len());
+                            let mut supported_join = true;
+                            for arm in arms {
+                                let Some((arm_join_target, arm_local, arm_closure)) =
+                                    control_flow_capturing_closure_block_assignment(
+                                        body,
+                                        arm.target,
+                                        staged,
+                                        supported,
+                                        closure_spans,
+                                    )
+                                else {
+                                    supported_join = false;
+                                    break;
+                                };
+                                if arm_join_target != join_target || arm_local != local {
+                                    supported_join = false;
+                                    break;
+                                }
+                                lowered_arms.push(SupportedOrdinaryStringCapturingClosureCallArm {
+                                    value: arm.value.clone(),
+                                    closure_id: arm_closure,
+                                });
+                            }
+                            if !supported_join {
+                                continue;
+                            }
+
+                            self.record_supported_ordinary_control_flow_capturing_closure_call(
+                                body,
+                                join_target,
+                                local,
+                                SupportedOrdinaryCapturingClosureCall::StringMatch {
+                                    scrutinee: scrutinee.clone(),
+                                    arms: lowered_arms,
+                                    fallback_closure,
+                                },
+                                &mut ordinary_calls,
+                                conflicting_temps,
+                                closure_spans,
+                            );
+                        }
                         SupportedMatchLowering::GuardOnly { .. }
                         | SupportedMatchLowering::BoolGuarded { .. }
                         | SupportedMatchLowering::IntegerGuarded { .. }
-                        | SupportedMatchLowering::String { .. }
                         | SupportedMatchLowering::StringGuarded { .. } => {}
                     }
                 }
@@ -12398,6 +12469,102 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                             "  {compare} = {opcode} {} {}, {}",
                             scrutinee.llvm_ty, scrutinee.repr, arm.value
                         );
+                        let false_target = if index + 1 == arms.len() {
+                            fallback_label.clone()
+                        } else {
+                            dispatch_labels[index + 1].clone()
+                        };
+                        let _ = writeln!(
+                            output,
+                            "  br i1 {compare}, label %{}, label %{false_target}",
+                            arm_labels[index]
+                        );
+                    }
+                }
+
+                for (arm, arm_label) in arms.iter().zip(arm_labels.iter()) {
+                    let _ = writeln!(output, "{arm_label}:");
+                    if let Some(value) = self.render_direct_local_capturing_closure_call(
+                        output,
+                        arm.closure_id,
+                        args,
+                        span,
+                    ) && let Some(result_slot) = result_slot.as_ref()
+                    {
+                        let _ = writeln!(
+                            output,
+                            "  store {} {}, ptr {result_slot}",
+                            value.llvm_ty, value.repr
+                        );
+                    }
+                    let _ = writeln!(output, "  br label %{end_label}");
+                }
+
+                let _ = writeln!(output, "{fallback_label}:");
+                if let Some(value) = self.render_direct_local_capturing_closure_call(
+                    output,
+                    *fallback_closure,
+                    args,
+                    span,
+                ) && let Some(result_slot) = result_slot.as_ref()
+                {
+                    let _ = writeln!(
+                        output,
+                        "  store {} {}, ptr {result_slot}",
+                        value.llvm_ty, value.repr
+                    );
+                }
+                let _ = writeln!(output, "  br label %{end_label}");
+
+                let _ = writeln!(output, "{end_label}:");
+                result_slot.map(|slot| {
+                    self.render_loaded_pointer_value(output, slot, return_ty.clone(), span)
+                })
+            }
+            SupportedOrdinaryCapturingClosureCall::StringMatch {
+                scrutinee,
+                arms,
+                fallback_closure,
+            } => {
+                let scrutinee = self.render_operand(output, scrutinee, span);
+                let return_ty =
+                    self.direct_local_capturing_closure_call_return_ty(*fallback_closure, span);
+                let return_llvm_ty = (!is_void_ty(&return_ty)).then(|| {
+                    self.emitter
+                        .lower_llvm_type(&return_ty, span, "call result")
+                        .expect(
+                            "prepared ordinary capturing-closure control-flow calls should lower callable result types",
+                        )
+                });
+                let result_slot = return_llvm_ty.as_ref().map(|llvm_ty| {
+                    let slot = self.fresh_temp();
+                    let _ = writeln!(output, "  {slot} = alloca {llvm_ty}");
+                    slot
+                });
+                let end_label = self.fresh_label("ordinary_call_match_end");
+                let fallback_label = self.fresh_label("ordinary_call_match_fallback");
+                let dispatch_labels = (0..arms.len())
+                    .map(|_| self.fresh_label("ordinary_call_match_dispatch"))
+                    .collect::<Vec<_>>();
+                let arm_labels = (0..arms.len())
+                    .map(|_| self.fresh_label("ordinary_call_match_arm"))
+                    .collect::<Vec<_>>();
+
+                if arms.is_empty() {
+                    let _ = writeln!(output, "  br label %{fallback_label}");
+                } else {
+                    for (index, arm) in arms.iter().enumerate() {
+                        if index > 0 {
+                            let _ = writeln!(output, "{}:", dispatch_labels[index]);
+                        }
+                        let compare = self
+                            .render_string_match_literal_condition(
+                                output,
+                                scrutinee.clone(),
+                                &arm.value,
+                                span,
+                            )
+                            .repr;
                         let false_target = if index + 1 == arms.len() {
                             fallback_label.clone()
                         } else {
