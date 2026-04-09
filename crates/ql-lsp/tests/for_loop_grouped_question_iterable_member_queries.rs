@@ -577,23 +577,45 @@ packages = ["../dep"]
 }
 
 #[test]
-fn dependency_field_queries_work_on_for_loop_grouped_question_iterable_receivers() {
+fn dependency_field_queries_work_on_for_loop_grouped_question_function_iterables() {
     run_member_query_case(MemberKind::Field, RootKind::Function, false);
 }
 
 #[test]
-fn dependency_field_queries_work_on_for_loop_grouped_question_iterable_receivers_without_semantic_analysis(
+fn dependency_field_queries_work_on_for_loop_grouped_question_function_iterables_without_semantic_analysis(
 ) {
     run_member_query_case(MemberKind::Field, RootKind::Function, true);
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_grouped_question_iterable_receivers() {
+fn dependency_field_queries_work_on_for_loop_grouped_question_static_iterables() {
+    run_member_query_case(MemberKind::Field, RootKind::Static, false);
+}
+
+#[test]
+fn dependency_field_queries_work_on_for_loop_grouped_question_static_iterables_without_semantic_analysis(
+) {
+    run_member_query_case(MemberKind::Field, RootKind::Static, true);
+}
+
+#[test]
+fn dependency_method_queries_work_on_for_loop_grouped_question_function_iterables() {
+    run_member_query_case(MemberKind::Method, RootKind::Function, false);
+}
+
+#[test]
+fn dependency_method_queries_work_on_for_loop_grouped_question_function_iterables_without_semantic_analysis(
+) {
+    run_member_query_case(MemberKind::Method, RootKind::Function, true);
+}
+
+#[test]
+fn dependency_method_queries_work_on_for_loop_grouped_question_static_iterables() {
     run_member_query_case(MemberKind::Method, RootKind::Static, false);
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_grouped_question_iterable_receivers_without_semantic_analysis(
+fn dependency_method_queries_work_on_for_loop_grouped_question_static_iterables_without_semantic_analysis(
 ) {
     run_member_query_case(MemberKind::Method, RootKind::Static, true);
 }
