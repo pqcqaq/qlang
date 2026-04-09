@@ -10965,6 +10965,90 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_projected_aggregate_match_catch_all() {
+        let dir = TestDir::new("ql-driver-projected-aggregate-match-catch-all");
+        let source = dir.write(
+            "projected_aggregate_match_catch_all.ql",
+            r#"
+extern "c" fn sink(value: Int)
+
+struct State {
+    value: Int,
+}
+
+struct Bundle {
+    pair: (Int, Int),
+    current: State,
+    values: [Int; 3],
+}
+
+fn main() -> Int {
+    let bundle = Bundle {
+        pair: (1, 2),
+        current: State { value: 3 },
+        values: [4, 5, 6],
+    }
+
+    match bundle.pair {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    match bundle.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    match bundle.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    defer match bundle.pair {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    defer match bundle.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    defer match bundle.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/projected_aggregate_match_catch_all.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("projected aggregate match catch-all should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("extractvalue { i64, i64 }"));
+        assert!(rendered.contains("extractvalue { i64 }"));
+        assert!(rendered.contains("extractvalue [3 x i64]"));
+        assert!(rendered.contains("cleanup_match_arm_"));
+        assert!(rendered.matches("call void @sink").count() >= 12);
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_block_guard_scrutinee_and_value_lowering() {
         let dir = TestDir::new("ql-driver-cleanup-block-guard-scrutinee-value");
         let source = dir.write(
