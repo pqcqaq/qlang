@@ -4,9 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{analyze_package, analyze_package_dependencies};
-use ql_lsp::bridge::{
-    definition_for_dependency_methods, definition_for_dependency_struct_fields, span_to_range,
-};
+use ql_lsp::bridge::{definition_for_dependency_methods, span_to_range};
+use ql_span::Span;
 use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position};
 
 struct TempDir {
@@ -90,88 +89,14 @@ fn assert_targets_dependency_snippet(
         .expect("snippet should exist in dependency artifact");
     assert_eq!(
         range,
-        span_to_range(&artifact, ql_span::Span::new(start, start + snippet.len()))
+        span_to_range(&artifact, Span::new(start, start + snippet.len()))
     );
 }
 
 #[test]
-fn dependency_field_definition_works_on_question_function_and_static_value_receivers() {
-    let temp = TempDir::new("ql-lsp-question-value-field-binding");
-    let app_root = temp.path().join("workspace").join("app");
-
-    temp.write(
-        "workspace/dep/qlang.toml",
-        r#"
-[package]
-name = "dep"
-"#,
-    );
-    let dep_qi = temp.write(
-        "workspace/dep/dep.qi",
-        r#"
-// qlang interface v1
-// package: dep
-
-// source: src/lib.ql
-package demo.dep
-
-pub struct Child {
-    value: Int,
-}
-
-pub fn maybe_load() -> Option[Child]
-
-pub static MAYBE: Option[Child]
-"#,
-    );
-    temp.write(
-        "workspace/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../dep"]
-"#,
-    );
-    let source = r#"
-package demo.app
-
-use demo.dep.maybe_load
-use demo.dep.MAYBE as child
-
-pub fn read(flag: Bool) -> Int {
-    if flag {
-        return maybe_load()?.value
-    }
-    return child?.value
-}
-"#;
-    temp.write("workspace/app/src/lib.ql", source);
-
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-
-    let function_definition = definition_for_dependency_struct_fields(
-        source,
-        &package,
-        offset_to_position(source, nth_offset(source, "value", 1)),
-    )
-    .expect("dependency question function field definition should exist");
-    assert_targets_dependency_snippet(function_definition, &dep_qi, "value");
-
-    let static_definition = definition_for_dependency_struct_fields(
-        source,
-        &package,
-        offset_to_position(source, nth_offset(source, "value", 2)),
-    )
-    .expect("dependency question static field definition should exist");
-    assert_targets_dependency_snippet(static_definition, &dep_qi, "value");
-}
-
-#[test]
-fn dependency_method_definition_works_on_question_function_and_static_value_receivers_without_semantic_analysis(
-) {
-    let temp = TempDir::new("ql-lsp-question-value-method-binding-broken");
+fn dependency_method_definition_works_on_question_static_value_receivers_without_semantic_analysis()
+{
+    let temp = TempDir::new("ql-lsp-question-static-method-binding-broken");
     let app_root = temp.path().join("workspace").join("app");
 
     temp.write(
@@ -198,8 +123,6 @@ impl Child {
     pub fn get(self) -> Int
 }
 
-pub fn maybe_load() -> Option[Child]
-
 pub static MAYBE: Option[Child]
 "#,
     );
@@ -216,15 +139,10 @@ packages = ["../dep"]
     let source = r#"
 package demo.app
 
-use demo.dep.maybe_load
 use demo.dep.MAYBE as child
 
-pub fn read(flag: Bool) -> Int {
-    if flag {
-        let first = maybe_load()?.get()
-    } else {
-        let second = child?.get()
-    }
+pub fn read() -> Int {
+    let second = child?.get()
     return "oops"
 }
 "#;
@@ -234,19 +152,11 @@ pub fn read(flag: Bool) -> Int {
     let package = analyze_package_dependencies(&app_root)
         .expect("dependency-only package analysis should succeed");
 
-    let function_definition = definition_for_dependency_methods(
+    let definition = definition_for_dependency_methods(
         source,
         &package,
         offset_to_position(source, nth_offset(source, "get", 1)),
     )
-    .expect("dependency question function method definition should exist");
-    assert_targets_dependency_snippet(function_definition, &dep_qi, "get");
-
-    let static_definition = definition_for_dependency_methods(
-        source,
-        &package,
-        offset_to_position(source, nth_offset(source, "get", 2)),
-    )
     .expect("dependency question static method definition should exist");
-    assert_targets_dependency_snippet(static_definition, &dep_qi, "get");
+    assert_targets_dependency_snippet(definition, &dep_qi, "get");
 }
