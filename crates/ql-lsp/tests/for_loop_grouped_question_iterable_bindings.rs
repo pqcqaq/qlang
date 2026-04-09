@@ -94,83 +94,73 @@ fn assert_targets_dependency_snippet(
     );
 }
 
-#[test]
-fn dependency_field_definition_works_on_for_loop_grouped_question_field_iterables() {
-    let temp = TempDir::new("ql-lsp-for-loop-grouped-question-field");
-    let app_root = temp.path().join("workspace").join("app");
-    temp.write(
-        "workspace/dep/qlang.toml",
-        r#"
-[package]
-name = "dep"
-"#,
-    );
-    let dep_qi = temp.write(
-        "workspace/dep/dep.qi",
-        r#"
-// qlang interface v1
-// package: dep
-
-// source: src/lib.ql
-package demo.dep
-
-pub struct Child {
-    value: Int,
+#[derive(Clone, Copy)]
+enum MemberKind {
+    Field,
+    Method,
 }
 
-pub fn maybe_children() -> Option[[Child; 2]]
-"#,
-    );
-    let source = r#"
-package demo.app
-
-use demo.dep.{maybe_children as kids}
-
-pub fn read() -> Int {
-    for current in kids()? {
-        return current.value
+impl MemberKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Field => "field",
+            Self::Method => "method",
+        }
     }
-    return 0
-}
-"#;
-    temp.write(
-        "workspace/app/qlang.toml",
-        r#"
-[package]
-name = "app"
 
-[references]
-packages = ["../dep"]
-"#,
-    );
-    temp.write("workspace/app/src/lib.ql", source);
+    fn token(self) -> &'static str {
+        match self {
+            Self::Field => "value",
+            Self::Method => "get",
+        }
+    }
 
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let definition = definition_for_dependency_struct_fields(
-        source,
-        &package,
-        offset_to_position(source, nth_offset(source, "value", 1)),
-    )
-    .expect("grouped question field iterable definition should exist");
-
-    assert_targets_dependency_snippet(definition, &dep_qi, "value");
+    fn access_expr(self) -> &'static str {
+        match self {
+            Self::Field => "current.value",
+            Self::Method => "current.get()",
+        }
+    }
 }
 
-#[test]
-fn dependency_method_definition_works_on_for_loop_grouped_question_method_iterables_without_semantic_analysis(
-) {
-    let temp = TempDir::new("ql-lsp-for-loop-grouped-question-method-query-broken");
-    let app_root = temp.path().join("workspace").join("app");
+#[derive(Clone, Copy)]
+enum RootKind {
+    Function,
+    Static,
+}
 
-    temp.write(
-        "workspace/dep/qlang.toml",
-        r#"
-[package]
-name = "dep"
-"#,
-    );
-    let dep_qi = temp.write(
-        "workspace/dep/dep.qi",
+impl RootKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Function => "function",
+            Self::Static => "static",
+        }
+    }
+
+    fn use_decl(self) -> &'static str {
+        match self {
+            Self::Function => "use demo.dep.{maybe_children as kids}",
+            Self::Static => "use demo.dep.{MAYBE_ITEMS as maybe_items}",
+        }
+    }
+
+    fn receiver_expr(self) -> &'static str {
+        match self {
+            Self::Function => "kids()?",
+            Self::Static => "maybe_items?",
+        }
+    }
+
+    fn dep_decl(self) -> &'static str {
+        match self {
+            Self::Function => "pub fn maybe_children() -> Option[[Child; 2]]",
+            Self::Static => "pub static MAYBE_ITEMS: Option[[Child; 2]]",
+        }
+    }
+}
+
+fn build_dep_qi(member: MemberKind, root: RootKind) -> String {
+    format!(
         r#"
 // qlang interface v1
 // package: dep
@@ -178,17 +168,70 @@ name = "dep"
 // source: src/lib.ql
 package demo.dep
 
-pub struct Child {
+pub struct Child {{
     value: Int,
-}
+}}
 
-pub static MAYBE_ITEMS: Option[[Child; 2]]
+{root_decl}{member_impl}
+"#,
+        root_decl = root.dep_decl(),
+        member_impl = match member {
+            MemberKind::Field => "",
+            MemberKind::Method => {
+                r#"
 
 impl Child {
     pub fn get(self) -> Int
 }
+"#
+            }
+        }
+    )
+}
+
+fn build_source(member: MemberKind, root: RootKind, broken: bool) -> String {
+    let broken_line = if broken {
+        "    let broken: Int = \"oops\"\n"
+    } else {
+        ""
+    };
+    format!(
+        r#"
+package demo.app
+
+{use_decl}
+
+pub fn read() -> Int {{
+    for current in {receiver} {{
+        return {access_expr}
+    }}
+{broken_line}    return 0
+}}
+"#,
+        use_decl = root.use_decl(),
+        receiver = root.receiver_expr(),
+        access_expr = member.access_expr(),
+        broken_line = broken_line,
+    )
+}
+
+fn run_definition_case(member: MemberKind, root: RootKind, broken: bool) {
+    let temp = TempDir::new(&format!(
+        "ql-lsp-for-loop-grouped-question-iterable-{}-{}-definition{}",
+        member.label(),
+        root.label(),
+        if broken { "-broken" } else { "" }
+    ));
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
 "#,
     );
+    let dep_qi = temp.write("workspace/dep/dep.qi", &build_dep_qi(member, root));
     temp.write(
         "workspace/app/qlang.toml",
         r#"
@@ -199,30 +242,86 @@ name = "app"
 packages = ["../dep"]
 "#,
     );
-    let source = r#"
-package demo.app
+    let source = build_source(member, root, broken);
+    temp.write("workspace/app/src/lib.ql", &source);
 
-use demo.dep.{MAYBE_ITEMS as maybe_items}
+    let definition = if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        match member {
+            MemberKind::Field => definition_for_dependency_struct_fields(
+                &source,
+                &package,
+                offset_to_position(&source, nth_offset(&source, member.token(), 1)),
+            ),
+            MemberKind::Method => definition_for_dependency_methods(
+                &source,
+                &package,
+                offset_to_position(&source, nth_offset(&source, member.token(), 1)),
+            ),
+        }
+        .expect("grouped question iterable definition should exist")
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        match member {
+            MemberKind::Field => definition_for_dependency_struct_fields(
+                &source,
+                &package,
+                offset_to_position(&source, nth_offset(&source, member.token(), 1)),
+            ),
+            MemberKind::Method => definition_for_dependency_methods(
+                &source,
+                &package,
+                offset_to_position(&source, nth_offset(&source, member.token(), 1)),
+            ),
+        }
+        .expect("grouped question iterable definition should exist")
+    };
 
-pub fn read() -> Int {
-    for current in maybe_items? {
-        let value = current.get()
-    }
-    let broken: Int = "oops"
-    return 0
+    assert_targets_dependency_snippet(definition, &dep_qi, member.token());
 }
-"#;
-    temp.write("workspace/app/src/lib.ql", source);
 
-    assert!(analyze_package(&app_root).is_err());
-    let package = analyze_package_dependencies(&app_root)
-        .expect("dependency-only package analysis should succeed");
-    let definition = definition_for_dependency_methods(
-        source,
-        &package,
-        offset_to_position(source, nth_offset(source, "get", 1)),
-    )
-    .expect("grouped question method iterable definition should exist");
+#[test]
+fn dependency_field_definition_works_on_for_loop_grouped_question_function_iterables() {
+    run_definition_case(MemberKind::Field, RootKind::Function, false);
+}
 
-    assert_targets_dependency_snippet(definition, &dep_qi, "get");
+#[test]
+fn dependency_field_definition_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis(
+) {
+    run_definition_case(MemberKind::Field, RootKind::Function, true);
+}
+
+#[test]
+fn dependency_field_definition_works_on_for_loop_grouped_question_static_iterables() {
+    run_definition_case(MemberKind::Field, RootKind::Static, false);
+}
+
+#[test]
+fn dependency_field_definition_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis(
+) {
+    run_definition_case(MemberKind::Field, RootKind::Static, true);
+}
+
+#[test]
+fn dependency_method_definition_works_on_for_loop_grouped_question_function_iterables() {
+    run_definition_case(MemberKind::Method, RootKind::Function, false);
+}
+
+#[test]
+fn dependency_method_definition_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis(
+) {
+    run_definition_case(MemberKind::Method, RootKind::Function, true);
+}
+
+#[test]
+fn dependency_method_definition_works_on_for_loop_grouped_question_static_iterables() {
+    run_definition_case(MemberKind::Method, RootKind::Static, false);
+}
+
+#[test]
+fn dependency_method_definition_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis(
+) {
+    run_definition_case(MemberKind::Method, RootKind::Static, true);
 }
