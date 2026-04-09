@@ -192,6 +192,30 @@ return "alpha" != "beta"
 }
 
 #[test]
+fn emits_string_ordered_comparisons_via_memcmp_and_length_tiebreak() {
+    let rendered = emit_library(
+        r#"
+fn less(left: String, right: String) -> Bool {
+return left < right
+}
+
+fn at_least(left: String, right: String) -> Bool {
+return left >= right
+}
+"#,
+    );
+
+    assert!(rendered.contains("declare i32 @memcmp(ptr, ptr, i64)"));
+    assert!(rendered.contains("select i1"));
+    assert!(rendered.contains("icmp eq i32"));
+    assert!(rendered.contains("icmp slt i32"));
+    assert!(rendered.contains("icmp sgt i32"));
+    assert!(rendered.contains("icmp ult i64"));
+    assert!(rendered.contains("icmp uge i64"));
+    assert!(rendered.contains("phi i1 [ %"));
+}
+
+#[test]
 fn emits_runtime_hook_declarations_from_shared_abi_contract() {
     let runtime_hooks = collect_runtime_hook_signatures([
         RuntimeCapability::TaskSpawn,

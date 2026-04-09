@@ -2251,12 +2251,15 @@ impl<'a> Checker<'a> {
             }
             BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Lt | BinaryOp::LtEq => {
                 let right_ty = self.check_expr(right, None);
-                if self.has_compatible_numeric_operands(&left_ty, &right_ty) {
+                if self.has_compatible_numeric_operands(&left_ty, &right_ty)
+                    || (left_ty == Ty::Builtin(ql_resolve::BuiltinType::String)
+                        && right_ty == Ty::Builtin(ql_resolve::BuiltinType::String))
+                {
                     Ty::Builtin(ql_resolve::BuiltinType::Bool)
                 } else {
                     self.diagnostics.push(
                         Diagnostic::error(format!(
-                            "comparison operator `{}` expects compatible numeric operands, found `{}` and `{}`",
+                            "comparison operator `{}` expects compatible numeric or string operands, found `{}` and `{}`",
                             op_text(op),
                             left_ty,
                             right_ty

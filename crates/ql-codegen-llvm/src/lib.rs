@@ -6088,12 +6088,13 @@ impl<'a> ModuleEmitter<'a> {
                 }
             }
             BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Lt | BinaryOp::LtEq => {
-                if is_comparable_ty(left_ty) {
+                if is_comparable_ty(left_ty) || matches!(left_ty, Ty::Builtin(BuiltinType::String))
+                {
                     Some(Ty::Builtin(BuiltinType::Bool))
                 } else {
                     diagnostics.push(unsupported(
                         span,
-                        "LLVM IR backend foundation only supports integer, float, or bool ordered comparisons",
+                        "LLVM IR backend foundation only supports integer, float, bool, or string ordered comparisons",
                     ));
                     None
                 }
@@ -12363,29 +12364,20 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         right: LoweredValue,
     ) -> Option<LoweredValue> {
         debug_assert!(matches!(left.ty, Ty::Builtin(BuiltinType::String)));
-        debug_assert!(matches!(op, BinaryOp::EqEq | BinaryOp::BangEq));
+        debug_assert!(matches!(
+            op,
+            BinaryOp::EqEq
+                | BinaryOp::BangEq
+                | BinaryOp::Gt
+                | BinaryOp::GtEq
+                | BinaryOp::Lt
+                | BinaryOp::LtEq
+        ));
 
         let left_ptr = self.fresh_temp();
         let left_len = self.fresh_temp();
         let right_ptr = self.fresh_temp();
         let right_len = self.fresh_temp();
-        let len_eq = self.fresh_temp();
-        let memcmp_label = self.fresh_label("string_cmp_memcmp");
-        let mismatch_label = self.fresh_label("string_cmp_mismatch");
-        let end_label = self.fresh_label("string_cmp_end");
-        let memcmp_result = self.fresh_temp();
-        let bytes_compare = self.fresh_temp();
-        let temp = self.fresh_temp();
-        let mismatch_value = match op {
-            BinaryOp::EqEq => "false",
-            BinaryOp::BangEq => "true",
-            _ => unreachable!("validated string comparisons should only use == or !="),
-        };
-        let memcmp_opcode = match op {
-            BinaryOp::EqEq => "icmp eq",
-            BinaryOp::BangEq => "icmp ne",
-            _ => unreachable!("validated string comparisons should only use == or !="),
-        };
 
         let _ = writeln!(
             output,
@@ -12407,28 +12399,119 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             "  {right_len} = extractvalue {} {}, 1",
             right.llvm_ty, right.repr
         );
-        let _ = writeln!(output, "  {len_eq} = icmp eq i64 {left_len}, {right_len}");
-        let _ = writeln!(
-            output,
-            "  br i1 {len_eq}, label %{memcmp_label}, label %{mismatch_label}"
-        );
-        let _ = writeln!(output, "{memcmp_label}:");
-        let _ = writeln!(
-            output,
-            "  {memcmp_result} = call i32 @memcmp(ptr {left_ptr}, ptr {right_ptr}, i64 {left_len})"
-        );
-        let _ = writeln!(
-            output,
-            "  {bytes_compare} = {memcmp_opcode} i32 {memcmp_result}, 0"
-        );
-        let _ = writeln!(output, "  br label %{end_label}");
-        let _ = writeln!(output, "{mismatch_label}:");
-        let _ = writeln!(output, "  br label %{end_label}");
-        let _ = writeln!(output, "{end_label}:");
-        let _ = writeln!(
-            output,
-            "  {temp} = phi i1 [ {mismatch_value}, %{mismatch_label} ], [ {bytes_compare}, %{memcmp_label} ]"
-        );
+
+        let temp = match op {
+            BinaryOp::EqEq | BinaryOp::BangEq => {
+                let len_eq = self.fresh_temp();
+                let memcmp_label = self.fresh_label("string_cmp_memcmp");
+                let mismatch_label = self.fresh_label("string_cmp_mismatch");
+                let end_label = self.fresh_label("string_cmp_end");
+                let memcmp_result = self.fresh_temp();
+                let bytes_compare = self.fresh_temp();
+                let temp = self.fresh_temp();
+                let mismatch_value = match op {
+                    BinaryOp::EqEq => "false",
+                    BinaryOp::BangEq => "true",
+                    _ => unreachable!("validated string comparisons should only use == or !="),
+                };
+                let memcmp_opcode = match op {
+                    BinaryOp::EqEq => "icmp eq",
+                    BinaryOp::BangEq => "icmp ne",
+                    _ => unreachable!("validated string comparisons should only use == or !="),
+                };
+
+                let _ = writeln!(output, "  {len_eq} = icmp eq i64 {left_len}, {right_len}");
+                let _ = writeln!(
+                    output,
+                    "  br i1 {len_eq}, label %{memcmp_label}, label %{mismatch_label}"
+                );
+                let _ = writeln!(output, "{memcmp_label}:");
+                let _ = writeln!(
+                    output,
+                    "  {memcmp_result} = call i32 @memcmp(ptr {left_ptr}, ptr {right_ptr}, i64 {left_len})"
+                );
+                let _ = writeln!(
+                    output,
+                    "  {bytes_compare} = {memcmp_opcode} i32 {memcmp_result}, 0"
+                );
+                let _ = writeln!(output, "  br label %{end_label}");
+                let _ = writeln!(output, "{mismatch_label}:");
+                let _ = writeln!(output, "  br label %{end_label}");
+                let _ = writeln!(output, "{end_label}:");
+                let _ = writeln!(
+                    output,
+                    "  {temp} = phi i1 [ {mismatch_value}, %{mismatch_label} ], [ {bytes_compare}, %{memcmp_label} ]"
+                );
+
+                temp
+            }
+            BinaryOp::Gt | BinaryOp::GtEq | BinaryOp::Lt | BinaryOp::LtEq => {
+                let left_shorter = self.fresh_temp();
+                let min_len = self.fresh_temp();
+                let memcmp_result = self.fresh_temp();
+                let memcmp_eq = self.fresh_temp();
+                let bytes_label = self.fresh_label("string_ord_bytes");
+                let len_label = self.fresh_label("string_ord_len");
+                let end_label = self.fresh_label("string_ord_end");
+                let bytes_compare = self.fresh_temp();
+                let len_compare = self.fresh_temp();
+                let temp = self.fresh_temp();
+                let bytes_opcode = match op {
+                    BinaryOp::Gt | BinaryOp::GtEq => "icmp sgt",
+                    BinaryOp::Lt | BinaryOp::LtEq => "icmp slt",
+                    _ => unreachable!(
+                        "validated string comparisons should only use ordering operators"
+                    ),
+                };
+                let len_opcode = match op {
+                    BinaryOp::Gt => "icmp ugt",
+                    BinaryOp::GtEq => "icmp uge",
+                    BinaryOp::Lt => "icmp ult",
+                    BinaryOp::LtEq => "icmp ule",
+                    _ => unreachable!(
+                        "validated string comparisons should only use ordering operators"
+                    ),
+                };
+
+                let _ = writeln!(
+                    output,
+                    "  {left_shorter} = icmp ult i64 {left_len}, {right_len}"
+                );
+                let _ = writeln!(
+                    output,
+                    "  {min_len} = select i1 {left_shorter}, i64 {left_len}, i64 {right_len}"
+                );
+                let _ = writeln!(
+                    output,
+                    "  {memcmp_result} = call i32 @memcmp(ptr {left_ptr}, ptr {right_ptr}, i64 {min_len})"
+                );
+                let _ = writeln!(output, "  {memcmp_eq} = icmp eq i32 {memcmp_result}, 0");
+                let _ = writeln!(
+                    output,
+                    "  br i1 {memcmp_eq}, label %{len_label}, label %{bytes_label}"
+                );
+                let _ = writeln!(output, "{bytes_label}:");
+                let _ = writeln!(
+                    output,
+                    "  {bytes_compare} = {bytes_opcode} i32 {memcmp_result}, 0"
+                );
+                let _ = writeln!(output, "  br label %{end_label}");
+                let _ = writeln!(output, "{len_label}:");
+                let _ = writeln!(
+                    output,
+                    "  {len_compare} = {len_opcode} i64 {left_len}, {right_len}"
+                );
+                let _ = writeln!(output, "  br label %{end_label}");
+                let _ = writeln!(output, "{end_label}:");
+                let _ = writeln!(
+                    output,
+                    "  {temp} = phi i1 [ {bytes_compare}, %{bytes_label} ], [ {len_compare}, %{len_label} ]"
+                );
+
+                temp
+            }
+            _ => unreachable!("validated string comparisons should only use comparison operators"),
+        };
 
         Some(LoweredValue {
             ty: Ty::Builtin(BuiltinType::Bool),

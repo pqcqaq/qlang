@@ -3373,6 +3373,22 @@ fn main(left: Int, right: UInt) -> Bool {
 }
 
 #[test]
+fn accepts_string_ordered_comparisons() {
+    let diagnostics = diagnostic_messages(
+        r#"
+fn main(left: String, right: String) -> Bool {
+    return left < right || left <= right || left > right || left >= right
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no diagnostics, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn reports_equality_operand_mismatches() {
     let diagnostics = diagnostic_messages(
         r#"
