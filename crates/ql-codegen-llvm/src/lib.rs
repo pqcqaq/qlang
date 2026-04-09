@@ -1790,7 +1790,7 @@ impl<'a> ModuleEmitter<'a> {
             let closure_supported = closure_decl.captures.iter().all(|capture| {
                 local_types
                     .get(&capture.local)
-                    .is_some_and(is_scalar_capture_ty)
+                    .is_some_and(is_supported_capture_ty)
             });
             if !closure_supported {
                 diagnostics.push(self.capturing_closure_diagnostic(closure_decl.span));
@@ -19078,7 +19078,7 @@ fn supported_direct_local_capturing_closure_locals_for_guard(
         let closure_supported = closure_decl.captures.iter().all(|capture| {
             local_types
                 .get(&capture.local)
-                .is_some_and(is_scalar_capture_ty)
+                .is_some_and(is_supported_capture_ty)
         });
         if !closure_supported || staged.contains_key(&place.base) {
             continue;
@@ -21552,10 +21552,11 @@ fn scalar_abi_layout(ty: &Ty, span: Span, context: &str) -> Result<ScalarAbiLayo
     }
 }
 
-fn is_scalar_capture_ty(ty: &Ty) -> bool {
+fn is_supported_capture_ty(ty: &Ty) -> bool {
     matches!(
         ty,
-        Ty::Builtin(BuiltinType::Bool)
+        Ty::Builtin(BuiltinType::String)
+            | Ty::Builtin(BuiltinType::Bool)
             | Ty::Builtin(BuiltinType::Int)
             | Ty::Builtin(BuiltinType::UInt)
             | Ty::Builtin(BuiltinType::I8)

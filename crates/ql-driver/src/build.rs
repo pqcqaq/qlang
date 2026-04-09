@@ -7418,6 +7418,46 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_string_capturing_closure_values() {
+        let dir = TestDir::new("ql-driver-string-capturing-closure-values");
+        let source = dir.write(
+            "string_capturing_closure_values.ql",
+            r#"
+const TARGET: String = "alpha"
+
+fn main() -> Int {
+    let captured = TARGET
+    let run = () => if captured == TARGET { 41 } else { 0 }
+    return run()
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/string_capturing_closure_values.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("string capturing closure values should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call i32 @memcmp"));
+        assert!(rendered.contains("__closure0({ ptr, i64 } %arg0)"));
+        assert!(rendered.contains("call i64 @ql_"));
+        assert!(
+            !rendered.contains("does not support capturing-closure control-flow call lowering yet")
+        );
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_callable_const_and_static_values() {
         let dir = TestDir::new("ql-driver-callable-const-static-values");
         let source = dir.write(
