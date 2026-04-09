@@ -7824,6 +7824,106 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_nested_runtime_projection_values(
+    ) {
+        let dir =
+            TestDir::new("ql-driver-cleanup-awaited-task-handle-nested-runtime-projection-values");
+        let source = dir.write(
+            "cleanup_awaited_task_handle_nested_runtime_projection_values.ql",
+            r#"
+struct Slot {
+    value: Int,
+}
+
+struct State {
+    slot: Slot,
+}
+
+extern "c" fn sink(value: Int)
+
+async fn worker(value: Int) -> State {
+    return State {
+        slot: Slot { value: value + 1 },
+    }
+}
+
+fn wrap(state: State) -> State {
+    return state
+}
+
+fn offset(value: Int) -> Int {
+    return value - 11
+}
+
+fn matches(value: Int, expected: Int) -> Bool {
+    return value == expected
+}
+
+async fn main() -> Int {
+    let branch = true
+    let which = 1
+    let first = spawn worker(12)
+    let second = spawn worker(14)
+    let left = () => first
+    let right = () => second
+
+    defer if wrap(await (if branch { left } else { right })()).slot.value == 13 {
+        sink(1);
+    }
+
+    defer match true {
+        true if matches(
+            value: [wrap(await (match which { 1 => right, _ => left })()).slot.value, 0][offset(11)],
+            expected: 15,
+        ) => sink(2),
+        _ => sink(3),
+    }
+
+    defer match wrap(await (if branch { left } else { right })()).slot.value {
+        13 => sink(4),
+        _ => sink(5),
+    }
+
+    defer match [wrap(await (match which { 1 => right, _ => left })()).slot.value, 0][offset(11)] {
+        15 => sink(6),
+        _ => sink(7),
+    }
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/cleanup_awaited_task_handle_nested_runtime_projection_values.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup awaited task-handle nested runtime projection values should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("guard_call_if_then"));
+        assert!(rendered.contains("guard_call_match_arm"));
+        assert!(rendered.contains("cleanup_match_arm"));
+        assert!(rendered.contains("getelementptr inbounds { { i64 } }"));
+        assert!(rendered.contains("getelementptr inbounds [2 x i64]"));
+        assert!(rendered.contains("__closure0"));
+        assert!(rendered.contains("__closure1"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 4);
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_different_closure_roots() {
         let dir =
             TestDir::new("ql-driver-cleanup-awaited-task-handle-different-closure-roots");
