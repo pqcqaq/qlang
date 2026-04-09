@@ -468,6 +468,14 @@ fn render_pattern(hir: &hir::Module, pattern_id: PatternId) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        hir::PatternKind::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(|pattern| render_pattern(hir, *pattern))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         hir::PatternKind::Path(path) => render_path(path),
         hir::PatternKind::TupleStruct { path, items } => format!(
             "{}({})",

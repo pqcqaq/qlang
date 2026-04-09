@@ -1573,7 +1573,7 @@ impl<'a> QueryIndexBuilder<'a> {
                     self.record_variant_path_completion_site(path, item_id);
                 }
             }
-            PatternKind::Tuple(items) => {
+            PatternKind::Tuple(items) | PatternKind::Array(items) => {
                 for &item in items {
                     self.index_pattern_completion_sites(item);
                 }
@@ -1816,7 +1816,9 @@ impl<'a> QueryIndexBuilder<'a> {
         let pattern = self.module.pattern(pattern_id);
         match &pattern.kind {
             PatternKind::Binding(local_id) => self.define_local(*local_id),
-            PatternKind::Tuple(items) | PatternKind::TupleStruct { items, .. } => {
+            PatternKind::Tuple(items)
+            | PatternKind::Array(items)
+            | PatternKind::TupleStruct { items, .. } => {
                 for &item in items {
                     self.index_pattern_local_definitions(item);
                 }
@@ -1966,7 +1968,7 @@ impl<'a> QueryIndexBuilder<'a> {
         let pattern = self.module.pattern(pattern_id);
         match &pattern.kind {
             PatternKind::Binding(_) => {}
-            PatternKind::Tuple(items) => {
+            PatternKind::Tuple(items) | PatternKind::Array(items) => {
                 for &item in items {
                     self.index_pattern_use(item);
                 }

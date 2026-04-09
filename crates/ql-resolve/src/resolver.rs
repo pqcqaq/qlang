@@ -410,6 +410,11 @@ impl<'module> Resolver<'module> {
                     self.resolve_pattern(item, scope);
                 }
             }
+            PatternKind::Array(items) => {
+                for &item in items {
+                    self.resolve_pattern(item, scope);
+                }
+            }
             PatternKind::Path(path) => {
                 if let Some(resolution) = self.lookup_value_path(path, scope) {
                     self.resolution.pattern_paths.insert(pattern_id, resolution);
@@ -458,7 +463,9 @@ impl<'module> Resolver<'module> {
                 let local = self.module.local(*local_id);
                 self.bind_value(scope, local.name.clone(), ValueResolution::Local(*local_id));
             }
-            PatternKind::Tuple(items) | PatternKind::TupleStruct { items, .. } => {
+            PatternKind::Tuple(items)
+            | PatternKind::Array(items)
+            | PatternKind::TupleStruct { items, .. } => {
                 for &item in items {
                     self.bind_pattern_locals(item, scope);
                 }

@@ -55,6 +55,21 @@ impl Parser {
             ));
         }
 
+        if self.eat(TokenKind::LBracket) {
+            let mut patterns = Vec::new();
+            while !self.at(TokenKind::RBracket) && !self.at(TokenKind::Eof) {
+                patterns.push(self.parse_pattern()?);
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RBracket, "expected `]` after array pattern")?;
+            return Ok(Pattern::new(
+                self.span_from(start),
+                PatternKind::Array(patterns),
+            ));
+        }
+
         let path = self.parse_path()?;
         if self.eat(TokenKind::LParen) {
             let mut items = Vec::new();

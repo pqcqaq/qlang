@@ -2704,7 +2704,9 @@ impl<'a> BodyAnalyzer<'a> {
                     locals.push(local);
                 }
             }
-            hir::PatternKind::Tuple(items) | hir::PatternKind::TupleStruct { items, .. } => {
+            hir::PatternKind::Tuple(items)
+            | hir::PatternKind::Array(items)
+            | hir::PatternKind::TupleStruct { items, .. } => {
                 for item in items {
                     self.collect_binding_pattern_mir_locals(*item, locals);
                 }

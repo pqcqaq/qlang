@@ -883,7 +883,9 @@ impl<'a> ModuleEmitter<'a> {
                     llvm_name
                 });
             }
-            PatternKind::Tuple(items) | PatternKind::TupleStruct { items, .. } => {
+            PatternKind::Tuple(items)
+            | PatternKind::Array(items)
+            | PatternKind::TupleStruct { items, .. } => {
                 for item in items {
                     self.collect_string_literals_in_pattern(*item, literals, next_index);
                 }
@@ -4531,6 +4533,9 @@ impl<'a> ModuleEmitter<'a> {
             PatternKind::Tuple(items) => items
                 .iter()
                 .all(|item| self.supports_cleanup_let_pattern(*item)),
+            PatternKind::Array(items) => items
+                .iter()
+                .all(|item| self.supports_cleanup_let_pattern(*item)),
             PatternKind::Struct { fields, .. } => fields
                 .iter()
                 .all(|field| self.supports_cleanup_let_pattern(field.pattern)),
@@ -4541,7 +4546,10 @@ impl<'a> ModuleEmitter<'a> {
     fn cleanup_let_expected_ty(&self, pattern: hir::PatternId, value: hir::ExprId) -> Option<&Ty> {
         match pattern_kind(self.input.hir, pattern) {
             PatternKind::Binding(local) => self.input.typeck.local_ty(*local),
-            PatternKind::Tuple(_) | PatternKind::Struct { .. } | PatternKind::Wildcard => {
+            PatternKind::Tuple(_)
+            | PatternKind::Array(_)
+            | PatternKind::Struct { .. }
+            | PatternKind::Wildcard => {
                 self.input.typeck.expr_ty(value)
             }
             _ => None,
@@ -4552,6 +4560,9 @@ impl<'a> ModuleEmitter<'a> {
         match pattern_kind(self.input.hir, pattern) {
             PatternKind::Binding(_) | PatternKind::Wildcard => true,
             PatternKind::Tuple(items) => items
+                .iter()
+                .all(|item| self.supports_cleanup_for_pattern(*item)),
+            PatternKind::Array(items) => items
                 .iter()
                 .all(|item| self.supports_cleanup_for_pattern(*item)),
             PatternKind::Struct { fields, .. } => fields
@@ -4572,6 +4583,15 @@ impl<'a> ModuleEmitter<'a> {
                     && items.iter().zip(item_tys.iter()).all(|(item, item_ty)| {
                         self.supports_match_catch_all_pattern(*item, item_ty)
                     })
+            }
+            PatternKind::Array(items) => {
+                let Ty::Array { element, len } = scrutinee_ty else {
+                    return false;
+                };
+                items.len() == *len
+                    && items
+                        .iter()
+                        .all(|item| self.supports_match_catch_all_pattern(*item, element))
             }
             PatternKind::Struct { fields, .. } => {
                 let Ok(field_layouts) = self.struct_field_lowerings(
@@ -4598,6 +4618,9 @@ impl<'a> ModuleEmitter<'a> {
         match pattern_kind(self.input.hir, pattern) {
             PatternKind::Binding(_) | PatternKind::Wildcard => true,
             PatternKind::Tuple(items) => items
+                .iter()
+                .all(|item| self.supports_destructuring_bind_pattern(*item)),
+            PatternKind::Array(items) => items
                 .iter()
                 .all(|item| self.supports_destructuring_bind_pattern(*item)),
             PatternKind::Struct { fields, .. } => fields
@@ -6589,7 +6612,7 @@ impl<'a> ModuleEmitter<'a> {
         if !supported {
             diagnostics.push(unsupported(
                 span,
-                "LLVM IR backend foundation only supports binding, wildcard, literal, or tuple/struct destructuring binding patterns",
+                "LLVM IR backend foundation only supports binding, wildcard, literal, or tuple/struct/fixed-array destructuring binding patterns",
             ));
         }
     }
@@ -8456,6 +8479,34 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     self.bind_cleanup_pattern(output, *item, item_value, span);
                 }
             }
+            PatternKind::Array(items) => {
+                let Ty::Array { element, len } = &value.ty else {
+                    panic!(
+                        "supported cleanup lowering at {span:?} should only destructure fixed-array cleanup values with fixed-array patterns"
+                    );
+                };
+                assert_eq!(
+                    items.len(),
+                    *len,
+                    "supported cleanup lowering at {span:?} should only destructure fixed-array cleanup values with matching arity"
+                );
+                let item_llvm_ty = self
+                    .emitter
+                    .lower_llvm_type(element, span, "cleanup fixed-array pattern item")
+                    .expect(
+                        "supported cleanup lowering should lower cleanup fixed-array pattern items",
+                    );
+                for (index, item) in items.iter().enumerate() {
+                    let item_value = self.extract_aggregate_value(
+                        output,
+                        &value,
+                        index,
+                        element.as_ref().clone(),
+                        item_llvm_ty.clone(),
+                    );
+                    self.bind_cleanup_pattern(output, *item, item_value, span);
+                }
+            }
             PatternKind::Struct { fields, .. } => {
                 let field_layouts = self
                     .emitter
@@ -8487,7 +8538,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             PatternKind::Wildcard => {}
             _ => panic!(
-                "supported cleanup lowering at {span:?} should only destructure binding, wildcard, tuple, or struct cleanup patterns"
+                "supported cleanup lowering at {span:?} should only destructure binding, wildcard, tuple, fixed-array, or struct cleanup patterns"
             ),
         }
     }
@@ -8545,6 +8596,34 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     self.bind_pattern_value(output, *item, item_value, span);
                 }
             }
+            PatternKind::Array(items) => {
+                let Ty::Array { element, len } = &value.ty else {
+                    panic!(
+                        "supported bind-pattern lowering at {span:?} should only destructure fixed-array values with fixed-array patterns"
+                    );
+                };
+                assert_eq!(
+                    items.len(),
+                    *len,
+                    "supported bind-pattern lowering at {span:?} should only destructure fixed-array values with matching arity"
+                );
+                let item_llvm_ty = self
+                    .emitter
+                    .lower_llvm_type(element, span, "fixed-array pattern item")
+                    .expect(
+                        "supported bind-pattern lowering should lower fixed-array pattern items",
+                    );
+                for (index, item) in items.iter().enumerate() {
+                    let item_value = self.extract_aggregate_value(
+                        output,
+                        &value,
+                        index,
+                        element.as_ref().clone(),
+                        item_llvm_ty.clone(),
+                    );
+                    self.bind_pattern_value(output, *item, item_value, span);
+                }
+            }
             PatternKind::Struct { fields, .. } => {
                 let field_layouts = self
                     .emitter
@@ -8580,7 +8659,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             | PatternKind::Bool(_)
             | PatternKind::Wildcard => {}
             _ => panic!(
-                "supported bind-pattern lowering at {span:?} should only destructure binding, wildcard, tuple, or struct patterns"
+                "supported bind-pattern lowering at {span:?} should only destructure binding, wildcard, tuple, fixed-array, or struct patterns"
             ),
         }
     }
@@ -17816,7 +17895,9 @@ fn pattern_binds_local(
 ) -> bool {
     match pattern_kind(module, pattern) {
         PatternKind::Binding(binding_local) => *binding_local == local_id,
-        PatternKind::Tuple(items) | PatternKind::TupleStruct { items, .. } => items
+        PatternKind::Tuple(items)
+        | PatternKind::Array(items)
+        | PatternKind::TupleStruct { items, .. } => items
             .iter()
             .any(|item| pattern_binds_local(module, *item, local_id)),
         PatternKind::Struct { fields, .. } => fields

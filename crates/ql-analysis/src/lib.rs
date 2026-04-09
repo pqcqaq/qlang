@@ -3086,7 +3086,9 @@ fn dependency_struct_field_completion_site_in_pattern(
     offset: usize,
 ) -> Option<DependencyStructFieldCompletionSite> {
     match &pattern.kind {
-        ql_ast::PatternKind::Tuple(items) | ql_ast::PatternKind::TupleStruct { items, .. } => items
+        ql_ast::PatternKind::Tuple(items)
+        | ql_ast::PatternKind::Array(items)
+        | ql_ast::PatternKind::TupleStruct { items, .. } => items
             .iter()
             .find_map(|item| dependency_struct_field_completion_site_in_pattern(item, offset)),
         ql_ast::PatternKind::Struct { path, fields, .. } => {
@@ -4797,7 +4799,7 @@ fn dependency_import_occurrence_in_pattern(
     offset: usize,
 ) -> Option<DependencyImportOccurrence> {
     match &pattern.kind {
-        ql_ast::PatternKind::Tuple(items) => items
+        ql_ast::PatternKind::Tuple(items) | ql_ast::PatternKind::Array(items) => items
             .iter()
             .find_map(|item| dependency_import_occurrence_in_pattern(item, offset)),
         ql_ast::PatternKind::Path(path) => dependency_import_occurrence_for_path(path, offset),
@@ -6407,7 +6409,9 @@ fn collect_dependency_struct_field_occurrences_in_pattern(
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
     match &pattern.kind {
-        ql_ast::PatternKind::Tuple(items) | ql_ast::PatternKind::TupleStruct { items, .. } => {
+        ql_ast::PatternKind::Tuple(items)
+        | ql_ast::PatternKind::Array(items)
+        | ql_ast::PatternKind::TupleStruct { items, .. } => {
             for item in items {
                 collect_dependency_struct_field_occurrences_in_pattern(
                     package,
@@ -7854,7 +7858,9 @@ fn shadow_dependency_iterable_pattern(
                 .expect("iterable scope stack must be non-empty")
                 .insert(name.clone(), None);
         }
-        ql_ast::PatternKind::Tuple(items) | ql_ast::PatternKind::TupleStruct { items, .. } => {
+        ql_ast::PatternKind::Tuple(items)
+        | ql_ast::PatternKind::Array(items)
+        | ql_ast::PatternKind::TupleStruct { items, .. } => {
             for item in items {
                 shadow_dependency_iterable_pattern(item, scopes);
             }

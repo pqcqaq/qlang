@@ -1881,7 +1881,9 @@ impl<'a> BodyBuilder<'a> {
     fn collect_binding_locals_recursive(&self, pattern: PatternId, locals: &mut Vec<hir::LocalId>) {
         match &self.hir.pattern(pattern).kind {
             PatternKind::Binding(local) => locals.push(*local),
-            PatternKind::Tuple(items) | PatternKind::TupleStruct { items, .. } => {
+            PatternKind::Tuple(items)
+            | PatternKind::Array(items)
+            | PatternKind::TupleStruct { items, .. } => {
                 for item in items {
                     self.collect_binding_locals_recursive(*item, locals);
                 }

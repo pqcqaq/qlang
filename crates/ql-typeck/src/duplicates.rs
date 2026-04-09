@@ -272,7 +272,9 @@ impl Checker {
     fn check_pattern_structure(&mut self, module: &Module, pattern_id: PatternId) {
         let pattern = module.pattern(pattern_id);
         match &pattern.kind {
-            PatternKind::Tuple(items) | PatternKind::TupleStruct { items, .. } => {
+            PatternKind::Tuple(items)
+            | PatternKind::Array(items)
+            | PatternKind::TupleStruct { items, .. } => {
                 for &item in items {
                     self.check_pattern_structure(module, item);
                 }
@@ -322,7 +324,9 @@ impl Checker {
                     local.span,
                 );
             }
-            PatternKind::Tuple(items) | PatternKind::TupleStruct { items, .. } => {
+            PatternKind::Tuple(items)
+            | PatternKind::Array(items)
+            | PatternKind::TupleStruct { items, .. } => {
                 for &item in items {
                     self.collect_pattern_bindings(module, item, seen);
                 }

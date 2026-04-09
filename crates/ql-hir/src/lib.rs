@@ -365,6 +365,7 @@ pub struct Pattern {
 pub enum PatternKind {
     Binding(LocalId),
     Tuple(Vec<PatternId>),
+    Array(Vec<PatternId>),
     Path(Path),
     TupleStruct {
         path: Path,

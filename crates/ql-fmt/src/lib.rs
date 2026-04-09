@@ -510,6 +510,16 @@ fn format_pattern(pattern: &Pattern, out: &mut String) {
             }
             out.push(')');
         }
+        PatternKind::Array(items) => {
+            out.push('[');
+            for (idx, item) in items.iter().enumerate() {
+                if idx > 0 {
+                    out.push_str(", ");
+                }
+                format_pattern(item, out);
+            }
+            out.push(']');
+        }
         PatternKind::Path(path) => format_path(path, out),
         PatternKind::TupleStruct { path, items } => {
             format_path(path, out);

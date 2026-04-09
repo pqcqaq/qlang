@@ -413,6 +413,9 @@ impl Lowerer {
             ast::PatternKind::Tuple(items) => {
                 PatternKind::Tuple(items.iter().map(|item| self.lower_pattern(item)).collect())
             }
+            ast::PatternKind::Array(items) => {
+                PatternKind::Array(items.iter().map(|item| self.lower_pattern(item)).collect())
+            }
             ast::PatternKind::Path(path) => PatternKind::Path(path.clone()),
             ast::PatternKind::TupleStruct { path, items } => PatternKind::TupleStruct {
                 path: path.clone(),

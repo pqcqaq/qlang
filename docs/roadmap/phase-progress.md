@@ -7,6 +7,7 @@
 
 ## 总体结论
 
+- 这轮继续把 `TaskHandle` capturing closure transport 推到 cleanup awaited fixed-array destructuring scrutinees：capturing sync closure 现在不再只限 cleanup 的 tuple / struct aggregate destructuring scrutinee，而是已继续接受首个 fixed-array destructuring scrutinee 子集，即 `defer { sink(match await (if ... { left } else { right })() { [first, _, last] => ... }) }` 与 `defer match await (match ... { true => left, false => right })() { [first, middle, last] if first == 30 => ... }` 这类 fixed-array catch-all scrutinee 也可直接消费 closure 返回的 handle。对应的 driver LLVM IR 回归、`ql build --emit obj` fixture，以及 fixed-array pattern 的最小 parser/typeck/codegen 支撑都已单独锁住，因此这条 task-handle cleanup-awaited transport 已从 tuple/struct destructuring 继续推进到 fixed-array destructuring。
 - P1 到 P6 已完成，并且已经形成可持续扩展的工程主干。
 - P7 正在进行，但主线不是“重新设计 async”，而是在既有 compiler/runtime/build 真相源上保守扩面。
 - 这轮继续把 `TaskHandle` capturing closure transport 推到 cleanup awaited aggregate destructuring scrutinees：capturing sync closure 现在不再只限 cleanup 的 awaited aggregate `current` binding scrutinee，而是已继续接受首个 awaited aggregate destructuring scrutinee 子集，即 `defer { sink(match await (if ... { pair_left } else { pair_right })() { (left, right) => ... }) }` 与 `defer match await (match ... { true => state_left, false => state_right })() { State { slot: Slot { value } } if value == 13 => ... }` 这类 tuple / struct catch-all scrutinee 也可直接消费 closure 返回的 handle。对应的 driver LLVM IR 回归与 `ql build --emit obj` fixture 也已单独锁住，因此这条 task-handle cleanup-awaited transport 已从 aggregate binding 继续推进到 aggregate destructuring。

@@ -2595,6 +2595,35 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            PatternKind::Array(items) => {
+                if let Ty::Array { element, len } = expected {
+                    if *len != items.len() {
+                        self.diagnostics.push(
+                            Diagnostic::error(format!(
+                                "array pattern expects {} item(s), found {}",
+                                items.len(),
+                                len
+                            ))
+                            .with_label(Label::new(pattern.span).with_message("pattern here")),
+                        );
+                    }
+                    for &item in items {
+                        self.bind_pattern(item, element);
+                    }
+                } else {
+                    if !expected.is_unknown() {
+                        self.diagnostics.push(
+                            Diagnostic::error(format!(
+                                "array pattern requires a fixed-array value, found `{expected}`"
+                            ))
+                            .with_label(Label::new(pattern.span).with_message("pattern here")),
+                        );
+                    }
+                    for &item in items {
+                        self.bind_pattern(item, &Ty::Unknown);
+                    }
+                }
+            }
             PatternKind::TupleStruct { items, .. } => {
                 let invalid_root_message =
                     self.invalid_tuple_struct_pattern_root_message(pattern_id);
@@ -2731,7 +2760,9 @@ impl<'a> Checker<'a> {
             PatternKind::Binding(local_id) => {
                 self.mutable_locals.insert(*local_id);
             }
-            PatternKind::Tuple(items) | PatternKind::TupleStruct { items, .. } => {
+            PatternKind::Tuple(items)
+            | PatternKind::Array(items)
+            | PatternKind::TupleStruct { items, .. } => {
                 for &item in items {
                     self.record_mutable_pattern_bindings(item);
                 }

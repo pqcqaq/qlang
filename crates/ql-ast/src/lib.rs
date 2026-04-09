@@ -372,6 +372,7 @@ impl Pattern {
 pub enum PatternKind {
     Name(String),
     Tuple(Vec<Pattern>),
+    Array(Vec<Pattern>),
     Path(Path),
     TupleStruct {
         path: Path,
