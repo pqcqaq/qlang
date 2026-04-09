@@ -3,13 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
+use ql_analysis::{analyze_package, analyze_package_dependencies};
 use ql_lsp::bridge::{
-    completion_for_package_analysis, definition_for_dependency_methods, span_to_range,
+    definition_for_dependency_methods, definition_for_dependency_struct_fields, span_to_range,
 };
-use tower_lsp::lsp_types::{
-    CompletionItemKind, CompletionResponse, GotoDefinitionResponse, Location, Position,
-};
+use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position};
 
 struct TempDir {
     path: PathBuf,
@@ -97,25 +95,10 @@ fn assert_targets_dependency_snippet(
 }
 
 #[test]
-fn package_bridge_completes_dependency_fields_for_for_loop_helper_tuple_receivers() {
-    let temp = TempDir::new("ql-lsp-for-loop-helper-field-completion");
+fn dependency_field_definition_works_on_for_loop_helper_tuple_receivers() {
+    let temp = TempDir::new("ql-lsp-for-loop-helper-return-field");
     let app_root = temp.path().join("workspace").join("app");
-    let source = r#"
-package demo.app
 
-use demo.dep.Config as Cfg
-
-fn configs(config: Cfg) -> (Cfg, Cfg) {
-    return (config, config)
-}
-
-pub fn read(config: Cfg) -> Int {
-    for current in configs(config) {
-        let value = current.va
-    }
-    return 0
-}
-"#;
     temp.write(
         "workspace/dep/qlang.toml",
         r#"
@@ -123,7 +106,7 @@ pub fn read(config: Cfg) -> Int {
 name = "dep"
 "#,
     );
-    temp.write(
+    let dep_qi = temp.write(
         "workspace/dep/dep.qi",
         r#"
 // qlang interface v1
@@ -147,29 +130,38 @@ name = "app"
 packages = ["../dep"]
 "#,
     );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+fn configs(config: Cfg) -> (Cfg, Cfg) {
+    return (config, config)
+}
+
+pub fn read(config: Cfg) -> Int {
+    for current in configs(config) {
+        return current.value
+    }
+    return 0
+}
+"#;
     temp.write("workspace/app/src/lib.ql", source);
 
     let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(source).expect("analysis should succeed for completion query");
-
-    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+    let definition = definition_for_dependency_struct_fields(
         source,
-        &analysis,
         &package,
-        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
-    ) else {
-        panic!("dependency helper loop field completion should exist");
-    };
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].label, "value");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
-    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
+        offset_to_position(source, nth_offset(source, "value", 1)),
+    )
+    .expect("dependency field definition should exist");
+
+    assert_targets_dependency_snippet(definition, &dep_qi, "value");
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_helper_array_receiver_without_semantic_analysis()
-{
-    let temp = TempDir::new("ql-lsp-for-loop-helper-method-query-broken");
+fn dependency_method_definition_works_on_for_loop_helper_array_receivers_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-for-loop-helper-return-method-broken");
     let app_root = temp.path().join("workspace").join("app");
 
     temp.write(
@@ -229,8 +221,7 @@ pub fn read(config: Cfg) -> Int {
     for current in children(config) {
         let value = current.get()
     }
-    let broken: Int = "oops"
-    return 0
+    return "oops"
 }
 "#;
     temp.write("workspace/app/src/lib.ql", source);
@@ -243,7 +234,7 @@ pub fn read(config: Cfg) -> Int {
         &package,
         offset_to_position(source, nth_offset(source, "get", 1)),
     )
-    .expect("dependency helper loop method definition should exist");
+    .expect("dependency method definition should exist");
 
     assert_targets_dependency_snippet(definition, &dep_qi, "get");
 }
