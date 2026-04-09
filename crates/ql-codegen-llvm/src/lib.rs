@@ -412,7 +412,7 @@ struct SupportedGuardedStringMatchArm {
     target: mir::BasicBlockId,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum SupportedStringMatchPattern {
     Literal(String),
     CatchAll,
@@ -440,6 +440,11 @@ enum SupportedOrdinaryCapturingClosureCall {
         arms: Vec<SupportedOrdinaryStringCapturingClosureCallArm>,
         fallback_closure: mir::ClosureId,
     },
+    StringGuardedMatch {
+        scrutinee: Operand,
+        arms: Vec<SupportedOrdinaryGuardedStringCapturingClosureCallArm>,
+        fallback_closure: mir::ClosureId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -451,6 +456,14 @@ struct SupportedOrdinaryIntegerCapturingClosureCallArm {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SupportedOrdinaryStringCapturingClosureCallArm {
     value: String,
+    closure_id: mir::ClosureId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SupportedOrdinaryGuardedStringCapturingClosureCallArm {
+    pattern: SupportedStringMatchPattern,
+    binding_local: Option<hir::LocalId>,
+    guard: SupportedBoolGuard,
     closure_id: mir::ClosureId,
 }
 
@@ -2337,10 +2350,74 @@ impl<'a> ModuleEmitter<'a> {
                                 closure_spans,
                             );
                         }
+                        SupportedMatchLowering::StringGuarded {
+                            arms,
+                            fallback_target,
+                        } => {
+                            let Some((join_target, local, fallback_closure)) =
+                                control_flow_capturing_closure_block_assignment(
+                                    body,
+                                    *fallback_target,
+                                    staged,
+                                    supported,
+                                    closure_spans,
+                                )
+                            else {
+                                continue;
+                            };
+                            if !conflicting_temps.contains(&local) {
+                                continue;
+                            }
+
+                            let mut lowered_arms = Vec::with_capacity(arms.len());
+                            let mut supported_join = true;
+                            for arm in arms {
+                                let Some((arm_join_target, arm_local, arm_closure)) =
+                                    control_flow_capturing_closure_block_assignment(
+                                        body,
+                                        arm.target,
+                                        staged,
+                                        supported,
+                                        closure_spans,
+                                    )
+                                else {
+                                    supported_join = false;
+                                    break;
+                                };
+                                if arm_join_target != join_target || arm_local != local {
+                                    supported_join = false;
+                                    break;
+                                }
+                                lowered_arms.push(
+                                    SupportedOrdinaryGuardedStringCapturingClosureCallArm {
+                                        pattern: arm.pattern.clone(),
+                                        binding_local: arm.binding_local,
+                                        guard: arm.guard,
+                                        closure_id: arm_closure,
+                                    },
+                                );
+                            }
+                            if !supported_join {
+                                continue;
+                            }
+
+                            self.record_supported_ordinary_control_flow_capturing_closure_call(
+                                body,
+                                join_target,
+                                local,
+                                SupportedOrdinaryCapturingClosureCall::StringGuardedMatch {
+                                    scrutinee: scrutinee.clone(),
+                                    arms: lowered_arms,
+                                    fallback_closure,
+                                },
+                                &mut ordinary_calls,
+                                conflicting_temps,
+                                closure_spans,
+                            );
+                        }
                         SupportedMatchLowering::GuardOnly { .. }
                         | SupportedMatchLowering::BoolGuarded { .. }
-                        | SupportedMatchLowering::IntegerGuarded { .. }
-                        | SupportedMatchLowering::StringGuarded { .. } => {}
+                        | SupportedMatchLowering::IntegerGuarded { .. } => {}
                     }
                 }
                 TerminatorKind::Goto { .. }
@@ -12575,6 +12652,147 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                             "  br i1 {compare}, label %{}, label %{false_target}",
                             arm_labels[index]
                         );
+                    }
+                }
+
+                for (arm, arm_label) in arms.iter().zip(arm_labels.iter()) {
+                    let _ = writeln!(output, "{arm_label}:");
+                    if let Some(value) = self.render_direct_local_capturing_closure_call(
+                        output,
+                        arm.closure_id,
+                        args,
+                        span,
+                    ) && let Some(result_slot) = result_slot.as_ref()
+                    {
+                        let _ = writeln!(
+                            output,
+                            "  store {} {}, ptr {result_slot}",
+                            value.llvm_ty, value.repr
+                        );
+                    }
+                    let _ = writeln!(output, "  br label %{end_label}");
+                }
+
+                let _ = writeln!(output, "{fallback_label}:");
+                if let Some(value) = self.render_direct_local_capturing_closure_call(
+                    output,
+                    *fallback_closure,
+                    args,
+                    span,
+                ) && let Some(result_slot) = result_slot.as_ref()
+                {
+                    let _ = writeln!(
+                        output,
+                        "  store {} {}, ptr {result_slot}",
+                        value.llvm_ty, value.repr
+                    );
+                }
+                let _ = writeln!(output, "  br label %{end_label}");
+
+                let _ = writeln!(output, "{end_label}:");
+                result_slot.map(|slot| {
+                    self.render_loaded_pointer_value(output, slot, return_ty.clone(), span)
+                })
+            }
+            SupportedOrdinaryCapturingClosureCall::StringGuardedMatch {
+                scrutinee,
+                arms,
+                fallback_closure,
+            } => {
+                let scrutinee = self.render_operand(output, scrutinee, span);
+                let return_ty =
+                    self.direct_local_capturing_closure_call_return_ty(*fallback_closure, span);
+                let return_llvm_ty = (!is_void_ty(&return_ty)).then(|| {
+                    self.emitter
+                        .lower_llvm_type(&return_ty, span, "call result")
+                        .expect(
+                            "prepared ordinary capturing-closure control-flow calls should lower callable result types",
+                        )
+                });
+                let result_slot = return_llvm_ty.as_ref().map(|llvm_ty| {
+                    let slot = self.fresh_temp();
+                    let _ = writeln!(output, "  {slot} = alloca {llvm_ty}");
+                    slot
+                });
+                let end_label = self.fresh_label("ordinary_call_match_end");
+                let fallback_label = self.fresh_label("ordinary_call_match_fallback");
+                let dispatch_labels = (0..arms.len())
+                    .map(|_| self.fresh_label("ordinary_call_match_dispatch"))
+                    .collect::<Vec<_>>();
+                let guard_labels = (0..arms.len())
+                    .map(|_| self.fresh_label("ordinary_call_match_guard"))
+                    .collect::<Vec<_>>();
+                let arm_labels = (0..arms.len())
+                    .map(|_| self.fresh_label("ordinary_call_match_arm"))
+                    .collect::<Vec<_>>();
+
+                if arms.is_empty() {
+                    let _ = writeln!(output, "  br label %{fallback_label}");
+                } else {
+                    for (index, arm) in arms.iter().enumerate() {
+                        if index > 0 {
+                            let _ = writeln!(output, "{}:", dispatch_labels[index]);
+                        }
+                        let false_target = if index + 1 == arms.len() {
+                            fallback_label.clone()
+                        } else {
+                            dispatch_labels[index + 1].clone()
+                        };
+                        let guard_target = match arm.guard {
+                            SupportedBoolGuard::Always => arm_labels[index].clone(),
+                            SupportedBoolGuard::Dynamic(_) => guard_labels[index].clone(),
+                        };
+
+                        match &arm.pattern {
+                            SupportedStringMatchPattern::Literal(value) => {
+                                let compare = self
+                                    .render_string_match_literal_condition(
+                                        output,
+                                        scrutinee.clone(),
+                                        value,
+                                        span,
+                                    )
+                                    .repr;
+                                let _ = writeln!(
+                                    output,
+                                    "  br i1 {compare}, label %{guard_target}, label %{false_target}"
+                                );
+                            }
+                            SupportedStringMatchPattern::CatchAll => {
+                                let _ = writeln!(output, "  br label %{guard_target}");
+                            }
+                        }
+
+                        if let SupportedBoolGuard::Dynamic(expr_id) = arm.guard {
+                            let _ = writeln!(output, "{}:", guard_labels[index]);
+                            let guard_binding = arm.binding_local.map(|local| GuardBindingValue {
+                                local,
+                                value: scrutinee.clone(),
+                            });
+                            if let Some(binding) = guard_binding.as_ref()
+                                && let Some(local) =
+                                    mir_local_for_hir_local(self.body, binding.local)
+                            {
+                                let _ = writeln!(
+                                    output,
+                                    "  store {} {}, ptr {}",
+                                    binding.value.llvm_ty,
+                                    binding.value.repr,
+                                    llvm_slot_name(self.body, local)
+                                );
+                            }
+                            let condition = self.render_bool_guard_expr(
+                                output,
+                                expr_id,
+                                span,
+                                guard_binding.as_ref(),
+                            );
+                            let _ = writeln!(
+                                output,
+                                "  br i1 {}, label %{}, label %{false_target}",
+                                condition.repr, arm_labels[index]
+                            );
+                        }
                     }
                 }
 

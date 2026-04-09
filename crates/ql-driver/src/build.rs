@@ -8943,6 +8943,67 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_guarded_capturing_closure_string_match_call_roots() {
+        let dir = TestDir::new("ql-driver-guarded-capturing-closure-string-match");
+        let source = dir.write(
+            "guarded_capturing_closure_string_match.ql",
+            r#"
+fn enabled() -> Bool {
+    return true
+}
+
+const ALPHA: String = "alpha"
+static BETA: String = "beta"
+
+fn main() -> Int {
+    let offset = 40
+    let branch = false
+    let left = (value: Int) => value + offset
+    let right = (value: Int) => value + offset + 10
+    let fallback = (value: Int) => value + offset + 20
+    let direct_key = "alpha"
+    let binding_key = "beta"
+    let chosen = match binding_key {
+        ALPHA if branch => left,
+        BETA if enabled() => right,
+        _ => fallback,
+    }
+    let alias = chosen
+    return (match direct_key {
+        ALPHA if enabled() => left,
+        BETA if branch => right,
+        _ => fallback,
+    })(1) + alias(2)
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/guarded_capturing_closure_string_match.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("guarded capturing closure string match call roots should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("call i32 @memcmp"));
+        assert!(rendered.contains("ordinary_call_match_guard"));
+        assert!(rendered.contains("ordinary_call_match_arm"));
+        assert!(
+            !rendered.contains("does not support capturing-closure control-flow call lowering yet")
+        );
+        assert!(!rendered.contains("does not support `match` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_block_sequence_lowering() {
         let dir = TestDir::new("ql-driver-cleanup-block-sequence");
         let source = dir.write(
