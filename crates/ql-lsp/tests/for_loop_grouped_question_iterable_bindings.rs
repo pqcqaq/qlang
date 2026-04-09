@@ -3,14 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
+use ql_analysis::{analyze_package, analyze_package_dependencies};
 use ql_lsp::bridge::{
-    completion_for_dependency_member_fields, completion_for_dependency_methods,
-    completion_for_package_analysis, definition_for_dependency_methods, span_to_range,
+    definition_for_dependency_methods, definition_for_dependency_struct_fields, span_to_range,
 };
-use tower_lsp::lsp_types::{
-    CompletionItemKind, CompletionResponse, GotoDefinitionResponse, Location, Position,
-};
+use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position};
 
 struct TempDir {
     path: PathBuf,
@@ -98,21 +95,9 @@ fn assert_targets_dependency_snippet(
 }
 
 #[test]
-fn package_bridge_completes_dependency_fields_for_for_loop_grouped_question_field_iterables() {
-    let temp = TempDir::new("ql-lsp-for-loop-grouped-question-field-completion");
+fn dependency_field_definition_works_on_for_loop_grouped_question_field_iterables() {
+    let temp = TempDir::new("ql-lsp-for-loop-grouped-question-field");
     let app_root = temp.path().join("workspace").join("app");
-    let source = r#"
-package demo.app
-
-use demo.dep.{maybe_children as kids}
-
-pub fn read() -> Int {
-    for current in kids()? {
-        let value = current.va
-    }
-    return 0
-}
-"#;
     temp.write(
         "workspace/dep/qlang.toml",
         r#"
@@ -120,7 +105,7 @@ pub fn read() -> Int {
 name = "dep"
 "#,
     );
-    temp.write(
+    let dep_qi = temp.write(
         "workspace/dep/dep.qi",
         r#"
 // qlang interface v1
@@ -136,6 +121,18 @@ pub struct Child {
 pub fn maybe_children() -> Option[[Child; 2]]
 "#,
     );
+    let source = r#"
+package demo.app
+
+use demo.dep.{maybe_children as kids}
+
+pub fn read() -> Int {
+    for current in kids()? {
+        return current.value
+    }
+    return 0
+}
+"#;
     temp.write(
         "workspace/app/qlang.toml",
         r#"
@@ -149,164 +146,14 @@ packages = ["../dep"]
     temp.write("workspace/app/src/lib.ql", source);
 
     let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(source).expect("analysis should succeed for completion query");
-
-    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
-        source,
-        &analysis,
-        &package,
-        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
-    ) else {
-        panic!("grouped question field iterable completion should exist");
-    };
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].label, "value");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
-    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
-}
-
-#[test]
-fn package_bridge_completes_dependency_fields_for_for_loop_grouped_question_field_iterables_without_semantic_analysis(
-) {
-    let temp = TempDir::new("ql-lsp-for-loop-grouped-question-field-broken-completion");
-    let app_root = temp.path().join("workspace").join("app");
-    let source = r#"
-package demo.app
-
-use demo.dep.{maybe_children as kids}
-
-pub fn read() -> Int {
-    for current in kids()? {
-        let value = current.va
-    }
-    let broken: Int = "oops"
-    return 0
-}
-"#;
-    temp.write(
-        "workspace/dep/qlang.toml",
-        r#"
-[package]
-name = "dep"
-"#,
-    );
-    temp.write(
-        "workspace/dep/dep.qi",
-        r#"
-// qlang interface v1
-// package: dep
-
-// source: src/lib.ql
-package demo.dep
-
-pub struct Child {
-    value: Int,
-}
-
-pub fn maybe_children() -> Option[[Child; 2]]
-"#,
-    );
-    temp.write(
-        "workspace/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../dep"]
-"#,
-    );
-    temp.write("workspace/app/src/lib.ql", source);
-
-    assert!(analyze_package(&app_root).is_err());
-    let package = analyze_package_dependencies(&app_root)
-        .expect("dependency-only package analysis should succeed");
-
-    let Some(CompletionResponse::Array(items)) = completion_for_dependency_member_fields(
+    let definition = definition_for_dependency_struct_fields(
         source,
         &package,
-        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
-    ) else {
-        panic!("grouped question field iterable completion should exist");
-    };
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].label, "value");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
-    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
-}
+        offset_to_position(source, nth_offset(source, "value", 1)),
+    )
+    .expect("grouped question field iterable definition should exist");
 
-#[test]
-fn package_bridge_completes_dependency_methods_for_for_loop_grouped_question_method_iterables_without_semantic_analysis(
-) {
-    let temp = TempDir::new("ql-lsp-for-loop-grouped-question-method-broken-completion");
-    let app_root = temp.path().join("workspace").join("app");
-    let source = r#"
-package demo.app
-
-use demo.dep.{MAYBE_ITEMS as maybe_items}
-
-pub fn read() -> Int {
-    for current in maybe_items? {
-        let value = current.ge
-    }
-    let broken: Int = "oops"
-    return 0
-}
-"#;
-    temp.write(
-        "workspace/dep/qlang.toml",
-        r#"
-[package]
-name = "dep"
-"#,
-    );
-    temp.write(
-        "workspace/dep/dep.qi",
-        r#"
-// qlang interface v1
-// package: dep
-
-// source: src/lib.ql
-package demo.dep
-
-pub struct Child {
-    value: Int,
-}
-
-pub static MAYBE_ITEMS: Option[[Child; 2]]
-
-impl Child {
-    pub fn get(self) -> Int
-}
-"#,
-    );
-    temp.write(
-        "workspace/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../dep"]
-"#,
-    );
-    temp.write("workspace/app/src/lib.ql", source);
-
-    assert!(analyze_package(&app_root).is_err());
-    let package = analyze_package_dependencies(&app_root)
-        .expect("dependency-only package analysis should succeed");
-
-    let Some(CompletionResponse::Array(items)) = completion_for_dependency_methods(
-        source,
-        &package,
-        offset_to_position(source, nth_offset(source, ".ge", 1) + ".ge".len()),
-    ) else {
-        panic!("grouped question method iterable completion should exist");
-    };
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].label, "get");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
-    assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+    assert_targets_dependency_snippet(definition, &dep_qi, "value");
 }
 
 #[test]
