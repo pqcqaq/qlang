@@ -474,6 +474,12 @@ fn render_c_header(header_path: &Path, functions: &[CHeaderFunction]) -> String 
     output.push_str("\n\n");
     output.push_str("#include <stdbool.h>\n");
     output.push_str("#include <stdint.h>\n\n");
+    if header_uses_string(functions) {
+        output.push_str("typedef struct ql_string {\n");
+        output.push_str("    const uint8_t* ptr;\n");
+        output.push_str("    int64_t len;\n");
+        output.push_str("} ql_string;\n\n");
+    }
     output.push_str("#ifdef __cplusplus\n");
     output.push_str("extern \"C\" {\n");
     output.push_str("#endif\n\n");
@@ -505,6 +511,16 @@ fn render_c_header(header_path: &Path, functions: &[CHeaderFunction]) -> String 
     output.push_str(&include_guard);
     output.push_str(" */\n");
     output
+}
+
+fn header_uses_string(functions: &[CHeaderFunction]) -> bool {
+    functions.iter().any(|function| {
+        function.return_ty.contains("ql_string")
+            || function
+                .params
+                .iter()
+                .any(|param| param.ty.contains("ql_string"))
+    })
 }
 
 fn render_c_type(ty: &Ty, span: ql_span::Span, context: &str) -> Result<String, Diagnostic> {
@@ -568,6 +584,10 @@ fn lower_c_type_spelling(
         }),
         Ty::Builtin(BuiltinType::F64) => Ok(CTypeSpelling {
             base: "double".to_owned(),
+            pointer_constness: Vec::new(),
+        }),
+        Ty::Builtin(BuiltinType::String) => Ok(CTypeSpelling {
+            base: "ql_string".to_owned(),
             pointer_constness: Vec::new(),
         }),
         Ty::Pointer { is_const, inner } => {
@@ -910,26 +930,55 @@ extern "c" pub fn fill(buf: *U8, src: *const U8) -> *const U8 {
     }
 
     #[test]
-    fn emit_c_header_rejects_unsupported_export_types() {
-        let dir = TestDir::new("ql-driver-ffi-header-unsupported");
+    fn emit_c_header_supports_string_exports() {
+        let dir = TestDir::new("ql-driver-ffi-string-header");
         let source = dir.write(
-            "ffi_bad.ql",
+            "ffi_string.ql",
             r#"
-extern "c" pub fn q_print(message: String) -> Void {
+extern "c" pub fn q_echo(message: String) -> String {
+    return message
 }
 "#,
         );
+        let output = dir.path().join("artifacts/ffi_string.h");
 
-        let error = emit_c_header(&source, &CHeaderOptions::default())
-            .expect_err("unsupported exports should fail header generation");
-        let diagnostics = match error {
-            CHeaderError::Diagnostics { diagnostics, .. } => diagnostics,
-            other => panic!("expected diagnostics error, got {other:?}"),
-        };
+        emit_c_header(
+            &source,
+            &CHeaderOptions {
+                output: Some(output.clone()),
+                ..CHeaderOptions::default()
+            },
+        )
+        .expect("string header generation should succeed");
 
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message == "C header generation does not support parameter type `String` yet"
-        }));
+        let rendered = fs::read_to_string(output).expect("read generated string header");
+        assert_eq!(
+            rendered,
+            concat!(
+                "#ifndef QLANG_FFI_STRING_H\n",
+                "#define QLANG_FFI_STRING_H\n",
+                "\n",
+                "#include <stdbool.h>\n",
+                "#include <stdint.h>\n",
+                "\n",
+                "typedef struct ql_string {\n",
+                "    const uint8_t* ptr;\n",
+                "    int64_t len;\n",
+                "} ql_string;\n",
+                "\n",
+                "#ifdef __cplusplus\n",
+                "extern \"C\" {\n",
+                "#endif\n",
+                "\n",
+                "ql_string q_echo(ql_string message);\n",
+                "\n",
+                "#ifdef __cplusplus\n",
+                "}\n",
+                "#endif\n",
+                "\n",
+                "#endif /* QLANG_FFI_STRING_H */\n"
+            )
+        );
     }
 
     #[test]

@@ -2,8 +2,9 @@ mod support;
 
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
-    expect_snapshot_matches, expect_stderr_contains, expect_stderr_not_contains, expect_success,
-    ql_command, read_normalized_file, run_command_capture, workspace_root,
+    expect_snapshot_matches, expect_stderr_contains, expect_stderr_not_contains,
+    expect_stdout_contains_all, expect_success, ql_command, read_normalized_file,
+    run_command_capture, workspace_root,
 };
 
 #[test]
@@ -71,40 +72,57 @@ fn ffi_header_rejects_unknown_surface() {
 }
 
 #[test]
-fn ffi_header_rejects_unsupported_export_signature() {
+fn ffi_header_supports_string_export_signatures() {
     let workspace_root = workspace_root();
-    let temp = TempDir::new("ql-ffi-header-fail");
+    let temp = TempDir::new("ql-ffi-header-string");
     let source = temp.write(
-        "unsupported.ql",
+        "string_export.ql",
         r#"
-extern "c" pub fn q_print(message: String) -> Void {
+extern "c" pub fn q_echo(message: String) -> String {
+    return message
 }
 "#,
     );
+    let header = temp.path().join("string_export.h");
 
     let mut command = ql_command(&workspace_root);
-    command.args(["ffi", "header"]).arg(&source);
-    let output = run_command_capture(&mut command, "`ql ffi header` on unsupported signature");
-    let (stdout, stderr) = expect_exit_code(
-        "ffi-header-unsupported-export-signature",
-        "unsupported header generation",
+    command
+        .args(["ffi", "header"])
+        .arg(&source)
+        .arg("-o")
+        .arg(&header);
+    let output = run_command_capture(&mut command, "`ql ffi header` on string export signature");
+    let (stdout, stderr) = expect_success(
+        "ffi-header-string-export-signature",
+        "string header generation",
         &output,
-        1,
     )
-    .expect("unsupported header generation should fail with exit code 1");
-    expect_empty_stdout(
-        "ffi-header-unsupported-export-signature",
-        "failing header generation",
+    .expect("string header generation should succeed");
+    expect_stdout_contains_all(
+        "ffi-header-string-export-signature",
         &stdout,
+        &["wrote c-header:", "string_export.h"],
     )
-    .expect("unsupported header generation should not print stdout");
-    expect_stderr_contains(
-        "ffi-header-unsupported-export-signature",
-        "unsupported header generation",
+    .expect("string header generation should report the header artifact path");
+    expect_empty_stderr(
+        "ffi-header-string-export-signature",
+        "string header generation",
         &stderr,
-        "C header generation does not support parameter type `String` yet",
     )
-    .expect("unsupported signature diagnostic should mention String");
+    .expect("string header generation should not print stderr");
+    expect_file_exists(
+        "ffi-header-string-export-signature",
+        &header,
+        "header artifact",
+        "string header generation",
+    )
+    .expect("string header generation should produce a header artifact");
+
+    let rendered = read_normalized_file(&header, "generated string ffi header");
+    assert!(rendered.contains("typedef struct ql_string {"));
+    assert!(rendered.contains("const uint8_t* ptr;"));
+    assert!(rendered.contains("int64_t len;"));
+    assert!(rendered.contains("ql_string q_echo(ql_string message);"));
 }
 
 #[test]

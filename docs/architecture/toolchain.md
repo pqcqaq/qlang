@@ -229,7 +229,7 @@ build-side sidecar 默认输出路径：
 - 默认投影 public 顶层 `extern "c"` 函数定义作为 exported surface
 - 在 `--surface imports` 下投影顶层 `extern "c"` 声明和 `extern "c"` block 成员声明
 - 在 `--surface both` 下按源码顺序合并 import/export surface
-- 将当前已支持的标量 / 指针类型投影到确定性的 C declaration
+- 将当前已支持的标量 / `String` / 指针类型投影到确定性的 C declaration
 - 输出 include guard、`<stdbool.h>` / `<stdint.h>`、C++ `extern "C"` wrapper
 - include guard 会按最终输出头文件名生成，避免 export/import/both 三份 header 互相冲突
 
@@ -244,6 +244,7 @@ build-side sidecar 默认输出路径：
 - `Int` / `UInt` / `I8` / `I16` / `I32` / `I64` / `ISize`
 - `U8` / `U16` / `U32` / `U64` / `USize`
 - `F32` / `F64`
+- `String`，当前稳定投影为 `typedef struct ql_string { const uint8_t* ptr; int64_t len; } ql_string;`
 - 原始指针和多级原始指针
 - `exports` / `imports` / `both` 三种 surface 选择
 - 按源码顺序稳定输出 declaration
