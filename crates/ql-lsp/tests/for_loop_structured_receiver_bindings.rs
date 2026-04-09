@@ -3,13 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
+use ql_analysis::{analyze_package, analyze_package_dependencies};
 use ql_lsp::bridge::{
-    completion_for_package_analysis, definition_for_dependency_methods, span_to_range,
+    definition_for_dependency_methods, definition_for_dependency_struct_fields, span_to_range,
 };
-use tower_lsp::lsp_types::{
-    CompletionItemKind, CompletionResponse, GotoDefinitionResponse, Location, Position,
-};
+use tower_lsp::lsp_types::{GotoDefinitionResponse, Location, Position};
 
 struct TempDir {
     path: PathBuf,
@@ -97,21 +95,9 @@ fn assert_targets_dependency_snippet(
 }
 
 #[test]
-fn package_bridge_completes_dependency_fields_for_for_loop_if_tuple_receivers() {
-    let temp = TempDir::new("ql-lsp-for-loop-if-field-completion");
+fn dependency_field_definition_works_on_for_loop_if_tuple_receivers() {
+    let temp = TempDir::new("ql-lsp-for-loop-if-field");
     let app_root = temp.path().join("workspace").join("app");
-    let source = r#"
-package demo.app
-
-use demo.dep.Config as Cfg
-
-pub fn read(config: Cfg, flag: Bool) -> Int {
-    for current in (if flag { (config, config) } else { (config, config) }) {
-        let value = current.va
-    }
-    return 0
-}
-"#;
     temp.write(
         "workspace/dep/qlang.toml",
         r#"
@@ -119,7 +105,7 @@ pub fn read(config: Cfg, flag: Bool) -> Int {
 name = "dep"
 "#,
     );
-    temp.write(
+    let dep_qi = temp.write(
         "workspace/dep/dep.qi",
         r#"
 // qlang interface v1
@@ -133,6 +119,18 @@ pub struct Config {
 }
 "#,
     );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg, flag: Bool) -> Int {
+    for current in (if flag { (config, config) } else { (config, config) }) {
+        return current.value
+    }
+    return 0
+}
+"#;
     temp.write(
         "workspace/app/qlang.toml",
         r#"
@@ -146,20 +144,14 @@ packages = ["../dep"]
     temp.write("workspace/app/src/lib.ql", source);
 
     let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(source).expect("analysis should succeed for completion query");
-
-    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+    let definition = definition_for_dependency_struct_fields(
         source,
-        &analysis,
         &package,
-        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
-    ) else {
-        panic!("dependency structured loop field completion should exist");
-    };
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].label, "value");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
-    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
+        offset_to_position(source, nth_offset(source, "value", 1)),
+    )
+    .expect("dependency structured loop field definition should exist");
+
+    assert_targets_dependency_snippet(definition, &dep_qi, "value");
 }
 
 #[test]
