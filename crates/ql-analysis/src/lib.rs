@@ -11,6 +11,7 @@ use ql_borrowck::{
 };
 use ql_diagnostics::{Diagnostic, Label, render_diagnostics};
 use ql_hir::{ExprId, LocalId, PatternId, lower_module};
+use ql_lexer::{is_keyword, is_valid_identifier};
 use ql_mir::{MirModule, lower_module as lower_mir, render_module as render_mir_module};
 use ql_parser::{ParseError, parse_source};
 use ql_project::{
@@ -1614,6 +1615,90 @@ impl PackageAnalysis {
         }
         references.sort_by_key(|reference| (reference.span.start, reference.span.end));
         Some(references)
+    }
+
+    pub fn dependency_prepare_rename_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<RenameTarget> {
+        let module = parse_source(source).ok()?;
+        let occurrence = dependency_import_occurrence_in_module(&module, offset)?;
+        dependency_import_alias_binding_for_local_name(self, &module, &occurrence.local_name)?;
+        Some(RenameTarget {
+            kind: SymbolKind::Import,
+            name: occurrence.local_name,
+            span: occurrence.span,
+        })
+    }
+
+    pub fn dependency_rename_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+        new_name: &str,
+    ) -> Result<Option<RenameResult>, RenameError> {
+        validate_dependency_rename_text(new_name)?;
+
+        let module = match parse_source(source) {
+            Ok(module) => module,
+            Err(_) => return Ok(None),
+        };
+        let Some(target_occurrence) = dependency_import_occurrence_in_module(&module, offset)
+        else {
+            return Ok(None);
+        };
+        let Some((dependency, symbol)) = dependency_import_alias_binding_for_local_name(
+            self,
+            &module,
+            &target_occurrence.local_name,
+        ) else {
+            return Ok(None);
+        };
+
+        let mut edits = source
+            .match_indices(&target_occurrence.local_name)
+            .filter_map(|(start, _)| {
+                let occurrence = dependency_import_occurrence_in_module(&module, start)?;
+                if occurrence.span.start != start
+                    || occurrence.local_name != target_occurrence.local_name
+                {
+                    return None;
+                }
+
+                let (occurrence_dependency, occurrence_symbol) =
+                    dependency_import_alias_binding_for_local_name(
+                        self,
+                        &module,
+                        &occurrence.local_name,
+                    )?;
+                if occurrence_dependency.interface_path != dependency.interface_path
+                    || occurrence_dependency.artifact.package_name
+                        != dependency.artifact.package_name
+                    || occurrence_symbol.source_path != symbol.source_path
+                    || occurrence_symbol.kind != symbol.kind
+                    || occurrence_symbol.name != symbol.name
+                {
+                    return None;
+                }
+
+                Some(RenameEdit {
+                    span: occurrence.span,
+                    replacement: new_name.to_owned(),
+                })
+            })
+            .collect::<Vec<_>>();
+        if edits.is_empty() {
+            return Ok(None);
+        }
+        edits.sort_by_key(|edit| (edit.span.start, edit.span.end));
+
+        Ok(Some(RenameResult {
+            kind: SymbolKind::Import,
+            old_name: target_occurrence.local_name,
+            new_name: new_name.to_owned(),
+            edits,
+        }))
     }
 
     pub fn dependency_value_references_in_source_at(
@@ -8170,6 +8255,23 @@ fn dependency_import_binding_for_local_name<'a>(
     matches.pop()
 }
 
+fn dependency_import_alias_binding_for_local_name<'a>(
+    package: &'a PackageAnalysis,
+    module: &ql_ast::Module,
+    local_name: &str,
+) -> Option<(&'a DependencyInterface, &'a DependencySymbol)> {
+    let mut matches = module
+        .uses
+        .iter()
+        .flat_map(|use_decl| dependency_import_alias_bindings_for_local_name(use_decl, local_name))
+        .filter_map(|binding| package.resolve_dependency_import_binding(&binding))
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return None;
+    }
+    matches.pop()
+}
+
 fn dependency_import_bindings_for_local_name(
     use_decl: &ql_ast::UseDecl,
     local_name: &str,
@@ -8190,6 +8292,49 @@ fn dependency_import_bindings_for_local_name(
             Vec::new()
         }
     }
+}
+
+fn dependency_import_alias_bindings_for_local_name(
+    use_decl: &ql_ast::UseDecl,
+    local_name: &str,
+) -> Vec<ImportBinding> {
+    if let Some(group) = &use_decl.group {
+        group
+            .iter()
+            .filter_map(|item| {
+                let alias = item.alias.as_ref()?;
+                (alias == local_name).then_some(ImportBinding::grouped(&use_decl.prefix, item))
+            })
+            .collect()
+    } else {
+        let Some(alias) = use_decl.alias.as_ref() else {
+            return Vec::new();
+        };
+        if alias != local_name {
+            return Vec::new();
+        }
+        vec![ImportBinding::direct(use_decl)]
+    }
+}
+
+fn validate_dependency_rename_text(text: &str) -> Result<(), RenameError> {
+    let escaped = text
+        .strip_prefix('`')
+        .and_then(|value| value.strip_suffix('`'));
+    if let Some(inner) = escaped {
+        return is_valid_identifier(inner)
+            .then_some(())
+            .ok_or_else(|| RenameError::InvalidIdentifier(text.to_owned()));
+    }
+
+    if !is_valid_identifier(text) {
+        return Err(RenameError::InvalidIdentifier(text.to_owned()));
+    }
+    if is_keyword(text) {
+        return Err(RenameError::Keyword(text.to_owned()));
+    }
+
+    Ok(())
 }
 
 fn dependency_value_type_definition_root_in_module(

@@ -39,12 +39,13 @@ use crate::bridge::{
     definition_for_package_analysis, diagnostics_to_lsp, document_symbol_kind,
     document_symbols_for_analysis, hover_for_dependency_imports, hover_for_dependency_methods,
     hover_for_dependency_struct_fields, hover_for_dependency_values, hover_for_dependency_variants,
-    hover_for_package_analysis, prepare_rename_for_analysis, references_for_analysis,
+    hover_for_package_analysis, position_to_offset, prepare_rename_for_analysis,
+    prepare_rename_for_dependency_imports, references_for_analysis,
     references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_values,
     references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
-    semantic_tokens_for_analysis, semantic_tokens_legend, span_to_range,
-    type_definition_for_analysis, type_definition_for_dependency_imports,
+    rename_for_dependency_imports, semantic_tokens_for_analysis, semantic_tokens_legend,
+    span_to_range, type_definition_for_analysis, type_definition_for_dependency_imports,
     type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
     type_definition_for_dependency_values, type_definition_for_dependency_variants,
     type_definition_for_package_analysis, workspace_symbols_for_analysis,
@@ -867,7 +868,22 @@ impl LanguageServer for Backend {
     ) -> Result<Option<PrepareRenameResponse>> {
         let uri = params.text_document.uri;
         let position = params.position;
-        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            if let Some(rename) = prepare_rename_for_dependency_imports(&source, &package, position)
+            {
+                return Ok(Some(rename));
+            }
+            if position_to_offset(&source, position)
+                .and_then(|offset| package.dependency_hover_in_source_at(&source, offset))
+                .is_some()
+            {
+                return Ok(None);
+            }
+        }
+        let Ok(analysis) = analyze_source(&source) else {
             return Ok(None);
         };
 
@@ -877,7 +893,24 @@ impl LanguageServer for Backend {
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
-        let Some((source, analysis)) = self.analyzed_document(&uri).await else {
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            if let Some(edit) =
+                rename_for_dependency_imports(&uri, &source, &package, position, &params.new_name)
+                    .map_err(|error| Error::invalid_params(error.to_string()))?
+            {
+                return Ok(Some(edit));
+            }
+            if position_to_offset(&source, position)
+                .and_then(|offset| package.dependency_hover_in_source_at(&source, offset))
+                .is_some()
+            {
+                return Ok(None);
+            }
+        }
+        let Ok(analysis) = analyze_source(&source) else {
             return Ok(None);
         };
 

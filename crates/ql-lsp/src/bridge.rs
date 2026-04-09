@@ -1156,6 +1156,21 @@ pub fn prepare_rename_for_analysis(
     })
 }
 
+pub fn prepare_rename_for_dependency_imports(
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+) -> Option<PrepareRenameResponse> {
+    let offset = position_to_offset(source, position)?;
+    let target = package.dependency_prepare_rename_in_source_at(source, offset)?;
+    let placeholder = source.get(target.span.start..target.span.end)?.to_owned();
+
+    Some(PrepareRenameResponse::RangeWithPlaceholder {
+        range: span_to_range(source, target.span),
+        placeholder,
+    })
+}
+
 pub fn rename_for_analysis(
     uri: &Url,
     source: &str,
@@ -1167,6 +1182,31 @@ pub fn rename_for_analysis(
         return Ok(None);
     };
     let Some(rename) = analysis.rename_at(offset, new_name)? else {
+        return Ok(None);
+    };
+
+    let edits = rename
+        .edits
+        .into_iter()
+        .map(|edit| TextEdit::new(span_to_range(source, edit.span), edit.replacement))
+        .collect::<Vec<_>>();
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), edits);
+
+    Ok(Some(WorkspaceEdit::new(changes)))
+}
+
+pub fn rename_for_dependency_imports(
+    uri: &Url,
+    source: &str,
+    package: &PackageAnalysis,
+    position: Position,
+    new_name: &str,
+) -> Result<Option<WorkspaceEdit>, RenameError> {
+    let Some(offset) = position_to_offset(source, position) else {
+        return Ok(None);
+    };
+    let Some(rename) = package.dependency_rename_in_source_at(source, offset, new_name)? else {
         return Ok(None);
     };
 
