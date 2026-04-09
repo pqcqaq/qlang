@@ -3,10 +3,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_source};
+use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    declaration_for_package_analysis, definition_for_package_analysis, hover_for_package_analysis,
-    references_for_package_analysis, span_to_range,
+    declaration_for_dependency_values, declaration_for_package_analysis,
+    definition_for_dependency_values, definition_for_package_analysis, hover_for_dependency_values,
+    hover_for_package_analysis, references_for_dependency_values, references_for_package_analysis,
+    span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::request::GotoDeclarationResponse;
@@ -189,7 +191,12 @@ fn assert_dependency_location(location: &Location, dep_qi: &Path, snippet: &str)
     );
 }
 
-fn build_source(root: RootKind, structured: StructuredKind) -> String {
+fn build_source(root: RootKind, structured: StructuredKind, broken: bool) -> String {
+    let tail = if broken {
+        "    return \"oops\"\n"
+    } else {
+        "    return 0\n"
+    };
     format!(
         r#"
 package demo.app
@@ -200,20 +207,21 @@ pub fn read(flag: Bool) -> Int {{
     for current in ({receiver}) {{
         return {body}
     }}
-    return 0
-}}
+{tail}}}
 "#,
         use_decl = root.use_decl(),
         receiver = structured.wrap(root.receiver_expr()),
         body = root.body_expr(),
+        tail = tail,
     )
 }
 
-fn run_root_query_case(root: RootKind, structured: StructuredKind) {
+fn run_root_query_case(root: RootKind, structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-for-loop-grouped-question-structured-iterable-{}-{}-value-root-query",
+        "ql-lsp-for-loop-grouped-question-structured-iterable-{}-{}-value-root-query{}",
         root.label(),
-        structured.label()
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -241,154 +249,296 @@ name = "app"
 packages = ["../dep"]
 "#,
     );
-    let source = build_source(root, structured);
+    let source = build_source(root, structured, broken);
     temp.write("workspace/app/src/lib.ql", &source);
-
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(&source).expect("source should analyze");
     let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
     let current_usage = nth_offset(&source, "current", 2);
 
-    let hover = hover_for_package_analysis(
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, current_usage),
-    )
-    .expect("grouped structured dependency question iterable value root hover should exist");
-    let HoverContents::Markup(markup) = hover.contents else {
-        panic!("hover should use markdown")
-    };
-    assert!(markup.value.contains("**struct** `Child`"));
-    assert!(markup.value.contains("struct Child"));
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
 
-    let definition = definition_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, current_usage),
-    )
-    .expect("grouped structured dependency question iterable value root definition should exist");
-    let GotoDefinitionResponse::Scalar(location) = definition else {
-        panic!("definition should be one location")
-    };
-    assert_dependency_location(&location, &dep_qi, root.dep_struct_snippet());
+        let hover = hover_for_dependency_values(
+            &source,
+            &package,
+            offset_to_position(&source, current_usage),
+        )
+        .expect("grouped structured dependency question iterable value root hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**struct** `Child`"));
+        assert!(markup.value.contains("struct Child"));
 
-    let declaration = declaration_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, current_usage),
-    )
-    .expect("grouped structured dependency question iterable value root declaration should exist");
-    let GotoDeclarationResponse::Scalar(location) = declaration else {
-        panic!("declaration should be one location")
-    };
-    assert_dependency_location(&location, &dep_qi, root.dep_struct_snippet());
+        let definition = definition_for_dependency_values(
+            &source,
+            &package,
+            offset_to_position(&source, current_usage),
+        )
+        .expect("grouped structured dependency question iterable value root definition should exist");
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, root.dep_struct_snippet());
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, current_usage),
-        false,
-    )
-    .expect("grouped structured dependency question iterable value root references should exist");
-    assert_eq!(
-        without_declaration,
-        vec![
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    Span::new(
-                        nth_offset(&source, "current", 2),
-                        nth_offset(&source, "current", 2) + "current".len(),
-                    ),
-                ),
-            ),
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    Span::new(
-                        nth_offset(&source, "current", 3),
-                        nth_offset(&source, "current", 3) + "current".len(),
-                    ),
-                ),
-            ),
-        ]
-    );
+        let declaration = declaration_for_dependency_values(
+            &source,
+            &package,
+            offset_to_position(&source, current_usage),
+        )
+        .expect("grouped structured dependency question iterable value root declaration should exist");
+        let GotoDeclarationResponse::Scalar(location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, root.dep_struct_snippet());
 
-    let with_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, current_usage),
-        true,
-    )
-    .expect(
-        "grouped structured dependency question iterable value root references with declaration should exist",
-    );
-    assert_eq!(with_declaration.len(), 4);
-    assert_dependency_location(&with_declaration[0], &dep_qi, root.dep_struct_snippet());
-    assert_eq!(
-        with_declaration[1..],
-        [
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    Span::new(
-                        nth_offset(&source, "current", 1),
-                        nth_offset(&source, "current", 1) + "current".len(),
+        let without_declaration = references_for_dependency_values(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, current_usage),
+            false,
+        )
+        .expect("grouped structured dependency question iterable value root references should exist");
+        assert_eq!(
+            without_declaration,
+            vec![
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "current", 2),
+                            nth_offset(&source, "current", 2) + "current".len(),
+                        ),
                     ),
                 ),
-            ),
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    Span::new(
-                        nth_offset(&source, "current", 2),
-                        nth_offset(&source, "current", 2) + "current".len(),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "current", 3),
+                            nth_offset(&source, "current", 3) + "current".len(),
+                        ),
                     ),
                 ),
-            ),
-            Location::new(
-                uri,
-                span_to_range(
-                    &source,
-                    Span::new(
-                        nth_offset(&source, "current", 3),
-                        nth_offset(&source, "current", 3) + "current".len(),
+            ]
+        );
+
+        let with_declaration = references_for_dependency_values(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, current_usage),
+            true,
+        )
+        .expect(
+            "grouped structured dependency question iterable value root references with declaration should exist",
+        );
+        assert_eq!(with_declaration.len(), 4);
+        assert_dependency_location(&with_declaration[0], &dep_qi, root.dep_struct_snippet());
+        assert_eq!(
+            with_declaration[1..],
+            [
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "current", 1),
+                            nth_offset(&source, "current", 1) + "current".len(),
+                        ),
                     ),
                 ),
-            ),
-        ]
-    );
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "current", 2),
+                            nth_offset(&source, "current", 2) + "current".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri,
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "current", 3),
+                            nth_offset(&source, "current", 3) + "current".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(&source).expect("source should analyze");
+
+        let hover = hover_for_package_analysis(
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, current_usage),
+        )
+        .expect("grouped structured dependency question iterable value root hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**struct** `Child`"));
+        assert!(markup.value.contains("struct Child"));
+
+        let definition = definition_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, current_usage),
+        )
+        .expect("grouped structured dependency question iterable value root definition should exist");
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, root.dep_struct_snippet());
+
+        let declaration = declaration_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, current_usage),
+        )
+        .expect("grouped structured dependency question iterable value root declaration should exist");
+        let GotoDeclarationResponse::Scalar(location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, root.dep_struct_snippet());
+
+        let without_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, current_usage),
+            false,
+        )
+        .expect("grouped structured dependency question iterable value root references should exist");
+        assert_eq!(
+            without_declaration,
+            vec![
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "current", 2),
+                            nth_offset(&source, "current", 2) + "current".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "current", 3),
+                            nth_offset(&source, "current", 3) + "current".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+
+        let with_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, current_usage),
+            true,
+        )
+        .expect(
+            "grouped structured dependency question iterable value root references with declaration should exist",
+        );
+        assert_eq!(with_declaration.len(), 4);
+        assert_dependency_location(&with_declaration[0], &dep_qi, root.dep_struct_snippet());
+        assert_eq!(
+            with_declaration[1..],
+            [
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "current", 1),
+                            nth_offset(&source, "current", 1) + "current".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "current", 2),
+                            nth_offset(&source, "current", 2) + "current".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri,
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "current", 3),
+                            nth_offset(&source, "current", 3) + "current".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+    }
 }
 
 #[test]
 fn root_query_bridge_surfaces_dependency_for_loop_if_grouped_question_function_bindings() {
-    run_root_query_case(RootKind::Function, StructuredKind::If);
+    run_root_query_case(RootKind::Function, StructuredKind::If, false);
 }
 
 #[test]
 fn root_query_bridge_surfaces_dependency_for_loop_match_grouped_question_function_bindings() {
-    run_root_query_case(RootKind::Function, StructuredKind::Match);
+    run_root_query_case(RootKind::Function, StructuredKind::Match, false);
 }
 
 #[test]
 fn root_query_bridge_surfaces_dependency_for_loop_if_grouped_question_static_bindings() {
-    run_root_query_case(RootKind::Static, StructuredKind::If);
+    run_root_query_case(RootKind::Static, StructuredKind::If, false);
 }
 
 #[test]
 fn root_query_bridge_surfaces_dependency_for_loop_match_grouped_question_static_bindings() {
-    run_root_query_case(RootKind::Static, StructuredKind::Match);
+    run_root_query_case(RootKind::Static, StructuredKind::Match, false);
+}
+
+#[test]
+fn root_query_fallback_surfaces_dependency_for_loop_if_grouped_question_function_bindings() {
+    run_root_query_case(RootKind::Function, StructuredKind::If, true);
+}
+
+#[test]
+fn root_query_fallback_surfaces_dependency_for_loop_match_grouped_question_function_bindings() {
+    run_root_query_case(RootKind::Function, StructuredKind::Match, true);
+}
+
+#[test]
+fn root_query_fallback_surfaces_dependency_for_loop_if_grouped_question_static_bindings() {
+    run_root_query_case(RootKind::Static, StructuredKind::If, true);
+}
+
+#[test]
+fn root_query_fallback_surfaces_dependency_for_loop_match_grouped_question_static_bindings() {
+    run_root_query_case(RootKind::Static, StructuredKind::Match, true);
 }

@@ -3,8 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_source};
-use ql_lsp::bridge::{span_to_range, type_definition_for_package_analysis};
+use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
+use ql_lsp::bridge::{
+    span_to_range, type_definition_for_dependency_values, type_definition_for_package_analysis,
+};
 use ql_span::Span;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{Location, Position, Url};
@@ -197,7 +199,12 @@ fn assert_targets_dependency_type(
     );
 }
 
-fn build_source(root: RootKind, structured: StructuredKind) -> String {
+fn build_source(root: RootKind, structured: StructuredKind, broken: bool) -> String {
+    let tail = if broken {
+        "    return \"oops\"\n"
+    } else {
+        "    return 0\n"
+    };
     format!(
         r#"
 package demo.app
@@ -208,20 +215,21 @@ pub fn read(flag: Bool) -> Int {{
     for current in ({receiver}) {{
         return {body}
     }}
-    return 0
-}}
+{tail}}}
 "#,
         use_decl = root.use_decl(),
         receiver = structured.wrap(root.receiver_expr()),
         body = root.body_expr(),
+        tail = tail,
     )
 }
 
-fn run_type_definition_case(root: RootKind, structured: StructuredKind) {
+fn run_type_definition_case(root: RootKind, structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-for-loop-grouped-question-structured-iterable-{}-{}-value-root-type-definition",
+        "ql-lsp-for-loop-grouped-question-structured-iterable-{}-{}-value-root-type-definition{}",
         root.label(),
-        structured.label()
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -249,41 +257,74 @@ name = "app"
 packages = ["../dep"]
 "#,
     );
-    let source = build_source(root, structured);
+    let source = build_source(root, structured, broken);
     temp.write("workspace/app/src/lib.ql", &source);
-
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(&source).expect("source should analyze");
-    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
     let current_usage = nth_offset(&source, "current", 2);
 
-    let definition = type_definition_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, current_usage),
-    )
-    .expect("grouped structured dependency question iterable value root type definition should exist");
-    assert_targets_dependency_type(definition, &dep_qi, root.dep_struct_snippet());
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let definition = type_definition_for_dependency_values(
+            &source,
+            &package,
+            offset_to_position(&source, current_usage),
+        )
+        .expect("grouped structured dependency question iterable value root type definition should exist");
+        assert_targets_dependency_type(definition, &dep_qi, root.dep_struct_snippet());
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(&source).expect("source should analyze");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+        let definition = type_definition_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, current_usage),
+        )
+        .expect("grouped structured dependency question iterable value root type definition should exist");
+        assert_targets_dependency_type(definition, &dep_qi, root.dep_struct_snippet());
+    }
 }
 
 #[test]
 fn type_definition_bridge_follows_dependency_for_loop_if_grouped_question_function_bindings() {
-    run_type_definition_case(RootKind::Function, StructuredKind::If);
+    run_type_definition_case(RootKind::Function, StructuredKind::If, false);
 }
 
 #[test]
 fn type_definition_bridge_follows_dependency_for_loop_match_grouped_question_function_bindings() {
-    run_type_definition_case(RootKind::Function, StructuredKind::Match);
+    run_type_definition_case(RootKind::Function, StructuredKind::Match, false);
 }
 
 #[test]
 fn type_definition_bridge_follows_dependency_for_loop_if_grouped_question_static_bindings() {
-    run_type_definition_case(RootKind::Static, StructuredKind::If);
+    run_type_definition_case(RootKind::Static, StructuredKind::If, false);
 }
 
 #[test]
 fn type_definition_bridge_follows_dependency_for_loop_match_grouped_question_static_bindings() {
-    run_type_definition_case(RootKind::Static, StructuredKind::Match);
+    run_type_definition_case(RootKind::Static, StructuredKind::Match, false);
+}
+
+#[test]
+fn type_definition_fallback_follows_dependency_for_loop_if_grouped_question_function_bindings() {
+    run_type_definition_case(RootKind::Function, StructuredKind::If, true);
+}
+
+#[test]
+fn type_definition_fallback_follows_dependency_for_loop_match_grouped_question_function_bindings() {
+    run_type_definition_case(RootKind::Function, StructuredKind::Match, true);
+}
+
+#[test]
+fn type_definition_fallback_follows_dependency_for_loop_if_grouped_question_static_bindings() {
+    run_type_definition_case(RootKind::Static, StructuredKind::If, true);
+}
+
+#[test]
+fn type_definition_fallback_follows_dependency_for_loop_match_grouped_question_static_bindings() {
+    run_type_definition_case(RootKind::Static, StructuredKind::Match, true);
 }
