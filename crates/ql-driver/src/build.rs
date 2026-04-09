@@ -8226,6 +8226,60 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_fixed_array_bind_patterns() {
+        let dir = TestDir::new("ql-driver-fixed-array-bind-patterns");
+        let source = dir.write(
+            "fixed_array_bind_patterns.ql",
+            r#"
+extern "c" fn sink(value: Int)
+
+async fn worker(value: Int) -> [Int; 2] {
+    return [value, value + 1]
+}
+
+async fn main() -> Int {
+    let [first, _, third] = [1, 2, 3]
+    sink(first + third)
+
+    for [left, right] in ([4, 5], [6, 7]) {
+        sink(left + right)
+    }
+
+    for await [left, right] in [worker(8), worker(10)] {
+        sink(left + right)
+    }
+
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/fixed_array_bind_patterns.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("fixed-array bind patterns should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("extractvalue [3 x i64]"));
+        assert!(rendered.contains("extractvalue [2 x i64]"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(rendered.contains("call void @sink"));
+        assert!(
+            !rendered.contains(
+                "LLVM IR backend foundation only supports binding, wildcard, literal, or tuple/struct/fixed-array destructuring binding patterns"
+            )
+        );
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_different_closure_roots() {
         let dir =
             TestDir::new("ql-driver-cleanup-awaited-task-handle-different-closure-roots");

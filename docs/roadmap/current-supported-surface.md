@@ -1,6 +1,6 @@
 # 当前支持基线
 
-> 最后同步：2026-04-09
+> 最后同步：2026-04-10
 
 这页只保留“今天真实可依赖的能力边界”。  
 详细切片过程、逐轮回归记录与旧版长文已归档到 [路线图归档](/roadmap/archive/index)。
@@ -277,7 +277,7 @@
   - C header `ql_string` projection：`typedef struct ql_string { const uint8_t* ptr; int64_t len; } ql_string;`
   - tuple / fixed-array / non-generic struct aggregate transport
   - 仍未开放：更广义 string-pattern surface
-- `let` / `var` 局部绑定；当前已支持 statement-level 显式类型标注 `let name: Type = value` / `var name: Type = value`，以及 tuple / struct destructuring（叶子当前限 binding / `_`）
+- `let` / `var` 局部绑定；当前已支持 statement-level 显式类型标注 `let name: Type = value` / `var name: Type = value`，以及 tuple / struct / fixed-array destructuring（叶子当前限 binding / `_`）
 - direct call 与 named arguments
 - same-file `use ... as ...` function alias call
 - 最小 first-class sync function value 子集
@@ -301,7 +301,7 @@
 - fixed-shape `for`
   - fixed-array
   - homogeneous tuple
-  - `binding` / `_` / tuple destructuring / struct destructuring loop pattern
+  - `binding` / `_` / tuple destructuring / struct destructuring / fixed-array destructuring loop pattern
   - projected root / direct call-root / same-file import-alias call-root / nested call-root / same-file import-alias nested call-root
   - block-valued / assignment-valued / runtime `if` / `match` valued projected root
   - parenthesized / unparenthesized inline projected root
@@ -352,6 +352,7 @@
   - fixed-array
   - homogeneous tuple
   - task-array / task-tuple auto-await
+  - `binding` / `_` / tuple destructuring / struct destructuring / fixed-array destructuring loop pattern
   - same-file scalar `const` / `static` root、same-file scalar item alias，以及 scalar item-backed read-only projected root
   - same-file task-producing `const` / `static` root，以及 same-file task item alias root
   - projected / block-valued projected / assignment-valued projected / runtime `if` / `match` valued projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
@@ -444,6 +445,7 @@
   - fixed-array
   - homogeneous tuple
   - task-array / task-tuple auto-await
+  - `binding` / `_` / tuple destructuring / struct destructuring / fixed-array destructuring loop pattern
   - same-file scalar `const` / `static` root、same-file scalar item alias，以及 scalar item-backed read-only projected root
   - same-file task-producing `const` / `static` root、same-file task item alias root，以及 projected task item root
   - projected / block-valued projected / assignment-valued projected / runtime `if` / `match` valued projected / call-root / awaited-aggregate / import-alias / inline / nested call-root
