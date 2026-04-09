@@ -1624,7 +1624,9 @@ impl PackageAnalysis {
     ) -> Option<RenameTarget> {
         let module = parse_source(source).ok()?;
         let occurrence = dependency_import_occurrence_in_module(&module, offset)?;
-        dependency_import_alias_binding_for_local_name(self, &module, &occurrence.local_name)?;
+        let binding =
+            dependency_unique_import_binding_for_local_name(&module, &occurrence.local_name)?;
+        self.resolve_dependency_import_binding(&binding)?;
         Some(RenameTarget {
             kind: SymbolKind::Import,
             name: occurrence.local_name,
@@ -1648,11 +1650,13 @@ impl PackageAnalysis {
         else {
             return Ok(None);
         };
-        let Some((dependency, symbol)) = dependency_import_alias_binding_for_local_name(
-            self,
-            &module,
-            &target_occurrence.local_name,
-        ) else {
+        let Some(target_binding) =
+            dependency_unique_import_binding_for_local_name(&module, &target_occurrence.local_name)
+        else {
+            return Ok(None);
+        };
+        let Some((dependency, symbol)) = self.resolve_dependency_import_binding(&target_binding)
+        else {
             return Ok(None);
         };
 
@@ -1666,12 +1670,12 @@ impl PackageAnalysis {
                     return None;
                 }
 
+                let occurrence_binding = dependency_unique_import_binding_for_local_name(
+                    &module,
+                    &occurrence.local_name,
+                )?;
                 let (occurrence_dependency, occurrence_symbol) =
-                    dependency_import_alias_binding_for_local_name(
-                        self,
-                        &module,
-                        &occurrence.local_name,
-                    )?;
+                    self.resolve_dependency_import_binding(&occurrence_binding)?;
                 if occurrence_dependency.interface_path != dependency.interface_path
                     || occurrence_dependency.artifact.package_name
                         != dependency.artifact.package_name
@@ -1682,9 +1686,20 @@ impl PackageAnalysis {
                     return None;
                 }
 
+                let replacement = if occurrence.is_definition
+                    && dependency_import_binding_uses_direct_local_name(&occurrence_binding)
+                {
+                    format!(
+                        "{} as {}",
+                        dependency_import_binding_imported_name(&occurrence_binding)?,
+                        new_name
+                    )
+                } else {
+                    new_name.to_owned()
+                };
                 Some(RenameEdit {
                     span: occurrence.span,
-                    replacement: new_name.to_owned(),
+                    replacement,
                 })
             })
             .collect::<Vec<_>>();
@@ -8255,16 +8270,14 @@ fn dependency_import_binding_for_local_name<'a>(
     matches.pop()
 }
 
-fn dependency_import_alias_binding_for_local_name<'a>(
-    package: &'a PackageAnalysis,
+fn dependency_unique_import_binding_for_local_name(
     module: &ql_ast::Module,
     local_name: &str,
-) -> Option<(&'a DependencyInterface, &'a DependencySymbol)> {
+) -> Option<ImportBinding> {
     let mut matches = module
         .uses
         .iter()
-        .flat_map(|use_decl| dependency_import_alias_bindings_for_local_name(use_decl, local_name))
-        .filter_map(|binding| package.resolve_dependency_import_binding(&binding))
+        .flat_map(|use_decl| dependency_import_bindings_for_local_name(use_decl, local_name))
         .collect::<Vec<_>>();
     if matches.len() != 1 {
         return None;
@@ -8294,27 +8307,13 @@ fn dependency_import_bindings_for_local_name(
     }
 }
 
-fn dependency_import_alias_bindings_for_local_name(
-    use_decl: &ql_ast::UseDecl,
-    local_name: &str,
-) -> Vec<ImportBinding> {
-    if let Some(group) = &use_decl.group {
-        group
-            .iter()
-            .filter_map(|item| {
-                let alias = item.alias.as_ref()?;
-                (alias == local_name).then_some(ImportBinding::grouped(&use_decl.prefix, item))
-            })
-            .collect()
-    } else {
-        let Some(alias) = use_decl.alias.as_ref() else {
-            return Vec::new();
-        };
-        if alias != local_name {
-            return Vec::new();
-        }
-        vec![ImportBinding::direct(use_decl)]
-    }
+fn dependency_import_binding_imported_name(binding: &ImportBinding) -> Option<&str> {
+    binding.path.segments.last().map(String::as_str)
+}
+
+fn dependency_import_binding_uses_direct_local_name(binding: &ImportBinding) -> bool {
+    dependency_import_binding_imported_name(binding)
+        .is_some_and(|imported_name| binding.local_name == imported_name)
 }
 
 fn validate_dependency_rename_text(text: &str) -> Result<(), RenameError> {

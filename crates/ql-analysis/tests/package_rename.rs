@@ -149,7 +149,7 @@ pub fn make() -> Cfg {
 }
 
 #[test]
-fn package_analysis_keeps_direct_dependency_import_rename_closed() {
+fn package_analysis_supports_direct_dependency_import_rename() {
     let temp = TempDir::new("ql-analysis-package-direct-import-rename");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -201,10 +201,48 @@ pub fn make() -> Config {
 
     assert_eq!(
         package.dependency_prepare_rename_in_source_at(source, use_position),
-        None
+        Some(RenameTarget {
+            kind: SymbolKind::Import,
+            name: "Config".to_owned(),
+            span: Span::new(use_position, use_position + "Config".len()),
+        })
     );
     assert_eq!(
         package.dependency_rename_in_source_at(source, use_position, "Settings"),
-        Ok(None)
+        Ok(Some(RenameResult {
+            kind: SymbolKind::Import,
+            old_name: "Config".to_owned(),
+            new_name: "Settings".to_owned(),
+            edits: vec![
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "Config", 1),
+                        nth_offset(source, "Config", 1) + "Config".len(),
+                    ),
+                    replacement: "Config as Settings".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "Config", 2),
+                        nth_offset(source, "Config", 2) + "Config".len(),
+                    ),
+                    replacement: "Settings".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "Config", 3),
+                        nth_offset(source, "Config", 3) + "Config".len(),
+                    ),
+                    replacement: "Settings".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "Config", 4),
+                        nth_offset(source, "Config", 4) + "Config".len(),
+                    ),
+                    replacement: "Settings".to_owned(),
+                },
+            ],
+        }))
     );
 }

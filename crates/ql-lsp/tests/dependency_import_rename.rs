@@ -60,28 +60,22 @@ fn offset_to_position(source: &str, offset: usize) -> Position {
     Position::new(line, prefix[line_start..].chars().count() as u32)
 }
 
-fn assert_workspace_edit(
-    edit: WorkspaceEdit,
-    uri: &Url,
-    source: &str,
-    spans: &[Span],
-    replacement: &str,
-) {
+fn assert_workspace_edit(edit: WorkspaceEdit, uri: &Url, source: &str, expected: &[(Span, &str)]) {
     let changes = edit
         .changes
         .expect("workspace edit should contain direct changes");
     let edits = changes
         .get(uri)
         .expect("workspace edit should target source uri");
-    assert_eq!(edits.len(), spans.len());
-    for (edit, span) in edits.iter().zip(spans.iter()) {
+    assert_eq!(edits.len(), expected.len());
+    for (edit, (span, replacement)) in edits.iter().zip(expected.iter()) {
         assert_eq!(edit.range, span_to_range(source, *span));
-        assert_eq!(edit.new_text, replacement);
+        assert_eq!(edit.new_text, *replacement);
     }
 }
 
 #[test]
-fn dependency_import_alias_rename_bridge_supports_package_analysis() {
+fn dependency_direct_import_rename_bridge_supports_package_analysis() {
     let temp = TempDir::new("ql-lsp-dependency-import-rename");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -119,59 +113,70 @@ packages = ["../dep"]
     let source = r#"
 package demo.app
 
-use demo.dep.Config as Cfg
+use demo.dep.Config
 
-pub fn make() -> Cfg {
-    let value: Cfg = Cfg { value: 1 }
+pub fn make() -> Config {
+    let value: Config = Config { value: 1 }
     return value
 }
 "#;
     let app_source = temp.write("workspace/app/src/lib.ql", source);
 
     let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let use_offset = nth_offset(source, "Cfg", 2);
+    let use_offset = nth_offset(source, "Config", 2);
     let use_position = offset_to_position(source, use_offset);
 
     assert_eq!(
         prepare_rename_for_dependency_imports(source, &package, use_position),
         Some(PrepareRenameResponse::RangeWithPlaceholder {
-            range: span_to_range(source, Span::new(use_offset, use_offset + 3)),
-            placeholder: "Cfg".to_owned(),
+            range: span_to_range(source, Span::new(use_offset, use_offset + 6)),
+            placeholder: "Config".to_owned(),
         })
     );
 
     let uri = Url::from_file_path(&app_source).expect("source path should convert to file uri");
     let edit = rename_for_dependency_imports(&uri, source, &package, use_position, "Settings")
         .expect("rename should validate")
-        .expect("dependency import alias rename should produce edits");
+        .expect("dependency direct import rename should produce edits");
     assert_workspace_edit(
         edit,
         &uri,
         source,
         &[
-            Span::new(
-                nth_offset(source, "Cfg", 1),
-                nth_offset(source, "Cfg", 1) + 3,
+            (
+                Span::new(
+                    nth_offset(source, "Config", 1),
+                    nth_offset(source, "Config", 1) + 6,
+                ),
+                "Config as Settings",
             ),
-            Span::new(
-                nth_offset(source, "Cfg", 2),
-                nth_offset(source, "Cfg", 2) + 3,
+            (
+                Span::new(
+                    nth_offset(source, "Config", 2),
+                    nth_offset(source, "Config", 2) + 6,
+                ),
+                "Settings",
             ),
-            Span::new(
-                nth_offset(source, "Cfg", 3),
-                nth_offset(source, "Cfg", 3) + 3,
+            (
+                Span::new(
+                    nth_offset(source, "Config", 3),
+                    nth_offset(source, "Config", 3) + 6,
+                ),
+                "Settings",
             ),
-            Span::new(
-                nth_offset(source, "Cfg", 4),
-                nth_offset(source, "Cfg", 4) + 3,
+            (
+                Span::new(
+                    nth_offset(source, "Config", 4),
+                    nth_offset(source, "Config", 4) + 6,
+                ),
+                "Settings",
             ),
         ],
-        "Settings",
     );
 }
 
 #[test]
-fn dependency_grouped_import_alias_rename_bridge_survives_semantic_errors() {
+fn dependency_grouped_direct_import_rename_bridge_survives_semantic_errors() {
     let temp = TempDir::new("ql-lsp-dependency-grouped-import-rename");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -209,10 +214,10 @@ packages = ["../dep"]
     let source = r#"
 package demo.app
 
-use demo.dep.{Config as Cfg}
+use demo.dep.{Config}
 
-pub fn make() -> Cfg {
-    let value: Cfg = Cfg { value: 1 }
+pub fn make() -> Config {
+    let value: Config = Config { value: 1 }
     return 0
 }
 "#;
@@ -221,43 +226,54 @@ pub fn make() -> Cfg {
     assert!(analyze_package(&app_root).is_err());
     let package = analyze_package_dependencies(&app_root)
         .expect("dependency-only package analysis should survive semantic errors");
-    let use_offset = nth_offset(source, "Cfg", 3);
+    let use_offset = nth_offset(source, "Config", 3);
     let use_position = offset_to_position(source, use_offset);
 
     assert_eq!(
         prepare_rename_for_dependency_imports(source, &package, use_position),
         Some(PrepareRenameResponse::RangeWithPlaceholder {
-            range: span_to_range(source, Span::new(use_offset, use_offset + 3)),
-            placeholder: "Cfg".to_owned(),
+            range: span_to_range(source, Span::new(use_offset, use_offset + 6)),
+            placeholder: "Config".to_owned(),
         })
     );
 
     let uri = Url::from_file_path(&app_source).expect("source path should convert to file uri");
     let edit = rename_for_dependency_imports(&uri, source, &package, use_position, "Settings")
         .expect("rename should validate")
-        .expect("broken-source dependency import alias rename should produce edits");
+        .expect("broken-source dependency direct import rename should produce edits");
     assert_workspace_edit(
         edit,
         &uri,
         source,
         &[
-            Span::new(
-                nth_offset(source, "Cfg", 1),
-                nth_offset(source, "Cfg", 1) + 3,
+            (
+                Span::new(
+                    nth_offset(source, "Config", 1),
+                    nth_offset(source, "Config", 1) + 6,
+                ),
+                "Config as Settings",
             ),
-            Span::new(
-                nth_offset(source, "Cfg", 2),
-                nth_offset(source, "Cfg", 2) + 3,
+            (
+                Span::new(
+                    nth_offset(source, "Config", 2),
+                    nth_offset(source, "Config", 2) + 6,
+                ),
+                "Settings",
             ),
-            Span::new(
-                nth_offset(source, "Cfg", 3),
-                nth_offset(source, "Cfg", 3) + 3,
+            (
+                Span::new(
+                    nth_offset(source, "Config", 3),
+                    nth_offset(source, "Config", 3) + 6,
+                ),
+                "Settings",
             ),
-            Span::new(
-                nth_offset(source, "Cfg", 4),
-                nth_offset(source, "Cfg", 4) + 3,
+            (
+                Span::new(
+                    nth_offset(source, "Config", 4),
+                    nth_offset(source, "Config", 4) + 6,
+                ),
+                "Settings",
             ),
         ],
-        "Settings",
     );
 }
