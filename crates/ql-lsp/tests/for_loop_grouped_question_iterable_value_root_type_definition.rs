@@ -3,8 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_source};
-use ql_lsp::bridge::{span_to_range, type_definition_for_package_analysis};
+use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
+use ql_lsp::bridge::{
+    span_to_range, type_definition_for_dependency_values, type_definition_for_package_analysis,
+};
 use ql_span::Span;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{Location, Position, Url};
@@ -101,36 +103,41 @@ impl Child {
         }
     }
 
-    fn build_source(self) -> &'static str {
+    fn build_source(self, broken: bool) -> String {
+        let tail = if broken {
+            "    return \"oops\"\n"
+        } else {
+            "    return 0\n"
+        };
         match self {
-            Self::Function => {
+            Self::Function => format!(
                 r#"
 package demo.app
 
-use demo.dep.{maybe_children as kids}
+use demo.dep.{{maybe_children as kids}}
 
-pub fn read() -> Int {
-    for current in kids()? {
+pub fn read() -> Int {{
+    for current in kids()? {{
         return current.value + current.value
-    }
-    return 0
-}
-"#
-            }
-            Self::Static => {
+    }}
+{tail}}}
+"#,
+                tail = tail,
+            ),
+            Self::Static => format!(
                 r#"
 package demo.app
 
-use demo.dep.{MAYBE_ITEMS as maybe_items}
+use demo.dep.{{MAYBE_ITEMS as maybe_items}}
 
-pub fn read() -> Int {
-    for current in maybe_items? {
+pub fn read() -> Int {{
+    for current in maybe_items? {{
         return current.get() + current.get()
-    }
-    return 0
-}
-"#
-            }
+    }}
+{tail}}}
+"#,
+                tail = tail,
+            ),
         }
     }
 }
@@ -185,10 +192,11 @@ fn assert_targets_dependency_type(
     );
 }
 
-fn run_type_definition_case(root: RootKind) {
+fn run_type_definition_case(root: RootKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-for-loop-grouped-question-iterable-{}-value-root-type-definition",
-        root.label()
+        "ql-lsp-for-loop-grouped-question-iterable-{}-value-root-type-definition{}",
+        root.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -216,31 +224,54 @@ name = "app"
 packages = ["../dep"]
 "#,
     );
-    let source = root.build_source();
-    temp.write("workspace/app/src/lib.ql", source);
-
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(source).expect("source should analyze");
-    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let source = root.build_source(broken);
+    temp.write("workspace/app/src/lib.ql", &source);
+    let source = source.as_str();
     let current_usage = nth_offset(source, "current", 2);
 
-    let definition = type_definition_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        offset_to_position(source, current_usage),
-    )
-    .expect("grouped dependency question iterable value root type definition should exist");
-    assert_targets_dependency_type(definition, &dep_qi, root.dep_struct_snippet());
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let definition = type_definition_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("grouped dependency question iterable value root type definition should exist");
+        assert_targets_dependency_type(definition, &dep_qi, root.dep_struct_snippet());
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(source).expect("source should analyze");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+        let definition = type_definition_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("grouped dependency question iterable value root type definition should exist");
+        assert_targets_dependency_type(definition, &dep_qi, root.dep_struct_snippet());
+    }
 }
 
 #[test]
 fn type_definition_bridge_follows_dependency_for_loop_grouped_question_function_bindings() {
-    run_type_definition_case(RootKind::Function);
+    run_type_definition_case(RootKind::Function, false);
 }
 
 #[test]
 fn type_definition_bridge_follows_dependency_for_loop_grouped_question_static_bindings() {
-    run_type_definition_case(RootKind::Static);
+    run_type_definition_case(RootKind::Static, false);
+}
+
+#[test]
+fn type_definition_fallback_follows_dependency_for_loop_grouped_question_function_bindings() {
+    run_type_definition_case(RootKind::Function, true);
+}
+
+#[test]
+fn type_definition_fallback_follows_dependency_for_loop_grouped_question_static_bindings() {
+    run_type_definition_case(RootKind::Static, true);
 }
