@@ -3,10 +3,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_source};
+use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    declaration_for_package_analysis, definition_for_package_analysis, hover_for_package_analysis,
-    references_for_package_analysis, span_to_range,
+    declaration_for_dependency_values, declaration_for_package_analysis,
+    definition_for_dependency_values, definition_for_package_analysis, hover_for_dependency_values,
+    hover_for_package_analysis, references_for_dependency_values, references_for_package_analysis,
+    span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::request::GotoDeclarationResponse;
@@ -110,7 +112,12 @@ fn assert_dependency_location(location: &Location, dep_qi: &Path, snippet: &str)
     );
 }
 
-fn build_source(structured: StructuredKind) -> String {
+fn build_source(structured: StructuredKind, broken: bool) -> String {
+    let tail = if broken {
+        "    return \"oops\"\n"
+    } else {
+        "    return first + second\n"
+    };
     format!(
         r#"
 package demo.app
@@ -120,17 +127,20 @@ use demo.dep.Config as Cfg
 pub fn read(config: Cfg, flag: Bool) -> Int {{
     let current = {receiver}
     let alias = current
-    return alias.value + alias.value
-}}
+    let first = alias.value
+    let second = alias.value
+{tail}}}
 "#,
         receiver = structured.receiver_expr(),
+        tail = tail,
     )
 }
 
-fn run_root_query_case(structured: StructuredKind) {
+fn run_root_query_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-structured-{}-alias-value-root-query",
-        structured.label()
+        "ql-lsp-structured-{}-alias-value-root-query{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -179,146 +189,277 @@ name = "app"
 packages = ["../dep"]
 "#,
     );
-    let source = build_source(structured);
+    let source = build_source(structured, broken);
     temp.write("workspace/app/src/lib.ql", &source);
-
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(&source).expect("source should analyze");
     let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
     let alias_usage = nth_offset(&source, "alias", 2);
 
-    let hover = hover_for_package_analysis(
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, alias_usage),
-    )
-    .expect("structured alias value root hover should exist");
-    let HoverContents::Markup(markup) = hover.contents else {
-        panic!("hover should use markdown")
-    };
-    assert!(markup.value.contains("**struct** `Child`"));
-    assert!(markup.value.contains("struct Child"));
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
 
-    let definition = definition_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, alias_usage),
-    )
-    .expect("structured alias value root definition should exist");
-    let GotoDefinitionResponse::Scalar(location) = definition else {
-        panic!("definition should be one location")
-    };
-    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+        let hover =
+            hover_for_dependency_values(&source, &package, offset_to_position(&source, alias_usage))
+                .expect("structured alias value root hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**struct** `Child`"));
+        assert!(markup.value.contains("struct Child"));
 
-    let declaration = declaration_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, alias_usage),
-    )
-    .expect("structured alias value root declaration should exist");
-    let GotoDeclarationResponse::Scalar(location) = declaration else {
-        panic!("declaration should be one location")
-    };
-    assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+        let definition = definition_for_dependency_values(
+            &source,
+            &package,
+            offset_to_position(&source, alias_usage),
+        )
+        .expect("structured alias value root definition should exist");
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, alias_usage),
-        false,
-    )
-    .expect("structured alias value root references should exist");
-    assert_eq!(
-        without_declaration,
-        vec![
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    Span::new(
-                        nth_offset(&source, "alias", 2),
-                        nth_offset(&source, "alias", 2) + "alias".len(),
-                    ),
-                ),
-            ),
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    Span::new(
-                        nth_offset(&source, "alias", 3),
-                        nth_offset(&source, "alias", 3) + "alias".len(),
-                    ),
-                ),
-            ),
-        ]
-    );
+        let declaration = declaration_for_dependency_values(
+            &source,
+            &package,
+            offset_to_position(&source, alias_usage),
+        )
+        .expect("structured alias value root declaration should exist");
+        let GotoDeclarationResponse::Scalar(location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let with_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, alias_usage),
-        true,
-    )
-    .expect("structured alias value root references with declaration should exist");
-    assert_eq!(with_declaration.len(), 4);
-    assert_dependency_location(
-        &with_declaration[0],
-        &dep_qi,
-        "pub struct Child {\n    value: Int,\n}",
-    );
-    assert_eq!(
-        with_declaration[1..],
-        [
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    Span::new(
-                        nth_offset(&source, "alias", 1),
-                        nth_offset(&source, "alias", 1) + "alias".len(),
+        let without_declaration = references_for_dependency_values(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, alias_usage),
+            false,
+        )
+        .expect("structured alias value root references should exist");
+        assert_eq!(
+            without_declaration,
+            vec![
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "alias", 2),
+                            nth_offset(&source, "alias", 2) + "alias".len(),
+                        ),
                     ),
                 ),
-            ),
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    Span::new(
-                        nth_offset(&source, "alias", 2),
-                        nth_offset(&source, "alias", 2) + "alias".len(),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "alias", 3),
+                            nth_offset(&source, "alias", 3) + "alias".len(),
+                        ),
                     ),
                 ),
-            ),
-            Location::new(
-                uri,
-                span_to_range(
-                    &source,
-                    Span::new(
-                        nth_offset(&source, "alias", 3),
-                        nth_offset(&source, "alias", 3) + "alias".len(),
+            ]
+        );
+
+        let with_declaration = references_for_dependency_values(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, alias_usage),
+            true,
+        )
+        .expect("structured alias value root references with declaration should exist");
+        assert_eq!(with_declaration.len(), 4);
+        assert_dependency_location(
+            &with_declaration[0],
+            &dep_qi,
+            "pub struct Child {\n    value: Int,\n}",
+        );
+        assert_eq!(
+            with_declaration[1..],
+            [
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "alias", 1),
+                            nth_offset(&source, "alias", 1) + "alias".len(),
+                        ),
                     ),
                 ),
-            ),
-        ]
-    );
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "alias", 2),
+                            nth_offset(&source, "alias", 2) + "alias".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri,
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "alias", 3),
+                            nth_offset(&source, "alias", 3) + "alias".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(&source).expect("source should analyze");
+
+        let hover = hover_for_package_analysis(
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, alias_usage),
+        )
+        .expect("structured alias value root hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**struct** `Child`"));
+        assert!(markup.value.contains("struct Child"));
+
+        let definition = definition_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, alias_usage),
+        )
+        .expect("structured alias value root definition should exist");
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+        let declaration = declaration_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, alias_usage),
+        )
+        .expect("structured alias value root declaration should exist");
+        let GotoDeclarationResponse::Scalar(location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+        let without_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, alias_usage),
+            false,
+        )
+        .expect("structured alias value root references should exist");
+        assert_eq!(
+            without_declaration,
+            vec![
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "alias", 2),
+                            nth_offset(&source, "alias", 2) + "alias".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "alias", 3),
+                            nth_offset(&source, "alias", 3) + "alias".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+
+        let with_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, alias_usage),
+            true,
+        )
+        .expect("structured alias value root references with declaration should exist");
+        assert_eq!(with_declaration.len(), 4);
+        assert_dependency_location(
+            &with_declaration[0],
+            &dep_qi,
+            "pub struct Child {\n    value: Int,\n}",
+        );
+        assert_eq!(
+            with_declaration[1..],
+            [
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "alias", 1),
+                            nth_offset(&source, "alias", 1) + "alias".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "alias", 2),
+                            nth_offset(&source, "alias", 2) + "alias".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri,
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "alias", 3),
+                            nth_offset(&source, "alias", 3) + "alias".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+    }
 }
 
 #[test]
 fn root_queries_work_on_if_structured_alias_value_roots() {
-    run_root_query_case(StructuredKind::If);
+    run_root_query_case(StructuredKind::If, false);
 }
 
 #[test]
 fn root_queries_work_on_match_structured_alias_value_roots() {
-    run_root_query_case(StructuredKind::Match);
+    run_root_query_case(StructuredKind::Match, false);
+}
+
+#[test]
+fn root_queries_fallback_on_if_structured_alias_value_roots() {
+    run_root_query_case(StructuredKind::If, true);
+}
+
+#[test]
+fn root_queries_fallback_on_match_structured_alias_value_roots() {
+    run_root_query_case(StructuredKind::Match, true);
 }
