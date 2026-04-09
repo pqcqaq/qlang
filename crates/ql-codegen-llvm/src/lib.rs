@@ -6603,6 +6603,9 @@ impl<'a> ModuleEmitter<'a> {
             PatternKind::Tuple(items) => items
                 .iter()
                 .all(|item| self.supports_destructuring_bind_pattern(*item)),
+            PatternKind::Array(items) => items
+                .iter()
+                .all(|item| self.supports_destructuring_bind_pattern(*item)),
             PatternKind::Struct { fields, .. } => fields
                 .iter()
                 .all(|field| self.supports_destructuring_bind_pattern(field.pattern)),
@@ -7665,7 +7668,10 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             StatementKind::BindPattern {
                 pattern, source, ..
             } => match pattern_kind(self.emitter.input.hir, *pattern) {
-                PatternKind::Binding(_) | PatternKind::Tuple(_) | PatternKind::Struct { .. } => {
+                PatternKind::Binding(_)
+                | PatternKind::Tuple(_)
+                | PatternKind::Array(_)
+                | PatternKind::Struct { .. } => {
                     let rendered = self.render_operand(output, source, statement.span);
                     self.bind_pattern_value(output, *pattern, rendered, statement.span);
                 }

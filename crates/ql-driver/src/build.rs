@@ -8168,6 +8168,64 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_awaited_fixed_array_destructuring_scrutinees() {
+        let dir = TestDir::new("ql-driver-awaited-fixed-array-destructuring-scrutinees");
+        let source = dir.write(
+            "awaited_fixed_array_destructuring_scrutinees.ql",
+            r#"
+use load_values as values_alias
+use LOAD_VALUES as values_const_alias
+
+extern "c" fn sink(value: Int)
+
+async fn load_values(value: Int) -> [Int; 3] {
+    return [value, value + 1, value + 2]
+}
+
+const LOAD_VALUES: (Int) -> Task[[Int; 3]] = load_values
+
+async fn main() -> Int {
+    let branch = true
+    match await (if branch { values_alias } else { values_const_alias })(30) {
+        [first, _, last] if first < last => sink(first + last),
+        _ => sink(0),
+    }
+    match await (match branch { true => values_const_alias, false => values_alias })(13) {
+        [first, middle, last] if first == 13 => sink(first + middle + last),
+        _ => sink(0),
+    }
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/awaited_fixed_array_destructuring_scrutinees.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("awaited fixed-array destructuring scrutinees should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("extractvalue [3 x i64]"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(rendered.contains("call void @sink"));
+        assert!(
+            !rendered.contains(
+                "LLVM IR backend foundation only supports binding, wildcard, literal, or tuple/struct/fixed-array destructuring binding patterns"
+            )
+        );
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_different_closure_roots() {
         let dir =
             TestDir::new("ql-driver-cleanup-awaited-task-handle-different-closure-roots");
