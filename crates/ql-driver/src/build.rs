@@ -7750,6 +7750,80 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_helper_inline_values() {
+        let dir = TestDir::new("ql-driver-cleanup-awaited-task-handle-helper-inline-values");
+        let source = dir.write(
+            "cleanup_awaited_task_handle_helper_inline_values.ql",
+            r#"
+use matches as helper_alias
+
+struct State {
+    value: Int,
+}
+
+extern "c" fn sink(value: Int)
+
+async fn worker(value: Int) -> State {
+    return State {
+        value: value + 1,
+    }
+}
+
+fn matches(expected: Int, state: State) -> Bool {
+    return state.value == expected
+}
+
+async fn main() -> Int {
+    let branch = true
+    let which = 1
+    let first = spawn worker(41)
+    let second = spawn worker(1)
+    let left = () => first
+    let right = () => second
+
+    defer if helper_alias(42, await (if branch { left } else { right })()) {
+        sink(1);
+    }
+
+    defer match State { value: (await (match which { 1 => left, _ => right })()).value }.value {
+        42 => sink(2),
+        _ => sink(3),
+    }
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/cleanup_awaited_task_handle_helper_inline_values.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("cleanup awaited task-handle helper/inline values should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("guard_call_if_then"));
+        assert!(rendered.contains("guard_call_match_arm"));
+        assert!(rendered.contains("cleanup_match_arm"));
+        assert!(rendered.contains("@ql_3_matches"));
+        assert!(rendered.contains("__closure0"));
+        assert!(rendered.contains("__closure1"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 2);
+        assert!(
+            !rendered
+                .contains("currently only supports a narrow non-`move` capturing-closure subset")
+        );
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_different_closure_roots() {
         let dir =
             TestDir::new("ql-driver-cleanup-awaited-task-handle-different-closure-roots");
