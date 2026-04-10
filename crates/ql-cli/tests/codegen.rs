@@ -6575,6 +6575,27 @@ fn awaited_nested_projected_aggregate_match_catch_all_codegen_case_matches() {
 }
 
 #[test]
+fn control_flow_awaited_nested_projected_aggregate_match_catch_all_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "control_flow_awaited_nested_projected_aggregate_match_catch_all_build",
+        source_relative:
+            "fixtures/codegen/pass/control_flow_awaited_nested_projected_aggregate_match_catch_all.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!("control-flow awaited nested projected aggregate match catch-all build regression:\n\n{message}");
+    }
+}
+
+#[test]
 fn import_alias_control_flow_awaited_nested_projected_aggregate_match_catch_all_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {
