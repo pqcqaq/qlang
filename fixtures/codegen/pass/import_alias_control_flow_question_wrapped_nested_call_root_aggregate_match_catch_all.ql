@@ -1,0 +1,126 @@
+use tuple_env as tuples
+use alt_tuple_env as alt_tuples
+use state_env as states
+use alt_state_env as alt_states
+use deep_env as deep
+use alt_deep_env as alt_deep
+
+extern "c" fn sink(value: Int)
+
+struct ArrayPayload {
+    values: [Int; 3],
+}
+
+struct TuplePayload {
+    values: (Int, Int),
+}
+
+struct State {
+    value: Int,
+}
+
+struct StatePayload {
+    current: State,
+}
+
+struct ArrayEnvelope {
+    payload: ArrayPayload,
+}
+
+struct TupleEnvelope {
+    payload: TuplePayload,
+}
+
+struct StateEnvelope {
+    payload: StatePayload,
+}
+
+struct DeepEnvelope {
+    outer: ArrayEnvelope,
+}
+
+fn tuple_env(base: Int) -> TupleEnvelope {
+    return TupleEnvelope {
+        payload: TuplePayload {
+            values: (base, base + 1),
+        },
+    }
+}
+
+fn alt_tuple_env(base: Int) -> TupleEnvelope {
+    return TupleEnvelope {
+        payload: TuplePayload {
+            values: (base + 2, base + 3),
+        },
+    }
+}
+
+fn state_env(base: Int) -> StateEnvelope {
+    return StateEnvelope {
+        payload: StatePayload {
+            current: State { value: base },
+        },
+    }
+}
+
+fn alt_state_env(base: Int) -> StateEnvelope {
+    return StateEnvelope {
+        payload: StatePayload {
+            current: State { value: base + 1 },
+        },
+    }
+}
+
+fn deep_env(base: Int) -> DeepEnvelope {
+    return DeepEnvelope {
+        outer: ArrayEnvelope {
+            payload: ArrayPayload {
+                values: [base, base + 1, base + 2],
+            },
+        },
+    }
+}
+
+fn alt_deep_env(base: Int) -> DeepEnvelope {
+    return DeepEnvelope {
+        outer: ArrayEnvelope {
+            payload: ArrayPayload {
+                values: [base + 3, base + 4, base + 5],
+            },
+        },
+    }
+}
+
+fn main() -> Int {
+    match ((if true { tuples } else { alt_tuples })(1)?).payload.values {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    match ((match true { true => states, false => alt_states })(3)?).payload.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    match ((if true { deep } else { alt_deep })(4)?).outer.payload.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    defer match ((match true { true => tuples, false => alt_tuples })(1)?).payload.values {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    defer match ((if true { states } else { alt_states })(3)?).payload.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    defer match ((match true { true => deep, false => alt_deep })(4)?).outer.payload.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    return 0
+}
