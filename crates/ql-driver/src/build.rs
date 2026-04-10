@@ -13404,6 +13404,113 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_import_alias_control_flow_call_root_aggregate_match_catch_all(
+    ) {
+        let dir =
+            TestDir::new("ql-driver-import-alias-control-flow-call-root-aggregate-match-catch-all");
+        let source = dir.write(
+            "import_alias_control_flow_call_root_aggregate_match_catch_all.ql",
+            r#"
+use pair_value as pair_alias
+use alt_pair_value as alt_pair_alias
+use state_value as state_alias
+use alt_state_value as alt_state_alias
+use values as values_alias
+use alt_values as alt_values_alias
+
+extern "c" fn sink(value: Int)
+
+struct State {
+    value: Int,
+}
+
+fn pair_value() -> (Int, Int) {
+    return (1, 2)
+}
+
+fn alt_pair_value() -> (Int, Int) {
+    return (7, 8)
+}
+
+fn state_value() -> State {
+    return State { value: 3 }
+}
+
+fn alt_state_value() -> State {
+    return State { value: 9 }
+}
+
+fn values() -> [Int; 3] {
+    return [4, 5, 6]
+}
+
+fn alt_values() -> [Int; 3] {
+    return [10, 11, 12]
+}
+
+fn main() -> Int {
+    let branch = true
+
+    match (if branch { pair_alias } else { alt_pair_alias })() {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    match (match branch { true => state_alias, false => alt_state_alias })() {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    match (if branch { values_alias } else { alt_values_alias })() {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    defer match (match branch { true => pair_alias, false => alt_pair_alias })() {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    defer match (if branch { state_alias } else { alt_state_alias })() {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    defer match (match branch { true => values_alias, false => alt_values_alias })() {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/import_alias_control_flow_call_root_aggregate_match_catch_all.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("import-alias control-flow call-root aggregate match catch-all should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("extractvalue { i64, i64 }"));
+        assert!(rendered.contains("extractvalue { i64 }"));
+        assert!(rendered.contains("extractvalue [3 x i64]"));
+        assert!(rendered.contains("cleanup_match_arm_"));
+        assert!(rendered.matches("call void @sink").count() >= 12);
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_nested_call_root_aggregate_match_catch_all() {
         let dir = TestDir::new("ql-driver-nested-call-root-aggregate-match-catch-all");
         let source = dir.write(
