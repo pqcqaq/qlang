@@ -8623,6 +8623,161 @@ async fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_import_alias_control_flow_awaited_nested_projected_aggregate_match_catch_all(
+    ) {
+        let dir = TestDir::new(
+            "ql-driver-import-alias-control-flow-awaited-nested-projected-aggregate-match-catch-all",
+        );
+        let source = dir.write(
+            "import_alias_control_flow_awaited_nested_projected_aggregate_match_catch_all.ql",
+            r#"
+use tuple_env as tuple_alias
+use state_env as state_alias
+use array_env as array_alias
+use TUPLE_ENV as tuple_const_alias
+use STATE_ENV as state_const_alias
+use ARRAY_ENV as array_const_alias
+
+extern "c" fn sink(value: Int)
+
+struct TuplePayload {
+    values: (Int, Int),
+}
+
+struct TupleOuter {
+    payload: TuplePayload,
+}
+
+struct TupleEnvelope {
+    outer: TupleOuter,
+}
+
+struct State {
+    value: Int,
+}
+
+struct StatePayload {
+    current: State,
+}
+
+struct StateOuter {
+    payload: StatePayload,
+}
+
+struct StateEnvelope {
+    outer: StateOuter,
+}
+
+struct ArrayPayload {
+    values: [Int; 3],
+}
+
+struct ArrayOuter {
+    payload: ArrayPayload,
+}
+
+struct ArrayEnvelope {
+    outer: ArrayOuter,
+}
+
+async fn tuple_env(base: Int) -> TupleEnvelope {
+    return TupleEnvelope {
+        outer: TupleOuter {
+            payload: TuplePayload {
+                values: (base, base + 1),
+            },
+        },
+    }
+}
+
+async fn state_env(base: Int) -> StateEnvelope {
+    return StateEnvelope {
+        outer: StateOuter {
+            payload: StatePayload {
+                current: State { value: base },
+            },
+        },
+    }
+}
+
+async fn array_env(base: Int) -> ArrayEnvelope {
+    return ArrayEnvelope {
+        outer: ArrayOuter {
+            payload: ArrayPayload {
+                values: [base, base + 1, base + 2],
+            },
+        },
+    }
+}
+
+const TUPLE_ENV: (Int) -> Task[TupleEnvelope] = tuple_env
+const STATE_ENV: (Int) -> Task[StateEnvelope] = state_env
+const ARRAY_ENV: (Int) -> Task[ArrayEnvelope] = array_env
+
+async fn main() -> Int {
+    let branch = true
+
+    match (await (if branch { tuple_alias } else { tuple_const_alias })(1)).outer.payload.values {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    match (await (match branch { true => state_const_alias, false => state_alias })(3)).outer.payload.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    match (await (if branch { array_alias } else { array_const_alias })(4)).outer.payload.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    defer match (await (match branch { true => tuple_const_alias, false => tuple_alias })(1)).outer.payload.values {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    defer match (await (if branch { state_alias } else { state_const_alias })(3)).outer.payload.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    defer match (await (match branch { true => array_const_alias, false => array_alias })(4)).outer.payload.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    return 0
+}
+"#,
+        );
+        let output = dir.path().join(
+            "artifacts/import_alias_control_flow_awaited_nested_projected_aggregate_match_catch_all.ll",
+        );
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("import-alias control-flow awaited nested projected aggregate match catch-all should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("extractvalue { i64, i64 }"));
+        assert!(rendered.contains("extractvalue { i64 }"));
+        assert!(rendered.contains("extractvalue [3 x i64]"));
+        assert!(rendered.contains("cleanup_match_arm_"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 6);
+        assert!(rendered.matches("call void @sink").count() >= 12);
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_fixed_array_bind_patterns() {
         let dir = TestDir::new("ql-driver-fixed-array-bind-patterns");
         let source = dir.write(
