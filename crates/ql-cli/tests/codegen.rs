@@ -4799,8 +4799,7 @@ fn capturing_closure_task_handle_cleanup_await_root_matrix_codegen_case_matches(
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_root_matrix_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_root_matrix.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_root_matrix.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -4844,8 +4843,7 @@ fn capturing_closure_task_handle_cleanup_await_helper_inline_values_codegen_case
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_helper_inline_values_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_helper_inline_values.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_helper_inline_values.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -4863,13 +4861,12 @@ fn capturing_closure_task_handle_cleanup_await_helper_inline_values_codegen_case
 }
 
 #[test]
-fn capturing_closure_task_handle_cleanup_await_nested_runtime_projection_values_codegen_case_matches(
-) {
+fn capturing_closure_task_handle_cleanup_await_nested_runtime_projection_values_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_nested_runtime_projection_values_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_nested_runtime_projection_values.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_nested_runtime_projection_values.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -4891,8 +4888,7 @@ fn capturing_closure_task_handle_cleanup_await_aggregate_binding_scrutinees_code
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_aggregate_binding_scrutinees_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_aggregate_binding_scrutinees.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_aggregate_binding_scrutinees.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -4910,13 +4906,12 @@ fn capturing_closure_task_handle_cleanup_await_aggregate_binding_scrutinees_code
 }
 
 #[test]
-fn capturing_closure_task_handle_cleanup_await_aggregate_destructuring_scrutinees_codegen_case_matches(
-) {
+fn capturing_closure_task_handle_cleanup_await_aggregate_destructuring_scrutinees_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_aggregate_destructuring_scrutinees_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_aggregate_destructuring_scrutinees.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_aggregate_destructuring_scrutinees.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -4934,13 +4929,12 @@ fn capturing_closure_task_handle_cleanup_await_aggregate_destructuring_scrutinee
 }
 
 #[test]
-fn capturing_closure_task_handle_cleanup_await_fixed_array_destructuring_scrutinees_codegen_case_matches(
-) {
+fn capturing_closure_task_handle_cleanup_await_fixed_array_destructuring_scrutinees_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_fixed_array_destructuring_scrutinees_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_fixed_array_destructuring_scrutinees.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_fixed_array_destructuring_scrutinees.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -4962,8 +4956,7 @@ fn capturing_closure_task_handle_cleanup_await_different_closure_roots_codegen_c
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_different_closure_roots_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_different_closure_roots.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_different_closure_roots.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -4986,8 +4979,7 @@ fn capturing_closure_task_handle_cleanup_await_different_closure_alias_roots_cod
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_different_closure_alias_roots_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_different_closure_alias_roots.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_different_closure_alias_roots.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -5009,8 +5001,7 @@ fn capturing_closure_task_handle_cleanup_await_shared_local_alias_chains_codegen
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_shared_local_alias_chains_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_shared_local_alias_chains.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_shared_local_alias_chains.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -5028,13 +5019,12 @@ fn capturing_closure_task_handle_cleanup_await_shared_local_alias_chains_codegen
 }
 
 #[test]
-fn capturing_closure_task_handle_cleanup_await_guarded_match_shared_local_alias_chains_codegen_case_matches(
-) {
+fn capturing_closure_task_handle_cleanup_await_guarded_match_shared_local_alias_chains_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_guarded_match_shared_local_alias_chains_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_guarded_match_shared_local_alias_chains.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_guarded_match_shared_local_alias_chains.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -5052,13 +5042,12 @@ fn capturing_closure_task_handle_cleanup_await_guarded_match_shared_local_alias_
 }
 
 #[test]
-fn capturing_closure_task_handle_cleanup_await_tagged_guarded_match_shared_local_alias_chains_codegen_case_matches(
-) {
+fn capturing_closure_task_handle_cleanup_await_tagged_guarded_match_shared_local_alias_chains_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_tagged_guarded_match_shared_local_alias_chains_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_tagged_guarded_match_shared_local_alias_chains.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_tagged_guarded_match_shared_local_alias_chains.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -5076,13 +5065,12 @@ fn capturing_closure_task_handle_cleanup_await_tagged_guarded_match_shared_local
 }
 
 #[test]
-fn capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_closure_roots_codegen_case_matches(
-) {
+fn capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_closure_roots_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_closure_roots_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_closure_roots.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_closure_roots.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -5100,13 +5088,12 @@ fn capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_cl
 }
 
 #[test]
-fn capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_closure_alias_roots_codegen_case_matches(
-) {
+fn capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_closure_alias_roots_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_closure_alias_roots_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_closure_alias_roots.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_closure_alias_roots.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -5124,13 +5111,12 @@ fn capturing_closure_task_handle_cleanup_await_tagged_guarded_match_different_cl
 }
 
 #[test]
-fn capturing_closure_task_handle_cleanup_await_guarded_match_different_closure_roots_codegen_case_matches(
-) {
+fn capturing_closure_task_handle_cleanup_await_guarded_match_different_closure_roots_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_guarded_match_different_closure_roots_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_guarded_match_different_closure_roots.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_guarded_match_different_closure_roots.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -5148,13 +5134,12 @@ fn capturing_closure_task_handle_cleanup_await_guarded_match_different_closure_r
 }
 
 #[test]
-fn capturing_closure_task_handle_cleanup_await_guarded_match_different_closure_alias_roots_codegen_case_matches(
-) {
+fn capturing_closure_task_handle_cleanup_await_guarded_match_different_closure_alias_roots_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "capturing_closure_task_handle_cleanup_await_guarded_match_different_closure_alias_roots_build",
-        source_relative:
-            "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_guarded_match_different_closure_alias_roots.ql",
+        source_relative: "fixtures/codegen/pass/capturing_closure_task_handle_cleanup_await_guarded_match_different_closure_alias_roots.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6468,7 +6453,9 @@ fn import_alias_nested_call_root_aggregate_match_catch_all_codegen_case_matches(
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("import-alias nested call-root aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "import-alias nested call-root aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
@@ -6488,7 +6475,9 @@ fn control_flow_nested_call_root_aggregate_match_catch_all_codegen_case_matches(
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("control-flow nested call-root aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "control-flow nested call-root aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
@@ -6508,7 +6497,9 @@ fn import_alias_control_flow_nested_call_root_aggregate_match_catch_all_codegen_
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("import-alias control-flow nested call-root aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "import-alias control-flow nested call-root aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
@@ -6537,8 +6528,7 @@ fn import_alias_awaited_projected_aggregate_match_catch_all_codegen_case_matches
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_awaited_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_awaited_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_awaited_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6549,7 +6539,9 @@ fn import_alias_awaited_projected_aggregate_match_catch_all_codegen_case_matches
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("import-alias awaited projected aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "import-alias awaited projected aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
@@ -6558,8 +6550,7 @@ fn control_flow_awaited_projected_aggregate_match_catch_all_codegen_case_matches
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "control_flow_awaited_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/control_flow_awaited_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/control_flow_awaited_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6570,7 +6561,9 @@ fn control_flow_awaited_projected_aggregate_match_catch_all_codegen_case_matches
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("control-flow awaited projected aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "control-flow awaited projected aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
@@ -6579,8 +6572,7 @@ fn import_alias_control_flow_awaited_projected_aggregate_match_catch_all_codegen
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_control_flow_awaited_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_control_flow_awaited_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_control_flow_awaited_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6591,7 +6583,9 @@ fn import_alias_control_flow_awaited_projected_aggregate_match_catch_all_codegen
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("import-alias control-flow awaited projected aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "import-alias control-flow awaited projected aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
@@ -6600,8 +6594,7 @@ fn awaited_nested_projected_aggregate_match_catch_all_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "awaited_nested_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/awaited_nested_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/awaited_nested_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6617,12 +6610,11 @@ fn awaited_nested_projected_aggregate_match_catch_all_codegen_case_matches() {
 }
 
 #[test]
-fn control_flow_awaited_nested_projected_aggregate_match_catch_all_codegen_case_matches() {
+fn import_alias_awaited_nested_projected_aggregate_match_catch_all_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {
-        name: "control_flow_awaited_nested_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/control_flow_awaited_nested_projected_aggregate_match_catch_all.ql",
+        name: "import_alias_awaited_nested_projected_aggregate_match_catch_all_build",
+        source_relative: "fixtures/codegen/pass/import_alias_awaited_nested_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6633,17 +6625,41 @@ fn control_flow_awaited_nested_projected_aggregate_match_catch_all_codegen_case_
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("control-flow awaited nested projected aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "import-alias awaited nested projected aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
 #[test]
-fn import_alias_control_flow_awaited_nested_projected_aggregate_match_catch_all_codegen_case_matches() {
+fn control_flow_awaited_nested_projected_aggregate_match_catch_all_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "control_flow_awaited_nested_projected_aggregate_match_catch_all_build",
+        source_relative: "fixtures/codegen/pass/control_flow_awaited_nested_projected_aggregate_match_catch_all.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!(
+            "control-flow awaited nested projected aggregate match catch-all build regression:\n\n{message}"
+        );
+    }
+}
+
+#[test]
+fn import_alias_control_flow_awaited_nested_projected_aggregate_match_catch_all_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_control_flow_awaited_nested_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_control_flow_awaited_nested_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_control_flow_awaited_nested_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,

@@ -7824,8 +7824,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_nested_runtime_projection_values(
-    ) {
+    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_nested_runtime_projection_values()
+    {
         let dir =
             TestDir::new("ql-driver-cleanup-awaited-task-handle-nested-runtime-projection-values");
         let source = dir.write(
@@ -8017,8 +8017,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_aggregate_destructuring_scrutinees(
-    ) {
+    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_aggregate_destructuring_scrutinees()
+     {
         let dir = TestDir::new(
             "ql-driver-cleanup-awaited-task-handle-aggregate-destructuring-scrutinees",
         );
@@ -8082,7 +8082,9 @@ async fn main() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect("cleanup awaited task-handle aggregate destructuring scrutinees should emit LLVM IR");
+        .expect(
+            "cleanup awaited task-handle aggregate destructuring scrutinees should emit LLVM IR",
+        );
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);
@@ -8101,8 +8103,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_fixed_array_destructuring_scrutinees(
-    ) {
+    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_fixed_array_destructuring_scrutinees()
+     {
         let dir = TestDir::new(
             "ql-driver-cleanup-awaited-task-handle-fixed-array-destructuring-scrutinees",
         );
@@ -8150,7 +8152,9 @@ async fn main() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect("cleanup awaited task-handle fixed-array destructuring scrutinees should emit LLVM IR");
+        .expect(
+            "cleanup awaited task-handle fixed-array destructuring scrutinees should emit LLVM IR",
+        );
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);
@@ -8347,9 +8351,9 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_awaited_projected_aggregate_match_catch_all()
-    {
-        let dir = TestDir::new("ql-driver-import-alias-awaited-projected-aggregate-match-catch-all");
+    fn build_file_writes_llvm_ir_with_import_alias_awaited_projected_aggregate_match_catch_all() {
+        let dir =
+            TestDir::new("ql-driver-import-alias-awaited-projected-aggregate-match-catch-all");
         let source = dir.write(
             "import_alias_awaited_projected_aggregate_match_catch_all.ql",
             r#"
@@ -8480,9 +8484,9 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_control_flow_awaited_projected_aggregate_match_catch_all(
-    ) {
-        let dir = TestDir::new("ql-driver-control-flow-awaited-projected-aggregate-match-catch-all");
+    fn build_file_writes_llvm_ir_with_control_flow_awaited_projected_aggregate_match_catch_all() {
+        let dir =
+            TestDir::new("ql-driver-control-flow-awaited-projected-aggregate-match-catch-all");
         let source = dir.write(
             "control_flow_awaited_projected_aggregate_match_catch_all.ql",
             r#"
@@ -8608,8 +8612,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_control_flow_awaited_projected_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_import_alias_control_flow_awaited_projected_aggregate_match_catch_all()
+     {
         let dir = TestDir::new(
             "ql-driver-import-alias-control-flow-awaited-projected-aggregate-match-catch-all",
         );
@@ -8884,8 +8888,163 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_control_flow_awaited_nested_projected_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_import_alias_awaited_nested_projected_aggregate_match_catch_all()
+     {
+        let dir = TestDir::new(
+            "ql-driver-import-alias-awaited-nested-projected-aggregate-match-catch-all",
+        );
+        let source = dir.write(
+            "import_alias_awaited_nested_projected_aggregate_match_catch_all.ql",
+            r#"
+use tuple_env as tuple_alias
+use state_env as state_alias
+use array_env as array_alias
+use TUPLE_ENV as tuple_const_alias
+use STATE_ENV as state_const_alias
+use ARRAY_ENV as array_const_alias
+
+extern "c" fn sink(value: Int)
+
+struct TuplePayload {
+    values: (Int, Int),
+}
+
+struct TupleOuter {
+    payload: TuplePayload,
+}
+
+struct TupleEnvelope {
+    outer: TupleOuter,
+}
+
+struct State {
+    value: Int,
+}
+
+struct StatePayload {
+    current: State,
+}
+
+struct StateOuter {
+    payload: StatePayload,
+}
+
+struct StateEnvelope {
+    outer: StateOuter,
+}
+
+struct ArrayPayload {
+    values: [Int; 3],
+}
+
+struct ArrayOuter {
+    payload: ArrayPayload,
+}
+
+struct ArrayEnvelope {
+    outer: ArrayOuter,
+}
+
+async fn tuple_env(base: Int) -> TupleEnvelope {
+    return TupleEnvelope {
+        outer: TupleOuter {
+            payload: TuplePayload {
+                values: (base, base + 1),
+            },
+        },
+    }
+}
+
+async fn state_env(base: Int) -> StateEnvelope {
+    return StateEnvelope {
+        outer: StateOuter {
+            payload: StatePayload {
+                current: State { value: base },
+            },
+        },
+    }
+}
+
+async fn array_env(base: Int) -> ArrayEnvelope {
+    return ArrayEnvelope {
+        outer: ArrayOuter {
+            payload: ArrayPayload {
+                values: [base, base + 1, base + 2],
+            },
+        },
+    }
+}
+
+const TUPLE_ENV: (Int) -> Task[TupleEnvelope] = tuple_env
+const STATE_ENV: (Int) -> Task[StateEnvelope] = state_env
+const ARRAY_ENV: (Int) -> Task[ArrayEnvelope] = array_env
+
+async fn main() -> Int {
+    match (await tuple_alias(1)).outer.payload.values {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    match (await state_const_alias(3)).outer.payload.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    match (await array_alias(4)).outer.payload.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    defer match (await tuple_const_alias(1)).outer.payload.values {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    defer match (await state_alias(3)).outer.payload.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    defer match (await array_const_alias(4)).outer.payload.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/import_alias_awaited_nested_projected_aggregate_match_catch_all.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect(
+            "import-alias awaited nested projected aggregate match catch-all should emit LLVM IR",
+        );
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("extractvalue { i64, i64 }"));
+        assert!(rendered.contains("extractvalue { i64 }"));
+        assert!(rendered.contains("extractvalue [3 x i64]"));
+        assert!(rendered.contains("cleanup_match_arm_"));
+        assert!(rendered.matches("call ptr @qlrt_task_await").count() >= 6);
+        assert!(rendered.matches("call void @sink").count() >= 12);
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+    }
+
+    #[test]
+    fn build_file_writes_llvm_ir_with_control_flow_awaited_nested_projected_aggregate_match_catch_all()
+     {
         let dir = TestDir::new(
             "ql-driver-control-flow-awaited-nested-projected-aggregate-match-catch-all",
         );
@@ -9018,7 +9177,9 @@ async fn main() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect("control-flow awaited nested projected aggregate match catch-all should emit LLVM IR");
+        .expect(
+            "control-flow awaited nested projected aggregate match catch-all should emit LLVM IR",
+        );
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);
@@ -9032,8 +9193,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_control_flow_awaited_nested_projected_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_import_alias_control_flow_awaited_nested_projected_aggregate_match_catch_all()
+     {
         let dir = TestDir::new(
             "ql-driver-import-alias-control-flow-awaited-nested-projected-aggregate-match-catch-all",
         );
@@ -9242,8 +9403,7 @@ async fn main() -> Int {
 
     #[test]
     fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_different_closure_roots() {
-        let dir =
-            TestDir::new("ql-driver-cleanup-awaited-task-handle-different-closure-roots");
+        let dir = TestDir::new("ql-driver-cleanup-awaited-task-handle-different-closure-roots");
         let source = dir.write(
             "cleanup_awaited_task_handle_different_closure_roots.ql",
             r#"
@@ -9383,8 +9543,7 @@ async fn main() -> Int {
 
     #[test]
     fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_shared_local_alias_chains() {
-        let dir =
-            TestDir::new("ql-driver-cleanup-awaited-task-handle-shared-local-alias-chains");
+        let dir = TestDir::new("ql-driver-cleanup-awaited-task-handle-shared-local-alias-chains");
         let source = dir.write(
             "cleanup_awaited_task_handle_shared_local_alias_chains.ql",
             r#"
@@ -9455,8 +9614,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_guarded_match_shared_local_alias_chains(
-    ) {
+    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_guarded_match_shared_local_alias_chains()
+     {
         let dir = TestDir::new(
             "ql-driver-cleanup-awaited-task-handle-guarded-match-shared-local-alias-chains",
         );
@@ -9508,9 +9667,9 @@ async fn main() -> Int {
 }
 "#,
         );
-        let output = dir
-            .path()
-            .join("artifacts/cleanup_awaited_task_handle_guarded_match_shared_local_alias_chains.ll");
+        let output = dir.path().join(
+            "artifacts/cleanup_awaited_task_handle_guarded_match_shared_local_alias_chains.ll",
+        );
         let artifact = build_file(
             &source,
             &BuildOptions {
@@ -9540,8 +9699,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_tagged_guarded_match_shared_local_alias_chains(
-    ) {
+    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_tagged_guarded_match_shared_local_alias_chains()
+     {
         let dir = TestDir::new(
             "ql-driver-cleanup-awaited-task-handle-tagged-guarded-match-shared-local-alias-chains",
         );
@@ -9620,8 +9779,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_tagged_guarded_match_different_closure_roots(
-    ) {
+    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_tagged_guarded_match_different_closure_roots()
+     {
         let dir = TestDir::new(
             "ql-driver-cleanup-awaited-task-handle-tagged-guarded-match-different-closure-roots",
         );
@@ -9662,9 +9821,9 @@ async fn main() -> Int {
 }
 "#,
         );
-        let output = dir
-            .path()
-            .join("artifacts/cleanup_awaited_task_handle_tagged_guarded_match_different_closure_roots.ll");
+        let output = dir.path().join(
+            "artifacts/cleanup_awaited_task_handle_tagged_guarded_match_different_closure_roots.ll",
+        );
         let artifact = build_file(
             &source,
             &BuildOptions {
@@ -9693,8 +9852,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_tagged_guarded_match_different_closure_alias_roots(
-    ) {
+    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_tagged_guarded_match_different_closure_alias_roots()
+     {
         let dir = TestDir::new(
             "ql-driver-cleanup-awaited-task-handle-tagged-guarded-match-different-closure-alias-roots",
         );
@@ -9774,8 +9933,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_guarded_match_different_closure_roots(
-    ) {
+    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_guarded_match_different_closure_roots()
+     {
         let dir = TestDir::new(
             "ql-driver-cleanup-awaited-task-handle-guarded-match-different-closure-roots",
         );
@@ -9852,8 +10011,8 @@ async fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_guarded_match_different_closure_alias_roots(
-    ) {
+    fn build_file_writes_llvm_ir_with_cleanup_awaited_task_handle_guarded_match_different_closure_alias_roots()
+     {
         let dir = TestDir::new(
             "ql-driver-cleanup-awaited-task-handle-guarded-match-different-closure-alias-roots",
         );
@@ -9906,9 +10065,9 @@ async fn main() -> Int {
 }
 "#,
         );
-        let output = dir
-            .path()
-            .join("artifacts/cleanup_awaited_task_handle_guarded_match_different_closure_alias_roots.ll");
+        let output = dir.path().join(
+            "artifacts/cleanup_awaited_task_handle_guarded_match_different_closure_alias_roots.ll",
+        );
         let artifact = build_file(
             &source,
             &BuildOptions {
@@ -12627,10 +12786,11 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_control_flow_nested_call_root_aggregate_match_catch_all(
-    ) {
-        let dir =
-            TestDir::new("ql-driver-import-alias-control-flow-nested-call-root-aggregate-match-catch-all");
+    fn build_file_writes_llvm_ir_with_import_alias_control_flow_nested_call_root_aggregate_match_catch_all()
+     {
+        let dir = TestDir::new(
+            "ql-driver-import-alias-control-flow-nested-call-root-aggregate-match-catch-all",
+        );
         let source = dir.write(
             "import_alias_control_flow_nested_call_root_aggregate_match_catch_all.ql",
             r#"
