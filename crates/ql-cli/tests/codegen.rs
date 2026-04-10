@@ -6649,6 +6649,29 @@ fn import_alias_question_wrapped_call_root_aggregate_match_catch_all_codegen_cas
 }
 
 #[test]
+fn control_flow_question_wrapped_call_root_aggregate_match_catch_all_codegen_case_matches() {
+    let workspace_root = workspace_root();
+    let case = PassCase {
+        name: "control_flow_question_wrapped_call_root_aggregate_match_catch_all_build",
+        source_relative:
+            "fixtures/codegen/pass/control_flow_question_wrapped_call_root_aggregate_match_catch_all.ql",
+        emit: "obj",
+        expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
+        mock_compiler: true,
+        mock_archiver: false,
+        archiver_style: None,
+        header_surface: None,
+        expected_header_relative: None,
+    };
+
+    if let Err(message) = run_pass_case(&workspace_root, &case) {
+        panic!(
+            "control-flow question-wrapped call-root aggregate match catch-all build regression:\n\n{message}"
+        );
+    }
+}
+
+#[test]
 fn nested_call_root_aggregate_match_catch_all_codegen_case_matches() {
     let workspace_root = workspace_root();
     let case = PassCase {
