@@ -14283,6 +14283,151 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_question_wrapped_nested_call_root_aggregate_match_catch_all() {
+        let dir = TestDir::new("ql-driver-question-wrapped-nested-call-root-aggregate-match-catch-all");
+        let source = dir.write(
+            "question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
+            r#"
+extern "c" fn sink(value: Int)
+
+struct ArrayPayload {
+    values: [Int; 3],
+}
+
+struct TuplePayload {
+    values: (Int, Int),
+}
+
+struct State {
+    value: Int,
+}
+
+struct StatePayload {
+    current: State,
+}
+
+struct ArrayEnvelope {
+    payload: ArrayPayload,
+}
+
+struct TupleEnvelope {
+    payload: TuplePayload,
+}
+
+struct StateEnvelope {
+    payload: StatePayload,
+}
+
+struct DeepEnvelope {
+    outer: ArrayEnvelope,
+}
+
+fn array_env(base: Int) -> ArrayEnvelope {
+    return ArrayEnvelope {
+        payload: ArrayPayload {
+            values: [base, base + 1, base + 2],
+        },
+    }
+}
+
+fn tuple_env(base: Int) -> TupleEnvelope {
+    return TupleEnvelope {
+        payload: TuplePayload {
+            values: (base, base + 1),
+        },
+    }
+}
+
+fn state_env(base: Int) -> StateEnvelope {
+    return StateEnvelope {
+        payload: StatePayload {
+            current: State { value: base },
+        },
+    }
+}
+
+fn deep_env(base: Int) -> DeepEnvelope {
+    return DeepEnvelope {
+        outer: ArrayEnvelope {
+            payload: ArrayPayload {
+                values: [base, base + 1, base + 2],
+            },
+        },
+    }
+}
+
+fn main() -> Int {
+    match (tuple_env(1)?).payload.values {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    match (state_env(3)?).payload.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    match (array_env(4)?).payload.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    match (deep_env(6)?).outer.payload.values {
+        [first, middle, last] if middle == 7 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    defer match (tuple_env(1)?).payload.values {
+        (left, right) if left < right => sink(left + right),
+        _ => sink(0),
+    }
+
+    defer match (state_env(3)?).payload.current {
+        State { value } if value == 3 => sink(value),
+        _ => sink(0),
+    }
+
+    defer match (array_env(4)?).payload.values {
+        [first, middle, last] if middle == 5 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    defer match (deep_env(6)?).outer.payload.values {
+        [first, middle, last] if middle == 7 => sink(first + middle + last),
+        _ => sink(0),
+    }
+
+    return 0
+}
+"#,
+        );
+        let output = dir
+            .path()
+            .join("artifacts/question_wrapped_nested_call_root_aggregate_match_catch_all.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("question-wrapped nested call-root aggregate match catch-all should build");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("extractvalue { i64, i64 }"));
+        assert!(rendered.contains("extractvalue { i64 }"));
+        assert!(rendered.contains("extractvalue [3 x i64]"));
+        assert!(rendered.contains("cleanup_match_arm_"));
+        assert!(rendered.matches("call void @sink").count() >= 16);
+        assert!(!rendered.contains("does not support cleanup lowering yet"));
+        assert!(!rendered.contains("does not support `?` lowering yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_nested_call_root_aggregate_match_catch_all() {
         let dir = TestDir::new("ql-driver-nested-call-root-aggregate-match-catch-all");
         let source = dir.write(
