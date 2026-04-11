@@ -5017,6 +5017,45 @@ fn dependency_import_occurrence_for_path(
     )
 }
 
+fn dependency_value_root_binding_for_path(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    path: &ql_ast::Path,
+    offset: usize,
+) -> Option<DependencyStructBinding> {
+    let [root_name] = path.segments.as_slice() else {
+        return None;
+    };
+    let span = path.first_segment_span()?;
+    dependency_struct_field_completion_span_contains(span, offset)
+        .then(|| dependency_struct_binding_for_local_name(package, module, root_name))
+        .flatten()
+}
+
+fn push_dependency_value_root_occurrence_for_path(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    path: &ql_ast::Path,
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    let [root_name] = path.segments.as_slice() else {
+        return;
+    };
+    let Some(reference_span) = path.first_segment_span() else {
+        return;
+    };
+    let Some(binding) = dependency_struct_binding_for_local_name(package, module, root_name) else {
+        return;
+    };
+    push_dependency_value_root_occurrence(
+        SymbolKind::Struct,
+        root_name,
+        reference_span,
+        &binding,
+        occurrences,
+    );
+}
+
 fn collect_dependency_method_occurrences_in_item(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -6136,7 +6175,8 @@ fn collect_dependency_value_occurrences_in_expr(
                 );
             }
         }
-        ql_ast::ExprKind::StructLiteral { fields, .. } => {
+        ql_ast::ExprKind::StructLiteral { path, fields } => {
+            push_dependency_value_root_occurrence_for_path(package, module, path, occurrences);
             for field in fields {
                 if let Some(value) = &field.value {
                     collect_dependency_value_occurrences_in_expr(
@@ -8947,11 +8987,15 @@ fn dependency_value_root_binding_in_expr(
                 )
             }
         }
-        ql_ast::ExprKind::StructLiteral { fields, .. } => fields.iter().find_map(|field| {
-            field.value.as_ref().and_then(|expr| {
-                dependency_value_root_binding_in_expr(package, module, expr, offset)
+        ql_ast::ExprKind::StructLiteral { path, fields } => {
+            dependency_value_root_binding_for_path(package, module, path, offset).or_else(|| {
+                fields.iter().find_map(|field| {
+                    field.value.as_ref().and_then(|expr| {
+                        dependency_value_root_binding_in_expr(package, module, expr, offset)
+                    })
+                })
             })
-        }),
+        }
         ql_ast::ExprKind::Binary { left, right, .. } => {
             dependency_value_root_binding_in_expr(package, module, left, offset)
                 .or_else(|| dependency_value_root_binding_in_expr(package, module, right, offset))
