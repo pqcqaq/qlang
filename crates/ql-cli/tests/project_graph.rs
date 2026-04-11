@@ -190,11 +190,13 @@ pub fn exported() -> Int
     std::thread::sleep(std::time::Duration::from_millis(1200));
 
     temp.write(
-        "workspace/app/src/lib.ql",
+        "workspace/app/qlang.toml",
         r#"
-pub fn run() -> Int {
-    2
-}
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
 "#,
     );
     temp.write(
@@ -223,7 +225,7 @@ pub fn exported() -> Int {
     .expect("stale interface graph rendering should stay silent on stderr");
 
     let expected = format!(
-        "manifest: {}\npackage: app\nworkspace_members: []\nreferences:\n  - ../dep\ninterface:\n  path: app.qi\n  status: stale\nreference_interfaces:\n  - reference: ../dep\n    package: dep\n    path: ../dep/dep.qi\n    status: stale\n",
+        "manifest: {}\npackage: app\nworkspace_members: []\nreferences:\n  - ../dep\ninterface:\n  path: app.qi\n  status: stale\n  stale_reasons:\n    - manifest: qlang.toml\nreference_interfaces:\n  - reference: ../dep\n    package: dep\n    path: ../dep/dep.qi\n    status: stale\n    stale_reasons:\n      - source: ../dep/src/lib.ql\n",
         manifest_path.to_string_lossy().replace('\\', "/")
     );
     expect_snapshot_matches(

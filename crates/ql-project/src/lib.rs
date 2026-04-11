@@ -275,6 +275,27 @@ impl InterfaceArtifactStatus {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InterfaceArtifactStaleReason {
+    ManifestNewer { path: PathBuf },
+    SourceNewer { path: PathBuf },
+}
+
+impl InterfaceArtifactStaleReason {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::ManifestNewer { .. } => "manifest",
+            Self::SourceNewer { .. } => "source",
+        }
+    }
+
+    fn path(&self) -> &Path {
+        match self {
+            Self::ManifestNewer { path } | Self::SourceNewer { path } => path,
+        }
+    }
+}
+
 fn append_interface_summary(
     output: &mut String,
     root: &Path,
@@ -282,15 +303,18 @@ fn append_interface_summary(
     interface_path: &Path,
     indent: &str,
 ) {
+    let status = interface_artifact_status(manifest, interface_path);
     output.push_str(&format!("{indent}interface:\n"));
     output.push_str(&format!(
         "{indent}  path: {}\n",
         relative_display_path(root, interface_path)
     ));
-    output.push_str(&format!(
-        "{indent}  status: {}\n",
-        interface_artifact_status(manifest, interface_path).label()
-    ));
+    output.push_str(&format!("{indent}  status: {}\n", status.label()));
+    if status == InterfaceArtifactStatus::Stale {
+        let stale_reasons = interface_artifact_stale_reasons(manifest, interface_path);
+        let stale_indent = format!("{indent}  ");
+        append_stale_reason_summary(output, root, &stale_reasons, &stale_indent);
+    }
 }
 
 fn append_reference_interface_summaries(
@@ -311,6 +335,7 @@ fn append_reference_interface_summaries(
         match load_project_manifest(&manifest_dir.join(reference)) {
             Ok(reference_manifest) => match default_interface_path(&reference_manifest) {
                 Ok(interface_path) => {
+                    let status = interface_artifact_status(&reference_manifest, &interface_path);
                     let package = reference_manifest
                         .package
                         .as_ref()
@@ -321,10 +346,13 @@ fn append_reference_interface_summaries(
                         "{indent}    path: {}\n",
                         relative_display_path(root, &interface_path)
                     ));
-                    output.push_str(&format!(
-                        "{indent}    status: {}\n",
-                        interface_artifact_status(&reference_manifest, &interface_path).label()
-                    ));
+                    output.push_str(&format!("{indent}    status: {}\n", status.label()));
+                    if status == InterfaceArtifactStatus::Stale {
+                        let stale_reasons =
+                            interface_artifact_stale_reasons(&reference_manifest, &interface_path);
+                        let stale_indent = format!("{indent}    ");
+                        append_stale_reason_summary(output, root, &stale_reasons, &stale_indent);
+                    }
                 }
                 Err(_) => {
                     output.push_str(&format!("{indent}    package: <unresolved>\n"));
@@ -338,6 +366,26 @@ fn append_reference_interface_summaries(
                 output.push_str(&format!("{indent}    status: unresolved-manifest\n"));
             }
         }
+    }
+}
+
+fn append_stale_reason_summary(
+    output: &mut String,
+    root: &Path,
+    stale_reasons: &[InterfaceArtifactStaleReason],
+    indent: &str,
+) {
+    if stale_reasons.is_empty() {
+        return;
+    }
+
+    output.push_str(&format!("{indent}stale_reasons:\n"));
+    for reason in stale_reasons {
+        output.push_str(&format!(
+            "{indent}  - {}: {}\n",
+            reason.label(),
+            relative_display_path(root, reason.path())
+        ));
     }
 }
 
@@ -362,24 +410,37 @@ pub fn interface_artifact_status(
     }
 }
 
-fn interface_artifact_is_stale(manifest: &ProjectManifest, interface_path: &Path) -> bool {
+pub fn interface_artifact_stale_reasons(
+    manifest: &ProjectManifest,
+    interface_path: &Path,
+) -> Vec<InterfaceArtifactStaleReason> {
     let interface_modified = match file_modified(interface_path) {
         Some(modified) => modified,
-        None => return false,
+        None => return Vec::new(),
     };
 
+    let mut stale_reasons = Vec::new();
     if file_modified(&manifest.manifest_path).is_some_and(|modified| modified > interface_modified)
     {
-        return true;
+        stale_reasons.push(InterfaceArtifactStaleReason::ManifestNewer {
+            path: manifest.manifest_path.clone(),
+        });
     }
 
-    match collect_package_sources(manifest) {
-        Ok(source_paths) => source_paths
+    if let Ok(source_paths) = collect_package_sources(manifest) {
+        if let Some(path) = source_paths
             .into_iter()
-            .filter_map(|path| file_modified(&path))
-            .any(|modified| modified > interface_modified),
-        Err(_) => false,
+            .find(|path| file_modified(path).is_some_and(|modified| modified > interface_modified))
+        {
+            stale_reasons.push(InterfaceArtifactStaleReason::SourceNewer { path });
+        }
     }
+
+    stale_reasons
+}
+
+fn interface_artifact_is_stale(manifest: &ProjectManifest, interface_path: &Path) -> bool {
+    !interface_artifact_stale_reasons(manifest, interface_path).is_empty()
 }
 
 fn file_modified(path: &Path) -> Option<SystemTime> {

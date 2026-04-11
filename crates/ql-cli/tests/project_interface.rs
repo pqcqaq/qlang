@@ -640,17 +640,10 @@ pub fn exported() -> Int {
     );
     std::thread::sleep(std::time::Duration::from_millis(1200));
     temp.write(
-        "workspace-only/packages/tool/src/lib.ql",
+        "workspace-only/packages/tool/qlang.toml",
         r#"
-package demo.tool
-
-pub fn exported() -> Int {
-    return 1
-}
-
-pub fn newer() -> Int {
-    return 2
-}
+[package]
+name = "tool"
 "#,
     );
 
@@ -688,6 +681,13 @@ pub fn newer() -> Int {
         "is stale",
     )
     .expect("workspace interface check should surface stale member interface status");
+    expect_stderr_contains(
+        "project-interface-check-workspace",
+        "workspace interface check with stale member",
+        &stderr,
+        "reason: manifest newer than artifact:",
+    )
+    .expect("workspace interface check should explain why the stale member interface is stale");
     expect_stderr_contains(
         "project-interface-check-workspace",
         "workspace interface check with stale member",

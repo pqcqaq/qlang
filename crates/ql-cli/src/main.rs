@@ -15,9 +15,10 @@ use ql_driver::{
 };
 use ql_fmt::format_source;
 use ql_project::{
-    InterfaceArtifactStatus, collect_package_sources, default_interface_path,
-    interface_artifact_status, load_project_manifest, package_name, package_source_root,
-    render_module_interface, render_project_graph_resolved,
+    InterfaceArtifactStaleReason, InterfaceArtifactStatus, collect_package_sources,
+    default_interface_path, interface_artifact_stale_reasons, interface_artifact_status,
+    load_project_manifest, package_name, package_source_root, render_module_interface,
+    render_project_graph_resolved,
 };
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 
@@ -772,6 +773,7 @@ enum CheckPackageInterfaceResult {
         path: PathBuf,
         status: InterfaceArtifactStatus,
         manifest_path: PathBuf,
+        stale_reasons: Vec<InterfaceArtifactStaleReason>,
     },
 }
 
@@ -871,10 +873,16 @@ fn check_package_interface_artifact(
     })?;
     let status = interface_artifact_status(manifest, &output_path);
     if status != InterfaceArtifactStatus::Valid {
+        let stale_reasons = if status == InterfaceArtifactStatus::Stale {
+            interface_artifact_stale_reasons(manifest, &output_path)
+        } else {
+            Vec::new()
+        };
         return Ok(CheckPackageInterfaceResult::Invalid {
             path: output_path,
             status,
             manifest_path: manifest.manifest_path.clone(),
+            stale_reasons,
         });
     }
     Ok(CheckPackageInterfaceResult::Ok(output_path))
@@ -890,17 +898,32 @@ fn report_package_interface_check(result: CheckPackageInterfaceResult) -> Result
             path,
             status,
             manifest_path,
+            stale_reasons,
         } => {
             eprintln!(
                 "error: interface artifact `{}` is {}",
                 path.display(),
                 status.label()
             );
+            report_interface_stale_reasons(&stale_reasons);
             eprintln!(
                 "hint: rerun `ql project emit-interface {}` to regenerate it",
                 manifest_path.display()
             );
             Err(1)
+        }
+    }
+}
+
+fn report_interface_stale_reasons(stale_reasons: &[InterfaceArtifactStaleReason]) {
+    for reason in stale_reasons {
+        match reason {
+            InterfaceArtifactStaleReason::ManifestNewer { path } => {
+                eprintln!("reason: manifest newer than artifact: {}", path.display());
+            }
+            InterfaceArtifactStaleReason::SourceNewer { path } => {
+                eprintln!("reason: source newer than artifact: {}", path.display());
+            }
         }
     }
 }
@@ -967,13 +990,15 @@ fn ensure_reference_interfaces_current_recursive(
             eprintln!("error: {error}");
             1
         })?;
-        if interface_artifact_status(&dependency_manifest, &interface_path)
-            == InterfaceArtifactStatus::Stale
-        {
+        let status = interface_artifact_status(&dependency_manifest, &interface_path);
+        if status == InterfaceArtifactStatus::Stale {
+            let stale_reasons =
+                interface_artifact_stale_reasons(&dependency_manifest, &interface_path);
             eprintln!(
                 "error: referenced package `{dependency_package}` has stale interface artifact `{}`",
                 interface_path.display()
             );
+            report_interface_stale_reasons(&stale_reasons);
             eprintln!(
                 "hint: rerun `ql check --sync-interfaces {}` or regenerate `{}` with `ql project emit-interface {}`",
                 manifest_path.display(),

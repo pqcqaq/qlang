@@ -315,6 +315,13 @@ pub fn exported() -> Int {
         "project-check-stale-interface",
         "package-aware ql check with stale dependency interface",
         &stderr,
+        "reason: source newer than artifact:",
+    )
+    .expect("stale dependency interface should report why the artifact is stale");
+    expect_stderr_contains(
+        "project-check-stale-interface",
+        "package-aware ql check with stale dependency interface",
+        &stderr,
         "--sync-interfaces",
     )
     .expect("stale dependency interface diagnostic should suggest sync");
