@@ -3542,6 +3542,13 @@ fn dependency_member_completion_binding_for_pattern(
             dependency_struct_field_completion_span_contains(pattern.span, offset)
                 .then_some(binding.clone())
         }
+        ql_ast::PatternKind::Tuple(items) | ql_ast::PatternKind::Array(items) => {
+            items.iter().find_map(|item| {
+                dependency_member_completion_binding_for_pattern(
+                    package, item, binding, offset, kind,
+                )
+            })
+        }
         ql_ast::PatternKind::Struct { fields, .. } => fields.iter().find_map(|field| {
             let field_binding = binding
                 .fields
@@ -7882,6 +7889,9 @@ fn dependency_struct_binding_for_expr(
     match &expr.kind {
         ql_ast::ExprKind::Name(name) => dependency_struct_binding_for_name(scopes, name)
             .or_else(|| dependency_global_binding_for_local_name(package, module, name)),
+        ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => {
+            dependency_struct_common_binding_for_exprs(package, module, items, scopes)
+        }
         ql_ast::ExprKind::StructLiteral { path, .. } => {
             let [root_name] = path.segments.as_slice() else {
                 return None;
@@ -7953,6 +7963,11 @@ fn bind_dependency_struct_pattern(
                 .last_mut()
                 .expect("scope stack must be non-empty")
                 .insert(name.clone(), binding.clone());
+        }
+        ql_ast::PatternKind::Tuple(items) | ql_ast::PatternKind::Array(items) => {
+            for item in items {
+                bind_dependency_struct_pattern(package, item, binding, scopes);
+            }
         }
         ql_ast::PatternKind::Struct { fields, .. } => {
             for field in fields {
@@ -8356,6 +8371,18 @@ fn bind_dependency_value_pattern(
                 value_scopes,
                 occurrences,
             );
+        }
+        ql_ast::PatternKind::Tuple(items) | ql_ast::PatternKind::Array(items) => {
+            for item in items {
+                bind_dependency_value_pattern(
+                    package,
+                    item,
+                    binding,
+                    binding_scopes,
+                    value_scopes,
+                    occurrences,
+                );
+            }
         }
         ql_ast::PatternKind::Struct { fields, .. } => {
             for field in fields {
