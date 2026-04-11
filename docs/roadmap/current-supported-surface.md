@@ -56,8 +56,8 @@
 - package directory、`qlang.toml`、包内源码路径、workspace-only 根 manifest 都可进入 package-aware `check` 流程。
 - `ql project graph` 会展示 package/member、references，以及默认 `.qi` 的 `valid` / `missing` / `invalid` / `stale` 状态；`stale` 会给出 `stale_reasons`，`invalid` / `unreadable` 也会给出一行 `detail`。
 - `ql project emit-interface` 支持 package 和 workspace 批量写出；`-o/--output` 仍仅支持 package。
-- `ql project emit-interface --changed-only` 只重发非 `valid` 接口。
-- `ql project emit-interface --check` 只校验当前 package/workspace 的默认 `.qi` 是否都处于 `valid` 状态而不写文件；若发现 `stale` 会说明原因，若遇到 `invalid` / `unreadable` 也会直接打印 detail。
+- `ql project emit-interface --changed-only` 在写出路径上只重发非 `valid` 接口；搭配 `--check` 时不会写文件，已 `valid` 的接口会报告 `up-to-date interface`。
+- `ql project emit-interface --check` 只校验当前 package/workspace 的默认 `.qi` 是否都处于 `valid` 状态；若发现 `stale` 会说明原因，若遇到 `invalid` / `unreadable` 也会直接打印 detail。
 - `ql build --emit-interface` 会在成功 build 后写出当前 package 的默认 `.qi`。
 - `ql check` 现会在分析前显式拒绝本地依赖包的非 `valid` 默认 `.qi`（`missing` / `invalid` / `unreadable` / `stale`），并统一给出 `--sync-interfaces` / `ql project emit-interface` 修复提示。
 - `ql check --sync-interfaces` 会在分析前递归同步本地依赖包的默认 `.qi`，避免把这些非 `valid` artifact 留到后续分析阶段才暴露。

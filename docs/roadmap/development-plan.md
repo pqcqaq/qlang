@@ -79,7 +79,7 @@
 
 当前重点：
 
-- 收紧 `qlang.toml`、workspace member、references 和 `.qi` 生命周期，尤其是继续统一 `ql check` / `ql project graph` / `ql project emit-interface --check` 对非 `valid` artifact 的状态、detail 和修复提示。
+- 继续收紧 `qlang.toml`、workspace member、references 和 `.qi` 生命周期；`ql project emit-interface --changed-only --check` 已落实为对已 `valid` artifact 报 `up-to-date interface` 且不写文件，下一步继续统一其余 `.qi` 维护路径的状态、detail 和修复提示。
 - 继续扩 `ql project graph`、`ql project emit-interface`、`ql build --emit-interface`、`ql check --sync-interfaces` 的一致性。
 - 继续扩 dependency-backed completion / query / `typeDefinition` 的最小 receiver slice，并在已打通的 direct dependency struct literal value-root、同构 tuple / array destructured dependency locals、direct dependency iterable call destructured locals 基础上继续扩面。
 

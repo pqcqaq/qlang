@@ -307,6 +307,97 @@ pub fn exported() -> Int
 }
 
 #[test]
+fn project_emit_interface_check_changed_only_accepts_valid_package_interface() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-changed-only-package");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for changed-only interface check test");
+    let interface_path = project_root.join("app.qi");
+    let expected = "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+";
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write("workspace/app/app.qi", expected);
+    let metadata_before = std::fs::metadata(&interface_path)
+        .expect("read interface metadata before changed-only package check")
+        .modified()
+        .expect("read interface modification time before changed-only package check");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--changed-only", "--check"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --changed-only --check` package",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-interface-check-changed-only-package",
+        "changed-only package interface check",
+        &output,
+    )
+    .expect("changed-only package interface check should succeed");
+    expect_snapshot_matches(
+        "project-interface-check-changed-only-package",
+        "changed-only package interface check stdout",
+        &format!("up-to-date interface: {}\n", interface_path.display()),
+        &stdout,
+    )
+    .expect("changed-only package interface check should report a valid interface as up to date");
+    expect_snapshot_matches(
+        "project-interface-check-changed-only-package",
+        "changed-only package interface check stderr",
+        "",
+        &stderr,
+    )
+    .expect("changed-only package interface check should stay silent on stderr");
+    let actual = read_normalized_file(
+        &interface_path,
+        "changed-only package check interface artifact after check",
+    );
+    expect_snapshot_matches(
+        "project-interface-check-changed-only-package",
+        "changed-only package check qi artifact",
+        expected,
+        &actual,
+    )
+    .expect("changed-only package interface check should not rewrite a valid artifact");
+    let metadata_after = std::fs::metadata(&interface_path)
+        .expect("read interface metadata after changed-only package check")
+        .modified()
+        .expect("read interface modification time after changed-only package check");
+    assert_eq!(
+        metadata_before,
+        metadata_after,
+        "expected changed-only package interface check not to rewrite `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn project_emit_interface_check_rejects_invalid_package_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-check-invalid-package");
@@ -759,6 +850,185 @@ name = "tool"
         "found 2 invalid artifact(s)",
     )
     .expect("workspace interface check should summarize all invalid artifacts");
+}
+
+#[test]
+fn project_emit_interface_check_changed_only_skips_valid_workspace_members() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-changed-only-workspace");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let tool_root = project_root.join("packages").join("tool");
+    let broken_root = project_root.join("packages").join("broken");
+    std::fs::create_dir_all(app_root.join("src")).expect(
+        "create app package source directory for changed-only workspace interface check test",
+    );
+    std::fs::create_dir_all(tool_root.join("src")).expect(
+        "create tool package source directory for changed-only workspace interface check test",
+    );
+    std::fs::create_dir_all(broken_root.join("src")).expect(
+        "create broken package source directory for changed-only workspace interface check test",
+    );
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/app.qi",
+        "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+",
+    );
+    temp.write(
+        "workspace-only/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/tool.qi",
+        "\
+// qlang interface v1
+// package: tool
+
+// source: src/lib.ql
+package demo.tool
+
+pub fn exported() -> Int
+",
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[package]
+name = "broken"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/broken/src/lib.ql",
+        r#"
+package demo.broken
+
+pub fn exported() -> Int {
+    return 3
+}
+"#,
+    );
+    let app_interface = app_root.join("app.qi");
+    let app_metadata_before = std::fs::metadata(&app_interface)
+        .expect("read app interface metadata before changed-only workspace check")
+        .modified()
+        .expect("read app interface modification time before changed-only workspace check");
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    temp.write(
+        "workspace-only/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--changed-only", "--check"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --changed-only --check` workspace-only manifest",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-check-changed-only-workspace",
+        "changed-only workspace interface check with stale member",
+        &output,
+        1,
+    )
+    .expect("changed-only workspace interface check with stale member should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
+    expect_snapshot_matches(
+        "project-interface-check-changed-only-workspace",
+        "changed-only workspace interface check stdout",
+        &format!("up-to-date interface: {normalized_app_interface}\n"),
+        &normalized_stdout,
+    )
+    .expect("changed-only workspace interface check should report valid members as up to date");
+    expect_stderr_contains(
+        "project-interface-check-changed-only-workspace",
+        "changed-only workspace interface check with stale member",
+        &stderr,
+        "is stale",
+    )
+    .expect("changed-only workspace interface check should surface stale member interface status");
+    expect_stderr_contains(
+        "project-interface-check-changed-only-workspace",
+        "changed-only workspace interface check with stale member",
+        &stderr,
+        "reason: manifest newer than artifact:",
+    )
+    .expect(
+        "changed-only workspace interface check should explain why the stale member interface is stale",
+    );
+    expect_stderr_contains(
+        "project-interface-check-changed-only-workspace",
+        "changed-only workspace interface check with stale member",
+        &stderr,
+        "is missing",
+    )
+    .expect("changed-only workspace interface check should also surface missing member interface status");
+    expect_stderr_contains(
+        "project-interface-check-changed-only-workspace",
+        "changed-only workspace interface check with stale member",
+        &stderr,
+        "found 2 invalid artifact(s)",
+    )
+    .expect("changed-only workspace interface check should summarize all invalid artifacts");
+    let app_metadata_after = std::fs::metadata(&app_interface)
+        .expect("read app interface metadata after changed-only workspace check")
+        .modified()
+        .expect("read app interface modification time after changed-only workspace check");
+    assert_eq!(
+        app_metadata_before,
+        app_metadata_after,
+        "expected changed-only workspace interface check not to rewrite `{}`",
+        app_interface.display()
+    );
 }
 
 #[test]

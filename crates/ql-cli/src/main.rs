@@ -708,6 +708,7 @@ fn project_emit_interface_path(
             return report_package_interface_check(check_package_interface_artifact(
                 &manifest,
                 "`ql project emit-interface --check`",
+                changed_only,
             )?);
         }
         report_emit_interface_result(emit_package_interface_path(
@@ -741,6 +742,7 @@ fn project_emit_interface_path(
             let result = check_package_interface_artifact(
                 &member_manifest,
                 "`ql project emit-interface --check`",
+                changed_only,
             )?;
             if report_package_interface_check(result).is_err() {
                 invalid_count += 1;
@@ -770,6 +772,7 @@ enum EmitPackageInterfaceResult {
 
 enum CheckPackageInterfaceResult {
     Ok(PathBuf),
+    UpToDate(PathBuf),
     Invalid {
         path: PathBuf,
         status: InterfaceArtifactStatus,
@@ -868,12 +871,20 @@ fn report_emit_interface_result(result: EmitPackageInterfaceResult) {
 fn check_package_interface_artifact(
     manifest: &ql_project::ProjectManifest,
     command_label: &str,
+    changed_only: bool,
 ) -> Result<CheckPackageInterfaceResult, u8> {
     let output_path = default_interface_path(manifest).map_err(|error| {
         eprintln!("error: {command_label} {error}");
         1
     })?;
     let status = interface_artifact_status(manifest, &output_path);
+    if status == InterfaceArtifactStatus::Valid {
+        return Ok(if changed_only {
+            CheckPackageInterfaceResult::UpToDate(output_path)
+        } else {
+            CheckPackageInterfaceResult::Ok(output_path)
+        });
+    }
     if status != InterfaceArtifactStatus::Valid {
         let detail = interface_artifact_status_detail(&output_path, status);
         let stale_reasons = if status == InterfaceArtifactStatus::Stale {
@@ -896,6 +907,10 @@ fn report_package_interface_check(result: CheckPackageInterfaceResult) -> Result
     match result {
         CheckPackageInterfaceResult::Ok(path) => {
             println!("ok interface: {}", path.display());
+            Ok(())
+        }
+        CheckPackageInterfaceResult::UpToDate(path) => {
+            println!("up-to-date interface: {}", path.display());
             Ok(())
         }
         CheckPackageInterfaceResult::Invalid {
@@ -1034,9 +1049,10 @@ fn report_reference_interface_artifact_issue(
                 "error: referenced package `{dependency_package}` has unreadable interface artifact `{}`",
                 interface_path.display()
             );
-            if let Some(detail) =
-                interface_artifact_status_detail(interface_path, InterfaceArtifactStatus::Unreadable)
-            {
+            if let Some(detail) = interface_artifact_status_detail(
+                interface_path,
+                InterfaceArtifactStatus::Unreadable,
+            ) {
                 eprintln!("detail: {detail}");
             }
         }
