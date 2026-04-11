@@ -557,6 +557,102 @@ pub struct Config {
 }
 
 #[test]
+fn project_emit_interface_keeps_writing_other_workspace_members_when_one_member_fails() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-partial-failure");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let broken_root = project_root.join("packages").join("broken");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for partial workspace emit test");
+    std::fs::create_dir_all(&broken_root)
+        .expect("create broken package directory for partial workspace emit test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[package
+name = "broken"
+"#,
+    );
+    let app_interface = app_root.join("app.qi");
+    let broken_interface = broken_root.join("broken.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` workspace manifest with failing member",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-workspace-partial-failure",
+        "workspace interface emission with failing member",
+        &output,
+        1,
+    )
+    .expect("workspace interface emission with failing member should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-workspace-partial-failure",
+        &normalized_stdout,
+        &[&format!("wrote interface: {normalized_app_interface}")],
+    )
+    .expect("workspace interface emission should still write healthy members before failing");
+    expect_stderr_contains(
+        "project-interface-workspace-partial-failure",
+        "workspace interface emission with failing member",
+        &stderr,
+        "invalid manifest",
+    )
+    .expect("workspace interface emission should surface the failing member manifest error");
+    expect_stderr_contains(
+        "project-interface-workspace-partial-failure",
+        "workspace interface emission with failing member",
+        &stderr,
+        "interface emission found 1 failing member(s)",
+    )
+    .expect("workspace interface emission should summarize failing members");
+    expect_file_exists(
+        "project-interface-workspace-partial-failure",
+        &app_interface,
+        "workspace app qi",
+        "workspace interface emission with failing member",
+    )
+    .expect("workspace interface emission should still create app qi");
+    assert!(
+        !broken_interface.is_file(),
+        "expected failing workspace member not to create `{}`",
+        broken_interface.display()
+    );
+}
+
+#[test]
 fn project_emit_interface_changed_only_rewrites_only_stale_workspace_members() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-changed-only-workspace");
