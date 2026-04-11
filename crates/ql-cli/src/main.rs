@@ -448,20 +448,33 @@ fn check_workspace_manifest(
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
     let mut sync_visited = BTreeSet::new();
     let mut synced_interfaces = BTreeSet::new();
+    let mut failing_members = 0usize;
 
     for member in &workspace.members {
         let member_path = manifest_dir.join(member);
-        let member_manifest = load_project_manifest(&member_path).map_err(|error| {
-            eprintln!("error: {error}");
-            1
-        })?;
+        let member_manifest = match load_project_manifest(&member_path) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                eprintln!("error: {error}");
+                failing_members += 1;
+                continue;
+            }
+        };
 
-        if !sync_interfaces {
-            ensure_reference_interfaces_current(&member_manifest)?;
+        if !sync_interfaces && ensure_reference_interfaces_current(&member_manifest).is_err() {
+            failing_members += 1;
+            continue;
         }
 
         if sync_interfaces {
-            for interface_path in sync_reference_interfaces(&member_path, &mut sync_visited)? {
+            let synced_paths = match sync_reference_interfaces(&member_path, &mut sync_visited) {
+                Ok(paths) => paths,
+                Err(_) => {
+                    failing_members += 1;
+                    continue;
+                }
+            };
+            for interface_path in synced_paths {
                 let display_path =
                     fs::canonicalize(&interface_path).unwrap_or_else(|_| interface_path.clone());
                 if synced_interfaces.insert(display_path.clone()) {
@@ -480,7 +493,8 @@ fn check_workspace_manifest(
                         "error: no `.ql` files found under `{}`",
                         source_root.display()
                     );
-                    return Err(1);
+                    failing_members += 1;
+                    continue;
                 }
                 for module in package.modules() {
                     println!("ok: {}", module.path().display());
@@ -494,9 +508,14 @@ fn check_workspace_manifest(
             }
             Err(error) => {
                 print_package_analysis_error(&error);
-                return Err(1);
+                failing_members += 1;
             }
         }
+    }
+
+    if failing_members > 0 {
+        eprintln!("error: workspace check found {failing_members} failing member(s)");
+        return Err(1);
     }
 
     Ok(())

@@ -60,6 +60,7 @@
 - `ql project emit-interface --check` 只校验当前 package/workspace 的默认 `.qi` 是否都处于 `valid` 状态；若发现 `stale` 会说明原因，若遇到 `invalid` / `unreadable` 也会直接打印 detail。
 - `ql build --emit-interface` 会在成功 build 后写出当前 package 的默认 `.qi`。
 - `ql check` 现会在分析前显式拒绝本地依赖包的非 `valid` 默认 `.qi`（`missing` / `invalid` / `unreadable` / `stale`），并统一给出 `--sync-interfaces` / `ql project emit-interface` 修复提示。
+- workspace 根路径上的 `ql check` 不再在首个 failing member 处停止，而会继续检查其余 members，最后输出失败成员总数。
 - `ql check --sync-interfaces` 会在分析前递归同步本地依赖包的默认 `.qi`，避免把这些非 `valid` artifact 留到后续分析阶段才暴露。
 
 ### dependency-backed tooling

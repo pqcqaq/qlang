@@ -915,3 +915,172 @@ pub fn main() -> Int {
         "expected workspace-root ql check stderr to stay empty, got:\n{stderr}"
     );
 }
+
+#[test]
+fn check_workspace_root_reports_all_failing_members() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-workspace-failures");
+    let good_dep_root = temp.path().join("workspace").join("deps").join("good");
+    let missing_dep_root = temp.path().join("workspace").join("deps").join("missing");
+    let good_root = temp.path().join("workspace").join("packages").join("good");
+    let missing_root = temp
+        .path()
+        .join("workspace")
+        .join("packages")
+        .join("missing");
+    let broken_root = temp
+        .path()
+        .join("workspace")
+        .join("packages")
+        .join("broken");
+    let good_source = good_root.join("src").join("lib.ql");
+    let workspace_manifest = temp.path().join("workspace");
+    std::fs::create_dir_all(good_dep_root.join("src"))
+        .expect("create good dependency source directory");
+    std::fs::create_dir_all(missing_dep_root.join("src"))
+        .expect("create missing dependency source directory");
+    std::fs::create_dir_all(good_root.join("src")).expect("create good package source directory");
+    std::fs::create_dir_all(missing_root.join("src"))
+        .expect("create missing package source directory");
+    std::fs::create_dir_all(broken_root.join("src"))
+        .expect("create broken package source directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/good", "packages/missing", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace/deps/good/qlang.toml",
+        r#"
+[package]
+name = "good_dep"
+"#,
+    );
+    temp.write(
+        "workspace/deps/good/good_dep.qi",
+        r#"
+// qlang interface v1
+// package: good_dep
+
+// source: src/lib.ql
+package demo.good_dep
+
+pub fn exported() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/deps/missing/qlang.toml",
+        r#"
+[package]
+name = "missing_dep"
+"#,
+    );
+    temp.write(
+        "workspace/packages/good/qlang.toml",
+        r#"
+[package]
+name = "good"
+
+[references]
+packages = ["../../deps/good"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/good/src/lib.ql",
+        r#"
+package demo.good
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/missing/qlang.toml",
+        r#"
+[package]
+name = "missing"
+
+[references]
+packages = ["../../deps/missing"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/missing/src/lib.ql",
+        r#"
+package demo.missing
+
+pub fn main() -> Int {
+    return 2
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/broken/qlang.toml",
+        r#"
+[package]
+name = "broken"
+"#,
+    );
+    temp.write(
+        "workspace/packages/broken/src/lib.ql",
+        r#"
+package demo.broken
+
+pub fn main( -> Int {
+    return 3
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check"]).arg(&workspace_manifest);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check` workspace root with multiple failing members",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-workspace-failures",
+        "workspace-root ql check with multiple failing members",
+        &output,
+        1,
+    )
+    .expect("workspace-root ql check with multiple failing members should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_good_source = good_source.display().to_string().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-check-workspace-failures",
+        &normalized_stdout,
+        &[
+            &format!("ok: {normalized_good_source}"),
+            "loaded interface: ",
+            "good_dep.qi",
+        ],
+    )
+    .expect("workspace-root ql check should still report successful members before the summary");
+    expect_stderr_contains(
+        "project-check-workspace-failures",
+        "workspace-root ql check with multiple failing members",
+        &stderr,
+        "referenced package `missing_dep` is missing interface artifact",
+    )
+    .expect("workspace-root ql check should surface missing dependency interfaces");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-workspace-failures",
+        "workspace-root ql check with multiple failing members",
+        &normalized_stderr,
+        "packages/broken/src/lib.ql",
+    )
+    .expect("workspace-root ql check should continue and surface later source diagnostics");
+    expect_stderr_contains(
+        "project-check-workspace-failures",
+        "workspace-root ql check with multiple failing members",
+        &stderr,
+        "workspace check found 2 failing member(s)",
+    )
+    .expect("workspace-root ql check should summarize all failing members");
+}
