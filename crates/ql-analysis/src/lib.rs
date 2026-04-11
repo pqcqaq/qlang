@@ -3250,6 +3250,13 @@ fn dependency_struct_field_completion_span_contains(span: Span, offset: usize) -
     span.start <= offset && offset <= span.end
 }
 
+fn dependency_indexed_iterable_target_contains_block(block: &ql_ast::Block, offset: usize) -> bool {
+    block
+        .tail
+        .as_ref()
+        .is_some_and(|tail| dependency_indexed_iterable_target_contains(tail, offset))
+}
+
 fn dependency_indexed_iterable_target_contains(expr: &ql_ast::Expr, offset: usize) -> bool {
     match &expr.kind {
         ql_ast::ExprKind::Name(_) => {
@@ -3267,6 +3274,22 @@ fn dependency_indexed_iterable_target_contains(expr: &ql_ast::Expr, offset: usiz
         ql_ast::ExprKind::Bracket { target, .. } => {
             dependency_indexed_iterable_target_contains(target, offset)
         }
+        ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
+            dependency_indexed_iterable_target_contains_block(block, offset)
+        }
+        ql_ast::ExprKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            dependency_indexed_iterable_target_contains_block(then_branch, offset)
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|expr| dependency_indexed_iterable_target_contains(expr, offset))
+        }
+        ql_ast::ExprKind::Match { arms, .. } => arms
+            .iter()
+            .any(|arm| dependency_indexed_iterable_target_contains(&arm.body, offset)),
         _ => false,
     }
 }

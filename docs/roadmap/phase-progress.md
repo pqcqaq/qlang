@@ -1,6 +1,6 @@
 # P1-P8 阶段总览
 
-> 最后同步：2026-04-11
+> 最后同步：2026-04-12
 
 这页只保留阶段级结论。详细增量记录已移出主阅读路径。
 
@@ -41,7 +41,7 @@
 - 编译器主路径稳定为 AST -> HIR -> resolve -> typeck -> MIR -> LLVM IR。
 - CLI 当前已实现 `ql check`、`ql fmt`、`ql mir`、`ql ownership`、`ql runtime`、`ql build`、`ql project`、`ql ffi`。
 - package/workspace 已支持 manifest 加载、成员遍历、`.qi` 生成/校验/同步和状态展示。
-- dependency-backed cross-file tooling 已有首批可用合同：import path completion、dependency symbol hover/definition/declaration/references、enum variant completion/typeDefinition、显式 struct field-label completion，以及语法局部可恢复 receiver、direct indexed iterable receiver（含 `config.maybe_children()?[0].value` / `get()`、`kids()?[0].value` / `get()`、对应的 value-root query/`typeDefinition`、`config.maybe_children()?[0].leaf` / `kids()?[0].leaf` 这类 member `typeDefinition`，以及 direct `if` / `match` structured question-indexed receiver）和 indexed bracket target 的最小 value-root/member/query/typeDefinition。
+- dependency-backed cross-file tooling 已有首批可用合同：import path completion、dependency symbol hover/definition/declaration/references、enum variant completion/typeDefinition、显式 struct field-label completion，以及语法局部可恢复 receiver、direct indexed iterable receiver（含 `config.maybe_children()?[0].value` / `get()`、`kids()?[0].value` / `get()`、对应的 value-root query/`typeDefinition`、`config.maybe_children()?[0].leaf` / `kids()?[0].leaf` 这类 member `typeDefinition`，以及 direct `if` / `match` structured question-indexed receiver）和 indexed bracket target 的最小 value-root/member/query/typeDefinition；这条 bracket-target value-root 现在也覆盖 direct structured question-indexed `(if ...)[0]` / `(match ...)[0]`。
 - `ramdon_tests/` 已提交为 executable smoke 基线；目录仍在 `.gitignore` 中，开发者本地可以继续追加忽略样例。
 
 ## 当前最值得继续推进的方向
