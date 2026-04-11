@@ -70,7 +70,7 @@
 - dependency enum import roots：variant completion、variant hover/query、`textDocument/typeDefinition`
 - dependency struct import roots：显式 struct literal / pattern field-label completion 与字段 query
 - 语法局部可恢复 receiver 的 dependency member-field / member-method 最小 completion、query 与 `typeDefinition`
-- direct indexed iterable receiver 现也开放同一最小 slice；question-unwrapped direct indexed receiver 也落在同一合同内，例如 `config.children[0].value`、`config.children()[0].get()`、`config.maybe_children()?[0].value`、`config.maybe_children()?[0].get()`，以及 member `typeDefinition` 目标如 `config.maybe_children()?[0].leaf`、`config.maybe_children()?[0].leaf()`；bracket target 上的 value-root 现也支持 hover / definition / declaration / references / `typeDefinition`
+- direct indexed iterable receiver 现也开放同一最小 slice；question-unwrapped direct indexed receiver 也落在同一合同内，例如 `config.children[0].value`、`config.children()[0].get()`、`config.maybe_children()?[0].value`、`config.maybe_children()?[0].get()`，以及 grouped alias 形态 `kids()?[0].value`、`kids()?[0].get()`；同轴的 member `typeDefinition` 目标如 `config.maybe_children()?[0].leaf`、`config.maybe_children()?[0].leaf()` 也已打通；bracket target 上的 value-root 现也支持 hover / definition / declaration / references / `typeDefinition`
 - broken-source fallback 下可恢复的 dependency import/type/value/member 查询
 
 当前 receiver slice 仍是保守开放，不等于“任意 dependency member access 都已支持”。
