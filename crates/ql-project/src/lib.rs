@@ -445,16 +445,18 @@ fn append_reference_interface_summaries(
                         append_stale_reason_summary(output, root, &stale_reasons, &stale_indent);
                     }
                 }
-                Err(_) => {
+                Err(error) => {
                     output.push_str(&format!("{indent}    package: <unresolved>\n"));
                     output.push_str(&format!("{indent}    path: <unresolved>\n"));
                     output.push_str(&format!("{indent}    status: unresolved-package\n"));
+                    output.push_str(&format!("{indent}    detail: {error}\n"));
                 }
             },
-            Err(_) => {
+            Err(error) => {
                 output.push_str(&format!("{indent}    package: <unresolved>\n"));
                 output.push_str(&format!("{indent}    path: <unresolved>\n"));
                 output.push_str(&format!("{indent}    status: unresolved-manifest\n"));
+                output.push_str(&format!("{indent}    detail: {error}\n"));
             }
         }
     }

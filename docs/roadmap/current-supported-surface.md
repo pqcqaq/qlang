@@ -56,6 +56,7 @@
 - package directory、`qlang.toml`、包内源码路径、workspace-only 根 manifest 都可进入 package-aware `check` 流程。
 - `ql project graph` 会展示 package/member、references，以及默认 `.qi` 的 `valid` / `missing` / `invalid` / `stale` 状态；`stale` 会给出 `stale_reasons`，`invalid` / `unreadable` 也会给出一行 `detail`。
 - workspace 根 `ql project graph` 在单个 member manifest 无法加载时不会整张图失败；已解析 members 会继续输出，坏 member 会落成 `package: <unresolved>` + `member_error`。
+- `ql project graph` 对 `reference_interfaces` 的 `unresolved-manifest` / `unresolved-package` 现在也会带 `detail`，直接说明是引用 manifest 语法坏了，还是引用目标没有 `[package].name`。
 - `ql project emit-interface` 支持 package 和 workspace 批量写出；`-o/--output` 仍仅支持 package。
 - workspace 根 `ql project emit-interface` 在单个 member 发射失败时不会立刻中断；已成功的 members 会继续输出，最后再汇总失败成员数。
 - `ql project emit-interface --changed-only` 在写出路径上只重发非 `valid` 接口；搭配 `--check` 时不会写文件，已 `valid` 的接口会报告 `up-to-date interface`。
