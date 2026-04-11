@@ -332,3 +332,81 @@ pub fn exported() -> Int
     )
     .expect("workspace root project graph stdout should match resolved member graph");
 }
+
+#[test]
+fn project_graph_keeps_resolved_workspace_members_when_one_member_manifest_is_invalid() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-workspace-invalid-member");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages").join("app").join("src"))
+        .expect("create workspace app directory for invalid member graph test");
+    std::fs::create_dir_all(project_root.join("packages").join("broken"))
+        .expect("create workspace broken directory for invalid member graph test");
+
+    let manifest_path = temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/app.qi",
+        r#"
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn run() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/packages/broken/qlang.toml",
+        r#"
+[package
+name = "broken"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "graph"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph` workspace root with invalid member manifest",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-graph-workspace-invalid-member",
+        "workspace root project graph rendering with invalid member manifest",
+        &output,
+    )
+    .expect("workspace root graph should still render when one member manifest is invalid");
+    expect_empty_stderr(
+        "project-graph-workspace-invalid-member",
+        "workspace root project graph rendering with invalid member manifest",
+        &stderr,
+    )
+    .expect("workspace root graph with invalid member manifest should stay silent on stderr");
+
+    let normalized_manifest = manifest_path.to_string_lossy().replace('\\', "/");
+    let expected_prefix = format!(
+        "manifest: {normalized_manifest}\npackage: <none>\nworkspace_members:\n  - packages/app\n  - packages/broken\nreferences: []\nworkspace_packages:\n  - member: packages/app\n    manifest: packages/app/qlang.toml\n    package: app\n    interface:\n      path: packages/app/app.qi\n      status: valid\n    references: []\n    reference_interfaces: []\n  - member: packages/broken\n    manifest: packages/broken/qlang.toml\n    package: <unresolved>\n    member_error: invalid manifest `"
+    );
+    assert!(
+        stdout.replace('\\', "/").starts_with(&expected_prefix),
+        "expected workspace graph to keep resolved members and surface invalid member error, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("packages/broken/qlang.toml")
+            || stdout.contains("packages\\broken\\qlang.toml"),
+        "expected workspace graph to mention the broken member manifest path, got:\n{stdout}"
+    );
+}

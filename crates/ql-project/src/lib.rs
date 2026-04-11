@@ -221,9 +221,46 @@ pub fn render_project_graph_resolved(manifest: &ProjectManifest) -> Result<Strin
         .expect("workspace exists")
         .members
     {
-        let member_manifest = load_project_manifest(&manifest_dir.join(member))?;
-        let package = package_name(&member_manifest)?;
-        let interface_path = default_interface_path(&member_manifest)?;
+        let member_path = manifest_dir.join(member);
+        let member_manifest = match load_project_manifest(&member_path) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                append_workspace_member_error(
+                    &mut output,
+                    manifest_dir,
+                    member,
+                    &workspace_member_manifest_path(&member_path),
+                    &error,
+                );
+                continue;
+            }
+        };
+        let package = match package_name(&member_manifest) {
+            Ok(package) => package,
+            Err(error) => {
+                append_workspace_member_error(
+                    &mut output,
+                    manifest_dir,
+                    member,
+                    &member_manifest.manifest_path,
+                    &error,
+                );
+                continue;
+            }
+        };
+        let interface_path = match default_interface_path(&member_manifest) {
+            Ok(path) => path,
+            Err(error) => {
+                append_workspace_member_error(
+                    &mut output,
+                    manifest_dir,
+                    member,
+                    &member_manifest.manifest_path,
+                    &error,
+                );
+                continue;
+            }
+        };
 
         output.push_str(&format!("  - member: {member}\n"));
         output.push_str(&format!(
@@ -252,6 +289,34 @@ pub fn render_project_graph_resolved(manifest: &ProjectManifest) -> Result<Strin
     }
 
     Ok(output)
+}
+
+fn append_workspace_member_error(
+    output: &mut String,
+    root: &Path,
+    member: &str,
+    manifest_path: &Path,
+    error: &ProjectError,
+) {
+    output.push_str(&format!("  - member: {member}\n"));
+    output.push_str(&format!(
+        "    manifest: {}\n",
+        relative_display_path(root, manifest_path)
+    ));
+    output.push_str("    package: <unresolved>\n");
+    output.push_str(&format!("    member_error: {error}\n"));
+}
+
+fn workspace_member_manifest_path(member_path: &Path) -> PathBuf {
+    if member_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
+    {
+        return member_path.to_path_buf();
+    }
+
+    member_path.join("qlang.toml")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -301,10 +366,14 @@ pub fn interface_artifact_status_detail(
     status: InterfaceArtifactStatus,
 ) -> Option<String> {
     match load_interface_artifact(path) {
-        Err(InterfaceError::Read { error, .. }) if status == InterfaceArtifactStatus::Unreadable => {
+        Err(InterfaceError::Read { error, .. })
+            if status == InterfaceArtifactStatus::Unreadable =>
+        {
             Some(error.to_string())
         }
-        Err(InterfaceError::Parse { message, .. }) if status == InterfaceArtifactStatus::Invalid => {
+        Err(InterfaceError::Parse { message, .. })
+            if status == InterfaceArtifactStatus::Invalid =>
+        {
             Some(message)
         }
         _ => None,
