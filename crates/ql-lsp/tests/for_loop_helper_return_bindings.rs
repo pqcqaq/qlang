@@ -160,7 +160,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_helper_array_receivers_without_semantic_analysis() {
+fn dependency_method_definition_works_on_for_loop_helper_array_receivers_without_semantic_analysis()
+{
     let temp = TempDir::new("ql-lsp-for-loop-helper-return-method-broken");
     let app_root = temp.path().join("workspace").join("app");
 

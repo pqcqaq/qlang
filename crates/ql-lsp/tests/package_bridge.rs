@@ -12,10 +12,10 @@ use ql_lsp::bridge::{
     definition_for_dependency_imports, definition_for_dependency_methods,
     definition_for_dependency_struct_fields, definition_for_dependency_variants,
     definition_for_package_analysis, hover_for_dependency_imports, hover_for_dependency_methods,
-    hover_for_dependency_struct_fields, hover_for_dependency_variants,
-    hover_for_package_analysis, references_for_dependency_imports,
-    references_for_dependency_methods, references_for_dependency_struct_fields,
-    references_for_dependency_variants, references_for_package_analysis, span_to_range,
+    hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
+    references_for_dependency_imports, references_for_dependency_methods,
+    references_for_dependency_struct_fields, references_for_dependency_variants,
+    references_for_package_analysis, span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::request::GotoDeclarationResponse;
@@ -2589,8 +2589,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn package_bridge_completes_dependency_struct_member_methods_for_closure_parameters_without_semantic_analysis(
-) {
+fn package_bridge_completes_dependency_struct_member_methods_for_closure_parameters_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-package-struct-member-method-closure-param-broken");
     let app_root = temp.path().join("workspace").join("app");
     let source = r#"

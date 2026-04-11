@@ -274,7 +274,9 @@ packages = ["../dep"]
             }
             MemberKind::Method => completion_for_dependency_methods(&source, &package, position),
         }) else {
-            panic!("structured question iterable member completion should exist without semantic analysis");
+            panic!(
+                "structured question iterable member completion should exist without semantic analysis"
+            );
         };
         assert_eq!(items.len(), 1);
         assert_completion_item(member, items[0].clone());
@@ -303,8 +305,8 @@ fn dependency_field_completion_works_on_if_question_function_iterable_receivers(
 }
 
 #[test]
-fn dependency_field_completion_works_on_if_question_function_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_if_question_function_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(
         RootKind::Function,
         MemberKind::Field,
@@ -324,8 +326,8 @@ fn dependency_method_completion_works_on_if_question_function_iterable_receivers
 }
 
 #[test]
-fn dependency_method_completion_works_on_if_question_function_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_if_question_function_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(
         RootKind::Function,
         MemberKind::Method,
@@ -345,8 +347,8 @@ fn dependency_field_completion_works_on_match_question_function_iterable_receive
 }
 
 #[test]
-fn dependency_field_completion_works_on_match_question_function_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_match_question_function_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(
         RootKind::Function,
         MemberKind::Field,
@@ -366,8 +368,8 @@ fn dependency_method_completion_works_on_match_question_function_iterable_receiv
 }
 
 #[test]
-fn dependency_method_completion_works_on_match_question_function_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_match_question_function_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(
         RootKind::Function,
         MemberKind::Method,
@@ -387,8 +389,8 @@ fn dependency_field_completion_works_on_if_question_static_iterable_receivers() 
 }
 
 #[test]
-fn dependency_field_completion_works_on_if_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_if_question_static_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(
         RootKind::Static,
         MemberKind::Field,
@@ -408,8 +410,8 @@ fn dependency_method_completion_works_on_if_question_static_iterable_receivers()
 }
 
 #[test]
-fn dependency_method_completion_works_on_if_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_if_question_static_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(
         RootKind::Static,
         MemberKind::Method,
@@ -429,8 +431,8 @@ fn dependency_field_completion_works_on_match_question_static_iterable_receivers
 }
 
 #[test]
-fn dependency_field_completion_works_on_match_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_match_question_static_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(
         RootKind::Static,
         MemberKind::Field,
@@ -450,8 +452,8 @@ fn dependency_method_completion_works_on_match_question_static_iterable_receiver
 }
 
 #[test]
-fn dependency_method_completion_works_on_match_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_match_question_static_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(
         RootKind::Static,
         MemberKind::Method,

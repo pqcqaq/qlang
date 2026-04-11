@@ -268,8 +268,8 @@ fn dependency_field_completion_works_on_imported_dependency_function_result_rece
 }
 
 #[test]
-fn dependency_field_completion_works_on_imported_dependency_function_result_receivers_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_imported_dependency_function_result_receivers_without_semantic_analysis()
+ {
     run_completion_case(ReceiverKind::FunctionResult, MemberKind::Field, true);
 }
 
@@ -279,8 +279,8 @@ fn dependency_method_completion_works_on_imported_dependency_function_result_rec
 }
 
 #[test]
-fn dependency_method_completion_works_on_imported_dependency_function_result_receivers_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_imported_dependency_function_result_receivers_without_semantic_analysis()
+ {
     run_completion_case(ReceiverKind::FunctionResult, MemberKind::Method, true);
 }
 
@@ -290,8 +290,8 @@ fn dependency_field_completion_works_on_imported_dependency_static_receivers() {
 }
 
 #[test]
-fn dependency_field_completion_works_on_imported_dependency_static_receivers_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_imported_dependency_static_receivers_without_semantic_analysis()
+ {
     run_completion_case(ReceiverKind::StaticValue, MemberKind::Field, true);
 }
 
@@ -301,7 +301,7 @@ fn dependency_method_completion_works_on_imported_dependency_static_receivers() 
 }
 
 #[test]
-fn dependency_method_completion_works_on_imported_dependency_static_receivers_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_imported_dependency_static_receivers_without_semantic_analysis()
+ {
     run_completion_case(ReceiverKind::StaticValue, MemberKind::Method, true);
 }

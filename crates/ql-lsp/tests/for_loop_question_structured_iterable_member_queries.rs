@@ -292,7 +292,9 @@ fn assert_member_queries(
                 offset_to_position(source, first_offset),
             ),
         }
-        .expect("structured question iterable member definition should exist without semantic analysis");
+        .expect(
+            "structured question iterable member definition should exist without semantic analysis",
+        );
         let GotoDefinitionResponse::Scalar(definition_location) = definition else {
             panic!("definition should be one location")
         };
@@ -342,7 +344,9 @@ fn assert_member_queries(
                 true,
             ),
         }
-        .expect("structured question iterable member references should exist without semantic analysis");
+        .expect(
+            "structured question iterable member references should exist without semantic analysis",
+        );
         assert_eq!(with_declaration.len(), 3);
         assert_location_targets_dependency_name(
             &with_declaration[0],
@@ -369,9 +373,11 @@ fn assert_member_queries(
         }
         .expect("structured question iterable member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration
-            .iter()
-            .all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -505,9 +511,11 @@ fn assert_member_queries(
         }
         .expect("structured question iterable member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration
-            .iter()
-            .all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -581,8 +589,8 @@ fn dependency_field_queries_work_on_for_loop_if_question_structured_iterable_rec
 }
 
 #[test]
-fn dependency_field_queries_work_on_for_loop_if_question_structured_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_queries_work_on_for_loop_if_question_structured_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(MemberKind::Field, true);
 }
 
@@ -592,7 +600,7 @@ fn dependency_method_queries_work_on_for_loop_match_question_structured_iterable
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_match_question_structured_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_queries_work_on_for_loop_match_question_structured_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(MemberKind::Method, true);
 }

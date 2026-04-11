@@ -264,7 +264,8 @@ fn dependency_field_completion_works_on_unsafe_tuple_for_loop_receivers() {
 }
 
 #[test]
-fn dependency_field_completion_works_on_unsafe_tuple_for_loop_receivers_without_semantic_analysis() {
+fn dependency_field_completion_works_on_unsafe_tuple_for_loop_receivers_without_semantic_analysis()
+{
     run_completion_case(CaseKind::UnsafeTupleField, true);
 }
 

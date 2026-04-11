@@ -99,8 +99,8 @@ fn assert_location_targets_dependency_name(
 }
 
 #[test]
-fn dependency_method_queries_work_on_question_unwrapped_local_method_receivers_without_semantic_analysis(
-) {
+fn dependency_method_queries_work_on_question_unwrapped_local_method_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-unwrapped-local-method-member-query-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -238,7 +238,9 @@ pub fn read(config: Cfg) -> Int {
     )
     .expect("question-unwrapped local member references should exist without declaration");
     assert_eq!(without_declaration.len(), 2);
-    assert!(without_declaration
-        .iter()
-        .all(|location| location.uri == uri));
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
 }

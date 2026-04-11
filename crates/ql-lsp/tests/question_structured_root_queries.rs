@@ -135,9 +135,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -189,7 +189,12 @@ fn assert_child_hover(hover: Hover) {
     assert!(markup.value.contains("struct Child"));
 }
 
-fn assert_root_references(locations: Vec<Location>, uri: &Url, source: &str, with_declaration: bool) {
+fn assert_root_references(
+    locations: Vec<Location>,
+    uri: &Url,
+    source: &str,
+    with_declaration: bool,
+) {
     if with_declaration {
         assert_eq!(locations.len(), 3);
     } else {
@@ -346,9 +351,15 @@ packages = ["../dep"]
         };
         assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-        let without_declaration =
-            references_for_package_analysis(&uri, &source, &analysis, &package, root_position, false)
-                .expect("structured question-unwrapped dependency root references should exist");
+        let without_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            root_position,
+            false,
+        )
+        .expect("structured question-unwrapped dependency root references should exist");
         assert_root_references(without_declaration, &uri, &source, false);
 
         let with_declaration =
@@ -372,7 +383,7 @@ fn root_query_bridge_surfaces_if_structured_question_unwrapped_dependency_field_
 
 #[test]
 fn root_query_fallback_surfaces_if_structured_question_unwrapped_dependency_field_roots_without_semantic_analysis()
-{
+ {
     run_root_query_case(RootKind::Field, StructuredKind::If, true);
 }
 
@@ -383,7 +394,7 @@ fn root_query_bridge_surfaces_match_structured_question_unwrapped_dependency_fie
 
 #[test]
 fn root_query_fallback_surfaces_match_structured_question_unwrapped_dependency_field_roots_without_semantic_analysis()
-{
+ {
     run_root_query_case(RootKind::Field, StructuredKind::Match, true);
 }
 
@@ -394,7 +405,7 @@ fn root_query_bridge_surfaces_if_structured_question_unwrapped_dependency_method
 
 #[test]
 fn root_query_fallback_surfaces_if_structured_question_unwrapped_dependency_method_roots_without_semantic_analysis()
-{
+ {
     run_root_query_case(RootKind::Method, StructuredKind::If, true);
 }
 
@@ -405,6 +416,6 @@ fn root_query_bridge_surfaces_match_structured_question_unwrapped_dependency_met
 
 #[test]
 fn root_query_fallback_surfaces_match_structured_question_unwrapped_dependency_method_roots_without_semantic_analysis()
-{
+ {
     run_root_query_case(RootKind::Method, StructuredKind::Match, true);
 }

@@ -94,8 +94,8 @@ fn assert_targets_dependency_snippet(
 }
 
 #[test]
-fn dependency_method_definition_works_on_question_function_value_receivers_without_semantic_analysis(
-) {
+fn dependency_method_definition_works_on_question_function_value_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-function-method-binding-broken");
     let app_root = temp.path().join("workspace").join("app");
 

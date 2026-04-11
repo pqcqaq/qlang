@@ -71,8 +71,7 @@ export default defineConfig({
           { text: "Phase 3 MIR 与所有权", link: "/plans/phase-3-mir-and-ownership" },
           { text: "Phase 4 后端与产物", link: "/plans/phase-4-backend-and-artifacts" },
           { text: "Phase 5 C FFI 与宿主互操作", link: "/plans/phase-5-ffi-and-c-abi" },
-          { text: "Phase 6 LSP 与编辑器语义", link: "/plans/phase-6-lsp-and-editor-experience" },
-          { text: "原始切片稿归档", link: "/plans/archive/index" }
+          { text: "Phase 6 LSP 与编辑器语义", link: "/plans/phase-6-lsp-and-editor-experience" }
         ]
       }
     ],

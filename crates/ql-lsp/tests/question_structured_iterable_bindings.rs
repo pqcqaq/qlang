@@ -166,8 +166,8 @@ packages = ["../dep"]
 }
 
 #[test]
-fn package_bridge_completes_dependency_fields_for_if_question_function_iterable_receivers_without_semantic_analysis(
-) {
+fn package_bridge_completes_dependency_fields_for_if_question_function_iterable_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-structured-iterable-field-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
     let source = r#"
@@ -235,8 +235,8 @@ packages = ["../dep"]
 }
 
 #[test]
-fn package_bridge_completes_dependency_methods_for_match_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn package_bridge_completes_dependency_methods_for_match_question_static_iterable_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-structured-iterable-method-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
     let source = r#"
@@ -311,8 +311,8 @@ packages = ["../dep"]
 }
 
 #[test]
-fn dependency_method_definition_works_on_match_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_definition_works_on_match_question_static_iterable_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-structured-iterable-method-query-broken");
     let app_root = temp.path().join("workspace").join("app");
 

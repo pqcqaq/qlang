@@ -159,8 +159,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn dependency_method_definition_works_on_local_alias_bound_from_dependency_field_projection_without_semantic_analysis(
-) {
+fn dependency_method_definition_works_on_local_alias_bound_from_dependency_field_projection_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-projected-field-alias-method-broken");
     let app_root = temp.path().join("workspace").join("app");
 

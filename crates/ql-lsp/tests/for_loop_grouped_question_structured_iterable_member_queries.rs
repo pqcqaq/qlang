@@ -180,9 +180,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -395,9 +395,11 @@ fn assert_member_queries(
         }
         .expect("grouped structured question iterable member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration
-            .iter()
-            .all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -531,9 +533,11 @@ fn assert_member_queries(
         }
         .expect("grouped structured question iterable member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration
-            .iter()
-            .all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -613,95 +617,174 @@ packages = ["../dep"]
 
 #[test]
 fn dependency_field_queries_work_on_for_loop_if_grouped_question_structured_iterable_receivers() {
-    run_member_query_case(MemberKind::Field, RootKind::Function, StructuredKind::If, false);
+    run_member_query_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn dependency_field_queries_work_on_for_loop_if_grouped_question_structured_iterable_static_receivers(
-) {
-    run_member_query_case(MemberKind::Field, RootKind::Static, StructuredKind::If, false);
+fn dependency_field_queries_work_on_for_loop_if_grouped_question_structured_iterable_static_receivers()
+ {
+    run_member_query_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn dependency_field_queries_work_on_for_loop_if_grouped_question_structured_iterable_receivers_without_semantic_analysis(
-) {
-    run_member_query_case(MemberKind::Field, RootKind::Function, StructuredKind::If, true);
+fn dependency_field_queries_work_on_for_loop_if_grouped_question_structured_iterable_receivers_without_semantic_analysis()
+ {
+    run_member_query_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn dependency_field_queries_work_on_for_loop_if_grouped_question_structured_iterable_static_receivers_without_semantic_analysis(
-) {
-    run_member_query_case(MemberKind::Field, RootKind::Static, StructuredKind::If, true);
+fn dependency_field_queries_work_on_for_loop_if_grouped_question_structured_iterable_static_receivers_without_semantic_analysis()
+ {
+    run_member_query_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn dependency_field_queries_work_on_for_loop_match_grouped_question_structured_iterable_receivers(
-) {
-    run_member_query_case(MemberKind::Field, RootKind::Function, StructuredKind::Match, false);
+fn dependency_field_queries_work_on_for_loop_match_grouped_question_structured_iterable_receivers()
+{
+    run_member_query_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn dependency_field_queries_work_on_for_loop_match_grouped_question_structured_iterable_receivers_without_semantic_analysis(
-) {
-    run_member_query_case(MemberKind::Field, RootKind::Function, StructuredKind::Match, true);
+fn dependency_field_queries_work_on_for_loop_match_grouped_question_structured_iterable_receivers_without_semantic_analysis()
+ {
+    run_member_query_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::Match,
+        true,
+    );
 }
 
 #[test]
-fn dependency_field_queries_work_on_for_loop_match_grouped_question_structured_iterable_static_receivers(
-) {
-    run_member_query_case(MemberKind::Field, RootKind::Static, StructuredKind::Match, false);
+fn dependency_field_queries_work_on_for_loop_match_grouped_question_structured_iterable_static_receivers()
+ {
+    run_member_query_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn dependency_field_queries_work_on_for_loop_match_grouped_question_structured_iterable_static_receivers_without_semantic_analysis(
-) {
-    run_member_query_case(MemberKind::Field, RootKind::Static, StructuredKind::Match, true);
+fn dependency_field_queries_work_on_for_loop_match_grouped_question_structured_iterable_static_receivers_without_semantic_analysis()
+ {
+    run_member_query_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::Match,
+        true,
+    );
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_if_grouped_question_structured_iterable_receivers(
-) {
-    run_member_query_case(MemberKind::Method, RootKind::Function, StructuredKind::If, false);
+fn dependency_method_queries_work_on_for_loop_if_grouped_question_structured_iterable_receivers() {
+    run_member_query_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_if_grouped_question_structured_iterable_receivers_without_semantic_analysis(
-) {
-    run_member_query_case(MemberKind::Method, RootKind::Function, StructuredKind::If, true);
+fn dependency_method_queries_work_on_for_loop_if_grouped_question_structured_iterable_receivers_without_semantic_analysis()
+ {
+    run_member_query_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_if_grouped_question_structured_iterable_static_receivers(
-) {
-    run_member_query_case(MemberKind::Method, RootKind::Static, StructuredKind::If, false);
+fn dependency_method_queries_work_on_for_loop_if_grouped_question_structured_iterable_static_receivers()
+ {
+    run_member_query_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_if_grouped_question_structured_iterable_static_receivers_without_semantic_analysis(
-) {
-    run_member_query_case(MemberKind::Method, RootKind::Static, StructuredKind::If, true);
+fn dependency_method_queries_work_on_for_loop_if_grouped_question_structured_iterable_static_receivers_without_semantic_analysis()
+ {
+    run_member_query_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_match_grouped_question_structured_iterable_receivers(
-) {
-    run_member_query_case(MemberKind::Method, RootKind::Static, StructuredKind::Match, false);
+fn dependency_method_queries_work_on_for_loop_match_grouped_question_structured_iterable_receivers()
+{
+    run_member_query_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_match_grouped_question_structured_iterable_receivers_without_semantic_analysis(
-) {
-    run_member_query_case(MemberKind::Method, RootKind::Static, StructuredKind::Match, true);
+fn dependency_method_queries_work_on_for_loop_match_grouped_question_structured_iterable_receivers_without_semantic_analysis()
+ {
+    run_member_query_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::Match,
+        true,
+    );
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_match_grouped_question_structured_iterable_function_receivers(
-) {
-    run_member_query_case(MemberKind::Method, RootKind::Function, StructuredKind::Match, false);
+fn dependency_method_queries_work_on_for_loop_match_grouped_question_structured_iterable_function_receivers()
+ {
+    run_member_query_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_match_grouped_question_structured_iterable_function_receivers_without_semantic_analysis(
-) {
-    run_member_query_case(MemberKind::Method, RootKind::Function, StructuredKind::Match, true);
+fn dependency_method_queries_work_on_for_loop_match_grouped_question_structured_iterable_function_receivers_without_semantic_analysis()
+ {
+    run_member_query_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::Match,
+        true,
+    );
 }

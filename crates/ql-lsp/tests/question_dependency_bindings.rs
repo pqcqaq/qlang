@@ -203,8 +203,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn dependency_field_definition_works_on_question_unwrapped_dependency_field_receiver_without_semantic_analysis(
-) {
+fn dependency_field_definition_works_on_question_unwrapped_dependency_field_receiver_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-field-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -386,9 +386,11 @@ pub fn read(config: Cfg) -> Int {
     )
     .expect("dependency field references should exist without declaration");
     assert_eq!(without_declaration.len(), 2);
-    assert!(without_declaration
-        .iter()
-        .all(|location| location.uri == uri));
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
     let local_ranges = without_declaration
         .iter()
         .map(|location| location.range)
@@ -404,8 +406,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn dependency_field_queries_work_on_question_unwrapped_dependency_field_receiver_without_semantic_analysis(
-) {
+fn dependency_field_queries_work_on_question_unwrapped_dependency_field_receiver_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-field-broken-query");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -525,9 +527,11 @@ pub fn read(config: Cfg) -> Int {
     )
     .expect("dependency field references should exist without declaration");
     assert_eq!(without_declaration.len(), 2);
-    assert!(without_declaration
-        .iter()
-        .all(|location| location.uri == uri));
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
     let local_ranges = without_declaration
         .iter()
         .map(|location| location.range)
@@ -612,8 +616,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn dependency_field_completion_works_on_question_unwrapped_dependency_field_receiver_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_question_unwrapped_dependency_field_receiver_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-field-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -756,8 +760,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn dependency_method_definition_works_on_question_unwrapped_dependency_method_receiver_without_semantic_analysis(
-) {
+fn dependency_method_definition_works_on_question_unwrapped_dependency_method_receiver_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-method-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -970,9 +974,11 @@ pub fn read(config: Cfg) -> Int {
     )
     .expect("dependency method references should exist without declaration");
     assert_eq!(without_declaration.len(), 2);
-    assert!(without_declaration
-        .iter()
-        .all(|location| location.uri == uri));
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
     let local_ranges = without_declaration
         .iter()
         .map(|location| location.range)
@@ -988,8 +994,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn dependency_method_queries_work_on_question_unwrapped_dependency_method_receiver_without_semantic_analysis(
-) {
+fn dependency_method_queries_work_on_question_unwrapped_dependency_method_receiver_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-method-broken-query");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -1128,9 +1134,11 @@ pub fn read(config: Cfg) -> Int {
     )
     .expect("dependency method references should exist without declaration");
     assert_eq!(without_declaration.len(), 2);
-    assert!(without_declaration
-        .iter()
-        .all(|location| location.uri == uri));
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
     let local_ranges = without_declaration
         .iter()
         .map(|location| location.range)
@@ -1227,8 +1235,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn dependency_method_completion_works_on_question_unwrapped_dependency_method_receiver_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_question_unwrapped_dependency_method_receiver_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-method-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
 

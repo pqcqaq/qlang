@@ -272,9 +272,11 @@ fn assert_member_queries(
                 &package,
                 offset_to_position(source, first_offset),
             ),
-            MemberKind::Method => {
-                hover_for_dependency_methods(source, &package, offset_to_position(source, first_offset))
-            }
+            MemberKind::Method => hover_for_dependency_methods(
+                source,
+                &package,
+                offset_to_position(source, first_offset),
+            ),
         }
         .expect("structured alias member hover should exist without semantic analysis");
         let HoverContents::Markup(markup) = hover.contents else {
@@ -372,7 +374,11 @@ fn assert_member_queries(
         }
         .expect("structured alias member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration.iter().all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -404,9 +410,11 @@ fn assert_member_queries(
                 &package,
                 offset_to_position(source, first_offset),
             ),
-            MemberKind::Method => {
-                hover_for_dependency_methods(source, &package, offset_to_position(source, first_offset))
-            }
+            MemberKind::Method => hover_for_dependency_methods(
+                source,
+                &package,
+                offset_to_position(source, first_offset),
+            ),
         }
         .expect("structured alias member hover should exist");
         let HoverContents::Markup(markup) = hover.contents else {
@@ -504,7 +512,11 @@ fn assert_member_queries(
         }
         .expect("structured alias member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration.iter().all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,

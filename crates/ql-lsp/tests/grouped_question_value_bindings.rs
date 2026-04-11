@@ -169,8 +169,8 @@ pub fn read(flag: Bool) -> Int {
 }
 
 #[test]
-fn dependency_method_definition_works_on_grouped_question_function_and_static_value_receivers_without_semantic_analysis(
-) {
+fn dependency_method_definition_works_on_grouped_question_function_and_static_value_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-value-method-binding-broken");
     let app_root = temp.path().join("workspace").join("app");
 

@@ -1,13 +1,13 @@
 # 阶段设计稿总览
 
-这组文档不是路线图，而是对已经落地开发工作的设计归档。
+这组文档不是路线图，而是对已经落地开发工作的阶段设计稿整理。
 
 整理原则：
 
 - `docs/roadmap/` 负责回答“现在做到了什么”
 - `docs/plans/` 负责回答“这些阶段最初是怎么设计和收敛的”
 - 同一阶段的分散切片稿已经合并成 phase 级文档，便于后续会话恢复和新 agent 接手
-- 原始切片稿保留在 [`/plans/archive/index`](/plans/archive/index) 中，作为审计与回溯材料
+- 原始切片稿保留在 archive 目录中，只在需要审计旧记录时再进入
 
 ## 当前合并文档
 
@@ -26,11 +26,11 @@
 1. [P1-P7 阶段总览](/roadmap/phase-progress)
 2. [开发计划](/roadmap/development-plan)
 3. 本页对应阶段的合并设计稿
-4. 需要追溯某个具体切片时，再进入 [`/plans/archive/index`](/plans/archive/index)
+4. 只有在追溯具体历史切片时，再看 archive 目录
 
 ## 当前结论
 
-目前仓库已经不是“预研空文档”，而是已经形成以下稳定边界：
+目前仓库已经形成以下稳定边界：
 
 - 前端基线：lexer / parser / AST / formatter / CLI
 - 语义地基：HIR / resolve / typeck / diagnostics / query / minimal LSP
@@ -42,9 +42,4 @@
 这意味着后续开发的主任务已经不是“重新搭骨架”，而是沿着现有分层继续扩展。
 
 当前最活跃的主线是 [Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop)。如果你要接着推进 async/runtime 相关工作，优先从该文档恢复上下文。
-
-基于 2026-03-28 Serena 记忆整理的近期执行优先级清单见 [Phase 7 近期优先级计划](/plans/2026-03-28-phase-7-next-priorities)（Tasks 1-5 均已落地，P7.1 完成）。
-
-P7.1 完成后的下一步可执行切片计划见 [Phase 7 P7.2 Runtime 合同扩展与 Rust 互操作](/plans/2026-03-29-phase-7-p7.2-runtime-and-interop)。
-
-当前推荐的下一份执行计划见 [Phase 7 P7.4 Next Execution Implementation Plan](/plans/2026-03-30-phase-7-p7.4-next-execution)。
+较细的按日执行稿保留在 `docs/plans/` 根目录与 archive 目录中，但不再放进主阅读路径。

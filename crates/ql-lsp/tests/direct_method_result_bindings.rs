@@ -162,7 +162,7 @@ pub fn read(config: Cfg) -> Int {
 
 #[test]
 fn dependency_method_definition_works_on_direct_dependency_method_result_receiver_without_semantic_analysis()
-{
+ {
     let temp = TempDir::new("ql-lsp-direct-method-result-method-broken");
     let app_root = temp.path().join("workspace").join("app");
 

@@ -221,7 +221,9 @@ pub fn read(config: Cfg) -> Int {
     )
     .expect("question-unwrapped local member references should exist without declaration");
     assert_eq!(without_declaration.len(), 2);
-    assert!(without_declaration
-        .iter()
-        .all(|location| location.uri == uri));
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
 }

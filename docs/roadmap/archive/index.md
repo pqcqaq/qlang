@@ -1,14 +1,14 @@
+---
+sidebar: false
+outline: false
+---
+
 # 路线图归档
 
-这里保存已经从当前入口页移出的详细记录。
+这里保存已从当前入口页移出的路线图记录。
 
-使用建议：
-
-- 日常开发先看：
-  - [当前支持基线](/roadmap/current-supported-surface)
-  - [开发计划](/roadmap/development-plan)
-  - [P1-P7 阶段总览](/roadmap/phase-progress)
-- 只有在需要追溯“某一轮到底扩了哪条切片、当时的保守边界是什么”时，再看本页。
+- 当前状态优先看 [当前支持基线](/roadmap/current-supported-surface)、[开发计划](/roadmap/development-plan)、[P1-P8 阶段总览](/roadmap/phase-progress)
+- 这里的正文保留历史版本，不回写到当前状态
 
 ## 详细快照
 

@@ -109,9 +109,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -150,7 +150,11 @@ pub struct Child {{
 }
 
 fn build_source(root: RootKind, structured: StructuredKind, broken: bool) -> String {
-    let tail = if broken { "    return \"oops\"\n" } else { "    return 0\n" };
+    let tail = if broken {
+        "    return \"oops\"\n"
+    } else {
+        "    return 0\n"
+    };
     format!(
         r#"
 package demo.app
@@ -225,15 +229,18 @@ fn assert_root_queries(
         assert_dependency_location(&location, dep_qi, "pub struct Child {\n    value: Int,\n}");
 
         let declaration = declaration_for_dependency_values(source, &package, root_position)
-            .expect("grouped structured dependency question iterable root declaration should exist");
+            .expect(
+                "grouped structured dependency question iterable root declaration should exist",
+            );
         let GotoDeclarationResponse::Scalar(location) = declaration else {
             panic!("declaration should be one location")
         };
         assert_dependency_location(&location, dep_qi, "pub struct Child {\n    value: Int,\n}");
 
         let without_declaration =
-            references_for_dependency_values(uri, source, &package, root_position, false)
-                .expect("grouped structured dependency question iterable root references should exist");
+            references_for_dependency_values(uri, source, &package, root_position, false).expect(
+                "grouped structured dependency question iterable root references should exist",
+            );
         assert_eq!(
             without_declaration,
             vec![
@@ -320,7 +327,9 @@ fn assert_root_queries(
 
         let definition =
             definition_for_package_analysis(uri, source, &analysis, &package, root_position)
-                .expect("grouped structured dependency question iterable root definition should exist");
+                .expect(
+                    "grouped structured dependency question iterable root definition should exist",
+                );
         let GotoDefinitionResponse::Scalar(location) = definition else {
             panic!("definition should be one location")
         };
@@ -328,7 +337,9 @@ fn assert_root_queries(
 
         let declaration =
             declaration_for_package_analysis(uri, source, &analysis, &package, root_position)
-                .expect("grouped structured dependency question iterable root declaration should exist");
+                .expect(
+                    "grouped structured dependency question iterable root declaration should exist",
+                );
         let GotoDeclarationResponse::Scalar(location) = declaration else {
             panic!("declaration should be one location")
         };
@@ -336,7 +347,9 @@ fn assert_root_queries(
 
         let without_declaration =
             references_for_package_analysis(uri, source, &analysis, &package, root_position, false)
-                .expect("grouped structured dependency question iterable root references should exist");
+                .expect(
+                    "grouped structured dependency question iterable root references should exist",
+                );
         assert_eq!(
             without_declaration,
             vec![
@@ -468,8 +481,7 @@ fn root_queries_work_on_match_grouped_question_function_iterable_roots() {
 }
 
 #[test]
-fn root_queries_work_on_match_grouped_question_function_iterable_roots_without_semantic_analysis()
-{
+fn root_queries_work_on_match_grouped_question_function_iterable_roots_without_semantic_analysis() {
     run_root_query_case(RootKind::Function, StructuredKind::Match, true);
 }
 
@@ -489,7 +501,6 @@ fn root_queries_work_on_match_grouped_question_static_iterable_roots() {
 }
 
 #[test]
-fn root_queries_work_on_match_grouped_question_static_iterable_roots_without_semantic_analysis()
-{
+fn root_queries_work_on_match_grouped_question_static_iterable_roots_without_semantic_analysis() {
     run_root_query_case(RootKind::Static, StructuredKind::Match, true);
 }

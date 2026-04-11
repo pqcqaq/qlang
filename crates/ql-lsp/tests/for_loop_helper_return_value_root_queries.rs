@@ -255,12 +255,16 @@ packages = ["../dep"]
         let HoverContents::Markup(markup) = hover.contents else {
             panic!("hover should use markdown")
         };
-        assert!(markup
-            .value
-            .contains(&format!("**struct** `{}`", binding.dep_struct_name())));
-        assert!(markup
-            .value
-            .contains(&format!("struct {}", binding.dep_struct_name())));
+        assert!(
+            markup
+                .value
+                .contains(&format!("**struct** `{}`", binding.dep_struct_name()))
+        );
+        assert!(
+            markup
+                .value
+                .contains(&format!("struct {}", binding.dep_struct_name()))
+        );
 
         let definition = definition_for_dependency_values(
             source,
@@ -377,12 +381,16 @@ packages = ["../dep"]
         let HoverContents::Markup(markup) = hover.contents else {
             panic!("hover should use markdown")
         };
-        assert!(markup
-            .value
-            .contains(&format!("**struct** `{}`", binding.dep_struct_name())));
-        assert!(markup
-            .value
-            .contains(&format!("struct {}", binding.dep_struct_name())));
+        assert!(
+            markup
+                .value
+                .contains(&format!("**struct** `{}`", binding.dep_struct_name()))
+        );
+        assert!(
+            markup
+                .value
+                .contains(&format!("struct {}", binding.dep_struct_name()))
+        );
 
         let definition = definition_for_package_analysis(
             &uri,

@@ -190,9 +190,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -290,14 +290,18 @@ packages = ["../dep"]
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
         match member {
-            MemberKind::Field => definition_for_dependency_struct_fields(&source, &package, position),
+            MemberKind::Field => {
+                definition_for_dependency_struct_fields(&source, &package, position)
+            }
             MemberKind::Method => definition_for_dependency_methods(&source, &package, position),
         }
         .expect("grouped structured question iterable definition should exist")
     } else {
         let package = analyze_package(&app_root).expect("package analysis should succeed");
         match member {
-            MemberKind::Field => definition_for_dependency_struct_fields(&source, &package, position),
+            MemberKind::Field => {
+                definition_for_dependency_struct_fields(&source, &package, position)
+            }
             MemberKind::Method => definition_for_dependency_methods(&source, &package, position),
         }
         .expect("grouped structured question iterable definition should exist")
@@ -307,97 +311,177 @@ packages = ["../dep"]
 }
 
 #[test]
-fn dependency_field_definition_works_on_for_loop_if_grouped_question_structured_iterable_function_receivers(
-) {
-    run_definition_case(MemberKind::Field, RootKind::Function, StructuredKind::If, false);
+fn dependency_field_definition_works_on_for_loop_if_grouped_question_structured_iterable_function_receivers()
+ {
+    run_definition_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn dependency_field_definition_works_on_for_loop_if_grouped_question_structured_iterable_function_receivers_without_semantic_analysis(
-) {
-    run_definition_case(MemberKind::Field, RootKind::Function, StructuredKind::If, true);
+fn dependency_field_definition_works_on_for_loop_if_grouped_question_structured_iterable_function_receivers_without_semantic_analysis()
+ {
+    run_definition_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn dependency_field_definition_works_on_for_loop_if_grouped_question_structured_iterable_static_receivers(
-) {
-    run_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::If, false);
+fn dependency_field_definition_works_on_for_loop_if_grouped_question_structured_iterable_static_receivers()
+ {
+    run_definition_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn dependency_field_definition_works_on_for_loop_if_grouped_question_structured_iterable_static_receivers_without_semantic_analysis(
-) {
-    run_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::If, true);
+fn dependency_field_definition_works_on_for_loop_if_grouped_question_structured_iterable_static_receivers_without_semantic_analysis()
+ {
+    run_definition_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn dependency_field_definition_works_on_for_loop_match_grouped_question_structured_iterable_function_receivers(
-) {
-    run_definition_case(MemberKind::Field, RootKind::Function, StructuredKind::Match, false);
+fn dependency_field_definition_works_on_for_loop_match_grouped_question_structured_iterable_function_receivers()
+ {
+    run_definition_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn dependency_field_definition_works_on_for_loop_match_grouped_question_structured_iterable_function_receivers_without_semantic_analysis(
-) {
-    run_definition_case(MemberKind::Field, RootKind::Function, StructuredKind::Match, true);
+fn dependency_field_definition_works_on_for_loop_match_grouped_question_structured_iterable_function_receivers_without_semantic_analysis()
+ {
+    run_definition_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::Match,
+        true,
+    );
 }
 
 #[test]
-fn dependency_field_definition_works_on_for_loop_match_grouped_question_structured_iterable_static_receivers(
-) {
-    run_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::Match, false);
+fn dependency_field_definition_works_on_for_loop_match_grouped_question_structured_iterable_static_receivers()
+ {
+    run_definition_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn dependency_field_definition_works_on_for_loop_match_grouped_question_structured_iterable_static_receivers_without_semantic_analysis(
-) {
-    run_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::Match, true);
+fn dependency_field_definition_works_on_for_loop_match_grouped_question_structured_iterable_static_receivers_without_semantic_analysis()
+ {
+    run_definition_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::Match,
+        true,
+    );
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_if_grouped_question_structured_iterable_function_receivers(
-) {
-    run_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::If, false);
+fn dependency_method_definition_works_on_for_loop_if_grouped_question_structured_iterable_function_receivers()
+ {
+    run_definition_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_if_grouped_question_structured_iterable_function_receivers_without_semantic_analysis(
-) {
-    run_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::If, true);
+fn dependency_method_definition_works_on_for_loop_if_grouped_question_structured_iterable_function_receivers_without_semantic_analysis()
+ {
+    run_definition_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_if_grouped_question_structured_iterable_static_receivers(
-) {
-    run_definition_case(MemberKind::Method, RootKind::Static, StructuredKind::If, false);
+fn dependency_method_definition_works_on_for_loop_if_grouped_question_structured_iterable_static_receivers()
+ {
+    run_definition_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_if_grouped_question_structured_iterable_static_receivers_without_semantic_analysis(
-) {
-    run_definition_case(MemberKind::Method, RootKind::Static, StructuredKind::If, true);
+fn dependency_method_definition_works_on_for_loop_if_grouped_question_structured_iterable_static_receivers_without_semantic_analysis()
+ {
+    run_definition_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_match_grouped_question_structured_iterable_function_receivers(
-) {
-    run_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::Match, false);
+fn dependency_method_definition_works_on_for_loop_match_grouped_question_structured_iterable_function_receivers()
+ {
+    run_definition_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_match_grouped_question_structured_iterable_function_receivers_without_semantic_analysis(
-) {
-    run_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::Match, true);
+fn dependency_method_definition_works_on_for_loop_match_grouped_question_structured_iterable_function_receivers_without_semantic_analysis()
+ {
+    run_definition_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::Match,
+        true,
+    );
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_match_grouped_question_structured_iterable_static_receivers(
-) {
-    run_definition_case(MemberKind::Method, RootKind::Static, StructuredKind::Match, false);
+fn dependency_method_definition_works_on_for_loop_match_grouped_question_structured_iterable_static_receivers()
+ {
+    run_definition_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_match_grouped_question_structured_iterable_static_receivers_without_semantic_analysis(
-) {
-    run_definition_case(MemberKind::Method, RootKind::Static, StructuredKind::Match, true);
+fn dependency_method_definition_works_on_for_loop_match_grouped_question_structured_iterable_static_receivers_without_semantic_analysis()
+ {
+    run_definition_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::Match,
+        true,
+    );
 }

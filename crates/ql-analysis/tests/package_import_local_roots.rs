@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_package_dependencies, SymbolKind};
+use ql_analysis::{SymbolKind, analyze_package, analyze_package_dependencies};
 
 struct TempDir {
     path: PathBuf,
@@ -110,9 +110,11 @@ pub fn main() -> Int {
             .collect::<Vec<_>>(),
         vec!["Retry", "Stop"]
     );
-    assert!(completions
-        .iter()
-        .all(|item| item.kind == SymbolKind::Variant));
+    assert!(
+        completions
+            .iter()
+            .all(|item| item.kind == SymbolKind::Variant)
+    );
 
     let grouped_source = r#"
 package demo.app
@@ -212,9 +214,11 @@ pub fn main(current: Int, built: Config) -> Int {
             .collect::<Vec<_>>(),
         vec!["flag"]
     );
-    assert!(completions
-        .iter()
-        .all(|item| item.kind == SymbolKind::Field));
+    assert!(
+        completions
+            .iter()
+            .all(|item| item.kind == SymbolKind::Field)
+    );
     assert_eq!(completions[0].detail, "field flag: Bool");
 
     let grouped_source = r#"

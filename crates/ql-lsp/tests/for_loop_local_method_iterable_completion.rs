@@ -263,8 +263,8 @@ fn dependency_field_completion_works_on_for_loop_local_method_iterable_receivers
 }
 
 #[test]
-fn dependency_field_completion_works_on_for_loop_local_method_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_for_loop_local_method_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(CaseKind::ConfigChildrenField, true);
 }
 
@@ -274,7 +274,7 @@ fn dependency_method_completion_works_on_for_loop_self_local_method_iterable_rec
 }
 
 #[test]
-fn dependency_method_completion_works_on_for_loop_self_local_method_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_for_loop_self_local_method_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(CaseKind::SelfPairMethod, true);
 }

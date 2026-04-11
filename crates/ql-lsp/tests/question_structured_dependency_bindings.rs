@@ -173,9 +173,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -311,9 +311,11 @@ fn assert_member_queries(
                 &package,
                 offset_to_position(source, first_offset),
             ),
-            MemberKind::Method => {
-                hover_for_dependency_methods(source, &package, offset_to_position(source, first_offset))
-            }
+            MemberKind::Method => hover_for_dependency_methods(
+                source,
+                &package,
+                offset_to_position(source, first_offset),
+            ),
         }
         .expect("dependency member hover should exist without semantic analysis");
         let HoverContents::Markup(markup) = hover.contents else {
@@ -328,9 +330,11 @@ fn assert_member_queries(
                 &package,
                 offset_to_position(source, first_offset),
             ),
-            MemberKind::Method => {
-                definition_for_dependency_methods(source, &package, offset_to_position(source, first_offset))
-            }
+            MemberKind::Method => definition_for_dependency_methods(
+                source,
+                &package,
+                offset_to_position(source, first_offset),
+            ),
         }
         .expect("dependency member definition should exist without semantic analysis");
         assert_targets_dependency_snippet(definition, dep_qi, member.member_token());
@@ -401,7 +405,11 @@ fn assert_member_queries(
         }
         .expect("dependency member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration.iter().all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -433,9 +441,11 @@ fn assert_member_queries(
                 &package,
                 offset_to_position(source, first_offset),
             ),
-            MemberKind::Method => {
-                hover_for_dependency_methods(source, &package, offset_to_position(source, first_offset))
-            }
+            MemberKind::Method => hover_for_dependency_methods(
+                source,
+                &package,
+                offset_to_position(source, first_offset),
+            ),
         }
         .expect("dependency member hover should exist");
         let HoverContents::Markup(markup) = hover.contents else {
@@ -450,9 +460,11 @@ fn assert_member_queries(
                 &package,
                 offset_to_position(source, first_offset),
             ),
-            MemberKind::Method => {
-                definition_for_dependency_methods(source, &package, offset_to_position(source, first_offset))
-            }
+            MemberKind::Method => definition_for_dependency_methods(
+                source,
+                &package,
+                offset_to_position(source, first_offset),
+            ),
         }
         .expect("dependency member definition should exist");
         assert_targets_dependency_snippet(definition, dep_qi, member.member_token());
@@ -523,7 +535,11 @@ fn assert_member_queries(
         }
         .expect("dependency member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration.iter().all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -607,7 +623,7 @@ fn dependency_field_queries_work_on_if_structured_question_unwrapped_receiver() 
 
 #[test]
 fn dependency_field_queries_work_on_if_structured_question_unwrapped_receiver_without_semantic_analysis()
-{
+ {
     run_member_query_case(MemberKind::Field, StructuredKind::If, true);
 }
 
@@ -618,7 +634,7 @@ fn dependency_field_queries_work_on_match_structured_question_unwrapped_receiver
 
 #[test]
 fn dependency_field_queries_work_on_match_structured_question_unwrapped_receiver_without_semantic_analysis()
-{
+ {
     run_member_query_case(MemberKind::Field, StructuredKind::Match, true);
 }
 
@@ -629,7 +645,7 @@ fn dependency_method_queries_work_on_if_structured_question_unwrapped_receiver()
 
 #[test]
 fn dependency_method_queries_work_on_if_structured_question_unwrapped_receiver_without_semantic_analysis()
-{
+ {
     run_member_query_case(MemberKind::Method, StructuredKind::If, true);
 }
 
@@ -640,6 +656,6 @@ fn dependency_method_queries_work_on_match_structured_question_unwrapped_receive
 
 #[test]
 fn dependency_method_queries_work_on_match_structured_question_unwrapped_receiver_without_semantic_analysis()
-{
+ {
     run_member_query_case(MemberKind::Method, StructuredKind::Match, true);
 }

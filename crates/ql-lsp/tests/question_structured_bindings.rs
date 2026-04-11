@@ -189,8 +189,8 @@ pub fn read(config: Cfg, flag: Bool) -> Int {{
 }
 
 #[test]
-fn dependency_method_definition_works_on_if_and_match_structured_question_unwrapped_receivers_without_semantic_analysis(
-) {
+fn dependency_method_definition_works_on_if_and_match_structured_question_unwrapped_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-structured-method-binding-broken");
     let app_root = temp.path().join("workspace").join("app");
 

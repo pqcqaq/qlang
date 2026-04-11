@@ -5,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    span_to_range, type_definition_for_dependency_method_types, type_definition_for_package_analysis,
+    span_to_range, type_definition_for_dependency_method_types,
+    type_definition_for_package_analysis,
 };
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{Location, Position, Url};
@@ -91,7 +92,10 @@ fn assert_targets_dependency_type(
         .expect("type signature should exist in dependency artifact");
     assert_eq!(
         range,
-        span_to_range(&artifact, ql_span::Span::new(type_def, type_def + snippet.len()))
+        span_to_range(
+            &artifact,
+            ql_span::Span::new(type_def, type_def + snippet.len())
+        )
     );
 }
 
@@ -178,11 +182,7 @@ pub fn read(config: Cfg, flag: Bool) -> Int {
         type_definition_for_package_analysis(&uri, source, &analysis, &package, position)
             .expect("structured alias field member type definition should exist");
 
-    assert_targets_dependency_type(
-        definition,
-        &dep_qi,
-        "pub struct Leaf {\n    value: Int,\n}",
-    );
+    assert_targets_dependency_type(definition, &dep_qi, "pub struct Leaf {\n    value: Int,\n}");
 }
 
 #[test]
@@ -232,9 +232,5 @@ pub fn read(config: Cfg, flag: Bool) -> Int {
     let definition = type_definition_for_dependency_method_types(source, &package, position)
         .expect("structured alias method member type definition should exist");
 
-    assert_targets_dependency_type(
-        definition,
-        &dep_qi,
-        "pub struct Leaf {\n    value: Int,\n}",
-    );
+    assert_targets_dependency_type(definition, &dep_qi, "pub struct Leaf {\n    value: Int,\n}");
 }

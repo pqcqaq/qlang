@@ -539,8 +539,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_question_wrapped_dependency_static_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-dependency-question-static-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -607,8 +607,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_structured_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_structured_question_wrapped_dependency_static_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-structured-question-static-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -675,8 +675,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_match_structured_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_match_structured_question_wrapped_dependency_static_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-match-question-static-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -746,8 +746,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_question_wrapped_dependency_function_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_question_wrapped_dependency_function_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-dependency-question-function-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -1191,8 +1191,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_dependency_const_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_dependency_const_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-const-iterable-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -1415,8 +1415,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_match_structured_question_wrapped_dependency_function_iterable_roots(
-) {
+fn type_definition_bridge_follows_match_structured_question_wrapped_dependency_function_iterable_roots()
+ {
     let temp =
         TempDir::new("ql-lsp-match-structured-question-function-iterable-root-type-definition");
     let app_root = temp.path().join("workspace").join("app");
@@ -1499,8 +1499,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-function-iterable-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -1569,8 +1569,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp =
         TempDir::new("ql-lsp-structured-question-function-iterable-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
@@ -1640,8 +1640,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_match_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_match_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new(
         "ql-lsp-match-structured-question-function-iterable-root-type-definition-broken",
     );
@@ -1871,8 +1871,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_match_structured_question_wrapped_dependency_static_iterable_roots(
-) {
+fn type_definition_bridge_follows_match_structured_question_wrapped_dependency_static_iterable_roots()
+ {
     let temp = TempDir::new("ql-lsp-match-question-static-iterable-root-type-definition");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -1954,8 +1954,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-static-iterable-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -2024,8 +2024,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp =
         TempDir::new("ql-lsp-structured-question-static-iterable-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
@@ -2095,8 +2095,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_match_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_match_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-match-question-static-iterable-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -2170,8 +2170,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_function_iterable_roots(
-) {
+fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_function_iterable_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-function-iterable-root-type-definition");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -2248,8 +2248,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_function_iterable_roots(
-) {
+fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_function_iterable_roots()
+ {
     let temp =
         TempDir::new("ql-lsp-grouped-structured-question-function-iterable-root-type-definition");
     let app_root = temp.path().join("workspace").join("app");
@@ -2327,8 +2327,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_function_iterable_roots(
-) {
+fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_function_iterable_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-function-iterable-root-type-definition");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -2486,8 +2486,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_static_iterable_roots(
-) {
+fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_static_iterable_roots()
+ {
     let temp =
         TempDir::new("ql-lsp-grouped-structured-question-static-iterable-root-type-definition");
     let app_root = temp.path().join("workspace").join("app");
@@ -2567,8 +2567,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_static_iterable_roots(
-) {
+fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_static_iterable_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-static-iterable-root-type-definition");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -2648,8 +2648,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp =
         TempDir::new("ql-lsp-grouped-question-function-iterable-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
@@ -2719,8 +2719,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new(
         "ql-lsp-grouped-structured-question-function-iterable-root-type-definition-broken",
     );
@@ -2791,8 +2791,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp =
         TempDir::new("ql-lsp-grouped-match-question-function-iterable-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
@@ -2865,8 +2865,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-static-iterable-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -2935,8 +2935,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new(
         "ql-lsp-grouped-structured-question-static-iterable-root-type-definition-broken",
     );
@@ -3009,8 +3009,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp =
         TempDir::new("ql-lsp-grouped-match-question-static-iterable-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
@@ -3157,8 +3157,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_function_roots(
-) {
+fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_function_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-structured-question-function-root-type-definition");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -3232,8 +3232,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_function_roots(
-) {
+fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_function_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-function-root-type-definition");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -3312,8 +3312,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_function_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_function_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-function-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -3380,8 +3380,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_function_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_function_roots_without_semantic_analysis()
+ {
     let temp =
         TempDir::new("ql-lsp-grouped-structured-question-function-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
@@ -3449,8 +3449,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_function_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_function_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-function-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -3596,8 +3596,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_static_roots(
-) {
+fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_static_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-structured-question-static-root-type-definition");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -3671,8 +3671,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_static_roots(
-) {
+fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_static_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-static-root-type-definition");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -3751,8 +3751,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_question_wrapped_dependency_static_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-static-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -3819,8 +3819,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_structured_question_wrapped_dependency_static_roots_without_semantic_analysis()
+ {
     let temp =
         TempDir::new("ql-lsp-grouped-structured-question-static-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
@@ -3888,8 +3888,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_grouped_import_match_structured_question_wrapped_dependency_static_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-static-root-type-definition-broken");
     let app_root = temp.path().join("workspace").join("app");
 

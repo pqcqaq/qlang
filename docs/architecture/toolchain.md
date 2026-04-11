@@ -2,29 +2,22 @@
 
 ## 目标
 
-Qlang 不是“只有一个编译器二进制”的项目，而是一整套开发体验工程。工具链应围绕统一 CLI 和共享语义数据库展开。
+工具链围绕统一 CLI 与共享 analysis 边界组织。实现分层见 [实现算法与分层边界](/architecture/implementation-algorithms)。
 
-如果要看当前 `ql build`、`ql check`、`qlsp` 背后分别如何编排 analysis、codegen、toolchain invocation 和协议桥接，继续看：
+## 命令入口
 
-- [实现算法与分层边界](/architecture/implementation-algorithms)
+统一入口命令为 `ql`。当前源码已实现的子命令如下：
 
-## 统一入口
-
-建议统一入口命令为 `ql`，由它驱动各子工具：
-
-- `ql new`
-- `ql init`
-- `ql build`
-- `ql run`
-- `ql test`
 - `ql check`
 - `ql fmt`
-- `ql doc`
-- `ql bench`
-- `ql clean`
+- `ql mir`
+- `ql ownership`
+- `ql runtime`
+- `ql build`
+- `ql project`
 - `ql ffi`
 
-这样可以减少工具数量膨胀，让使用者把它当成一个系统，而不是一堆松散命令。
+`new`、`init`、`run`、`test`、`doc`、`bench`、`clean` 等更宽命令面仍属于规划，不在本页按已实现能力展开。
 
 ## 子工具
 
@@ -137,8 +130,8 @@ P4/P5 地基已经落地；当前一边保守扩展 Phase 7 async library/progra
 - codegen 会在 program mode 下把 Qlang 用户入口 lower 成内部符号，并额外生成宿主 `main` wrapper
 - `dylib` 和 `staticlib` 都走 library mode，因此当前单文件库不要求顶层 `main`
 - async public build 当前已开放两类受控子集：`staticlib` 与 `dylib` 都支持已接入 backend 的 async library body，并为 fixed-shape iterable 打开 `for await` lowering；`BuildEmit::LlvmIr` / `BuildEmit::Object` / `BuildEmit::Executable` 也已开放 `async fn main` 的最小程序入口生命周期与 fixed-shape iterable `for await` 子集。其中 `dylib` 仍只开放不暴露 async ABI 的最小 library-style 子集；更广义的 async program/bootstrap surface，以及更广义的 dynamic/generalized iterable 仍保持保守拒绝
-- `crates/ql-cli/tests/executable_examples.rs` 当前编码了最小 async executable program subset 的本地 smoke contract；当开发者本地提供忽略的 `ramdon_tests/async_program_surface_examples/` 目录时，会按当前注册的 `222` 个 async case 执行
-- 下文若继续引用 `ramdon_tests/...` 文件名，它们表示这套本地忽略 smoke contract 的历史样例命名，不代表当前 checkout 提交了这些 `.ql` 文件
+- `crates/ql-cli/tests/executable_examples.rs` 当前编码了最小 async executable program subset 的 smoke contract；当前仓库已经提交 `ramdon_tests/async_program_surface_examples/` 基线目录，并会按当前注册的 `222` 个 async case 执行
+- 下文若继续引用 `ramdon_tests/...` 文件名，它们指向当前仓库已提交的 smoke corpus；该目录仍在 `.gitignore` 中，因此开发者本地也可继续追加样例
 - `174_async_main_spawned_aggregate_results.ql` 到 `225_async_main_guarded_arithmetic_forwarded_task_handle_flows.ql` 现进一步把 regular-size / spawned / zero-sized / recursive aggregate result family、regular-size / zero-sized helper-returned / forwarded task-handle flow、regular-size tuple / array / nested aggregate task-handle payload family、regular-size / zero-sized / recursive aggregate param family、zero-sized projected task-handle `await` / `spawn` consume、zero-sized projected reinit、zero-sized conditional `spawn/await/reinit` family、regular-size conditional task-handle flow、bound local task-handle `spawn` flow、regular-size returned / nested / struct-carried task-handle shape family、regular-size projected reinit family、stable-dynamic path family、guard-refined dynamic path family、static-alias-backed projected-root dynamic reinit family、aliased projected-root repackage/spawn family、guarded arithmetic forwarded helper flow surface、`async unsafe fn` body surface、ordinary assignment-expression surface、direct-root dynamic task-array assignment surface、tuple literal-index assignment-expression surface、projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root tuple / struct-field / fixed-array literal-index assignment-expression surface、projected-root dynamic task-array assignment surface、async mutable-local assignment-expression surface、async scalar dynamic non-`Task[...]` array assignment surface，以及 direct-root / projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root dynamic array assignment-expression surface 推进到 `async fn main` 的真实 build-and-run surface
 - 其中 `ramdon_tests/async_program_surface_examples/107_async_main_import_alias_named_calls.ql`、`108_async_main_import_alias_direct_submit.ql`、`109_async_main_import_alias_aggregate_submit.ql`、`110_async_main_import_alias_array_submit.ql`、`111_async_main_import_alias_tuple_submit.ql`、`112_async_main_import_alias_forward_submit.ql`、`113_async_main_import_alias_helper_task_submit.ql`、`114_async_main_import_alias_helper_forward_submit.ql`、`121_async_main_import_alias_awaited_aggregate_task_array_for_await.ql`、`127_async_main_import_alias_helper_task_tuple_for_await.ql`、`131_async_main_import_alias_awaited_aggregate_task_tuple_for_await.ql` 与 `135_async_main_import_alias_task_tuple_for_await.ql` 进一步把 same-file function import alias call lowering 推进到 `async fn main` 的真实 build-and-run surface，覆盖 alias-root direct call、direct `await`、direct `spawn`、aggregate-carried、fixed-array-carried、tuple-carried、helper-forwarded、helper-returned task-handle、helper-returned-task + helper-forwarded submit，以及 direct/helper-returned/awaited-aggregate/inline-awaited fixed-array task-array `for await`、direct/helper-returned homogeneous task-tuple `for await`、以及 import-aliased awaited-aggregate task-tuple `for await` 中对每个元素自动 `await` 后再绑定循环变量的组合路径；`115_async_main_import_alias_task_array_for_await.ql`、`116_async_main_import_alias_helper_task_array_for_await.ql`、`117_async_main_projected_task_array_for_await.ql`、`118_async_main_void_task_array_for_await.ql`、`119_async_main_awaited_aggregate_task_array_for_await.ql`、`120_async_main_awaited_nested_aggregate_task_array_for_await.ql`、`122_async_main_inline_awaited_task_array_for_await.ql`、`123_async_main_awaited_tuple_projected_task_array_for_await.ql`、`124_async_main_awaited_array_projected_task_array_for_await.ql`、`125_async_main_tuple_for_await.ql`、`126_async_main_task_tuple_for_await.ql`、`128_async_main_projected_task_tuple_for_await.ql`、`129_async_main_awaited_aggregate_task_tuple_for_await.ql`、`130_async_main_awaited_tuple_projected_task_tuple_for_await.ql`、`132_async_main_inline_awaited_task_tuple_for_await.ql`、`133_async_main_awaited_nested_aggregate_task_tuple_for_await.ql`、`134_async_main_awaited_array_projected_task_tuple_for_await.ql`、`135_async_main_import_alias_task_tuple_for_await.ql` 与 `136_async_main_void_task_tuple_for_await.ql` 还分别锁住了 helper-returned fixed-array task root、projected fixed-array task root、`Task[Void]` wildcard、awaited aggregate task root、awaited nested aggregate task root、inline-awaited fixed-array task root、awaited tuple-projected task root、awaited array-projected task root、homogeneous tuple iterable root、task-tuple auto-await iterable root、projected task-tuple root、awaited aggregate task-tuple root、awaited tuple-projected task-tuple root、inline-awaited task-tuple root、awaited nested aggregate task-tuple root、awaited array-projected task-tuple root、direct import-alias task-tuple root，以及 `Task[Void]` task-tuple wildcard 的 executable public surface
 - 其中 `137_async_main_const_tuple_for_await.ql`、`138_async_main_static_array_for_await.ql`、`139_async_main_import_alias_projected_const_tuple_for_await.ql`、`140_async_main_import_alias_projected_static_array_for_await.ql`、`141_async_main_import_alias_const_tuple_for_await.ql` 与 `142_async_main_import_alias_static_array_for_await.ql` 进一步把 same-file `const` / `static` fixed-shape root 及其 same-file import-alias projected/direct root 的 scalar `for await` lowering 推进到 `async fn main` 的真实 build-and-run surface；这条 public slice 现在已经显式覆盖 direct const tuple root、direct static array root、import-aliased projected const tuple root、import-aliased projected static array root、import-aliased direct const tuple root，以及 import-aliased direct static array root
@@ -195,7 +188,7 @@ P4/P5 地基已经落地；当前一边保守扩展 Phase 7 async library/progra
 - 任意共享库 surface、exported ABI 的 linkage/visibility 控制与 richer ABI surface
 - extern ABI 与 runtime glue 的其余部分
 
-这不是功能缺失，而是为了先把 Phase 4 的后端边界做稳，而不是把系统 LLVM、链接器和运行时问题一口气缠死。
+这些边界当前仍保持关闭，用于控制 Phase 4 的后端范围。
 
 ### `ql ffi`
 

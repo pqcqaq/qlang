@@ -1,11 +1,15 @@
+---
+sidebar: false
+outline: false
+---
+
 # 原始切片稿归档
 
-这里保存的是按日期拆分的原始阶段切片稿。
+这里保存按日期拆分的原始阶段切片稿。
 
-使用建议：
-
-- 日常阅读优先看 [`/plans`](/plans/)
-- 需要追溯单次切片的设计边界、验证列表或当时的保守约束时，再读这里
+- 合并稿优先看 [`/plans`](/plans/)
+- 当前实现边界优先看 [`/roadmap/current-supported-surface`](/roadmap/current-supported-surface)
+- 这里保留历史设计边界与验证列表
 
 ## Phase 0
 

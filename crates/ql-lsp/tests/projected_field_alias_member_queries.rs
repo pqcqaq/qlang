@@ -341,9 +341,11 @@ fn assert_member_queries(
         }
         .expect("projected-field alias member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration
-            .iter()
-            .all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -477,9 +479,11 @@ fn assert_member_queries(
         }
         .expect("projected-field alias member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration
-            .iter()
-            .all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,

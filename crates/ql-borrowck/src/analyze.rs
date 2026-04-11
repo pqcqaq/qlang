@@ -1659,8 +1659,10 @@ impl<'a> BodyAnalyzer<'a> {
         pattern_id: hir::PatternId,
         visiting: &mut ImmutableSourceVisit,
     ) -> Option<bool> {
-        let item_id =
-            item_id_for_value_resolution(self.hir, self.resolution.pattern_resolution(pattern_id)?)?;
+        let item_id = item_id_for_value_resolution(
+            self.hir,
+            self.resolution.pattern_resolution(pattern_id)?,
+        )?;
         if !visiting.items.insert(item_id) {
             return None;
         }
@@ -1676,8 +1678,10 @@ impl<'a> BodyAnalyzer<'a> {
         pattern_id: hir::PatternId,
         visiting: &mut ImmutableSourceVisit,
     ) -> Option<i64> {
-        let item_id =
-            item_id_for_value_resolution(self.hir, self.resolution.pattern_resolution(pattern_id)?)?;
+        let item_id = item_id_for_value_resolution(
+            self.hir,
+            self.resolution.pattern_resolution(pattern_id)?,
+        )?;
         if !visiting.items.insert(item_id) {
             return None;
         }
@@ -1698,7 +1702,9 @@ impl<'a> BodyAnalyzer<'a> {
             hir::ExprKind::Unary {
                 op: UnaryOp::Not,
                 expr,
-            } => self.bool_literal_value_for_expr(*expr, visiting).map(|value| !value),
+            } => self
+                .bool_literal_value_for_expr(*expr, visiting)
+                .map(|value| !value),
             hir::ExprKind::Binary { left, op, right } => {
                 if let (Some(left), Some(right)) = (
                     self.bool_literal_value_for_expr(*left, visiting),

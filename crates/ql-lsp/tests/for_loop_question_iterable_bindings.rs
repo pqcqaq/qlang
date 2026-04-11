@@ -168,8 +168,8 @@ packages = ["../dep"]
 }
 
 #[test]
-fn package_bridge_completes_dependency_fields_for_for_loop_question_field_iterables_without_semantic_analysis(
-) {
+fn package_bridge_completes_dependency_fields_for_for_loop_question_field_iterables_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-for-loop-question-field-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
     let source = r#"
@@ -240,8 +240,8 @@ packages = ["../dep"]
 }
 
 #[test]
-fn package_bridge_completes_dependency_methods_for_for_loop_question_method_iterables_without_semantic_analysis(
-) {
+fn package_bridge_completes_dependency_methods_for_for_loop_question_method_iterables_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-for-loop-question-method-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
     let source = r#"

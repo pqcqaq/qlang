@@ -359,7 +359,11 @@ fn assert_member_queries(
         }
         .expect("local-method iterable member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration.iter().all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -493,7 +497,11 @@ fn assert_member_queries(
         }
         .expect("local-method iterable member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration.iter().all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -567,8 +575,8 @@ fn dependency_field_queries_work_on_for_loop_local_method_iterable_receivers() {
 }
 
 #[test]
-fn dependency_field_queries_work_on_for_loop_local_method_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_queries_work_on_for_loop_local_method_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(CaseKind::ConfigChildrenField, true);
 }
 
@@ -578,7 +586,7 @@ fn dependency_method_queries_work_on_for_loop_self_local_method_iterable_receive
 }
 
 #[test]
-fn dependency_method_queries_work_on_for_loop_self_local_method_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_queries_work_on_for_loop_self_local_method_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(CaseKind::SelfPairMethod, true);
 }

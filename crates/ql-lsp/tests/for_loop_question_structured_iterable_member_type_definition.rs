@@ -307,12 +307,13 @@ fn type_definition_fallback_follows_for_loop_if_question_structured_iterable_fie
 }
 
 #[test]
-fn type_definition_bridge_follows_for_loop_match_question_structured_iterable_method_member_types() {
+fn type_definition_bridge_follows_for_loop_match_question_structured_iterable_method_member_types()
+{
     run_type_definition_case(MemberKind::Method, false);
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_match_question_structured_iterable_method_member_types(
-) {
+fn type_definition_fallback_follows_for_loop_match_question_structured_iterable_method_member_types()
+ {
     run_type_definition_case(MemberKind::Method, true);
 }

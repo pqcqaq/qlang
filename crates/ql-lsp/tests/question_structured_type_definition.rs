@@ -131,9 +131,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -184,7 +184,10 @@ fn assert_targets_dependency_type(
         .expect("type signature should exist in dependency artifact");
     assert_eq!(
         range,
-        span_to_range(&artifact, ql_span::Span::new(type_def, type_def + snippet.len()))
+        span_to_range(
+            &artifact,
+            ql_span::Span::new(type_def, type_def + snippet.len())
+        )
     );
 }
 
@@ -299,18 +302,18 @@ fn type_definition_bridge_follows_if_structured_question_unwrapped_dependency_me
 
 #[test]
 fn type_definition_fallback_follows_if_structured_question_unwrapped_dependency_method_return_types()
-{
+ {
     run_type_definition_case(RootKind::Method, StructuredKind::If, true);
 }
 
 #[test]
 fn type_definition_bridge_follows_match_structured_question_unwrapped_dependency_method_return_types()
-{
+ {
     run_type_definition_case(RootKind::Method, StructuredKind::Match, false);
 }
 
 #[test]
 fn type_definition_fallback_follows_match_structured_question_unwrapped_dependency_method_return_types()
-{
+ {
     run_type_definition_case(RootKind::Method, StructuredKind::Match, true);
 }

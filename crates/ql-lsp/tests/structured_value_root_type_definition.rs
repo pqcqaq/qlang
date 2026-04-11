@@ -114,7 +114,10 @@ fn assert_targets_dependency_type(
     let start = artifact
         .find(snippet)
         .expect("type target should exist in dependency interface");
-    assert_eq!(range, span_to_range(&artifact, Span::new(start, start + snippet.len())));
+    assert_eq!(
+        range,
+        span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
 }
 
 fn build_source(structured: StructuredKind, broken: bool) -> String {

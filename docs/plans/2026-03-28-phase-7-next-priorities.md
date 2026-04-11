@@ -2,8 +2,6 @@
 
 > Historical note (2026-03-29): Tasks 1-5 in this plan have now landed. This file is kept as an execution record for the 2026-03-28 planning snapshot, not as the current source of truth. Current implementation status lives in `docs/roadmap/phase-progress.md`, `docs/roadmap/development-plan.md`, and `docs/plans/phase-7-concurrency-and-rust-interop.md`.
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** 在当前 Phase 7 的保守 async/staticlib 闭环上，优先补齐最能继续放大 async 可用面的几个缺口。
 
 **Architecture:** 先锁住当前 `Task[T]` 与 projected task-handle 的既有行为，再把 borrowck 从“按 base local 粗暴消费”推进到 projection-sensitive。随后再打开 projection write/reinit 与首个 `for await` lowering 竖切片，最后再评估是否扩大 async build surface。整个顺序遵循现有记忆里的约束：TDD、保守扩面、文档/测试/实现同步。

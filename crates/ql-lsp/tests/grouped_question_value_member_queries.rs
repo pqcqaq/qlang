@@ -320,9 +320,11 @@ packages = ["../dep"]
                 &package,
                 offset_to_position(&source, first_offset),
             ),
-            MemberKind::Method => {
-                hover_for_dependency_methods(&source, &package, offset_to_position(&source, first_offset))
-            }
+            MemberKind::Method => hover_for_dependency_methods(
+                &source,
+                &package,
+                offset_to_position(&source, first_offset),
+            ),
         }
         .expect("dependency member hover should exist without semantic analysis");
         let HoverContents::Markup(markup) = hover.contents else {
@@ -412,7 +414,11 @@ packages = ["../dep"]
         }
         .expect("dependency member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration.iter().all(|location| location.uri == uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == uri)
+        );
 
         let expected_first = span_to_range(
             &source,
@@ -444,9 +450,11 @@ packages = ["../dep"]
                 &package,
                 offset_to_position(&source, first_offset),
             ),
-            MemberKind::Method => {
-                hover_for_dependency_methods(&source, &package, offset_to_position(&source, first_offset))
-            }
+            MemberKind::Method => hover_for_dependency_methods(
+                &source,
+                &package,
+                offset_to_position(&source, first_offset),
+            ),
         }
         .expect("dependency member hover should exist");
         let HoverContents::Markup(markup) = hover.contents else {
@@ -536,7 +544,11 @@ packages = ["../dep"]
         }
         .expect("dependency member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration.iter().all(|location| location.uri == uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == uri)
+        );
 
         let expected_first = span_to_range(
             &source,
@@ -569,7 +581,7 @@ fn dependency_field_queries_work_on_grouped_question_function_value_receivers() 
 
 #[test]
 fn dependency_field_queries_work_on_grouped_question_function_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(RootKind::Function, MemberKind::Field, true);
 }
 
@@ -580,7 +592,7 @@ fn dependency_method_queries_work_on_grouped_question_function_value_receivers()
 
 #[test]
 fn dependency_method_queries_work_on_grouped_question_function_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(RootKind::Function, MemberKind::Method, true);
 }
 
@@ -591,7 +603,7 @@ fn dependency_field_queries_work_on_grouped_question_static_value_receivers() {
 
 #[test]
 fn dependency_field_queries_work_on_grouped_question_static_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(RootKind::Static, MemberKind::Field, true);
 }
 
@@ -602,6 +614,6 @@ fn dependency_method_queries_work_on_grouped_question_static_value_receivers() {
 
 #[test]
 fn dependency_method_queries_work_on_grouped_question_static_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(RootKind::Static, MemberKind::Method, true);
 }

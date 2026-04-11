@@ -4,11 +4,11 @@
 
 把 Phase 8 的顺序固定下来，避免直接从 same-file LSP 跳到“全量 workspace IDE”。
 
-这轮的核心判断只有一条：
+当前顺序：
 
-- 先做 `.qi` 接口产物和 package/workspace graph。
-- 再让 `ql-analysis` / `ql-lsp` 消费 `.qi`。
-- 最后再做 cross-file rename / code actions。
+1. 先做 `.qi` 接口产物和 package/workspace graph。
+2. 再让 `ql-analysis` / `ql-lsp` 消费 `.qi`。
+3. 最后再做 cross-file rename / code actions。
 
 如果顺序反过来，LSP 会先长出一套只依赖源码扫描的临时语义，后面再接 `.qi` 时基本必然返工。
 

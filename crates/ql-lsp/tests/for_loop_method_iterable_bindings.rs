@@ -159,7 +159,11 @@ packages = ["../dep"]
     )
     .expect("dependency method iterable field definition should exist");
 
-    assert_targets_dependency_snippet(definition, &temp.path().join("workspace/dep/dep.qi"), "value");
+    assert_targets_dependency_snippet(
+        definition,
+        &temp.path().join("workspace/dep/dep.qi"),
+        "value",
+    );
 }
 
 #[test]

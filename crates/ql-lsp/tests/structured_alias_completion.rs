@@ -297,7 +297,8 @@ fn dependency_field_completion_works_on_match_structured_alias_receivers() {
 }
 
 #[test]
-fn dependency_field_completion_works_on_match_structured_alias_receivers_without_semantic_analysis() {
+fn dependency_field_completion_works_on_match_structured_alias_receivers_without_semantic_analysis()
+{
     run_completion_case(MemberKind::Field, StructuredKind::Match, true);
 }
 
@@ -307,6 +308,7 @@ fn dependency_method_completion_works_on_match_structured_alias_receivers() {
 }
 
 #[test]
-fn dependency_method_completion_works_on_match_structured_alias_receivers_without_semantic_analysis() {
+fn dependency_method_completion_works_on_match_structured_alias_receivers_without_semantic_analysis()
+ {
     run_completion_case(MemberKind::Method, StructuredKind::Match, true);
 }

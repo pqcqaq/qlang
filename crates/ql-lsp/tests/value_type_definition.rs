@@ -312,8 +312,8 @@ pub fn main(config: Cfg) -> Int {
 }
 
 #[test]
-fn type_definition_bridge_follows_dependency_struct_types_for_closure_parameters_without_semantic_analysis(
-) {
+fn type_definition_bridge_follows_dependency_struct_types_for_closure_parameters_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-value-type-definition-closure-param-broken");
     let app_root = temp.path().join("workspace").join("app");
 

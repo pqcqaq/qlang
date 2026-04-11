@@ -263,8 +263,8 @@ fn dependency_field_completion_works_on_question_function_iterable_receivers() {
 }
 
 #[test]
-fn dependency_field_completion_works_on_question_function_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_question_function_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(RootKind::Function, MemberKind::Field, true);
 }
 
@@ -274,8 +274,8 @@ fn dependency_method_completion_works_on_question_function_iterable_receivers() 
 }
 
 #[test]
-fn dependency_method_completion_works_on_question_function_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_question_function_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(RootKind::Function, MemberKind::Method, true);
 }
 
@@ -285,8 +285,8 @@ fn dependency_field_completion_works_on_question_static_iterable_receivers() {
 }
 
 #[test]
-fn dependency_field_completion_works_on_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_question_static_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(RootKind::Static, MemberKind::Field, true);
 }
 
@@ -296,7 +296,7 @@ fn dependency_method_completion_works_on_question_static_iterable_receivers() {
 }
 
 #[test]
-fn dependency_method_completion_works_on_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_question_static_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(RootKind::Static, MemberKind::Method, true);
 }

@@ -195,8 +195,8 @@ packages = ["../dep"]
 }
 
 #[test]
-fn package_bridge_completes_dependency_fields_for_grouped_question_function_receivers_without_semantic_analysis(
-) {
+fn package_bridge_completes_dependency_fields_for_grouped_question_function_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-function-value-field-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
     let source = r#"
@@ -265,8 +265,8 @@ packages = ["../dep"]
 }
 
 #[test]
-fn package_bridge_completes_dependency_methods_for_grouped_question_function_receivers_without_semantic_analysis(
-) {
+fn package_bridge_completes_dependency_methods_for_grouped_question_function_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-function-value-method-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
     let source = r#"
@@ -339,8 +339,8 @@ packages = ["../dep"]
 }
 
 #[test]
-fn package_bridge_completes_dependency_fields_for_grouped_question_static_receivers_without_semantic_analysis(
-) {
+fn package_bridge_completes_dependency_fields_for_grouped_question_static_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-static-value-field-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
     let source = r#"
@@ -409,8 +409,8 @@ packages = ["../dep"]
 }
 
 #[test]
-fn package_bridge_completes_dependency_methods_for_grouped_question_static_receivers_without_semantic_analysis(
-) {
+fn package_bridge_completes_dependency_methods_for_grouped_question_static_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-static-value-method-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
     let source = r#"

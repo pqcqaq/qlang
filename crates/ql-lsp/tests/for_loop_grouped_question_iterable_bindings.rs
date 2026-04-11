@@ -288,8 +288,8 @@ fn dependency_field_definition_works_on_for_loop_grouped_question_function_itera
 }
 
 #[test]
-fn dependency_field_definition_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis(
-) {
+fn dependency_field_definition_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis()
+ {
     run_definition_case(MemberKind::Field, RootKind::Function, true);
 }
 
@@ -299,8 +299,8 @@ fn dependency_field_definition_works_on_for_loop_grouped_question_static_iterabl
 }
 
 #[test]
-fn dependency_field_definition_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis(
-) {
+fn dependency_field_definition_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis()
+ {
     run_definition_case(MemberKind::Field, RootKind::Static, true);
 }
 
@@ -310,8 +310,8 @@ fn dependency_method_definition_works_on_for_loop_grouped_question_function_iter
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis(
-) {
+fn dependency_method_definition_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis()
+ {
     run_definition_case(MemberKind::Method, RootKind::Function, true);
 }
 
@@ -321,7 +321,7 @@ fn dependency_method_definition_works_on_for_loop_grouped_question_static_iterab
 }
 
 #[test]
-fn dependency_method_definition_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis(
-) {
+fn dependency_method_definition_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis()
+ {
     run_definition_case(MemberKind::Method, RootKind::Static, true);
 }

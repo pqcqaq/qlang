@@ -122,7 +122,11 @@ pub struct Child {{
 }
 
 fn build_source(root: RootKind, broken: bool) -> String {
-    let tail = if broken { "    return \"oops\"\n" } else { "    return 0\n" };
+    let tail = if broken {
+        "    return \"oops\"\n"
+    } else {
+        "    return 0\n"
+    };
     format!(
         r#"
 package demo.app

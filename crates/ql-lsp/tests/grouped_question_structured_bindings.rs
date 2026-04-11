@@ -112,8 +112,8 @@ fn assert_targets_dependency_snippet(
 }
 
 #[test]
-fn dependency_field_definition_works_on_structured_grouped_question_function_and_static_value_receivers(
-) {
+fn dependency_field_definition_works_on_structured_grouped_question_function_and_static_value_receivers()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-structured-value-field-binding");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -191,8 +191,8 @@ pub fn read(flag: Bool) -> Int {{
 }
 
 #[test]
-fn dependency_method_definition_works_on_structured_grouped_question_function_and_static_value_receivers_without_semantic_analysis(
-) {
+fn dependency_method_definition_works_on_structured_grouped_question_function_and_static_value_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-structured-value-method-binding-broken");
     let app_root = temp.path().join("workspace").join("app");
 

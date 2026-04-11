@@ -129,4 +129,4 @@ Phase 2 的目标不是一次做完完整类型系统，而是建立统一语义
 
 ## 归档
 
-本阶段原始切片稿已归档到 [`/plans/archive/phase-2`](/plans/archive/index)。
+本阶段原始切片稿保留在 archive 目录，需要追溯具体切片时再查看。

@@ -416,9 +416,11 @@ fn assert_member_queries(
         }
         .expect("dependency member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration
-            .iter()
-            .all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -544,9 +546,11 @@ fn assert_member_queries(
         }
         .expect("dependency member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration
-            .iter()
-            .all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -640,8 +644,8 @@ fn dependency_field_queries_work_on_if_question_function_iterable_receivers() {
 }
 
 #[test]
-fn dependency_field_queries_work_on_if_question_function_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_queries_work_on_if_question_function_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(
         RootKind::Function,
         MemberKind::Field,
@@ -661,8 +665,8 @@ fn dependency_method_queries_work_on_if_question_function_iterable_receivers() {
 }
 
 #[test]
-fn dependency_method_queries_work_on_if_question_function_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_queries_work_on_if_question_function_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(
         RootKind::Function,
         MemberKind::Method,
@@ -682,8 +686,8 @@ fn dependency_field_queries_work_on_match_question_function_iterable_receivers()
 }
 
 #[test]
-fn dependency_field_queries_work_on_match_question_function_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_queries_work_on_match_question_function_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(
         RootKind::Function,
         MemberKind::Field,
@@ -703,8 +707,8 @@ fn dependency_method_queries_work_on_match_question_function_iterable_receivers(
 }
 
 #[test]
-fn dependency_method_queries_work_on_match_question_function_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_queries_work_on_match_question_function_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(
         RootKind::Function,
         MemberKind::Method,
@@ -724,8 +728,8 @@ fn dependency_field_queries_work_on_if_question_static_iterable_receivers() {
 }
 
 #[test]
-fn dependency_field_queries_work_on_if_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_queries_work_on_if_question_static_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(
         RootKind::Static,
         MemberKind::Field,
@@ -745,8 +749,8 @@ fn dependency_method_queries_work_on_if_question_static_iterable_receivers() {
 }
 
 #[test]
-fn dependency_method_queries_work_on_if_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_queries_work_on_if_question_static_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(
         RootKind::Static,
         MemberKind::Method,
@@ -766,8 +770,8 @@ fn dependency_field_queries_work_on_match_question_static_iterable_receivers() {
 }
 
 #[test]
-fn dependency_field_queries_work_on_match_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_queries_work_on_match_question_static_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(
         RootKind::Static,
         MemberKind::Field,
@@ -787,8 +791,8 @@ fn dependency_method_queries_work_on_match_question_static_iterable_receivers() 
 }
 
 #[test]
-fn dependency_method_queries_work_on_match_question_static_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_queries_work_on_match_question_static_iterable_receivers_without_semantic_analysis()
+ {
     run_member_query_case(
         RootKind::Static,
         MemberKind::Method,

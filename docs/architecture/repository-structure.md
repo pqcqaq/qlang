@@ -2,81 +2,34 @@
 
 ## 设计目标
 
-Qlang 仓库结构必须同时服务于四类工作：
+仓库目录按四类职责组织：
 
 1. 语言规范和设计演进
 2. 编译器与工具链实现
 3. 标准库与运行时实现
 4. 示例、测试、基准、文档与生态模板
 
-如果目录从一开始没有分层清楚，后面一定会出现以下问题：
+实现分层见 [实现算法与分层边界](/architecture/implementation-algorithms)。
 
-- 规范和实现互相污染
-- LSP、格式化器、编译器共享代码困难
-- 测试资源散落，难以回归
-- 文档和 RFC 无法沉淀
+## 当前顶层分层
 
-如果要看这些目录在当前实现里分别承载什么算法与分层责任，继续看：
-
-- [实现算法与分层边界](/architecture/implementation-algorithms)
-
-## 推荐结构
+这页只描述当前仓库里真实存在、且已经承担职责的目录；不会再把未来可能拆出的顶级目录写成现状。
 
 ```text
 .
-├─ docs/                      # VitePress 文档站，面向设计、路线图、指南
-├─ spec/                      # 语言规范草案与正式规范
-├─ rfcs/                      # 语言与工具链演进提案
-├─ crates/                    # Rust workspace：编译器和工具链源码
-│  ├─ ql-cli
-│  ├─ ql-driver
-│  ├─ ql-lexer
-│  ├─ ql-parser
-│  ├─ ql-ast
-│  ├─ ql-hir
-│  ├─ ql-resolve
-│  ├─ ql-typeck
-│  ├─ ql-mir
-│  ├─ ql-borrowck
-│  ├─ ql-codegen-llvm
-│  ├─ ql-diagnostics
-│  ├─ ql-incremental
-│  ├─ ql-fmt
-│  ├─ ql-doc
-│  ├─ ql-lsp
-│  └─ ql-test-harness
-├─ runtime/                   # 运行时支持、启动代码、FFI shim
-├─ stdlib/                    # 标准库源码
-│  ├─ core
-│  ├─ alloc
-│  ├─ io
-│  ├─ net
-│  ├─ async
-│  ├─ ffi
-│  └─ test
-├─ examples/                  # 最小示例与最佳实践
-├─ packages/                  # 演示用工作区包、模板项目
-├─ tests/                     # 黑盒与金丝雀测试
-│  ├─ ui
-│  ├─ parser
-│  ├─ typecheck
-│  ├─ compile-pass
-│  ├─ compile-fail
-│  ├─ run-pass
-│  ├─ ffi
-│  ├─ lsp
-│  └─ fmt
-├─ benchmarks/                # 编译器与运行时基准
-├─ fixtures/                  # 测试夹具、头文件、示例输入
-├─ scripts/                   # 自动化脚本、发布、生成器
-├─ .github/workflows/         # CI/CD
-├─ Cargo.toml                 # Rust workspace
-└─ qlang.toml                 # Qlang workspace / package manifest
+├─ docs/                      # VitePress 文档站，承载设计、架构、路线图与教程
+├─ crates/                    # Rust workspace：编译器、project/workspace、runtime 与工具层源码
+├─ examples/                  # 已提交的 C / Rust 宿主互操作示例
+├─ tests/                     # 跨 crate 黑盒 / 集成 / FFI 测试
+├─ fixtures/                  # parser / codegen / backend 夹具
+├─ ramdon_tests/              # 已提交的 executable smoke 语料
+├─ Cargo.toml                 # Rust workspace manifest
+└─ README.md                  # 仓库入口说明
 ```
 
 ## 当前已落地结构（2026-04-06）
 
-当前仓库已经不是早期前端样机，而是覆盖 P1-P6 主干、并行推进 Phase 7 async/runtime/staticlib/Rust interop 与 Phase 8 `.qi`/dependency/cross-file tooling 入口的真实工作区。当前根目录里最关键的已落地部分是：
+截至 2026-04-06，仓库主干已覆盖 P1-P6，并继续推进 Phase 7 async/runtime/staticlib/Rust interop 与 Phase 8 `.qi`/dependency/cross-file tooling。当前主要目录如下：
 
 ```text
 .
@@ -95,14 +48,18 @@ Qlang 仓库结构必须同时服务于四类工作：
 │  ├─ ql-resolve              # 作用域图与保守名称解析
 │  ├─ ql-typeck               # Phase 2 初始语义检查
 │  ├─ ql-runtime              # Phase 7 最小 runtime / executor 抽象
+│  ├─ ql-project              # package/workspace manifest graph、默认 `.qi` 路径/状态与 interface artifact 工具层
 │  ├─ ql-driver               # Phase 4 build orchestration 边界
 │  ├─ ql-codegen-llvm         # Phase 4 文本 LLVM IR 后端地基
-│  ├─ ql-lsp                  # qlsp：hover / definition / same-file references / completion / rename / semantic tokens
-│  └─ ql-cli                  # `ql check` / `ql build` / `ql ffi` / `ql fmt` / `ql mir` / `ql ownership` / `ql runtime`
+│  ├─ ql-lsp                  # qlsp：same-file query + dependency-backed cross-file hover/definition/references/completion + `workspace/symbol`
+│  └─ ql-cli                  # `ql check` / `ql build` / `ql project` / `ql ffi` / `ql fmt` / `ql mir` / `ql ownership` / `ql runtime`
 ├─ examples/
 │  ├─ ffi-c                   # 真实 C host + combined header 静态链接 Qlang `staticlib`
 │  ├─ ffi-c-dylib             # 真实 C host + runtime loader 加载 Qlang `dylib`
 │  └─ ffi-rust                # Cargo host + build.rs 静态链接 Qlang `staticlib`
+├─ ramdon_tests/
+│  ├─ executable_examples     # 已提交的 sync executable smoke 样例
+│  └─ async_program_surface_examples # 已提交的 async executable smoke 样例
 ├─ tests/
 │  ├─ ui                      # CLI 黑盒 diagnostics 快照
 │  ├─ codegen                 # build / codegen / artifact 黑盒快照
@@ -112,9 +69,7 @@ Qlang 仓库结构必须同时服务于四类工作：
    └─ codegen                 # backend / artifact / async staticlib 夹具
 ```
 
-也就是说，当前目录结构承载的是一个真实的编译器/工具链工作区，而不只是前端实验场：前端、语义、中端、后端、FFI、LSP、runtime、示例和文档站都已经进入同一仓库主干。
-
-当前仓库根测试目录也已经不再只有占位设计：
+根测试目录职责：
 
 - `tests/ui/` 已承载 CLI 黑盒 diagnostics 快照
 - `tests/codegen/` 已承载 backend / artifact 黑盒快照
@@ -133,52 +88,39 @@ Qlang 仓库结构必须同时服务于四类工作：
 - `ql-driver` 的 exported C header 投影和类型映射回归也应留在 crate-local tests，避免把 FFI surface 逻辑塞回 CLI 层
 - 仓库根 `tests/` 保留给后续 CLI 黑盒、UI diagnostics、codegen、FFI 这类跨 crate 测试
 
-## 为什么这样分
+## 分层说明
 
-### `docs/` 和 `spec/` 分离
+### `docs/`
 
-- `docs/` 面向导航、说明、路线图和教程
-- `spec/` 面向可审查的语言规范文本
+- 当前仓库还没有独立顶级 `spec/` 目录。
+- 语言规范、愿景、架构和路线图目前都统一沉淀在 `docs/` 内。
+- 如果后续需要把规范文本做成更正式、可版本化的独立工件，再拆出 `spec/` 会更符合现状。
 
-这样能避免“文档写得像规范，规范写得像博客”。
+### `rfcs/`
 
-### `rfcs/` 单独存在
+- 当前仓库还没有独立顶级 `rfcs/` 目录。
+- 重大设计变化目前主要沉淀在 `docs/plans/`、合并设计稿与路线图文档里。
+- 如果后续进入更正式的提案/审议流程，再单独落地 `rfcs/` 会更合适。
 
-RFC 是设计演进机制，不应混在普通文档里。后续每个重大决策，例如错误处理模型、trait object、宏系统、包注册中心，都应走 RFC。
+### `crates/`
 
-### `crates/` 细分而不是一个大 compiler 目录
+当前采用多 crate 结构，便于依赖分层、测试隔离，以及 LSP/formatter/project tooling 复用中间层。
 
-这有四个好处：
+### `tests/` 与 `fixtures/`
 
-- 编译依赖清晰
-- 测试粒度清晰
-- LSP、格式化器、文档工具能重用中间层
-- 避免巨大 crate 变成“无法重构的黑箱”
+测试断言与测试输入分开维护；仓库根目录执行 `ql check .` 时，会跳过 `fixtures/`、构建输出目录和临时测试目录。
 
-### `tests/` 与 `fixtures/` 分离
+## 后续可能新增的顶级目录
 
-测试断言和测试输入需要分层管理。特别是 UI 诊断测试、FFI 测试和 LSP 测试，输入资源会很多，不分开后期会极乱。
+如果项目后续进入更重的规范、RFC、基准或模板阶段，可以再单独落地这些目录：
 
-当前前端实现还额外验证了一个工程约束：仓库根目录执行 `ql check .` 时，不应把 `fixtures/`、构建输出目录和临时测试目录一起扫进去。否则 fail fixture 和杂项目录会污染真实的项目检查结果。
-
-也就是说：
-
-- `fixtures/` 继续保留为显式回归输入目录
-- `ql check fixtures/...` 这种显式调用仍然成立
-- 但“扫描整个仓库”的命令路径应优先面向真实源码目录，而不是测试资源目录
-
-## 初期就要预留的目录
-
-即使 P0 不全部实现，也建议尽早预留：
-
+- `spec/`
 - `rfcs/`
-- `tests/ui`
-- `tests/ffi`
-- `examples/ffi-c`
-- `examples/ffi-rust`
 - `benchmarks/`
+- `packages/`
+- `stdlib/`
 
-这几类目录直接决定项目后续是否有演进机制、质量机制和互操作验证机制。
+这些目录尚未落地，不应在其他文档中写成当前根目录事实。
 
 当前状态补充：
 

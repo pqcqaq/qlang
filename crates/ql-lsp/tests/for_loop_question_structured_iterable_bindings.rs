@@ -169,8 +169,8 @@ packages = ["../dep"]
 }
 
 #[test]
-fn package_bridge_completes_dependency_fields_for_for_loop_if_question_field_iterables_without_semantic_analysis(
-) {
+fn package_bridge_completes_dependency_fields_for_for_loop_if_question_field_iterables_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-for-loop-question-structured-field-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
     let source = r#"
@@ -322,8 +322,8 @@ packages = ["../dep"]
 }
 
 #[test]
-fn package_bridge_completes_dependency_methods_for_for_loop_match_question_method_iterables_without_semantic_analysis(
-) {
+fn package_bridge_completes_dependency_methods_for_for_loop_match_question_method_iterables_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-for-loop-question-structured-method-broken-completion");
     let app_root = temp.path().join("workspace").join("app");
     let source = r#"
@@ -470,8 +470,8 @@ pub fn read(config: Cfg, flag: Bool) -> Int {
 }
 
 #[test]
-fn dependency_field_definition_works_on_for_loop_if_question_field_iterables_without_semantic_analysis(
-) {
+fn dependency_field_definition_works_on_for_loop_if_question_field_iterables_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-for-loop-question-structured-field-query-broken");
     let app_root = temp.path().join("workspace").join("app");
 

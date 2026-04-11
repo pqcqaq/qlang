@@ -338,15 +338,11 @@ fn assert_root_queries(
             ]
         );
 
-        let with_declaration = references_for_package_analysis(
-            uri,
-            source,
-            &analysis,
-            &package,
-            root_position,
-            true,
-        )
-        .expect("grouped dependency question root references with declaration should exist");
+        let with_declaration =
+            references_for_package_analysis(uri, source, &analysis, &package, root_position, true)
+                .expect(
+                    "grouped dependency question root references with declaration should exist",
+                );
         assert_eq!(with_declaration.len(), 4);
         assert_dependency_location(
             &with_declaration[0],

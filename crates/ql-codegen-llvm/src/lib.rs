@@ -4549,9 +4549,7 @@ impl<'a> ModuleEmitter<'a> {
             PatternKind::Tuple(_)
             | PatternKind::Array(_)
             | PatternKind::Struct { .. }
-            | PatternKind::Wildcard => {
-                self.input.typeck.expr_ty(value)
-            }
+            | PatternKind::Wildcard => self.input.typeck.expr_ty(value),
             _ => None,
         }
     }

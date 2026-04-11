@@ -1,14 +1,8 @@
 # 实现算法与分层边界
 
-## 为什么补这页
+## 文档范围
 
-现有架构文档已经说明了 Qlang 的阶段目标、模块边界和工具链方向，但还不够回答一个更工程化的问题：
-
-- 当前代码到底按什么算法在工作
-- 每一层输入和输出是什么
-- 新功能未来应该接到哪一层，而不是直接绕层硬塞
-
-这页只记录“当前真实实现已经采用的算法与边界”，不把尚未落地的能力写成既成事实。
+这页只记录当前代码实际采用的算法、每层的输入输出，以及新功能应该接入的层次。未落地能力不在这里做承诺。
 
 ## 端到端实现总览
 
@@ -23,6 +17,7 @@
 | `ql-resolve` | HIR | scope graph + resolution map + 保守诊断 | 先 seed，再按 lexical scope 递归解析 | 值/类型命名空间分离 |
 | `ql-typeck` | HIR + resolution | first-pass types + semantic diagnostics | 结构化递归检查 + `unknown` 受控退化 | 不假装已经实现完整约束求解 |
 | `ql-analysis` | 源码 | 聚合分析快照 | 顺序编排 + query index 双阶段索引 | CLI/LSP 共用分析入口 |
+| `ql-project` | manifest path + package/workspace roots + public AST items | manifest graph + `.qi` artifact/status + interface summaries | TOML parsing + source discovery + interface render/load | project/workspace tooling 不复制语言语义 |
 | `ql-mir` | HIR + resolution | 结构化 MIR body | 显式 CFG lowering + temp/local/scope 分配 | 为 ownership / codegen 提供稳定中层 |
 | `ql-borrowck` | MIR + HIR/type info | ownership facts + diagnostics | worklist 前向数据流 | 当前聚焦 moved-vs-usable 与 cleanup/capture 事实 |
 | `ql-codegen-llvm` | HIR + MIR + resolution + typeck | 文本 LLVM IR 或 codegen diagnostics | 受控子集 lowering | LLVM 只存在于 backend crate |

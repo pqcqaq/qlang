@@ -540,11 +540,15 @@ pub fn main(flag: Bool) -> Int {
         ]
     );
 
-    let with_declaration =
-        references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
-            .expect(
-            "structured dependency question static root references with declaration should exist",
-        );
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        true,
+    )
+    .expect("structured dependency question static root references with declaration should exist");
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -1254,8 +1258,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_structured_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_structured_question_wrapped_dependency_static_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-structured-question-static-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -1422,8 +1426,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_match_structured_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_match_structured_question_wrapped_dependency_static_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-match-question-static-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -1599,8 +1603,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_question_wrapped_dependency_function_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_question_wrapped_dependency_function_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-function-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -2374,11 +2378,15 @@ pub fn total() -> Int {
         ]
     );
 
-    let with_declaration =
-        references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
-            .expect(
-            "grouped dependency iterable function root references with declaration should exist",
-        );
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        true,
+    )
+    .expect("grouped dependency iterable function root references with declaration should exist");
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -2589,8 +2597,8 @@ pub fn total() -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_dependency_const_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_dependency_const_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-const-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -2871,11 +2879,15 @@ pub fn total() -> Int {
         ]
     );
 
-    let with_declaration =
-        references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
-            .expect(
-            "dependency question iterable function root references with declaration should exist",
-        );
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        true,
+    )
+    .expect("dependency question iterable function root references with declaration should exist");
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -3695,11 +3707,15 @@ pub fn total(flag: Bool) -> Int {
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration =
-        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
-            .expect(
-            "match structured dependency question iterable function root references should exist",
-        );
+    let without_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        false,
+    )
+    .expect("match structured dependency question iterable function root references should exist");
     assert_eq!(
         without_declaration,
         vec![
@@ -3781,8 +3797,8 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-function-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -3946,8 +3962,8 @@ pub fn total() -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-structured-question-function-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -4110,8 +4126,8 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_match_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_match_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp =
         TempDir::new("ql-lsp-match-structured-question-function-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
@@ -4279,8 +4295,8 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-question-static-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -4444,8 +4460,8 @@ pub fn total() -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-structured-question-static-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -4607,8 +4623,8 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_match_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_match_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-match-question-static-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -4947,8 +4963,8 @@ pub fn total() -> Int {
 }
 
 #[test]
-fn root_query_bridge_surfaces_grouped_import_structured_question_wrapped_dependency_function_iterable_roots(
-) {
+fn root_query_bridge_surfaces_grouped_import_structured_question_wrapped_dependency_function_iterable_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-structured-question-function-iterable-root-queries");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -5041,11 +5057,17 @@ pub fn total(flag: Bool) -> Int {
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration =
-        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
-            .expect(
-            "grouped structured dependency question iterable function root references should exist",
-        );
+    let without_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        false,
+    )
+    .expect(
+        "grouped structured dependency question iterable function root references should exist",
+    );
     assert_eq!(
         without_declaration,
         vec![
@@ -5127,8 +5149,8 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_bridge_surfaces_grouped_import_match_structured_question_wrapped_dependency_function_iterable_roots(
-) {
+fn root_query_bridge_surfaces_grouped_import_match_structured_question_wrapped_dependency_function_iterable_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-function-iterable-root-queries");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -5485,8 +5507,8 @@ pub fn total() -> Int {
 }
 
 #[test]
-fn root_query_bridge_surfaces_grouped_import_structured_question_wrapped_dependency_static_iterable_roots(
-) {
+fn root_query_bridge_surfaces_grouped_import_structured_question_wrapped_dependency_static_iterable_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-structured-question-static-iterable-root-queries");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -5573,11 +5595,15 @@ pub fn total(flag: Bool) -> Int {
     };
     assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-    let without_declaration =
-        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
-            .expect(
-            "grouped structured dependency question iterable static root references should exist",
-        );
+    let without_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        false,
+    )
+    .expect("grouped structured dependency question iterable static root references should exist");
     assert_eq!(
         without_declaration,
         vec![
@@ -5659,8 +5685,8 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_bridge_surfaces_grouped_import_match_structured_question_wrapped_dependency_static_iterable_roots(
-) {
+fn root_query_bridge_surfaces_grouped_import_match_structured_question_wrapped_dependency_static_iterable_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-static-iterable-root-queries");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -5850,8 +5876,8 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-function-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -6016,8 +6042,8 @@ pub fn total() -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp =
         TempDir::new("ql-lsp-grouped-structured-question-function-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
@@ -6182,8 +6208,8 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_match_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_match_structured_question_wrapped_dependency_function_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-function-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -6351,8 +6377,8 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-static-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -6522,8 +6548,8 @@ pub fn total() -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp =
         TempDir::new("ql-lsp-grouped-structured-question-static-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
@@ -6688,8 +6714,8 @@ pub fn total(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_match_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_match_structured_question_wrapped_dependency_static_iterable_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-static-iterable-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -6982,11 +7008,15 @@ pub fn main() -> Int {
         ]
     );
 
-    let with_declaration =
-        references_for_package_analysis(&uri, source, &analysis, &package, root_position, true)
-            .expect(
-            "grouped dependency question function root references with declaration should exist",
-        );
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        true,
+    )
+    .expect("grouped dependency question function root references with declaration should exist");
     assert_eq!(with_declaration.len(), 4);
     assert_dependency_location(
         &with_declaration[0],
@@ -7201,8 +7231,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_bridge_surfaces_grouped_import_match_structured_question_wrapped_dependency_function_roots(
-) {
+fn root_query_bridge_surfaces_grouped_import_match_structured_question_wrapped_dependency_function_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-function-root-queries");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -7297,11 +7327,15 @@ pub fn main(flag: Bool) -> Int {
         "pub struct Config {\n    value: Int,\n}",
     );
 
-    let without_declaration =
-        references_for_package_analysis(&uri, source, &analysis, &package, root_position, false)
-            .expect(
-            "grouped match structured dependency question function root references should exist",
-        );
+    let without_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        root_position,
+        false,
+    )
+    .expect("grouped match structured dependency question function root references should exist");
     assert_eq!(
         without_declaration,
         vec![
@@ -7377,8 +7411,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_question_wrapped_dependency_function_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_question_wrapped_dependency_function_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-function-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -7545,8 +7579,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_structured_question_wrapped_dependency_function_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_structured_question_wrapped_dependency_function_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-structured-question-function-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -8050,8 +8084,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_bridge_surfaces_grouped_import_match_structured_question_wrapped_dependency_static_roots(
-) {
+fn root_query_bridge_surfaces_grouped_import_match_structured_question_wrapped_dependency_static_roots()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-static-root-queries");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -8226,8 +8260,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_match_structured_question_wrapped_dependency_function_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_match_structured_question_wrapped_dependency_function_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-function-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -8401,8 +8435,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_question_wrapped_dependency_static_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-question-static-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -8569,8 +8603,8 @@ pub fn main() -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_structured_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_structured_question_wrapped_dependency_static_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-structured-question-static-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
@@ -8738,8 +8772,8 @@ pub fn main(flag: Bool) -> Int {
 }
 
 #[test]
-fn root_query_fallback_surfaces_grouped_import_match_structured_question_wrapped_dependency_static_roots_without_semantic_analysis(
-) {
+fn root_query_fallback_surfaces_grouped_import_match_structured_question_wrapped_dependency_static_roots_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-grouped-match-question-static-root-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp

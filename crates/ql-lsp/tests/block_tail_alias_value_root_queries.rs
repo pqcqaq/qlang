@@ -193,17 +193,23 @@ packages = ["../dep"]
         assert!(markup.value.contains("**struct** `Child`"));
         assert!(markup.value.contains("struct Child"));
 
-        let definition =
-            definition_for_dependency_values(source, &package, offset_to_position(source, alias_usage))
-                .expect("dependency block-tail alias value root definition should exist");
+        let definition = definition_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, alias_usage),
+        )
+        .expect("dependency block-tail alias value root definition should exist");
         let GotoDefinitionResponse::Scalar(location) = definition else {
             panic!("definition should be one location")
         };
         assert_dependency_location(&location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
 
-        let declaration =
-            declaration_for_dependency_values(source, &package, offset_to_position(source, alias_usage))
-                .expect("dependency block-tail alias value root declaration should exist");
+        let declaration = declaration_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, alias_usage),
+        )
+        .expect("dependency block-tail alias value root declaration should exist");
         let GotoDeclarationResponse::Scalar(location) = declaration else {
             panic!("declaration should be one location")
         };

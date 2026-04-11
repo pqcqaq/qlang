@@ -2,7 +2,7 @@
 
 ## 实现语言选择
 
-推荐使用 Rust 实现 Qlang 工具链。不是因为“Rust 最潮”，而是因为它在这件事上工程收益最高：
+当前工具链使用 Rust 实现，主要原因如下：
 
 - 内存安全和并发安全更适合长期维护大型编译器
 - 生态中已有较成熟的 parsing、diagnostic、arena、interner、LSP、LLVM 绑定方案
@@ -20,14 +20,12 @@ source
   -> type / trait / effect checking
   -> MIR
   -> ownership / borrow / escape analysis
-  -> monomorphization
+  -> backend specialization / monomorphization (when generic codegen is opened)
   -> LLVM IR
   -> object / library / executable
 ```
 
-如果要看“当前代码到底按什么算法工作、每层输入输出是什么、未来应把新能力接到哪一层”，直接看：
-
-- [实现算法与分层边界](/architecture/implementation-algorithms)
+当前已落地主路径是 AST -> HIR -> resolve -> typeck -> MIR -> LLVM IR。这里的 `backend specialization / monomorphization` 是未来 generic codegen 的扩展位，不表示仓库中已经存在独立的 monomorphization pass。实现细节见 [实现算法与分层边界](/architecture/implementation-algorithms)。
 
 ## 分层原则
 
@@ -265,17 +263,19 @@ source
 
 ## 查询系统
 
-编译器、LSP 和文档生成都应该建立在统一查询系统上。推荐引入增量查询架构，核心思想：
+编译器、CLI、LSP 和部分 package-aware project queries 现在已经复用统一查询边界，但当前并不是一套完整的增量数据库。今天真实存在的边界是：
 
-- 每个分析结果都是可缓存 query
-- 输入变更后只重新计算受影响节点
-- 编译器命令行与 LSP 共用数据库
+- `ql-analysis` 聚合 parse / HIR / resolve / typeck / MIR / borrowck snapshot，并维护统一 query index
+- same-file symbol / hover / definition / references / rename / completion / semantic tokens 与 dependency-backed package queries 复用同一份 analysis identity
+- `ql-cli`、`ql-lsp` 和 `ql-project` 驱动的 package/workspace 路径都建立在这条共享分析边界之上，而不是各自复制一套语义逻辑
 
 这样做的好处非常直接：
 
 - `ql check` 和 `qlsp` 不会各自维护一套语义逻辑
 - IDE 响应速度更可控
 - 后续重构和诊断增强成本更低
+
+如果后续再引入真正的 incremental query database，它也应该挂在这条共享边界后面，而不是重写一套并行语义实现。
 
 ## 诊断架构
 

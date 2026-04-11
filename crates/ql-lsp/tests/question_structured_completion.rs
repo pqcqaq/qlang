@@ -163,9 +163,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -206,10 +206,7 @@ pub fn read(config: Cfg, flag: Bool) -> Int {{
     )
 }
 
-fn assert_completion_items(
-    member: MemberKind,
-    items: tower_lsp::lsp_types::CompletionItem,
-) {
+fn assert_completion_items(member: MemberKind, items: tower_lsp::lsp_types::CompletionItem) {
     assert_eq!(items.label, member.expected_label());
     assert_eq!(items.kind, Some(member.expected_kind()));
     assert_eq!(items.detail.as_deref(), Some(member.expected_detail()));
@@ -253,17 +250,22 @@ packages = ["../dep"]
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
         let Some(CompletionResponse::Array(items)) = (match member {
-            MemberKind::Field => completion_for_dependency_member_fields(&source, &package, position),
+            MemberKind::Field => {
+                completion_for_dependency_member_fields(&source, &package, position)
+            }
             MemberKind::Method => completion_for_dependency_methods(&source, &package, position),
         }) else {
-            panic!("structured question-unwrapped member completion should exist without semantic analysis");
+            panic!(
+                "structured question-unwrapped member completion should exist without semantic analysis"
+            );
         };
         assert_eq!(items.len(), 1);
         assert_completion_items(member, items[0].clone());
     } else {
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
-        let analysis = analyze_source(&source).expect("analysis should succeed for completion query");
+        let analysis =
+            analyze_source(&source).expect("analysis should succeed for completion query");
         let Some(CompletionResponse::Array(items)) =
             completion_for_package_analysis(&source, &analysis, &package, position)
         else {
@@ -281,7 +283,7 @@ fn dependency_field_completion_works_on_if_structured_question_unwrapped_receive
 
 #[test]
 fn dependency_field_completion_works_on_if_structured_question_unwrapped_receiver_without_semantic_analysis()
-{
+ {
     run_completion_case(MemberKind::Field, StructuredKind::If, true);
 }
 
@@ -292,7 +294,7 @@ fn dependency_field_completion_works_on_match_structured_question_unwrapped_rece
 
 #[test]
 fn dependency_field_completion_works_on_match_structured_question_unwrapped_receiver_without_semantic_analysis()
-{
+ {
     run_completion_case(MemberKind::Field, StructuredKind::Match, true);
 }
 
@@ -303,7 +305,7 @@ fn dependency_method_completion_works_on_if_structured_question_unwrapped_receiv
 
 #[test]
 fn dependency_method_completion_works_on_if_structured_question_unwrapped_receiver_without_semantic_analysis()
-{
+ {
     run_completion_case(MemberKind::Method, StructuredKind::If, true);
 }
 
@@ -314,6 +316,6 @@ fn dependency_method_completion_works_on_match_structured_question_unwrapped_rec
 
 #[test]
 fn dependency_method_completion_works_on_match_structured_question_unwrapped_receiver_without_semantic_analysis()
-{
+ {
     run_completion_case(MemberKind::Method, StructuredKind::Match, true);
 }

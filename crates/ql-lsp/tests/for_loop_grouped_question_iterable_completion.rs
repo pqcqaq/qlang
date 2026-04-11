@@ -247,10 +247,14 @@ packages = ["../dep"]
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
         let Some(CompletionResponse::Array(items)) = (match member {
-            MemberKind::Field => completion_for_dependency_member_fields(&source, &package, position),
+            MemberKind::Field => {
+                completion_for_dependency_member_fields(&source, &package, position)
+            }
             MemberKind::Method => completion_for_dependency_methods(&source, &package, position),
         }) else {
-            panic!("grouped question iterable member completion should exist without semantic analysis");
+            panic!(
+                "grouped question iterable member completion should exist without semantic analysis"
+            );
         };
         assert_eq!(items.len(), 1);
         assert_completion_item(member, items[0].clone());
@@ -274,8 +278,8 @@ fn dependency_field_completion_works_on_for_loop_grouped_question_function_itera
 }
 
 #[test]
-fn dependency_field_completion_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis()
+ {
     run_completion_case(MemberKind::Field, RootKind::Function, true);
 }
 
@@ -285,8 +289,8 @@ fn dependency_field_completion_works_on_for_loop_grouped_question_static_iterabl
 }
 
 #[test]
-fn dependency_field_completion_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis()
+ {
     run_completion_case(MemberKind::Field, RootKind::Static, true);
 }
 
@@ -296,8 +300,8 @@ fn dependency_method_completion_works_on_for_loop_grouped_question_function_iter
 }
 
 #[test]
-fn dependency_method_completion_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_for_loop_grouped_question_function_iterables_without_semantic_analysis()
+ {
     run_completion_case(MemberKind::Method, RootKind::Function, true);
 }
 
@@ -307,7 +311,7 @@ fn dependency_method_completion_works_on_for_loop_grouped_question_static_iterab
 }
 
 #[test]
-fn dependency_method_completion_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_for_loop_grouped_question_static_iterables_without_semantic_analysis()
+ {
     run_completion_case(MemberKind::Method, RootKind::Static, true);
 }

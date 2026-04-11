@@ -109,9 +109,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -260,11 +260,16 @@ fn assert_root_queries(
             ]
         );
 
-        let with_declaration =
-            references_for_dependency_values(uri, source, &package, root_position, true)
-                .expect(
-                    "grouped structured dependency question root references with declaration should exist",
-                );
+        let with_declaration = references_for_dependency_values(
+            uri,
+            source,
+            &package,
+            root_position,
+            true,
+        )
+        .expect(
+            "grouped structured dependency question root references with declaration should exist",
+        );
         assert_eq!(with_declaration.len(), 4);
         assert_dependency_location(
             &with_declaration[0],
@@ -363,11 +368,17 @@ fn assert_root_queries(
             ]
         );
 
-        let with_declaration =
-            references_for_package_analysis(uri, source, &analysis, &package, root_position, true)
-                .expect(
-                    "grouped structured dependency question root references with declaration should exist",
-                );
+        let with_declaration = references_for_package_analysis(
+            uri,
+            source,
+            &analysis,
+            &package,
+            root_position,
+            true,
+        )
+        .expect(
+            "grouped structured dependency question root references with declaration should exist",
+        );
         assert_eq!(with_declaration.len(), 4);
         assert_dependency_location(
             &with_declaration[0],
@@ -489,7 +500,6 @@ fn root_queries_work_on_match_grouped_question_static_value_receivers() {
 }
 
 #[test]
-fn root_queries_work_on_match_grouped_question_static_value_receivers_without_semantic_analysis()
-{
+fn root_queries_work_on_match_grouped_question_static_value_receivers_without_semantic_analysis() {
     run_root_query_case(RootKind::Static, StructuredKind::Match, true);
 }

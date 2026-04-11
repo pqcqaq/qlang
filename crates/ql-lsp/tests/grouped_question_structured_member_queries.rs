@@ -151,9 +151,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -320,9 +320,11 @@ fn assert_member_queries(
                 &package,
                 offset_to_position(source, first_offset),
             ),
-            MemberKind::Method => {
-                hover_for_dependency_methods(source, &package, offset_to_position(source, first_offset))
-            }
+            MemberKind::Method => hover_for_dependency_methods(
+                source,
+                &package,
+                offset_to_position(source, first_offset),
+            ),
         }
         .expect("dependency member hover should exist without semantic analysis");
         let HoverContents::Markup(markup) = hover.contents else {
@@ -412,7 +414,11 @@ fn assert_member_queries(
         }
         .expect("dependency member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration.iter().all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -444,9 +450,11 @@ fn assert_member_queries(
                 &package,
                 offset_to_position(source, first_offset),
             ),
-            MemberKind::Method => {
-                hover_for_dependency_methods(source, &package, offset_to_position(source, first_offset))
-            }
+            MemberKind::Method => hover_for_dependency_methods(
+                source,
+                &package,
+                offset_to_position(source, first_offset),
+            ),
         }
         .expect("dependency member hover should exist");
         let HoverContents::Markup(markup) = hover.contents else {
@@ -536,7 +544,11 @@ fn assert_member_queries(
         }
         .expect("dependency member references should exist without declaration");
         assert_eq!(without_declaration.len(), 2);
-        assert!(without_declaration.iter().all(|location| location.uri == *uri));
+        assert!(
+            without_declaration
+                .iter()
+                .all(|location| location.uri == *uri)
+        );
 
         let expected_first = span_to_range(
             source,
@@ -631,7 +643,7 @@ fn dependency_field_queries_work_on_if_grouped_question_function_value_receivers
 
 #[test]
 fn dependency_field_queries_work_on_if_grouped_question_function_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(
         RootKind::Function,
         MemberKind::Field,
@@ -652,7 +664,7 @@ fn dependency_method_queries_work_on_if_grouped_question_function_value_receiver
 
 #[test]
 fn dependency_method_queries_work_on_if_grouped_question_function_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(
         RootKind::Function,
         MemberKind::Method,
@@ -673,7 +685,7 @@ fn dependency_field_queries_work_on_match_grouped_question_function_value_receiv
 
 #[test]
 fn dependency_field_queries_work_on_match_grouped_question_function_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(
         RootKind::Function,
         MemberKind::Field,
@@ -694,7 +706,7 @@ fn dependency_method_queries_work_on_match_grouped_question_function_value_recei
 
 #[test]
 fn dependency_method_queries_work_on_match_grouped_question_function_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(
         RootKind::Function,
         MemberKind::Method,
@@ -715,7 +727,7 @@ fn dependency_field_queries_work_on_if_grouped_question_static_value_receivers()
 
 #[test]
 fn dependency_field_queries_work_on_if_grouped_question_static_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(
         RootKind::Static,
         MemberKind::Field,
@@ -736,7 +748,7 @@ fn dependency_method_queries_work_on_if_grouped_question_static_value_receivers(
 
 #[test]
 fn dependency_method_queries_work_on_if_grouped_question_static_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(
         RootKind::Static,
         MemberKind::Method,
@@ -757,7 +769,7 @@ fn dependency_field_queries_work_on_match_grouped_question_static_value_receiver
 
 #[test]
 fn dependency_field_queries_work_on_match_grouped_question_static_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(
         RootKind::Static,
         MemberKind::Field,
@@ -778,7 +790,7 @@ fn dependency_method_queries_work_on_match_grouped_question_static_value_receive
 
 #[test]
 fn dependency_method_queries_work_on_match_grouped_question_static_value_receivers_without_semantic_analysis()
-{
+ {
     run_member_query_case(
         RootKind::Static,
         MemberKind::Method,

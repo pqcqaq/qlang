@@ -174,7 +174,10 @@ fn assert_targets_dependency_type(
         .expect("type signature should exist in dependency artifact");
     assert_eq!(
         range,
-        span_to_range(&artifact, ql_span::Span::new(type_def, type_def + snippet.len()))
+        span_to_range(
+            &artifact,
+            ql_span::Span::new(type_def, type_def + snippet.len())
+        )
     );
 }
 

@@ -205,7 +205,10 @@ fn assert_targets_dependency_type(
         .expect("type signature should exist in dependency artifact");
     assert_eq!(
         range,
-        span_to_range(&artifact, ql_span::Span::new(type_def, type_def + snippet.len()))
+        span_to_range(
+            &artifact,
+            ql_span::Span::new(type_def, type_def + snippet.len())
+        )
     );
 }
 
@@ -251,9 +254,9 @@ packages = ["../dep"]
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
         let definition = match member {
-            MemberKind::Field => type_definition_for_dependency_struct_field_types(
-                &source, &package, position,
-            ),
+            MemberKind::Field => {
+                type_definition_for_dependency_struct_field_types(&source, &package, position)
+            }
             MemberKind::Method => {
                 type_definition_for_dependency_method_types(&source, &package, position)
             }

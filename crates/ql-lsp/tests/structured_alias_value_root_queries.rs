@@ -199,9 +199,12 @@ packages = ["../dep"]
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
 
-        let hover =
-            hover_for_dependency_values(&source, &package, offset_to_position(&source, alias_usage))
-                .expect("structured alias value root hover should exist");
+        let hover = hover_for_dependency_values(
+            &source,
+            &package,
+            offset_to_position(&source, alias_usage),
+        )
+        .expect("structured alias value root hover should exist");
         let HoverContents::Markup(markup) = hover.contents else {
             panic!("hover should use markdown")
         };

@@ -85,4 +85,4 @@ P3 现在已经把三条后续主线固定下来：
 
 ## 归档
 
-本阶段原始切片稿已归档到 [`/plans/archive/phase-3`](/plans/archive/index)。
+本阶段原始切片稿保留在 archive 目录，需要追溯具体切片时再查看。

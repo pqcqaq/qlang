@@ -262,8 +262,8 @@ fn dependency_field_completion_works_on_for_loop_field_iterable_receivers() {
 }
 
 #[test]
-fn dependency_field_completion_works_on_for_loop_field_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_field_completion_works_on_for_loop_field_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(MemberKind::Field, true);
 }
 
@@ -273,7 +273,7 @@ fn dependency_method_completion_works_on_for_loop_field_iterable_receivers() {
 }
 
 #[test]
-fn dependency_method_completion_works_on_for_loop_field_iterable_receivers_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_for_loop_field_iterable_receivers_without_semantic_analysis()
+ {
     run_completion_case(MemberKind::Method, true);
 }

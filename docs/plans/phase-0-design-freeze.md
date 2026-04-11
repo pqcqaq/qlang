@@ -77,6 +77,4 @@ Phase 0 的这些判断到现在仍然成立：
 
 ## 归档
 
-原始设计稿已归档到：
-
-- [`/plans/archive/phase-0/2026-03-25-qlang-design`](/plans/archive/phase-0/2026-03-25-qlang-design)
+原始设计稿保留在 archive 目录，需要追溯早期记录时再查看。

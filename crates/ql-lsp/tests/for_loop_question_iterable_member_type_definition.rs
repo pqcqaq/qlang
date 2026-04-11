@@ -268,9 +268,7 @@ packages = ["../dep"]
                 type_definition_for_dependency_method_types(&source, &package, position)
             }
         }
-        .expect(
-            "question iterable member type definition should exist without semantic analysis",
-        );
+        .expect("question iterable member type definition should exist without semantic analysis");
         assert_targets_dependency_type(
             definition,
             &dep_qi,

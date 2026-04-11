@@ -243,7 +243,9 @@ packages = ["../dep"]
                 completion_for_dependency_methods(&source, &package, position)
             }
         }) else {
-            panic!("structured iterable receiver completion should exist without semantic analysis");
+            panic!(
+                "structured iterable receiver completion should exist without semantic analysis"
+            );
         };
         assert_eq!(items.len(), 1);
         assert_completion_item(case, items[0].clone());
@@ -277,6 +279,7 @@ fn dependency_method_completion_works_on_match_array_for_loop_receivers() {
 }
 
 #[test]
-fn dependency_method_completion_works_on_match_array_for_loop_receivers_without_semantic_analysis() {
+fn dependency_method_completion_works_on_match_array_for_loop_receivers_without_semantic_analysis()
+{
     run_completion_case(CaseKind::MatchArrayMethod, true);
 }

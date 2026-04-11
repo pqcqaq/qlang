@@ -126,7 +126,11 @@ pub struct Child {{
 }
 
 fn build_source(root: RootKind, broken: bool) -> String {
-    let suffix = if broken { "    return \"oops\"\n" } else { "    return 0\n" };
+    let suffix = if broken {
+        "    return \"oops\"\n"
+    } else {
+        "    return 0\n"
+    };
     format!(
         r#"
 package demo.app
@@ -239,10 +243,16 @@ fn assert_root_queries(
             ]
         );
 
-        let with_declaration =
-            references_for_dependency_values(uri, source, &package, root_position, true).expect(
-                "grouped dependency question iterable root references with declaration should exist",
-            );
+        let with_declaration = references_for_dependency_values(
+            uri,
+            source,
+            &package,
+            root_position,
+            true,
+        )
+        .expect(
+            "grouped dependency question iterable root references with declaration should exist",
+        );
         assert_eq!(with_declaration.len(), 4);
         assert_dependency_location(
             &with_declaration[0],
@@ -349,7 +359,9 @@ fn assert_root_queries(
             root_position,
             true,
         )
-        .expect("grouped dependency question iterable root references with declaration should exist");
+        .expect(
+            "grouped dependency question iterable root references with declaration should exist",
+        );
         assert_eq!(with_declaration.len(), 4);
         assert_dependency_location(
             &with_declaration[0],

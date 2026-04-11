@@ -156,7 +156,8 @@ pub fn read(config: Cfg, flag: Bool) -> Int {
 }
 
 #[test]
-fn dependency_method_definition_works_on_match_array_for_loop_receivers_without_semantic_analysis() {
+fn dependency_method_definition_works_on_match_array_for_loop_receivers_without_semantic_analysis()
+{
     let temp = TempDir::new("ql-lsp-for-loop-structured-iterable-method-broken");
     let app_root = temp.path().join("workspace").join("app");
 

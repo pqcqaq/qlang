@@ -164,7 +164,7 @@ pub fn read(config: Cfg, flag: Bool) -> Int {
 
 #[test]
 fn dependency_method_definition_works_on_local_alias_bound_from_structured_match_result_without_semantic_analysis()
-{
+ {
     let temp = TempDir::new("ql-lsp-structured-alias-match-method-broken");
     let app_root = temp.path().join("workspace").join("app");
 

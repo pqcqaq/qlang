@@ -105,9 +105,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -146,7 +146,11 @@ pub struct Child {{
 }
 
 fn build_source(root: RootKind, structured: StructuredKind, broken: bool) -> String {
-    let tail = if broken { "    return \"oops\"\n" } else { "    return 0\n" };
+    let tail = if broken {
+        "    return \"oops\"\n"
+    } else {
+        "    return 0\n"
+    };
     format!(
         r#"
 package demo.app
@@ -241,8 +245,9 @@ packages = ["../dep"]
         assert!(analyze_package(&app_root).is_err());
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
-        let definition = type_definition_for_dependency_values(&source, &package, position)
-            .expect("grouped structured dependency question iterable root type definition should exist");
+        let definition = type_definition_for_dependency_values(&source, &package, position).expect(
+            "grouped structured dependency question iterable root type definition should exist",
+        );
         assert_targets_dependency_struct(
             definition,
             &dep_qi,
@@ -252,9 +257,12 @@ packages = ["../dep"]
         let package = analyze_package(&app_root).expect("package analysis should succeed");
         let analysis = analyze_source(&source).expect("source should analyze");
         let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
-        let definition =
-            type_definition_for_package_analysis(&uri, &source, &analysis, &package, position)
-                .expect("grouped structured dependency question iterable root type definition should exist");
+        let definition = type_definition_for_package_analysis(
+            &uri, &source, &analysis, &package, position,
+        )
+        .expect(
+            "grouped structured dependency question iterable root type definition should exist",
+        );
         assert_targets_dependency_struct(
             definition,
             &dep_qi,

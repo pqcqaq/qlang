@@ -96,9 +96,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -149,7 +149,10 @@ fn assert_targets_dependency_type(
         .expect("type signature should exist in dependency artifact");
     assert_eq!(
         range,
-        span_to_range(&artifact, ql_span::Span::new(type_def, type_def + snippet.len()))
+        span_to_range(
+            &artifact,
+            ql_span::Span::new(type_def, type_def + snippet.len())
+        )
     );
 }
 
@@ -250,9 +253,9 @@ packages = ["../dep"]
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
         let definition = match member {
-            MemberKind::Field => type_definition_for_dependency_struct_field_types(
-                &source, &package, position,
-            ),
+            MemberKind::Field => {
+                type_definition_for_dependency_struct_field_types(&source, &package, position)
+            }
             MemberKind::Method => {
                 type_definition_for_dependency_method_types(&source, &package, position)
             }
@@ -291,13 +294,13 @@ fn type_definition_fallback_follows_if_structured_question_unwrapped_dependency_
 
 #[test]
 fn type_definition_bridge_follows_match_structured_question_unwrapped_dependency_field_member_types()
-{
+ {
     run_type_definition_case(MemberKind::Field, StructuredKind::Match, false);
 }
 
 #[test]
 fn type_definition_fallback_follows_match_structured_question_unwrapped_dependency_field_member_types()
-{
+ {
     run_type_definition_case(MemberKind::Field, StructuredKind::Match, true);
 }
 
@@ -309,18 +312,18 @@ fn type_definition_bridge_follows_if_structured_question_unwrapped_dependency_me
 
 #[test]
 fn type_definition_fallback_follows_if_structured_question_unwrapped_dependency_method_member_types()
-{
+ {
     run_type_definition_case(MemberKind::Method, StructuredKind::If, true);
 }
 
 #[test]
 fn type_definition_bridge_follows_match_structured_question_unwrapped_dependency_method_member_types()
-{
+ {
     run_type_definition_case(MemberKind::Method, StructuredKind::Match, false);
 }
 
 #[test]
 fn type_definition_fallback_follows_match_structured_question_unwrapped_dependency_method_member_types()
-{
+ {
     run_type_definition_case(MemberKind::Method, StructuredKind::Match, true);
 }

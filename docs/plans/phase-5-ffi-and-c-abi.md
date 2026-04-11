@@ -88,4 +88,4 @@ P5 现在已经建立：
 
 ## 归档
 
-本阶段原始切片稿已归档到 [`/plans/archive/phase-5`](/plans/archive/index)。
+本阶段原始切片稿保留在 archive 目录，需要追溯具体切片时再查看。

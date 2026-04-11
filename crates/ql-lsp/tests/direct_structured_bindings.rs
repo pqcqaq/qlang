@@ -161,8 +161,8 @@ pub fn read(config: Cfg, flag: Bool) -> Int {
 }
 
 #[test]
-fn dependency_method_definition_works_on_direct_match_structured_receivers_without_semantic_analysis(
-) {
+fn dependency_method_definition_works_on_direct_match_structured_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-direct-structured-method-broken");
     let app_root = temp.path().join("workspace").join("app");
 

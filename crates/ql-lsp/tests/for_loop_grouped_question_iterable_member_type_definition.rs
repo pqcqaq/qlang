@@ -303,7 +303,8 @@ fn type_definition_bridge_follows_for_loop_grouped_question_function_iterable_fi
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_grouped_question_function_iterable_field_member_types() {
+fn type_definition_fallback_follows_for_loop_grouped_question_function_iterable_field_member_types()
+{
     run_type_definition_case(MemberKind::Field, RootKind::Function, true);
 }
 
@@ -318,12 +319,14 @@ fn type_definition_fallback_follows_for_loop_grouped_question_static_iterable_fi
 }
 
 #[test]
-fn type_definition_bridge_follows_for_loop_grouped_question_function_iterable_method_member_types() {
+fn type_definition_bridge_follows_for_loop_grouped_question_function_iterable_method_member_types()
+{
     run_type_definition_case(MemberKind::Method, RootKind::Function, false);
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_grouped_question_function_iterable_method_member_types() {
+fn type_definition_fallback_follows_for_loop_grouped_question_function_iterable_method_member_types()
+ {
     run_type_definition_case(MemberKind::Method, RootKind::Function, true);
 }
 
@@ -333,6 +336,7 @@ fn type_definition_bridge_follows_for_loop_grouped_question_static_iterable_meth
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_grouped_question_static_iterable_method_member_types() {
+fn type_definition_fallback_follows_for_loop_grouped_question_static_iterable_method_member_types()
+{
     run_type_definition_case(MemberKind::Method, RootKind::Static, true);
 }

@@ -141,9 +141,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -267,16 +267,21 @@ packages = ["../dep"]
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
         let Some(CompletionResponse::Array(items)) = (match member {
-            MemberKind::Field => completion_for_dependency_member_fields(&source, &package, position),
+            MemberKind::Field => {
+                completion_for_dependency_member_fields(&source, &package, position)
+            }
             MemberKind::Method => completion_for_dependency_methods(&source, &package, position),
         }) else {
-            panic!("grouped structured question member completion should exist without semantic analysis");
+            panic!(
+                "grouped structured question member completion should exist without semantic analysis"
+            );
         };
         assert_eq!(items.len(), 1);
         assert_completion_item(member, items[0].clone());
     } else {
         let package = analyze_package(&app_root).expect("package analysis should succeed");
-        let analysis = analyze_source(&source).expect("analysis should succeed for completion query");
+        let analysis =
+            analyze_source(&source).expect("analysis should succeed for completion query");
         let Some(CompletionResponse::Array(items)) =
             completion_for_package_analysis(&source, &analysis, &package, position)
         else {
@@ -299,7 +304,7 @@ fn dependency_field_completion_works_on_if_grouped_question_function_value_recei
 
 #[test]
 fn dependency_field_completion_works_on_if_grouped_question_function_value_receivers_without_semantic_analysis()
-{
+ {
     run_completion_case(
         RootKind::Function,
         MemberKind::Field,
@@ -320,7 +325,7 @@ fn dependency_method_completion_works_on_if_grouped_question_function_value_rece
 
 #[test]
 fn dependency_method_completion_works_on_if_grouped_question_function_value_receivers_without_semantic_analysis()
-{
+ {
     run_completion_case(
         RootKind::Function,
         MemberKind::Method,
@@ -341,7 +346,7 @@ fn dependency_field_completion_works_on_match_grouped_question_function_value_re
 
 #[test]
 fn dependency_field_completion_works_on_match_grouped_question_function_value_receivers_without_semantic_analysis()
-{
+ {
     run_completion_case(
         RootKind::Function,
         MemberKind::Field,
@@ -362,7 +367,7 @@ fn dependency_method_completion_works_on_match_grouped_question_function_value_r
 
 #[test]
 fn dependency_method_completion_works_on_match_grouped_question_function_value_receivers_without_semantic_analysis()
-{
+ {
     run_completion_case(
         RootKind::Function,
         MemberKind::Method,
@@ -383,7 +388,7 @@ fn dependency_field_completion_works_on_if_grouped_question_static_value_receive
 
 #[test]
 fn dependency_field_completion_works_on_if_grouped_question_static_value_receivers_without_semantic_analysis()
-{
+ {
     run_completion_case(
         RootKind::Static,
         MemberKind::Field,
@@ -404,7 +409,7 @@ fn dependency_method_completion_works_on_if_grouped_question_static_value_receiv
 
 #[test]
 fn dependency_method_completion_works_on_if_grouped_question_static_value_receivers_without_semantic_analysis()
-{
+ {
     run_completion_case(
         RootKind::Static,
         MemberKind::Method,
@@ -425,7 +430,7 @@ fn dependency_field_completion_works_on_match_grouped_question_static_value_rece
 
 #[test]
 fn dependency_field_completion_works_on_match_grouped_question_static_value_receivers_without_semantic_analysis()
-{
+ {
     run_completion_case(
         RootKind::Static,
         MemberKind::Field,
@@ -446,7 +451,7 @@ fn dependency_method_completion_works_on_match_grouped_question_static_value_rec
 
 #[test]
 fn dependency_method_completion_works_on_match_grouped_question_static_value_receivers_without_semantic_analysis()
-{
+ {
     run_completion_case(
         RootKind::Static,
         MemberKind::Method,

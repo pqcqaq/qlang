@@ -145,9 +145,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -276,7 +276,9 @@ packages = ["../dep"]
             &package,
             offset_to_position(&source, current_usage),
         )
-        .expect("grouped structured dependency question iterable value root definition should exist");
+        .expect(
+            "grouped structured dependency question iterable value root definition should exist",
+        );
         let GotoDefinitionResponse::Scalar(location) = definition else {
             panic!("definition should be one location")
         };
@@ -287,7 +289,9 @@ packages = ["../dep"]
             &package,
             offset_to_position(&source, current_usage),
         )
-        .expect("grouped structured dependency question iterable value root declaration should exist");
+        .expect(
+            "grouped structured dependency question iterable value root declaration should exist",
+        );
         let GotoDeclarationResponse::Scalar(location) = declaration else {
             panic!("declaration should be one location")
         };
@@ -300,7 +304,9 @@ packages = ["../dep"]
             offset_to_position(&source, current_usage),
             false,
         )
-        .expect("grouped structured dependency question iterable value root references should exist");
+        .expect(
+            "grouped structured dependency question iterable value root references should exist",
+        );
         assert_eq!(
             without_declaration,
             vec![
@@ -398,7 +404,9 @@ packages = ["../dep"]
             &package,
             offset_to_position(&source, current_usage),
         )
-        .expect("grouped structured dependency question iterable value root definition should exist");
+        .expect(
+            "grouped structured dependency question iterable value root definition should exist",
+        );
         let GotoDefinitionResponse::Scalar(location) = definition else {
             panic!("definition should be one location")
         };
@@ -411,7 +419,9 @@ packages = ["../dep"]
             &package,
             offset_to_position(&source, current_usage),
         )
-        .expect("grouped structured dependency question iterable value root declaration should exist");
+        .expect(
+            "grouped structured dependency question iterable value root declaration should exist",
+        );
         let GotoDeclarationResponse::Scalar(location) = declaration else {
             panic!("declaration should be one location")
         };
@@ -425,7 +435,9 @@ packages = ["../dep"]
             offset_to_position(&source, current_usage),
             false,
         )
-        .expect("grouped structured dependency question iterable value root references should exist");
+        .expect(
+            "grouped structured dependency question iterable value root references should exist",
+        );
         assert_eq!(
             without_declaration,
             vec![

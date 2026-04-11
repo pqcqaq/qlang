@@ -8140,7 +8140,7 @@ async fn main(slot: Slot) -> Wrap {
 
 #[test]
 fn allows_reinitializing_guard_refined_arithmetic_const_backed_dynamic_task_handle_array_index_before_literal_reuse()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -8173,7 +8173,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn reports_use_after_move_for_guard_refined_arithmetic_const_alias_backed_dynamic_task_handle_array_index_and_literal_reuse()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 use INDEX as INDEX_ALIAS
@@ -8208,7 +8208,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_reinitializing_guard_refined_arithmetic_projected_dynamic_task_handle_array_index_before_literal_reuse()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -8243,7 +8243,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_reinitializing_guard_refined_arithmetic_static_alias_backed_projected_root_dynamic_task_handle_array_index_before_literal_reuse()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 use SLOT as INDEX_ALIAS
@@ -8682,7 +8682,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn reports_use_after_move_for_same_branch_selected_const_backed_dynamic_task_handle_array_index_and_literal_reuse()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -8712,7 +8712,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn reports_use_after_move_for_same_branch_selected_const_alias_backed_dynamic_task_handle_array_index_and_literal_reuse()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 use INDEX as INDEX_ALIAS
@@ -8892,7 +8892,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn reports_use_after_move_for_same_arithmetic_const_backed_dynamic_task_handle_array_index_and_literal_reuse()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -8922,7 +8922,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn reports_use_after_move_for_same_arithmetic_const_alias_backed_dynamic_task_handle_array_index_and_literal_reuse()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 use INDEX as INDEX_ALIAS
@@ -8954,7 +8954,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_reinitializing_same_arithmetic_projected_dynamic_task_handle_array_index_before_literal_reuse()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 struct Wrap {
@@ -8987,7 +8987,7 @@ async fn main() -> Wrap {
 
 #[test]
 fn allows_reinitializing_same_arithmetic_static_alias_backed_projected_dynamic_task_handle_array_index_before_reuse()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 use SLOT as INDEX_ALIAS
@@ -9232,7 +9232,7 @@ async fn main(index: Int) -> Wrap {
 
 #[test]
 fn reports_use_after_move_when_aliased_arithmetic_const_dynamic_task_handle_root_is_repackaged_into_tuple()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 use INDEX as INDEX_ALIAS
@@ -9301,7 +9301,7 @@ async fn main(index: Int) -> Wrap {
 
 #[test]
 fn allows_repackaging_aliased_arithmetic_static_projected_root_task_handle_after_source_path_reinit()
-{
+ {
     let diagnostics = diagnostic_messages(
         r#"
 use SLOT as INDEX_ALIAS

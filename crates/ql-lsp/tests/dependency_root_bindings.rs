@@ -169,8 +169,8 @@ pub fn read(flag: Bool) -> Int {
 }
 
 #[test]
-fn dependency_method_definition_works_on_imported_dependency_function_result_and_static_receivers_without_semantic_analysis(
-) {
+fn dependency_method_definition_works_on_imported_dependency_function_result_and_static_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-dependency-root-method-binding-broken");
     let app_root = temp.path().join("workspace").join("app");
 

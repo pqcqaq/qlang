@@ -90,7 +90,10 @@ fn assert_targets_dependency_type(
     let start = artifact
         .find(snippet)
         .expect("type target should exist in dependency interface");
-    assert_eq!(range, span_to_range(&artifact, Span::new(start, start + snippet.len())));
+    assert_eq!(
+        range,
+        span_to_range(&artifact, Span::new(start, start + snippet.len()))
+    );
 }
 
 fn build_source(broken: bool) -> &'static str {
@@ -177,9 +180,12 @@ packages = ["../dep"]
         assert!(analyze_package(&app_root).is_err());
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
-        let definition =
-            type_definition_for_dependency_values(source, &package, offset_to_position(source, current_usage))
-                .expect("dependency projected field value root type definition should exist");
+        let definition = type_definition_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("dependency projected field value root type definition should exist");
         assert_targets_dependency_type(
             definition,
             &dep_qi,

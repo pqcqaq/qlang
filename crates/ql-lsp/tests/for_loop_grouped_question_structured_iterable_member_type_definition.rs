@@ -125,9 +125,9 @@ impl StructuredKind {
     fn wrap(self, expr: &str) -> String {
         match self {
             Self::If => format!("if flag {{ {expr} }} else {{ {expr} }}"),
-            Self::Match => format!(
-                "match flag {{\n        true => {expr},\n        false => {expr},\n    }}"
-            ),
+            Self::Match => {
+                format!("match flag {{\n        true => {expr},\n        false => {expr},\n    }}")
+            }
         }
     }
 }
@@ -333,97 +333,177 @@ packages = ["../dep"]
 }
 
 #[test]
-fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterable_field_member_types(
-) {
-    run_type_definition_case(MemberKind::Field, RootKind::Function, StructuredKind::If, false);
+fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterable_field_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterable_static_field_member_types(
-) {
-    run_type_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::If, false);
+fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterable_static_field_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_field_member_types(
-) {
-    run_type_definition_case(MemberKind::Field, RootKind::Function, StructuredKind::If, true);
+fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_field_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_static_field_member_types(
-) {
-    run_type_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::If, true);
+fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_static_field_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_iterable_function_field_member_types(
-) {
-    run_type_definition_case(MemberKind::Field, RootKind::Function, StructuredKind::Match, false);
+fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_iterable_function_field_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_function_field_member_types(
-) {
-    run_type_definition_case(MemberKind::Field, RootKind::Function, StructuredKind::Match, true);
+fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_function_field_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Field,
+        RootKind::Function,
+        StructuredKind::Match,
+        true,
+    );
 }
 
 #[test]
-fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_iterable_static_field_member_types(
-) {
-    run_type_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::Match, false);
+fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_iterable_static_field_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_static_field_member_types(
-) {
-    run_type_definition_case(MemberKind::Field, RootKind::Static, StructuredKind::Match, true);
+fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_static_field_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Field,
+        RootKind::Static,
+        StructuredKind::Match,
+        true,
+    );
 }
 
 #[test]
-fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterable_function_method_member_types(
-) {
-    run_type_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::If, false);
+fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterable_function_method_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_function_method_member_types(
-) {
-    run_type_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::If, true);
+fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_function_method_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterable_static_method_member_types(
-) {
-    run_type_definition_case(MemberKind::Method, RootKind::Static, StructuredKind::If, false);
+fn type_definition_bridge_follows_for_loop_if_grouped_question_structured_iterable_static_method_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::If,
+        false,
+    );
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_static_method_member_types(
-) {
-    run_type_definition_case(MemberKind::Method, RootKind::Static, StructuredKind::If, true);
+fn type_definition_fallback_follows_for_loop_if_grouped_question_structured_iterable_static_method_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::If,
+        true,
+    );
 }
 
 #[test]
-fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_iterable_method_member_types(
-) {
-    run_type_definition_case(MemberKind::Method, RootKind::Static, StructuredKind::Match, false);
+fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_iterable_method_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_method_member_types(
-) {
-    run_type_definition_case(MemberKind::Method, RootKind::Static, StructuredKind::Match, true);
+fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_method_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Method,
+        RootKind::Static,
+        StructuredKind::Match,
+        true,
+    );
 }
 
 #[test]
-fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_iterable_function_method_member_types(
-) {
-    run_type_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::Match, false);
+fn type_definition_bridge_follows_for_loop_match_grouped_question_structured_iterable_function_method_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::Match,
+        false,
+    );
 }
 
 #[test]
-fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_function_method_member_types(
-) {
-    run_type_definition_case(MemberKind::Method, RootKind::Function, StructuredKind::Match, true);
+fn type_definition_fallback_follows_for_loop_match_grouped_question_structured_iterable_function_method_member_types()
+ {
+    run_type_definition_case(
+        MemberKind::Method,
+        RootKind::Function,
+        StructuredKind::Match,
+        true,
+    );
 }

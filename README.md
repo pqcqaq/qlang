@@ -1,27 +1,25 @@
 # Qlang
 
 Qlang is a compiled systems language with its own syntax, type system, ownership model, and toolchain goals.
-The current compiler and tools are implemented in a Rust workspace, but Qlang is not a Rust dialect and should not drift toward Rust syntax by implementation convenience.
+The current compiler and tools are implemented in a Rust workspace. Qlang remains a separate language design.
 
 ## Current Reality
 
-- Language-facing source of truth lives in `docs/design/` and `docs/vision.md`.
-- Compiler/runtime/build truth lives in `crates/`, `tests/`, `fixtures/`, and the regression matrix.
-- If implementation convenience conflicts with Qlang language design, the design docs win and the implementation must be corrected.
-
+- Language design: `docs/design/` and `docs/vision.md`
+- Implementation status: `crates/`, `tests/`, `fixtures/`, and the regression matrix
 - Phase 1 through Phase 6 foundations are already landed.
-- Active work is conservative Phase 7: async/runtime/task-handle lowering, library/program build surface, and Rust interop.
+- Active work is split across:
+  - Phase 7: async/runtime/task-handle lowering, library/program build surface, and Rust interop
+  - Phase 8: package/workspace manifests, `.qi` interface artifacts, and dependency-backed cross-file tooling
 - The stable external interop boundary is still C ABI.
-- Async support is real, but intentionally narrow:
+- Current async surface:
   - async library build for `staticlib` and the current minimal `dylib` subset
-- minimal program-mode `async fn main`
-- executable `unsafe fn` bodies on the current sync / async program subset
+  - minimal program-mode `async fn main`
+  - executable `unsafe fn` bodies on the current sync / async program subset
   - fixed-shape `for await`
   - task-handle payload / projection / guarded-match slices that are already regression-locked
 
-## Source Of Truth
-
-Read these first:
+## Key Docs
 
 - [`docs/vision.md`](./docs/vision.md)
 - [`docs/design/principles.md`](./docs/design/principles.md)
@@ -29,25 +27,25 @@ Read these first:
 - [`docs/roadmap/current-supported-surface.md`](./docs/roadmap/current-supported-surface.md)
 - [`docs/roadmap/development-plan.md`](./docs/roadmap/development-plan.md)
 - [`docs/roadmap/phase-progress.md`](./docs/roadmap/phase-progress.md)
-- [`docs/roadmap/archive/index.md`](./docs/roadmap/archive/index.md)
 
-Detailed design merges and archived slice notes live under [`docs/plans/`](./docs/plans/) and [`docs/plans/archive/`](./docs/plans/archive/).
+Merged phase design docs live under [`docs/plans/`](./docs/plans/). Historical archive pages stay out of the main reading path.
 
 ## Repository Layout
 
-- `crates/`: compiler, runtime, CLI, LSP, diagnostics, and supporting layers
+- `crates/`: compiler, project/workspace, runtime, CLI, LSP, diagnostics, and supporting layers
 - `docs/`: VitePress documentation site
 - `fixtures/`: parser/codegen/pass-fail fixtures
+- `ramdon_tests/`: committed executable smoke corpus used by `crates/ql-cli/tests/executable_examples.rs`
 - `tests/`: committed integration and host-interop test inputs
-- `crates/ql-cli/tests/executable_examples.rs`: executable smoke contract; local ignored `ramdon_tests/` examples may be used when present
+- `crates/ql-cli/tests/executable_examples.rs`: executable smoke contract over the committed `ramdon_tests/` baseline, with room for extra local-only ignored examples when present
 - `examples/ffi-c/`, `examples/ffi-c-dylib/`, `examples/ffi-rust/`: committed host interop examples
 
 ## Regression Truth
 
 Current user-facing executable smoke contract lives in `crates/ql-cli/tests/executable_examples.rs`.
 
-- This checkout does not commit a `ramdon_tests/` directory.
-- Local ignored `ramdon_tests/executable_examples/` and `ramdon_tests/async_program_surface_examples/` directories may be used to back executable smoke runs when present.
+- This checkout currently includes committed `ramdon_tests/executable_examples/` and `ramdon_tests/async_program_surface_examples/` corpora.
+- The directory is still listed in `.gitignore`, so extra local-only smoke files may coexist with the committed baseline.
 
 Current library/codegen surface is locked in `crates/ql-cli/tests/codegen.rs`.
 
