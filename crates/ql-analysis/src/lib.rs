@@ -3250,6 +3250,27 @@ fn dependency_struct_field_completion_span_contains(span: Span, offset: usize) -
     span.start <= offset && offset <= span.end
 }
 
+fn dependency_indexed_iterable_target_contains(expr: &ql_ast::Expr, offset: usize) -> bool {
+    match &expr.kind {
+        ql_ast::ExprKind::Name(_) => {
+            dependency_struct_field_completion_span_contains(expr.span, offset)
+        }
+        ql_ast::ExprKind::Member { field_span, .. } => {
+            dependency_struct_field_completion_span_contains(*field_span, offset)
+        }
+        ql_ast::ExprKind::Call { callee, .. } => {
+            dependency_indexed_iterable_target_contains(callee, offset)
+        }
+        ql_ast::ExprKind::Question(inner) => {
+            dependency_indexed_iterable_target_contains(inner, offset)
+        }
+        ql_ast::ExprKind::Bracket { target, .. } => {
+            dependency_indexed_iterable_target_contains(target, offset)
+        }
+        _ => false,
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DependencyMemberCompletionKind {
     Field,
@@ -3942,22 +3963,21 @@ fn dependency_member_completion_binding_in_expr(
             .then_some(binding)
         }),
         ql_ast::ExprKind::Bracket { target, items } => {
-            dependency_member_completion_binding_in_expr(
-                package,
-                module,
-                target,
-                source,
-                offset,
-                kind,
-                scopes,
-                iterable_scopes,
-            )
-            .or_else(|| {
-                items.iter().find_map(|item| {
+            if matches!(kind, DependencyMemberCompletionKind::ValueType)
+                && dependency_indexed_iterable_target_contains(target, offset)
+            {
+                dependency_struct_element_binding_for_iterable_expr(
+                    package,
+                    module,
+                    target,
+                    scopes,
+                    iterable_scopes,
+                )
+                .or_else(|| {
                     dependency_member_completion_binding_in_expr(
                         package,
                         module,
-                        item,
+                        target,
                         source,
                         offset,
                         kind,
@@ -3965,7 +3985,46 @@ fn dependency_member_completion_binding_in_expr(
                         iterable_scopes,
                     )
                 })
-            })
+                .or_else(|| {
+                    items.iter().find_map(|item| {
+                        dependency_member_completion_binding_in_expr(
+                            package,
+                            module,
+                            item,
+                            source,
+                            offset,
+                            kind,
+                            scopes,
+                            iterable_scopes,
+                        )
+                    })
+                })
+            } else {
+                dependency_member_completion_binding_in_expr(
+                    package,
+                    module,
+                    target,
+                    source,
+                    offset,
+                    kind,
+                    scopes,
+                    iterable_scopes,
+                )
+                .or_else(|| {
+                    items.iter().find_map(|item| {
+                        dependency_member_completion_binding_in_expr(
+                            package,
+                            module,
+                            item,
+                            source,
+                            offset,
+                            kind,
+                            scopes,
+                            iterable_scopes,
+                        )
+                    })
+                })
+            }
         }
         ql_ast::ExprKind::StructLiteral { fields, .. } => fields.iter().find_map(|field| {
             field.value.as_ref().and_then(|value| {
@@ -8760,11 +8819,23 @@ fn dependency_value_root_binding_in_expr(
             dependency_value_root_binding_in_expr(package, module, object, offset)
         }
         ql_ast::ExprKind::Bracket { target, items } => {
-            dependency_value_root_binding_in_expr(package, module, target, offset).or_else(|| {
-                items.iter().find_map(|expr| {
-                    dependency_value_root_binding_in_expr(package, module, expr, offset)
-                })
-            })
+            if dependency_indexed_iterable_target_contains(target, offset) {
+                dependency_value_root_iterable_binding_in_expr(package, module, target, offset)
+                    .or_else(|| {
+                        dependency_struct_binding_for_bracket_expr(package, module, target, &[])
+                    })
+                    .or_else(|| {
+                        dependency_value_root_binding_in_expr(package, module, target, offset)
+                    })
+            } else {
+                dependency_value_root_binding_in_expr(package, module, target, offset).or_else(
+                    || {
+                        items.iter().find_map(|expr| {
+                            dependency_value_root_binding_in_expr(package, module, expr, offset)
+                        })
+                    },
+                )
+            }
         }
         ql_ast::ExprKind::StructLiteral { fields, .. } => fields.iter().find_map(|field| {
             field.value.as_ref().and_then(|expr| {
