@@ -79,7 +79,7 @@
 
 当前重点：
 
-- 收紧 `qlang.toml`、workspace member、references 和 `.qi` 生命周期，尤其是让 stale 诊断显式指出 manifest / source 原因。
+- 收紧 `qlang.toml`、workspace member、references 和 `.qi` 生命周期，尤其是继续统一 `ql check` / `ql project graph` / `ql project emit-interface --check` 对非 `valid` artifact 的事实面和修复提示。
 - 继续扩 `ql project graph`、`ql project emit-interface`、`ql build --emit-interface`、`ql check --sync-interfaces` 的一致性。
 - 继续扩 dependency-backed completion / query / `typeDefinition` 的最小 receiver slice。
 

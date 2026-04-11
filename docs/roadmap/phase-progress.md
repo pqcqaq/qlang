@@ -40,7 +40,7 @@
 
 - 编译器主路径稳定为 AST -> HIR -> resolve -> typeck -> MIR -> LLVM IR。
 - CLI 当前已实现 `ql check`、`ql fmt`、`ql mir`、`ql ownership`、`ql runtime`、`ql build`、`ql project`、`ql ffi`。
-- package/workspace 已支持 manifest 加载、成员遍历、`.qi` 生成/校验/同步和状态展示；`ql project graph`、`ql check`、`ql project emit-interface --check` 现已对 `stale` 给出显式原因（manifest 或源码更新）。
+- package/workspace 已支持 manifest 加载、成员遍历、`.qi` 生成/校验/同步和状态展示；`ql project graph`、`ql project emit-interface --check` 会解释 `stale` 原因，而 `ql check` 现在也会在分析前显式拒绝本地依赖包的 `missing` / `invalid` / `unreadable` / `stale` `.qi` 并给出统一修复提示。
 - dependency-backed cross-file tooling 已有首批可用合同：import path completion、dependency symbol hover/definition/declaration/references、enum variant completion/typeDefinition、显式 struct field-label completion，以及语法局部可恢复 receiver、direct indexed iterable receiver（含 `config.maybe_children()?[0].value` / `get()`、`kids()?[0].value` / `get()`、对应的 value-root query/`typeDefinition`、`config.maybe_children()?[0].leaf` / `kids()?[0].leaf` 这类 member `typeDefinition`，以及 direct `if` / `match` structured question-indexed receiver与对应的 member `typeDefinition`）和 indexed bracket target 的最小 value-root/member/query/typeDefinition；这条 bracket-target value-root 现在也覆盖 direct structured question-indexed `(if ...)[0]` / `(match ...)[0]`。
 - `ramdon_tests/` 已提交为 executable smoke 基线；目录仍在 `.gitignore` 中，开发者本地可以继续追加忽略样例。
 
@@ -48,7 +48,7 @@
 
 - 扩 Phase 7 中“前端已支持、后端仍保守拒绝”的 async/runtime/build 缺口。
 - 扩 Phase 8 中 dependency-backed completion/query/typeDefinition 的 receiver slice。
-- 继续收紧 `.qi` 生命周期，但优先放在新的用户可见能力上，而不是只追加同一 receiver slice 的锁行为。
+- 继续收紧 `.qi` 生命周期，优先补 CLI / LSP 共享事实面里的真实缺口，而不是只追加同一 receiver slice 的锁行为。
 - 保持文档入口短版，把逐轮回归明细继续放在归档和测试里。
 
 ## 继续阅读

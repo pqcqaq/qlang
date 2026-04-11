@@ -59,7 +59,8 @@
 - `ql project emit-interface --changed-only` 只重发非 `valid` 接口。
 - `ql project emit-interface --check` 只校验当前 package/workspace 的默认 `.qi` 是否都处于 `valid` 状态而不写文件；若发现 `stale`，会显式说明是 manifest 还是源码较新。
 - `ql build --emit-interface` 会在成功 build 后写出当前 package 的默认 `.qi`。
-- `ql check --sync-interfaces` 会在分析前递归同步本地依赖包的默认 `.qi`，并把 `stale` 视为显式失败而不是隐式降级；未同步时，错误会说明是 manifest 还是源码较新。
+- `ql check` 现会在分析前显式拒绝本地依赖包的非 `valid` 默认 `.qi`（`missing` / `invalid` / `unreadable` / `stale`），并统一给出 `--sync-interfaces` / `ql project emit-interface` 修复提示。
+- `ql check --sync-interfaces` 会在分析前递归同步本地依赖包的默认 `.qi`，避免把这些非 `valid` artifact 留到后续分析阶段才暴露。
 
 ### dependency-backed tooling
 

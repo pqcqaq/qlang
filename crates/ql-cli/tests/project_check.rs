@@ -221,6 +221,89 @@ pub fn main() -> Int {
         "referenced package `dep` is missing interface artifact",
     )
     .expect("missing dependency interface should surface a clear error");
+    expect_stderr_contains(
+        "project-check-missing-interface",
+        "package-aware ql check with missing dependency interface",
+        &stderr,
+        "--sync-interfaces",
+    )
+    .expect("missing dependency interface diagnostic should suggest sync");
+}
+
+#[test]
+fn check_package_dir_reports_invalid_dependency_interface() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-invalid-interface");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+not a valid interface
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check"]).arg(&app_root);
+    let output = run_command_capture(&mut command, "`ql check` invalid dependency interface");
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-invalid-interface",
+        "package-aware ql check with invalid dependency interface",
+        &output,
+        1,
+    )
+    .expect("invalid dependency interface should fail package-aware ql check");
+    expect_stderr_contains(
+        "project-check-invalid-interface",
+        "package-aware ql check with invalid dependency interface",
+        &stderr,
+        "referenced package `dep` has invalid interface artifact",
+    )
+    .expect("invalid dependency interface should surface a clear error");
+    expect_stderr_contains(
+        "project-check-invalid-interface",
+        "package-aware ql check with invalid dependency interface",
+        &stderr,
+        "detail:",
+    )
+    .expect("invalid dependency interface should surface parse detail");
+    expect_stderr_contains(
+        "project-check-invalid-interface",
+        "package-aware ql check with invalid dependency interface",
+        &stderr,
+        "--sync-interfaces",
+    )
+    .expect("invalid dependency interface diagnostic should suggest sync");
 }
 
 #[test]

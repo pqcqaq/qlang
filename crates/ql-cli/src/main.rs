@@ -17,8 +17,8 @@ use ql_fmt::format_source;
 use ql_project::{
     InterfaceArtifactStaleReason, InterfaceArtifactStatus, collect_package_sources,
     default_interface_path, interface_artifact_stale_reasons, interface_artifact_status,
-    load_project_manifest, package_name, package_source_root, render_module_interface,
-    render_project_graph_resolved,
+    load_interface_artifact, load_project_manifest, package_name, package_source_root,
+    render_module_interface, render_project_graph_resolved,
 };
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 
@@ -991,19 +991,13 @@ fn ensure_reference_interfaces_current_recursive(
             1
         })?;
         let status = interface_artifact_status(&dependency_manifest, &interface_path);
-        if status == InterfaceArtifactStatus::Stale {
-            let stale_reasons =
-                interface_artifact_stale_reasons(&dependency_manifest, &interface_path);
-            eprintln!(
-                "error: referenced package `{dependency_package}` has stale interface artifact `{}`",
-                interface_path.display()
-            );
-            report_interface_stale_reasons(&stale_reasons);
-            eprintln!(
-                "hint: rerun `ql check --sync-interfaces {}` or regenerate `{}` with `ql project emit-interface {}`",
-                manifest_path.display(),
-                dependency_package,
-                dependency_manifest.manifest_path.display()
+        if status != InterfaceArtifactStatus::Valid {
+            report_reference_interface_artifact_issue(
+                &dependency_manifest,
+                &dependency_package,
+                &manifest_path,
+                &interface_path,
+                status,
             );
             return Err(1);
         }
@@ -1011,6 +1005,62 @@ fn ensure_reference_interfaces_current_recursive(
     }
 
     Ok(())
+}
+
+fn report_reference_interface_artifact_issue(
+    dependency_manifest: &ql_project::ProjectManifest,
+    dependency_package: &str,
+    manifest_path: &Path,
+    interface_path: &Path,
+    status: InterfaceArtifactStatus,
+) {
+    match status {
+        InterfaceArtifactStatus::Missing => {
+            eprintln!(
+                "error: referenced package `{dependency_package}` is missing interface artifact `{}`",
+                interface_path.display()
+            );
+        }
+        InterfaceArtifactStatus::Unreadable => {
+            eprintln!(
+                "error: referenced package `{dependency_package}` has unreadable interface artifact `{}`",
+                interface_path.display()
+            );
+            if let Err(ql_project::InterfaceError::Read { error, .. }) =
+                load_interface_artifact(interface_path)
+            {
+                eprintln!("detail: {error}");
+            }
+        }
+        InterfaceArtifactStatus::Invalid => {
+            eprintln!(
+                "error: referenced package `{dependency_package}` has invalid interface artifact `{}`",
+                interface_path.display()
+            );
+            if let Err(ql_project::InterfaceError::Parse { message, .. }) =
+                load_interface_artifact(interface_path)
+            {
+                eprintln!("detail: {message}");
+            }
+        }
+        InterfaceArtifactStatus::Stale => {
+            let stale_reasons =
+                interface_artifact_stale_reasons(dependency_manifest, interface_path);
+            eprintln!(
+                "error: referenced package `{dependency_package}` has stale interface artifact `{}`",
+                interface_path.display()
+            );
+            report_interface_stale_reasons(&stale_reasons);
+        }
+        InterfaceArtifactStatus::Valid => return,
+    }
+
+    eprintln!(
+        "hint: rerun `ql check --sync-interfaces {}` or regenerate `{}` with `ql project emit-interface {}`",
+        manifest_path.display(),
+        dependency_package,
+        dependency_manifest.manifest_path.display()
+    );
 }
 
 fn should_sync_interface_artifact(manifest: &ql_project::ProjectManifest) -> Result<bool, u8> {
