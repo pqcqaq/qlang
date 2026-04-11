@@ -41,7 +41,7 @@
 - 编译器主路径稳定为 AST -> HIR -> resolve -> typeck -> MIR -> LLVM IR。
 - CLI 当前已实现 `ql check`、`ql fmt`、`ql mir`、`ql ownership`、`ql runtime`、`ql build`、`ql project`、`ql ffi`。
 - package/workspace 已支持 manifest 加载、成员遍历、`.qi` 生成/校验/同步和状态展示。
-- dependency-backed cross-file tooling 已有首批可用合同：import path completion、dependency symbol hover/definition/declaration/references、enum variant completion/typeDefinition、显式 struct field-label completion，以及语法局部可恢复 receiver、direct indexed iterable receiver（含 `config.maybe_children()?[0].value` / `get()`、`kids()?[0].value` / `get()` 与 `.leaf` / `.leaf()` 这类 question-unwrapped 形态）和 indexed bracket target 的最小 value-root/member/query/typeDefinition。
+- dependency-backed cross-file tooling 已有首批可用合同：import path completion、dependency symbol hover/definition/declaration/references、enum variant completion/typeDefinition、显式 struct field-label completion，以及语法局部可恢复 receiver、direct indexed iterable receiver（含 `config.maybe_children()?[0].value` / `get()`、`kids()?[0].value` / `get()`、对应的 value-root query/`typeDefinition`，以及 `.leaf` / `.leaf()` 这类 question-unwrapped 形态）和 indexed bracket target 的最小 value-root/member/query/typeDefinition。
 - `ramdon_tests/` 已提交为 executable smoke 基线；目录仍在 `.gitignore` 中，开发者本地可以继续追加忽略样例。
 
 ## 当前最值得继续推进的方向
