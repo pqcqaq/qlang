@@ -60,6 +60,7 @@
 - workspace 根 `ql project emit-interface` 在单个 member 发射失败时不会立刻中断；已成功的 members 会继续输出，最后再汇总失败成员数。
 - `ql project emit-interface --changed-only` 在写出路径上只重发非 `valid` 接口；搭配 `--check` 时不会写文件，已 `valid` 的接口会报告 `up-to-date interface`。
 - `ql project emit-interface --check` 只校验当前 package/workspace 的默认 `.qi` 是否都处于 `valid` 状态；若发现 `stale` 会说明原因，若遇到 `invalid` / `unreadable` 也会直接打印 detail。
+- workspace 根 `ql project emit-interface --check` 在单个 member manifest 无法加载时也不会立刻中断；已检查 members 会先输出，最后统一汇总 failing members。
 - `ql build --emit-interface` 会在成功 build 后写出当前 package 的默认 `.qi`。
 - `ql check` 现会在分析前显式拒绝本地依赖包的非 `valid` 默认 `.qi`（`missing` / `invalid` / `unreadable` / `stale`），并统一给出 `--sync-interfaces` / `ql project emit-interface` 修复提示。
 - workspace 根路径上的 `ql check` 不再在首个 failing member 处停止，而会继续检查其余 members，最后输出失败成员总数。

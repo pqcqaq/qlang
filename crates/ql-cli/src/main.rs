@@ -750,22 +750,25 @@ fn project_emit_interface_path(
     };
 
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
-    let mut invalid_count = 0usize;
+    let mut failing_member_count = 0usize;
     let mut emission_failure_count = 0usize;
     for member in &workspace.members {
         if check_only {
-            let member_manifest =
-                load_project_manifest(&manifest_dir.join(member)).map_err(|error| {
+            let member_manifest = match load_project_manifest(&manifest_dir.join(member)) {
+                Ok(manifest) => manifest,
+                Err(error) => {
                     eprintln!("error: {error}");
-                    1
-                })?;
+                    failing_member_count += 1;
+                    continue;
+                }
+            };
             let result = check_package_interface_artifact(
                 &member_manifest,
                 "`ql project emit-interface --check`",
                 changed_only,
             )?;
             if report_package_interface_check(result).is_err() {
-                invalid_count += 1;
+                failing_member_count += 1;
             }
         } else {
             match emit_package_interface_path(
@@ -780,8 +783,8 @@ fn project_emit_interface_path(
         }
     }
 
-    if check_only && invalid_count > 0 {
-        eprintln!("error: interface check found {invalid_count} invalid artifact(s)");
+    if check_only && failing_member_count > 0 {
+        eprintln!("error: interface check found {failing_member_count} failing member(s)");
         return Err(1);
     }
 

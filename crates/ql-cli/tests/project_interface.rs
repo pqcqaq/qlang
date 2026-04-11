@@ -943,9 +943,108 @@ name = "tool"
         "project-interface-check-workspace",
         "workspace interface check with stale member",
         &stderr,
-        "found 2 invalid artifact(s)",
+        "found 2 failing member(s)",
     )
-    .expect("workspace interface check should summarize all invalid artifacts");
+    .expect("workspace interface check should summarize all failing members");
+}
+
+#[test]
+fn project_emit_interface_check_keeps_checking_other_workspace_members_when_one_member_manifest_is_invalid()
+ {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-workspace-invalid-member");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let broken_root = project_root.join("packages").join("broken");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for invalid member workspace check test");
+    std::fs::create_dir_all(&broken_root)
+        .expect("create broken package directory for invalid member workspace check test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/app.qi",
+        "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+",
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[package
+name = "broken"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--check"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --check` workspace manifest with invalid member",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-check-workspace-invalid-member",
+        "workspace interface check with invalid member manifest",
+        &output,
+        1,
+    )
+    .expect("workspace interface check with invalid member manifest should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_app_interface = app_root
+        .join("app.qi")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-check-workspace-invalid-member",
+        &normalized_stdout,
+        &[&format!("ok interface: {normalized_app_interface}")],
+    )
+    .expect("workspace interface check should still report healthy members before failing");
+    expect_stderr_contains(
+        "project-interface-check-workspace-invalid-member",
+        "workspace interface check with invalid member manifest",
+        &stderr,
+        "invalid manifest",
+    )
+    .expect("workspace interface check should surface the invalid member manifest");
+    expect_stderr_contains(
+        "project-interface-check-workspace-invalid-member",
+        "workspace interface check with invalid member manifest",
+        &stderr,
+        "found 1 failing member(s)",
+    )
+    .expect("workspace interface check should summarize all failing members");
 }
 
 #[test]
@@ -1112,9 +1211,9 @@ name = "tool"
         "project-interface-check-changed-only-workspace",
         "changed-only workspace interface check with stale member",
         &stderr,
-        "found 2 invalid artifact(s)",
+        "found 2 failing member(s)",
     )
-    .expect("changed-only workspace interface check should summarize all invalid artifacts");
+    .expect("changed-only workspace interface check should summarize all failing members");
     let app_metadata_after = std::fs::metadata(&app_interface)
         .expect("read app interface metadata after changed-only workspace check")
         .modified()
