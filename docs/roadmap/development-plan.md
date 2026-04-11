@@ -66,7 +66,7 @@
 当前重点：
 
 - 扩 async/runtime/task-handle/build 子集，但保持 borrowck、lowering、黑盒回归一致。
-- 继续补 program-mode 与 library-mode 的 build parity。
+- 继续补 program-mode 与 library-mode 的 build parity；当前 program-mode artifact 已覆盖 `llvm-ir`、`asm`、`obj`、`exe`。
 - 保持 runtime hook、executor、task handle 与 C ABI 的边界清晰。
 
 当前不做：

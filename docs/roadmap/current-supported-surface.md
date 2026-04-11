@@ -40,14 +40,14 @@
 - `ql mir <file>`
 - `ql ownership <file>`
 - `ql runtime <file>`
-- `ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]`
+- `ql build <file> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]`
 - `ql project graph [file-or-dir]`
 - `ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]`
 - `ql ffi header <file> [--surface exports|imports|both] [-o <output>]`
 
 当前稳定的 artifact 面：
 
-- `llvm-ir`、`obj`、`exe`、`dylib`、`staticlib`
+- `llvm-ir`、`asm`（默认输出 `.s`）、`obj`、`exe`、`dylib`、`staticlib`
 - `ql ffi header` 和 build-side header sidecar
 - `ql runtime` 的 runtime requirement / hook ABI 输出
 

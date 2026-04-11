@@ -18,6 +18,7 @@ use crate::toolchain::{ToolchainError, ToolchainOptions, discover_toolchain};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuildEmit {
     LlvmIr,
+    Assembly,
     Object,
     Executable,
     DynamicLibrary,
@@ -28,6 +29,7 @@ impl BuildEmit {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::LlvmIr => "llvm-ir",
+            Self::Assembly => "assembly",
             Self::Object => "object",
             Self::Executable => "executable",
             Self::DynamicLibrary => "dylib",
@@ -304,6 +306,9 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
                 error,
             })?;
         }
+        BuildEmit::Assembly => {
+            build_assembly_file(&output_path, &ir, &options.toolchain)?;
+        }
         BuildEmit::Object => {
             build_object_file(&output_path, &ir, &options.toolchain)?;
         }
@@ -367,8 +372,8 @@ fn runtime_requirement_message(
     emit: BuildEmit,
 ) -> Option<&'static str> {
     match capability {
-        // The current async subset is open for staticlib, dylib, llvm-ir, object, and
-        // executable builds.
+        // The current async subset is open for staticlib, dylib, llvm-ir, assembly, object,
+        // and executable builds.
         RuntimeCapability::AsyncFunctionBodies
         | RuntimeCapability::TaskAwait
         | RuntimeCapability::TaskSpawn
@@ -378,6 +383,7 @@ fn runtime_requirement_message(
                     | BuildEmit::DynamicLibrary
                     | BuildEmit::Executable
                     | BuildEmit::LlvmIr
+                    | BuildEmit::Assembly
                     | BuildEmit::Object
             ) =>
         {
@@ -390,6 +396,7 @@ fn runtime_requirement_message(
                     | BuildEmit::DynamicLibrary
                     | BuildEmit::Executable
                     | BuildEmit::LlvmIr
+                    | BuildEmit::Assembly
                     | BuildEmit::Object
             ) =>
         {
@@ -512,6 +519,29 @@ pub fn default_output_path(
         .join("ql")
         .join(profile.dir_name())
         .join(default_output_name(stem, emit))
+}
+
+fn build_assembly_file(
+    output_path: &Path,
+    ir: &str,
+    toolchain_options: &ToolchainOptions,
+) -> Result<(), BuildError> {
+    let intermediate_ir = intermediate_ir_path(output_path);
+    fs::write(&intermediate_ir, ir).map_err(|error| BuildError::Io {
+        path: intermediate_ir.clone(),
+        error,
+    })?;
+
+    let toolchain = discover_toolchain(toolchain_options)
+        .map_err(|error| toolchain_failure(error, vec![intermediate_ir.clone()]))?;
+
+    if let Err(error) = toolchain.compile_llvm_ir_to_assembly(&intermediate_ir, output_path) {
+        let _ = fs::remove_file(output_path);
+        return Err(toolchain_failure(error, vec![intermediate_ir]));
+    }
+
+    cleanup_artifacts(&[intermediate_ir]);
+    Ok(())
 }
 
 fn build_object_file(
@@ -743,6 +773,7 @@ fn dynamic_library_name(stem: &str) -> String {
 fn default_output_name(stem: &str, emit: BuildEmit) -> String {
     match emit {
         BuildEmit::LlvmIr => format!("{stem}.ll"),
+        BuildEmit::Assembly => format!("{stem}.s"),
         BuildEmit::Object => format!("{stem}.{}", object_extension()),
         BuildEmit::Executable => executable_name(stem),
         BuildEmit::DynamicLibrary => dynamic_library_name(stem),
@@ -752,7 +783,9 @@ fn default_output_name(stem: &str, emit: BuildEmit) -> String {
 
 fn codegen_mode(emit: BuildEmit) -> CodegenMode {
     match emit {
-        BuildEmit::LlvmIr | BuildEmit::Object | BuildEmit::Executable => CodegenMode::Program,
+        BuildEmit::LlvmIr | BuildEmit::Assembly | BuildEmit::Object | BuildEmit::Executable => {
+            CodegenMode::Program
+        }
         BuildEmit::DynamicLibrary | BuildEmit::StaticLibrary => CodegenMode::Library,
     }
 }
@@ -836,6 +869,12 @@ mod tests {
             BuildProfile::Release,
             BuildEmit::LlvmIr,
         );
+        let assembly = default_output_path(
+            Path::new("D:/workspace/demo"),
+            Path::new("src/app.ql"),
+            BuildProfile::Release,
+            BuildEmit::Assembly,
+        );
         let object = default_output_path(
             Path::new("D:/workspace/demo"),
             Path::new("src/app.ql"),
@@ -864,6 +903,10 @@ mod tests {
         assert_eq!(
             llvm_ir,
             PathBuf::from("D:/workspace/demo/target/ql/release/app.ll")
+        );
+        assert_eq!(
+            assembly,
+            PathBuf::from("D:/workspace/demo/target/ql/release/app.s")
         );
         assert_eq!(
             object,
@@ -1015,6 +1058,56 @@ fn main() -> Int {
         assert!(
             leftovers.is_empty(),
             "successful object emission should clean up intermediate LLVM IR"
+        );
+    }
+
+    #[test]
+    fn build_file_writes_assembly_with_mock_toolchain() {
+        let dir = TestDir::new("ql-driver-asm");
+        let source = dir.write(
+            "sample.ql",
+            r#"
+fn add_one(value: Int) -> Int {
+    return value + 1
+}
+
+fn main() -> Int {
+    return add_one(41)
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/sample.s");
+        let clang = mock_success_invocation(&dir);
+        let options = BuildOptions {
+            emit: BuildEmit::Assembly,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(clang),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        let artifact = build_file(&source, &options).expect("assembly build should succeed");
+        let rendered =
+            fs::read_to_string(&artifact.path).expect("read generated assembly placeholder");
+
+        assert_eq!(artifact.path, output);
+        assert_eq!(rendered, "mock-assembly");
+        let leftovers = fs::read_dir(output.parent().expect("assembly output should have a parent"))
+            .expect("read output directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(".codegen.ll"))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "successful assembly emission should clean up intermediate LLVM IR"
         );
     }
 
@@ -21324,7 +21417,11 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
 $ErrorActionPreference = 'Stop'
 $out = $null
 $isCompile = $false
+$isAssembly = $false
 for ($i = 0; $i -lt $args.Count; $i++) {
+    if ($args[$i] -eq '-S') {
+        $isAssembly = $true
+    }
     if ($args[$i] -eq '-c') {
         $isCompile = $true
     }
@@ -21342,7 +21439,9 @@ foreach ($arg in $args) {
         $isShared = $true
     }
 }
-if ($isCompile) {
+if ($isAssembly) {
+    Set-Content -Path $out -NoNewline -Value "mock-assembly"
+} elseif ($isCompile) {
     Set-Content -Path $out -NoNewline -Value "mock-object"
 } elseif ($isShared) {
     Set-Content -Path $out -NoNewline -Value "mock-dylib"
@@ -21362,8 +21461,14 @@ if ($isCompile) {
                 "mock-clang-success.sh",
                 r#"out=""
 is_compile=0
+is_assembly=0
 is_shared=0
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-S" ]; then
+    is_assembly=1
+    shift
+    continue
+  fi
   if [ "$1" = "-c" ]; then
     is_compile=1
     shift
@@ -21381,7 +21486,9 @@ while [ "$#" -gt 0 ]; do
   fi
   shift
 done
-if [ "$is_compile" -eq 1 ]; then
+if [ "$is_assembly" -eq 1 ]; then
+  printf 'mock-assembly' > "$out"
+elif [ "$is_compile" -eq 1 ]; then
   printf 'mock-object' > "$out"
 elif [ "$is_shared" -eq 1 ]; then
   printf 'mock-dylib' > "$out"

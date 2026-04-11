@@ -128,6 +128,7 @@ fn run() -> Result<(), u8> {
                         };
                         match value.as_str() {
                             "llvm-ir" => options.emit = BuildEmit::LlvmIr,
+                            "asm" => options.emit = BuildEmit::Assembly,
                             "obj" => options.emit = BuildEmit::Object,
                             "exe" => options.emit = BuildEmit::Executable,
                             "dylib" => options.emit = BuildEmit::DynamicLibrary,
@@ -1284,7 +1285,7 @@ fn print_usage() {
     eprintln!("usage:");
     eprintln!("  ql check <file-or-dir> [--sync-interfaces]");
     eprintln!(
-        "  ql build <file> [--emit llvm-ir|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
+        "  ql build <file> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
     );
     eprintln!("  ql project graph [file-or-dir]");
     eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]");
@@ -1574,11 +1575,40 @@ fn main() -> Int {
             toolchain: ToolchainOptions::default(),
         };
 
-        assert!(build_path(&dir.path().join("sample.ql"), &options).is_ok());
+        assert!(build_path(&dir.path().join("sample.ql"), &options, false).is_ok());
 
         let rendered = fs::read_to_string(output).expect("read emitted LLVM IR");
         assert!(rendered.contains("define i32 @main()"));
         assert!(rendered.contains("define i64 @ql_1_main()"));
+    }
+
+    #[test]
+    fn build_path_emits_assembly_for_supported_source() {
+        let dir = TestDir::new("ql-cli-build-asm");
+        dir.write(
+            "sample.ql",
+            r#"
+fn main() -> Int {
+    return 1
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/sample.s");
+        let options = BuildOptions {
+            emit: BuildEmit::Assembly,
+            profile: BuildProfile::Debug,
+            output: Some(output.clone()),
+            c_header: None,
+            toolchain: ToolchainOptions {
+                clang: Some(mock_success_invocation(&dir)),
+                ..ToolchainOptions::default()
+            },
+        };
+
+        assert!(build_path(&dir.path().join("sample.ql"), &options, false).is_ok());
+
+        let rendered = fs::read_to_string(output).expect("read emitted assembly placeholder");
+        assert_eq!(rendered, "mock-assembly");
     }
 
     #[test]
@@ -1608,7 +1638,7 @@ fn main() -> Int {
             },
         };
 
-        assert!(build_path(&dir.path().join("sample.ql"), &options).is_ok());
+        assert!(build_path(&dir.path().join("sample.ql"), &options, false).is_ok());
 
         let rendered = fs::read_to_string(output).expect("read emitted object placeholder");
         assert_eq!(rendered, "mock-object");
@@ -1641,7 +1671,7 @@ fn main() -> Int {
             },
         };
 
-        assert!(build_path(&dir.path().join("sample.ql"), &options).is_ok());
+        assert!(build_path(&dir.path().join("sample.ql"), &options, false).is_ok());
 
         let rendered = fs::read_to_string(output).expect("read emitted executable placeholder");
         assert_eq!(rendered, "mock-executable");
@@ -1676,7 +1706,7 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
             },
         };
 
-        assert!(build_path(&dir.path().join("ffi_export.ql"), &options).is_ok());
+        assert!(build_path(&dir.path().join("ffi_export.ql"), &options, false).is_ok());
 
         let rendered =
             fs::read_to_string(output).expect("read emitted dynamic library placeholder");
@@ -1710,7 +1740,7 @@ fn add_one(value: Int) -> Int {
             },
         };
 
-        assert!(build_path(&dir.path().join("math.ql"), &options).is_ok());
+        assert!(build_path(&dir.path().join("math.ql"), &options, false).is_ok());
 
         let rendered = fs::read_to_string(output).expect("read emitted static library placeholder");
         assert_eq!(rendered, "mock-staticlib");
@@ -1723,8 +1753,12 @@ fn add_one(value: Int) -> Int {
                 r#"
 $out = $null
 $isCompile = $false
+$isAssembly = $false
 $isShared = $false
 for ($i = 0; $i -lt $args.Count; $i++) {
+    if ($args[$i] -eq '-S') {
+        $isAssembly = $true
+    }
     if ($args[$i] -eq '-c') {
         $isCompile = $true
     }
@@ -1739,7 +1773,9 @@ if ($null -eq $out) {
     Write-Error "missing -o"
     exit 1
 }
-if ($isCompile) {
+if ($isAssembly) {
+    Set-Content -Path $out -NoNewline -Value "mock-assembly"
+} elseif ($isCompile) {
     Set-Content -Path $out -NoNewline -Value "mock-object"
 } elseif ($isShared) {
     Set-Content -Path $out -NoNewline -Value "mock-dylib"
@@ -1759,8 +1795,14 @@ if ($isCompile) {
                 "mock-clang-success.sh",
                 r#"out=""
 is_compile=0
+is_assembly=0
 is_shared=0
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-S" ]; then
+    is_assembly=1
+    shift
+    continue
+  fi
   if [ "$1" = "-c" ]; then
     is_compile=1
     shift
@@ -1778,7 +1820,9 @@ while [ "$#" -gt 0 ]; do
   fi
   shift
 done
-if [ "$is_compile" -eq 1 ]; then
+if [ "$is_assembly" -eq 1 ]; then
+  printf 'mock-assembly' > "$out"
+elif [ "$is_compile" -eq 1 ]; then
   printf 'mock-object' > "$out"
 elif [ "$is_shared" -eq 1 ]; then
   printf 'mock-dylib' > "$out"

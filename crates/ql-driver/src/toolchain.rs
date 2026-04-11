@@ -87,6 +87,21 @@ impl DiscoveredToolchain {
         ])
     }
 
+    pub fn compile_llvm_ir_to_assembly(
+        &self,
+        input_ir: &Path,
+        output_assembly: &Path,
+    ) -> Result<(), ToolchainError> {
+        self.run_clang([
+            "-S".to_owned(),
+            "-x".to_owned(),
+            "ir".to_owned(),
+            input_ir.display().to_string(),
+            "-o".to_owned(),
+            output_assembly.display().to_string(),
+        ])
+    }
+
     pub fn link_object_to_executable(
         &self,
         input_object: &Path,
