@@ -7728,6 +7728,22 @@ fn dependency_struct_element_binding_for_iterable_expr(
     }
 }
 
+fn dependency_struct_binding_for_bracket_expr(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    target: &ql_ast::Expr,
+    scopes: &[HashMap<String, DependencyStructBinding>],
+) -> Option<DependencyStructBinding> {
+    let iterable_scopes = DependencyIterableScopes::new();
+    dependency_struct_element_binding_for_iterable_expr(
+        package,
+        module,
+        target,
+        scopes,
+        &iterable_scopes,
+    )
+}
+
 fn dependency_struct_binding_for_expr(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -7761,6 +7777,9 @@ fn dependency_struct_binding_for_expr(
         }
         ql_ast::ExprKind::Call { callee, .. } => {
             dependency_struct_binding_for_call_expr(package, module, callee, scopes)
+        }
+        ql_ast::ExprKind::Bracket { target, .. } => {
+            dependency_struct_binding_for_bracket_expr(package, module, target, scopes)
         }
         ql_ast::ExprKind::Question(inner) => {
             dependency_struct_binding_for_question_expr(package, module, inner, scopes)

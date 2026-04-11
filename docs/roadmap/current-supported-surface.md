@@ -1,6 +1,6 @@
 # 当前支持基线
 
-> 最后同步：2026-04-10
+> 最后同步：2026-04-11
 
 这页只回答“今天真实可依赖的能力边界”。
 
@@ -70,6 +70,7 @@
 - dependency enum import roots：variant completion、variant hover/query、`textDocument/typeDefinition`
 - dependency struct import roots：显式 struct literal / pattern field-label completion 与字段 query
 - 语法局部可恢复 receiver 的 dependency member-field / member-method 最小 completion、query 与 `typeDefinition`
+- direct indexed iterable receiver 现也开放同一最小 slice：例如 `config.children[0].value`、`config.children()[0].get()`
 - broken-source fallback 下可恢复的 dependency import/type/value/member 查询
 
 当前 receiver slice 仍是保守开放，不等于“任意 dependency member access 都已支持”。
