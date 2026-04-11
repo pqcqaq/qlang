@@ -3646,7 +3646,15 @@ fn dependency_member_completion_binding_in_stmt(
                     package, pattern, binding, offset, kind,
                 )
             });
-            bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, scopes);
+            bind_dependency_struct_let(
+                package,
+                module,
+                pattern,
+                ty.as_ref(),
+                value,
+                scopes,
+                iterable_scopes,
+            );
             bind_dependency_iterable_let(package, module, pattern, value, scopes, iterable_scopes);
             expr_binding.or(pattern_binding)
         }
@@ -5256,7 +5264,15 @@ fn collect_dependency_method_occurrences_in_stmt(
                 iterable_scopes,
                 occurrences,
             );
-            bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, scopes);
+            bind_dependency_struct_let(
+                package,
+                module,
+                pattern,
+                ty.as_ref(),
+                value,
+                scopes,
+                iterable_scopes,
+            );
             bind_dependency_iterable_let(package, module, pattern, value, scopes, iterable_scopes);
         }
         ql_ast::StmtKind::Return(Some(expr))
@@ -5795,6 +5811,7 @@ fn collect_dependency_value_occurrences_in_stmt(
                 ty.as_ref(),
                 value,
                 binding_scopes,
+                iterable_scopes,
                 value_scopes,
                 occurrences,
             );
@@ -6443,7 +6460,15 @@ fn collect_dependency_struct_field_occurrences_in_stmt(
                 iterable_scopes,
                 occurrences,
             );
-            bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, scopes);
+            bind_dependency_struct_let(
+                package,
+                module,
+                pattern,
+                ty.as_ref(),
+                value,
+                scopes,
+                iterable_scopes,
+            );
             bind_dependency_iterable_let(package, module, pattern, value, scopes, iterable_scopes);
         }
         ql_ast::StmtKind::Return(Some(expr))
@@ -7379,12 +7404,30 @@ fn dependency_struct_binding_for_block_expr(
 ) -> Option<DependencyStructBinding> {
     let mut scopes = scopes.to_vec();
     scopes.push(HashMap::new());
+    let mut iterable_scopes = DependencyIterableScopes::new();
+    iterable_scopes.push(HashMap::new());
     for stmt in &block.statements {
         if let ql_ast::StmtKind::Let {
             pattern, ty, value, ..
         } = &stmt.kind
         {
-            bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, &mut scopes);
+            bind_dependency_struct_let(
+                package,
+                module,
+                pattern,
+                ty.as_ref(),
+                value,
+                &mut scopes,
+                &iterable_scopes,
+            );
+            bind_dependency_iterable_let(
+                package,
+                module,
+                pattern,
+                value,
+                &scopes,
+                &mut iterable_scopes,
+            );
         }
     }
     block
@@ -7467,7 +7510,15 @@ fn dependency_struct_element_binding_for_block_expr(
             pattern, ty, value, ..
         } = &stmt.kind
         {
-            bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, &mut scopes);
+            bind_dependency_struct_let(
+                package,
+                module,
+                pattern,
+                ty.as_ref(),
+                value,
+                &mut scopes,
+                &iterable_scopes,
+            );
             bind_dependency_iterable_let(
                 package,
                 module,
@@ -7505,7 +7556,15 @@ fn dependency_struct_question_element_binding_for_block_expr(
             pattern, ty, value, ..
         } = &stmt.kind
         {
-            bind_dependency_struct_let(package, module, pattern, ty.as_ref(), value, &mut scopes);
+            bind_dependency_struct_let(
+                package,
+                module,
+                pattern,
+                ty.as_ref(),
+                value,
+                &mut scopes,
+                &iterable_scopes,
+            );
             bind_dependency_iterable_let(
                 package,
                 module,
@@ -8086,6 +8145,13 @@ fn bind_dependency_iterable_closure_param(
         .insert(param.name.clone(), None);
 }
 
+fn pattern_destructures_dependency_iterable_elements(pattern: &ql_ast::Pattern) -> bool {
+    matches!(
+        pattern.kind,
+        ql_ast::PatternKind::Tuple(_) | ql_ast::PatternKind::Array(_)
+    )
+}
+
 fn bind_dependency_struct_let(
     package: &PackageAnalysis,
     module: &ql_ast::Module,
@@ -8093,10 +8159,24 @@ fn bind_dependency_struct_let(
     ty: Option<&ql_ast::TypeExpr>,
     value: &ql_ast::Expr,
     scopes: &mut [HashMap<String, DependencyStructBinding>],
+    iterable_scopes: &DependencyIterableScopes,
 ) {
     let binding = ty
         .and_then(|ty| dependency_struct_binding_for_type_expr(package, module, ty))
-        .or_else(|| dependency_struct_binding_for_expr(package, module, value, scopes));
+        .or_else(|| dependency_struct_binding_for_expr(package, module, value, scopes))
+        .or_else(|| {
+            if pattern_destructures_dependency_iterable_elements(pattern) {
+                dependency_struct_element_binding_for_iterable_expr(
+                    package,
+                    module,
+                    value,
+                    scopes,
+                    iterable_scopes,
+                )
+            } else {
+                None
+            }
+        });
     let Some(binding) = binding else {
         return;
     };
@@ -8426,12 +8506,26 @@ fn bind_dependency_value_let(
     ty: Option<&ql_ast::TypeExpr>,
     value: &ql_ast::Expr,
     binding_scopes: &mut [HashMap<String, DependencyStructBinding>],
+    iterable_scopes: &DependencyIterableScopes,
     value_scopes: &mut [HashMap<String, DependencyValueBinding>],
     occurrences: &mut Vec<DependencyValueOccurrence>,
 ) {
     let binding = ty
         .and_then(|ty| dependency_struct_binding_for_type_expr(package, module, ty))
-        .or_else(|| dependency_struct_binding_for_expr(package, module, value, binding_scopes));
+        .or_else(|| dependency_struct_binding_for_expr(package, module, value, binding_scopes))
+        .or_else(|| {
+            if pattern_destructures_dependency_iterable_elements(pattern) {
+                dependency_struct_element_binding_for_iterable_expr(
+                    package,
+                    module,
+                    value,
+                    binding_scopes,
+                    iterable_scopes,
+                )
+            } else {
+                None
+            }
+        });
     let Some(binding) = binding else {
         return;
     };
