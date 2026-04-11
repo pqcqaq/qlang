@@ -6085,6 +6085,13 @@ fn collect_dependency_value_occurrences_in_expr(
             );
         }
         ql_ast::ExprKind::Bracket { target, items } => {
+            push_dependency_indexed_value_root_occurrence_for_bracket_target(
+                package,
+                module,
+                target,
+                binding_scopes,
+                occurrences,
+            );
             collect_dependency_value_occurrences_in_expr(
                 package,
                 module,
@@ -8089,6 +8096,86 @@ fn push_dependency_value_root_occurrence(
         dependency: dependency.clone(),
     };
     push_dependency_value_occurrence(&binding, reference_span, false, occurrences);
+}
+
+fn push_dependency_indexed_value_root_occurrence_for_bracket_target(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    target: &ql_ast::Expr,
+    binding_scopes: &[HashMap<String, DependencyStructBinding>],
+    occurrences: &mut Vec<DependencyValueOccurrence>,
+) {
+    let Some(binding) =
+        dependency_struct_binding_for_bracket_expr(package, module, target, binding_scopes)
+    else {
+        return;
+    };
+
+    match &target.kind {
+        ql_ast::ExprKind::Member {
+            field, field_span, ..
+        } => {
+            push_dependency_value_root_occurrence(
+                SymbolKind::Field,
+                field,
+                *field_span,
+                &binding,
+                occurrences,
+            );
+        }
+        ql_ast::ExprKind::Call { callee, .. } => {
+            if let ql_ast::ExprKind::Member {
+                field, field_span, ..
+            } = &callee.kind
+            {
+                push_dependency_value_root_occurrence(
+                    SymbolKind::Method,
+                    field,
+                    *field_span,
+                    &binding,
+                    occurrences,
+                );
+            }
+        }
+        ql_ast::ExprKind::Question(inner) => match &inner.kind {
+            ql_ast::ExprKind::Member {
+                field, field_span, ..
+            } => {
+                push_dependency_value_root_occurrence(
+                    SymbolKind::Field,
+                    field,
+                    *field_span,
+                    &binding,
+                    occurrences,
+                );
+            }
+            ql_ast::ExprKind::Call { callee, .. } => {
+                if let ql_ast::ExprKind::Member {
+                    field, field_span, ..
+                } = &callee.kind
+                {
+                    push_dependency_value_root_occurrence(
+                        SymbolKind::Method,
+                        field,
+                        *field_span,
+                        &binding,
+                        occurrences,
+                    );
+                }
+            }
+            _ => {}
+        },
+        ql_ast::ExprKind::Bracket { target, .. } => {
+            push_dependency_indexed_value_root_occurrence_for_bracket_target(
+                package,
+                module,
+                target,
+                binding_scopes,
+                occurrences,
+            );
+        }
+        _ => {}
+    }
 }
 
 fn bind_dependency_value_local(
