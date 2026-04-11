@@ -69,7 +69,7 @@ pub fn run() -> Int
         .expect("successful project graph rendering should stay silent on stderr");
 
     let expected = format!(
-        "manifest: {}\npackage: app\nworkspace_members:\n  - packages/app\n  - packages/core\nreferences:\n  - ../core\n  - ../runtime\ninterface:\n  path: app.qi\n  status: invalid\nreference_interfaces:\n  - reference: ../core\n    package: core\n    path: ../core/core.qi\n    status: missing\n  - reference: ../runtime\n    package: runtime\n    path: ../runtime/runtime.qi\n    status: valid\n",
+        "manifest: {}\npackage: app\nworkspace_members:\n  - packages/app\n  - packages/core\nreferences:\n  - ../core\n  - ../runtime\ninterface:\n  path: app.qi\n  status: invalid\n  detail: expected `// qlang interface v1` header\nreference_interfaces:\n  - reference: ../core\n    package: core\n    path: ../core/core.qi\n    status: missing\n  - reference: ../runtime\n    package: runtime\n    path: ../runtime/runtime.qi\n    status: valid\n",
         manifest_path.to_string_lossy().replace('\\', "/")
     );
     expect_snapshot_matches(

@@ -296,6 +296,21 @@ impl InterfaceArtifactStaleReason {
     }
 }
 
+pub fn interface_artifact_status_detail(
+    path: &Path,
+    status: InterfaceArtifactStatus,
+) -> Option<String> {
+    match load_interface_artifact(path) {
+        Err(InterfaceError::Read { error, .. }) if status == InterfaceArtifactStatus::Unreadable => {
+            Some(error.to_string())
+        }
+        Err(InterfaceError::Parse { message, .. }) if status == InterfaceArtifactStatus::Invalid => {
+            Some(message)
+        }
+        _ => None,
+    }
+}
+
 fn append_interface_summary(
     output: &mut String,
     root: &Path,
@@ -310,6 +325,9 @@ fn append_interface_summary(
         relative_display_path(root, interface_path)
     ));
     output.push_str(&format!("{indent}  status: {}\n", status.label()));
+    if let Some(detail) = interface_artifact_status_detail(interface_path, status) {
+        output.push_str(&format!("{indent}  detail: {detail}\n"));
+    }
     if status == InterfaceArtifactStatus::Stale {
         let stale_reasons = interface_artifact_stale_reasons(manifest, interface_path);
         let stale_indent = format!("{indent}  ");
@@ -347,6 +365,10 @@ fn append_reference_interface_summaries(
                         relative_display_path(root, &interface_path)
                     ));
                     output.push_str(&format!("{indent}    status: {}\n", status.label()));
+                    if let Some(detail) = interface_artifact_status_detail(&interface_path, status)
+                    {
+                        output.push_str(&format!("{indent}    detail: {detail}\n"));
+                    }
                     if status == InterfaceArtifactStatus::Stale {
                         let stale_reasons =
                             interface_artifact_stale_reasons(&reference_manifest, &interface_path);

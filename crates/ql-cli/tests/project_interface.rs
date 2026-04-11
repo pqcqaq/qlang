@@ -307,6 +307,63 @@ pub fn exported() -> Int
 }
 
 #[test]
+fn project_emit_interface_check_rejects_invalid_package_interface() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-invalid-package");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for invalid interface check test");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write("workspace/app/app.qi", "broken interface\n");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--check"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --check` invalid package",
+    );
+    let (_stdout, stderr) = expect_exit_code(
+        "project-interface-check-invalid-package",
+        "invalid package interface check",
+        &output,
+        1,
+    )
+    .expect("invalid package interface check should fail");
+    expect_stderr_contains(
+        "project-interface-check-invalid-package",
+        "invalid package interface check",
+        &stderr,
+        "is invalid",
+    )
+    .expect("invalid package interface check should report invalid status");
+    expect_stderr_contains(
+        "project-interface-check-invalid-package",
+        "invalid package interface check",
+        &stderr,
+        "detail: expected `// qlang interface v1` header",
+    )
+    .expect("invalid package interface check should report parse detail");
+}
+
+#[test]
 fn project_emit_interface_writes_member_qi_for_workspace_only_manifest() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-workspace-only");

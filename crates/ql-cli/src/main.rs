@@ -17,7 +17,7 @@ use ql_fmt::format_source;
 use ql_project::{
     InterfaceArtifactStaleReason, InterfaceArtifactStatus, collect_package_sources,
     default_interface_path, interface_artifact_stale_reasons, interface_artifact_status,
-    load_interface_artifact, load_project_manifest, package_name, package_source_root,
+    interface_artifact_status_detail, load_project_manifest, package_name, package_source_root,
     render_module_interface, render_project_graph_resolved,
 };
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
@@ -773,6 +773,7 @@ enum CheckPackageInterfaceResult {
         path: PathBuf,
         status: InterfaceArtifactStatus,
         manifest_path: PathBuf,
+        detail: Option<String>,
         stale_reasons: Vec<InterfaceArtifactStaleReason>,
     },
 }
@@ -873,6 +874,7 @@ fn check_package_interface_artifact(
     })?;
     let status = interface_artifact_status(manifest, &output_path);
     if status != InterfaceArtifactStatus::Valid {
+        let detail = interface_artifact_status_detail(&output_path, status);
         let stale_reasons = if status == InterfaceArtifactStatus::Stale {
             interface_artifact_stale_reasons(manifest, &output_path)
         } else {
@@ -882,6 +884,7 @@ fn check_package_interface_artifact(
             path: output_path,
             status,
             manifest_path: manifest.manifest_path.clone(),
+            detail,
             stale_reasons,
         });
     }
@@ -898,6 +901,7 @@ fn report_package_interface_check(result: CheckPackageInterfaceResult) -> Result
             path,
             status,
             manifest_path,
+            detail,
             stale_reasons,
         } => {
             eprintln!(
@@ -905,6 +909,9 @@ fn report_package_interface_check(result: CheckPackageInterfaceResult) -> Result
                 path.display(),
                 status.label()
             );
+            if let Some(detail) = detail {
+                eprintln!("detail: {detail}");
+            }
             report_interface_stale_reasons(&stale_reasons);
             eprintln!(
                 "hint: rerun `ql project emit-interface {}` to regenerate it",
@@ -1026,10 +1033,10 @@ fn report_reference_interface_artifact_issue(
                 "error: referenced package `{dependency_package}` has unreadable interface artifact `{}`",
                 interface_path.display()
             );
-            if let Err(ql_project::InterfaceError::Read { error, .. }) =
-                load_interface_artifact(interface_path)
+            if let Some(detail) =
+                interface_artifact_status_detail(interface_path, InterfaceArtifactStatus::Unreadable)
             {
-                eprintln!("detail: {error}");
+                eprintln!("detail: {detail}");
             }
         }
         InterfaceArtifactStatus::Invalid => {
@@ -1037,10 +1044,10 @@ fn report_reference_interface_artifact_issue(
                 "error: referenced package `{dependency_package}` has invalid interface artifact `{}`",
                 interface_path.display()
             );
-            if let Err(ql_project::InterfaceError::Parse { message, .. }) =
-                load_interface_artifact(interface_path)
+            if let Some(detail) =
+                interface_artifact_status_detail(interface_path, InterfaceArtifactStatus::Invalid)
             {
-                eprintln!("detail: {message}");
+                eprintln!("detail: {detail}");
             }
         }
         InterfaceArtifactStatus::Stale => {
