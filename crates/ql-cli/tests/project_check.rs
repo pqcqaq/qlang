@@ -1213,6 +1213,39 @@ pub fn main() -> Int {
         ),
     )
     .expect("sync path should not print the old duplicate direct-rerun hint");
+    let package_note = format!(
+        "note: failing package manifest: {}",
+        dep_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let owner_note = format!(
+        "note: while syncing referenced package `../dep` from `{}`",
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        dep_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/"),
+    );
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("sync source failure should include the failing package manifest note");
+    let owner_note_index = normalized_stderr
+        .find(&owner_note)
+        .expect("sync source failure should include the owner reference note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("sync source failure should include the rerun hint");
+    assert!(
+        package_note_index < owner_note_index && owner_note_index < rerun_hint_index,
+        "expected sync source failure context before rerun hint, got:\n{stderr}"
+    );
     expect_stderr_contains(
         "project-check-sync-source-failure-context",
         "package-aware ql check sync with dependency source failures",
@@ -1347,6 +1380,24 @@ pub fn main() -> Int {
         &old_hint,
     )
     .expect("sync path should not reuse the source-failure rerun hint for output-path failures");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("sync output-path failure should include the dependency manifest note");
+    let output_note_index = normalized_stderr
+        .find(&output_note)
+        .expect("sync output-path failure should include the blocked interface path note");
+    let owner_note_index = normalized_stderr
+        .find(&owner_note)
+        .expect("sync output-path failure should include the owner reference note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("sync output-path failure should include the rerun hint");
+    assert!(
+        package_note_index < output_note_index
+            && output_note_index < owner_note_index
+            && owner_note_index < rerun_hint_index,
+        "expected sync output-path failure context before rerun hint, got:\n{stderr}"
+    );
     expect_stderr_contains(
         "project-check-sync-output-path-failure",
         "package-aware ql check sync with dependency blocked output path",

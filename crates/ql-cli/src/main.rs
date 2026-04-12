@@ -718,7 +718,7 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
 
 fn report_build_interface_failure(path: &Path, artifact_path: &Path) {
     if let Ok(manifest) = load_project_manifest(path) {
-        report_package_interface_failure(&manifest.manifest_path, None, None);
+        report_package_interface_failure(&manifest.manifest_path, None, None, None);
     }
     eprintln!(
         "note: build artifact remains at `{}`",
@@ -730,6 +730,7 @@ fn report_package_interface_failure(
     manifest_path: &Path,
     workspace_member_manifest_path: Option<&Path>,
     requested_output_path: Option<&Path>,
+    additional_context_note: Option<&str>,
 ) {
     let manifest_path = normalize_path(manifest_path);
     eprintln!("note: failing package manifest: {manifest_path}");
@@ -738,6 +739,9 @@ fn report_package_interface_failure(
             "note: failing workspace member manifest: {}",
             normalize_path(workspace_member_manifest_path)
         );
+    }
+    if let Some(additional_context_note) = additional_context_note {
+        eprintln!("{additional_context_note}");
     }
     let rerun_command = format_emit_interface_rerun_command(&manifest_path, requested_output_path);
     eprintln!(
@@ -751,6 +755,7 @@ fn report_package_interface_output_failure(
     workspace_member_manifest_path: Option<&Path>,
     output_path: &Path,
     requested_output_path: Option<&Path>,
+    additional_context_note: Option<&str>,
 ) {
     let manifest_path = normalize_path(manifest_path);
     eprintln!("note: failing package manifest: {manifest_path}");
@@ -764,6 +769,9 @@ fn report_package_interface_output_failure(
         "note: failing interface output path: {}",
         normalize_path(output_path)
     );
+    if let Some(additional_context_note) = additional_context_note {
+        eprintln!("{additional_context_note}");
+    }
     let rerun_command = format_emit_interface_rerun_command(&manifest_path, requested_output_path);
     eprintln!(
         "hint: rerun `{}` after fixing the interface output path",
@@ -773,7 +781,13 @@ fn report_package_interface_output_failure(
 
 fn report_build_interface_output_failure(path: &Path, artifact_path: &Path, output_path: &Path) {
     if let Ok(manifest) = load_project_manifest(path) {
-        report_package_interface_output_failure(&manifest.manifest_path, None, output_path, None);
+        report_package_interface_output_failure(
+            &manifest.manifest_path,
+            None,
+            output_path,
+            None,
+            None,
+        );
     }
     eprintln!(
         "note: build artifact remains at `{}`",
@@ -851,7 +865,7 @@ fn project_emit_interface_path(
         {
             Ok(result) => report_emit_interface_result(result),
             Err(EmitPackageInterfaceError::Code(code)) => {
-                report_package_interface_failure(&manifest.manifest_path, None, output);
+                report_package_interface_failure(&manifest.manifest_path, None, output, None);
                 return Err(code);
             }
             Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
@@ -860,6 +874,7 @@ fn project_emit_interface_path(
                     None,
                     &output_path,
                     output,
+                    None,
                 );
                 return Err(1);
             }
@@ -941,6 +956,7 @@ fn project_emit_interface_path(
                         &member_manifest.manifest_path,
                         Some(&member_manifest.manifest_path),
                         None,
+                        None,
                     );
                     emission_failure_count += 1;
                     record_reference_failure_manifest(
@@ -953,6 +969,7 @@ fn project_emit_interface_path(
                         &member_manifest.manifest_path,
                         Some(&member_manifest.manifest_path),
                         &output_path,
+                        None,
                         None,
                     );
                     emission_failure_count += 1;
@@ -1374,12 +1391,14 @@ fn sync_reference_interfaces_recursive(
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
                 Err(EmitPackageInterfaceError::Code(_)) => {
+                    let owner_note =
+                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
                     report_package_interface_failure(
                         &dependency_manifest.manifest_path,
                         None,
                         None,
+                        Some(owner_note.as_str()),
                     );
-                    report_reference_interface_sync_failure(&manifest.manifest_path, reference);
                     result.failure_count += 1;
                     record_reference_failure_manifest(
                         &mut result.first_failure_manifest,
@@ -1387,13 +1406,15 @@ fn sync_reference_interfaces_recursive(
                     );
                 }
                 Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
+                    let owner_note =
+                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
                     report_package_interface_output_failure(
                         &dependency_manifest.manifest_path,
                         None,
                         &output_path,
                         None,
+                        Some(owner_note.as_str()),
                     );
-                    report_reference_interface_sync_failure(&manifest.manifest_path, reference);
                     result.failure_count += 1;
                     record_reference_failure_manifest(
                         &mut result.first_failure_manifest,
@@ -1618,9 +1639,9 @@ fn report_reference_manifest_issue(
     );
 }
 
-fn report_reference_interface_sync_failure(owner_manifest_path: &Path, reference: &str) {
+fn format_reference_interface_sync_note(owner_manifest_path: &Path, reference: &str) -> String {
     let owner_manifest_path = normalize_path(owner_manifest_path);
-    eprintln!("note: while syncing referenced package `{reference}` from `{owner_manifest_path}`");
+    format!("note: while syncing referenced package `{reference}` from `{owner_manifest_path}`")
 }
 
 fn workspace_member_manifest_path(path: &Path) -> PathBuf {
