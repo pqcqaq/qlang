@@ -527,6 +527,182 @@ pub fn exported() -> Int {
 }
 
 #[test]
+fn project_emit_interface_preserves_custom_output_in_source_failure_hints() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-custom-output-source-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for custom output source failure test");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/src/broken.ql",
+        r#"
+package demo.app
+
+pub fn broken(value: MissingType) -> Int {
+    return value
+}
+"#,
+    );
+    let output_path = project_root.join("artifacts").join("custom.qi");
+    let manifest_path = project_root.join("qlang.toml");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let output_display = output_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--output"])
+        .arg(&output_path)
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --output` package with source failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-custom-output-source-failure",
+        "package interface emission with custom output and source failure",
+        &output,
+        1,
+    )
+    .expect("custom-output package interface emission should still fail on source errors");
+    expect_empty_stdout(
+        "project-interface-custom-output-source-failure",
+        "package interface emission with custom output and source failure",
+        &stdout,
+    )
+    .expect("source failures should not report a written custom output artifact");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {} --output {}` after fixing the package interface error",
+        manifest_display, output_display
+    );
+    let old_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        manifest_display
+    );
+    expect_stderr_contains(
+        "project-interface-custom-output-source-failure",
+        "package interface emission with custom output and source failure",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("custom-output source failures should preserve `--output` in the rerun hint");
+    expect_stderr_not_contains(
+        "project-interface-custom-output-source-failure",
+        "package interface emission with custom output and source failure",
+        &normalized_stderr,
+        &old_hint,
+    )
+    .expect("custom-output source failures should not drop back to the default rerun hint");
+    assert!(
+        !output_path.is_file(),
+        "custom-output source failure should not create `{}`",
+        output_path.display()
+    );
+}
+
+#[test]
+fn project_emit_interface_preserves_custom_output_in_output_path_hints() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-custom-output-path-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for custom output path failure test");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    let output_path = project_root.join("artifacts").join("custom.qi");
+    std::fs::create_dir_all(&output_path)
+        .expect("create blocking directory at the custom interface output path");
+    let manifest_path = project_root.join("qlang.toml");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let output_display = output_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--output"])
+        .arg(&output_path)
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --output` package with blocked custom output path",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-custom-output-path-failure",
+        "package interface emission with blocked custom output path",
+        &output,
+        1,
+    )
+    .expect(
+        "custom-output package interface emission should fail when the custom target is blocked",
+    );
+    expect_empty_stdout(
+        "project-interface-custom-output-path-failure",
+        "package interface emission with blocked custom output path",
+        &stdout,
+    )
+    .expect("blocked custom output path should not report a written artifact");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {} --output {}` after fixing the interface output path",
+        manifest_display, output_display
+    );
+    let old_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the interface output path",
+        manifest_display
+    );
+    expect_stderr_contains(
+        "project-interface-custom-output-path-failure",
+        "package interface emission with blocked custom output path",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("custom-output path failures should preserve `--output` in the rerun hint");
+    expect_stderr_not_contains(
+        "project-interface-custom-output-path-failure",
+        "package interface emission with blocked custom output path",
+        &normalized_stderr,
+        &old_hint,
+    )
+    .expect("custom-output path failures should not drop back to the default rerun hint");
+    assert!(
+        output_path.is_dir(),
+        "blocked custom output path test should preserve `{}` as a directory",
+        output_path.display()
+    );
+}
+
+#[test]
 fn project_emit_interface_changed_only_skips_up_to_date_package_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-changed-only-package");

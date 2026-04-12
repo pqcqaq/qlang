@@ -58,6 +58,7 @@
 - workspace 根 `ql project graph` 在单个 member manifest 无法加载时不会整张图失败；已解析 members 会继续输出，坏 member 会落成 `package: <unresolved>` + `member_error`。
 - `ql project graph` 对 `reference_interfaces` 的 `unresolved-manifest` / `unresolved-package` 现在也会带 `detail`，直接说明是引用 manifest 语法坏了，还是引用目标没有 `[package].name`。
 - `ql project emit-interface` 支持 package 和 workspace 批量写出；`-o/--output` 仍仅支持 package。package 模式下若同一个 package 里有多个坏源码阻塞 `.qi` 发射，CLI 现在会继续打印后续坏源码诊断，最后再汇总 failing source file 数；只有多失败场景才额外补 `first failing source file`。direct package emit 失败时现在也会补 `failing package manifest` 和可直接重跑的 `ql project emit-interface <manifest>` hint。
+- direct package `ql project emit-interface --output <path>` 如果因为源码错误或目标路径不可写而失败，stderr 里的重跑 hint 现在会保留同一个 `--output <path>`，不再退回默认 `.qi` 路径。
 - 如果 `ql project emit-interface` / `ql build --emit-interface` / `ql check --sync-interfaces` 是因为默认 `.qi` 输出路径本身写不进去而失败（例如同名目录占位），stderr 现在会明确补 `failing interface output path`，并把 hint 改成“先修输出路径再重跑”，不再误导成 package 源码错误。
 - workspace 根 `ql project emit-interface` 在单个 member 发射失败时不会立刻中断；已成功的 members 会继续输出，最后再汇总失败成员数；只有多失败场景才额外补 `first failing member manifest`。如果某个 member 是因为 package 源码错误而发射失败，stderr 现在会当场先补该 member 的 `failing package manifest`、`failing workspace member manifest`，再给可直接重跑的 hint；如果 member manifest 自身无法加载，局部错误块也会立即补 `failing workspace member manifest`，不需要只靠最终汇总回看。
 - `ql project emit-interface --changed-only` 在写出路径上只重发非 `valid` 接口；搭配 `--check` 时不会写文件，已 `valid` 的接口会报告 `up-to-date interface`。

@@ -718,7 +718,7 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
 
 fn report_build_interface_failure(path: &Path, artifact_path: &Path) {
     if let Ok(manifest) = load_project_manifest(path) {
-        report_package_interface_failure(&manifest.manifest_path, None);
+        report_package_interface_failure(&manifest.manifest_path, None, None);
     }
     eprintln!(
         "note: build artifact remains at `{}`",
@@ -729,6 +729,7 @@ fn report_build_interface_failure(path: &Path, artifact_path: &Path) {
 fn report_package_interface_failure(
     manifest_path: &Path,
     workspace_member_manifest_path: Option<&Path>,
+    requested_output_path: Option<&Path>,
 ) {
     let manifest_path = normalize_path(manifest_path);
     eprintln!("note: failing package manifest: {manifest_path}");
@@ -738,9 +739,10 @@ fn report_package_interface_failure(
             normalize_path(workspace_member_manifest_path)
         );
     }
+    let rerun_command = format_emit_interface_rerun_command(&manifest_path, requested_output_path);
     eprintln!(
-        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
-        manifest_path
+        "hint: rerun `{}` after fixing the package interface error",
+        rerun_command
     );
 }
 
@@ -748,6 +750,7 @@ fn report_package_interface_output_failure(
     manifest_path: &Path,
     workspace_member_manifest_path: Option<&Path>,
     output_path: &Path,
+    requested_output_path: Option<&Path>,
 ) {
     let manifest_path = normalize_path(manifest_path);
     eprintln!("note: failing package manifest: {manifest_path}");
@@ -761,15 +764,16 @@ fn report_package_interface_output_failure(
         "note: failing interface output path: {}",
         normalize_path(output_path)
     );
+    let rerun_command = format_emit_interface_rerun_command(&manifest_path, requested_output_path);
     eprintln!(
-        "hint: rerun `ql project emit-interface {}` after fixing the interface output path",
-        manifest_path
+        "hint: rerun `{}` after fixing the interface output path",
+        rerun_command
     );
 }
 
 fn report_build_interface_output_failure(path: &Path, artifact_path: &Path, output_path: &Path) {
     if let Ok(manifest) = load_project_manifest(path) {
-        report_package_interface_output_failure(&manifest.manifest_path, None, output_path);
+        report_package_interface_output_failure(&manifest.manifest_path, None, output_path, None);
     }
     eprintln!(
         "note: build artifact remains at `{}`",
@@ -846,7 +850,7 @@ fn project_emit_interface_path(
         {
             Ok(result) => report_emit_interface_result(result),
             Err(EmitPackageInterfaceError::Code(code)) => {
-                report_package_interface_failure(&manifest.manifest_path, None);
+                report_package_interface_failure(&manifest.manifest_path, None, output);
                 return Err(code);
             }
             Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
@@ -854,6 +858,7 @@ fn project_emit_interface_path(
                     &manifest.manifest_path,
                     None,
                     &output_path,
+                    output,
                 );
                 return Err(1);
             }
@@ -929,6 +934,7 @@ fn project_emit_interface_path(
                     report_package_interface_failure(
                         &member_manifest.manifest_path,
                         Some(&member_manifest.manifest_path),
+                        None,
                     );
                     emission_failure_count += 1;
                     record_reference_failure_manifest(
@@ -941,6 +947,7 @@ fn project_emit_interface_path(
                         &member_manifest.manifest_path,
                         Some(&member_manifest.manifest_path),
                         &output_path,
+                        None,
                     );
                     emission_failure_count += 1;
                     record_reference_failure_manifest(
@@ -1148,6 +1155,20 @@ fn report_interface_artifact_failure(
     eprintln!("{hint_line}");
 }
 
+fn format_emit_interface_rerun_command(
+    manifest_path: &str,
+    requested_output_path: Option<&Path>,
+) -> String {
+    if let Some(output_path) = requested_output_path {
+        format!(
+            "ql project emit-interface {manifest_path} --output {}",
+            normalize_path(output_path)
+        )
+    } else {
+        format!("ql project emit-interface {manifest_path}")
+    }
+}
+
 fn check_package_interface_artifact(
     manifest: &ql_project::ProjectManifest,
     command_label: &str,
@@ -1337,7 +1358,11 @@ fn sync_reference_interfaces_recursive(
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
                 Err(EmitPackageInterfaceError::Code(_)) => {
-                    report_package_interface_failure(&dependency_manifest.manifest_path, None);
+                    report_package_interface_failure(
+                        &dependency_manifest.manifest_path,
+                        None,
+                        None,
+                    );
                     report_reference_interface_sync_failure(&manifest.manifest_path, reference);
                     result.failure_count += 1;
                     record_reference_failure_manifest(
@@ -1350,6 +1375,7 @@ fn sync_reference_interfaces_recursive(
                         &dependency_manifest.manifest_path,
                         None,
                         &output_path,
+                        None,
                     );
                     report_reference_interface_sync_failure(&manifest.manifest_path, reference);
                     result.failure_count += 1;
