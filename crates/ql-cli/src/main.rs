@@ -1290,6 +1290,7 @@ fn ensure_reference_interfaces_current_recursive(
         if status != InterfaceArtifactStatus::Valid {
             report_reference_interface_artifact_issue(
                 &dependency_manifest,
+                reference,
                 &dependency_package,
                 &manifest_path,
                 &interface_path,
@@ -1435,8 +1436,9 @@ fn workspace_member_manifest_path(path: &Path) -> PathBuf {
 
 fn report_reference_interface_artifact_issue(
     dependency_manifest: &ql_project::ProjectManifest,
+    reference: &str,
     dependency_package: &str,
-    manifest_path: &Path,
+    owner_manifest_path: &Path,
     interface_path: &Path,
     status: InterfaceArtifactStatus,
 ) {
@@ -1482,9 +1484,11 @@ fn report_reference_interface_artifact_issue(
         InterfaceArtifactStatus::Valid => return,
     }
 
+    let owner_manifest_path = normalize_path(owner_manifest_path);
+    eprintln!("note: while checking referenced package `{reference}` from `{owner_manifest_path}`");
     eprintln!(
         "hint: rerun `ql check --sync-interfaces {}` or regenerate `{}` with `ql project emit-interface {}`",
-        normalize_path(manifest_path),
+        owner_manifest_path,
         dependency_package,
         normalize_path(&dependency_manifest.manifest_path)
     );

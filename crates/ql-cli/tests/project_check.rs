@@ -183,7 +183,7 @@ fn check_package_dir_reports_missing_dependency_interface() {
 name = "dep"
 "#,
     );
-    temp.write(
+    let app_manifest = temp.write(
         "workspace/app/qlang.toml",
         r#"
 [package]
@@ -228,6 +228,17 @@ pub fn main() -> Int {
         "--sync-interfaces",
     )
     .expect("missing dependency interface diagnostic should suggest sync");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-missing-interface",
+        "package-aware ql check with missing dependency interface",
+        &normalized_stderr,
+        &format!(
+            "note: while checking referenced package `../dep` from `{}`",
+            app_manifest.display().to_string().replace('\\', "/")
+        ),
+    )
+    .expect("missing dependency interface diagnostic should point back to the owner reference");
 }
 
 #[test]
