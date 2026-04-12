@@ -824,7 +824,7 @@ fn project_emit_interface_path(
     if check_only && failing_member_count > 0 {
         eprintln!("error: interface check found {failing_member_count} failing member(s)");
         if let Some(path) = &first_failing_member_manifest {
-            eprintln!("note: first failing member manifest: {}", path.display());
+            eprintln!("note: first failing member manifest: {}", normalize_path(path));
         }
         return Err(1);
     }
@@ -832,7 +832,7 @@ fn project_emit_interface_path(
     if !check_only && emission_failure_count > 0 {
         eprintln!("error: interface emission found {emission_failure_count} failing member(s)");
         if let Some(path) = &first_failing_member_manifest {
-            eprintln!("note: first failing member manifest: {}", path.display());
+            eprintln!("note: first failing member manifest: {}", normalize_path(path));
         }
         return Err(1);
     }
@@ -941,7 +941,7 @@ fn emit_package_interface_path(
             "error: interface emission found {failing_source_count} failing source file(s)"
         );
         if let Some(path) = &first_failing_source {
-            eprintln!("note: first failing source file: {}", path.display());
+            eprintln!("note: first failing source file: {}", normalize_path(path));
         }
         return Err(1);
     }
@@ -1034,7 +1034,7 @@ fn report_package_interface_check(result: CheckPackageInterfaceResult) -> Result
         } => {
             eprintln!(
                 "error: interface artifact `{}` is {}",
-                path.display(),
+                normalize_path(&path),
                 status.label()
             );
             if let Some(detail) = detail {
@@ -1043,7 +1043,7 @@ fn report_package_interface_check(result: CheckPackageInterfaceResult) -> Result
             report_interface_stale_reasons(&stale_reasons);
             eprintln!(
                 "hint: rerun `ql project emit-interface {}` to regenerate it",
-                manifest_path.display()
+                normalize_path(&manifest_path)
             );
             Err(1)
         }
@@ -1054,10 +1054,10 @@ fn report_interface_stale_reasons(stale_reasons: &[InterfaceArtifactStaleReason]
     for reason in stale_reasons {
         match reason {
             InterfaceArtifactStaleReason::ManifestNewer { path } => {
-                eprintln!("reason: manifest newer than artifact: {}", path.display());
+                eprintln!("reason: manifest newer than artifact: {}", normalize_path(path));
             }
             InterfaceArtifactStaleReason::SourceNewer { path } => {
-                eprintln!("reason: source newer than artifact: {}", path.display());
+                eprintln!("reason: source newer than artifact: {}", normalize_path(path));
             }
         }
     }
@@ -1082,7 +1082,7 @@ fn sync_reference_interfaces(
             result.failure_count
         );
         if let Some(path) = &result.first_failure_manifest {
-            eprintln!("note: first failing reference manifest: {}", path.display());
+            eprintln!("note: first failing reference manifest: {}", normalize_path(path));
         }
         return Err(1);
     }
@@ -1167,7 +1167,7 @@ fn ensure_reference_interfaces_current(manifest: &ql_project::ProjectManifest) -
             result.failure_count
         );
         if let Some(path) = &result.first_failure_manifest {
-            eprintln!("note: first failing reference manifest: {}", path.display());
+            eprintln!("note: first failing reference manifest: {}", normalize_path(path));
         }
         return Err(1);
     }
@@ -1356,8 +1356,8 @@ fn report_reference_manifest_issue(
     eprintln!("detail: {error}");
     eprintln!(
         "hint: fix the reference in `{}` or repair `{}`",
-        owner_manifest_path.display(),
-        reference_manifest_path.display()
+        normalize_path(owner_manifest_path),
+        normalize_path(reference_manifest_path)
     );
 }
 
@@ -1399,13 +1399,13 @@ fn report_reference_interface_artifact_issue(
         InterfaceArtifactStatus::Missing => {
             eprintln!(
                 "error: referenced package `{dependency_package}` is missing interface artifact `{}`",
-                interface_path.display()
+                normalize_path(interface_path)
             );
         }
         InterfaceArtifactStatus::Unreadable => {
             eprintln!(
                 "error: referenced package `{dependency_package}` has unreadable interface artifact `{}`",
-                interface_path.display()
+                normalize_path(interface_path)
             );
             if let Some(detail) = interface_artifact_status_detail(
                 interface_path,
@@ -1417,7 +1417,7 @@ fn report_reference_interface_artifact_issue(
         InterfaceArtifactStatus::Invalid => {
             eprintln!(
                 "error: referenced package `{dependency_package}` has invalid interface artifact `{}`",
-                interface_path.display()
+                normalize_path(interface_path)
             );
             if let Some(detail) =
                 interface_artifact_status_detail(interface_path, InterfaceArtifactStatus::Invalid)
@@ -1430,7 +1430,7 @@ fn report_reference_interface_artifact_issue(
                 interface_artifact_stale_reasons(dependency_manifest, interface_path);
             eprintln!(
                 "error: referenced package `{dependency_package}` has stale interface artifact `{}`",
-                interface_path.display()
+                normalize_path(interface_path)
             );
             report_interface_stale_reasons(&stale_reasons);
         }
@@ -1439,9 +1439,9 @@ fn report_reference_interface_artifact_issue(
 
     eprintln!(
         "hint: rerun `ql check --sync-interfaces {}` or regenerate `{}` with `ql project emit-interface {}`",
-        manifest_path.display(),
+        normalize_path(manifest_path),
         dependency_package,
-        dependency_manifest.manifest_path.display()
+        normalize_path(&dependency_manifest.manifest_path)
     );
 }
 
@@ -1598,7 +1598,26 @@ fn is_ql_source_file(path: &Path) -> bool {
 }
 
 fn normalize_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        ".".to_owned()
+    } else {
+        normalized.to_string_lossy().replace('\\', "/")
+    }
 }
 
 fn render_interface_artifact(package_name: &str, modules: &[(String, String)]) -> String {
@@ -1620,7 +1639,11 @@ fn render_interface_artifact(package_name: &str, modules: &[(String, String)]) -
 }
 
 fn print_diagnostics(path: &Path, source: &str, diagnostics: &[Diagnostic]) {
-    eprint!("{}", render_diagnostics(path, source, diagnostics));
+    let normalized_path = normalize_path(path);
+    eprint!(
+        "{}",
+        render_diagnostics(Path::new(&normalized_path), source, diagnostics)
+    );
 }
 
 fn print_package_analysis_error(error: &PackageAnalysisError) {

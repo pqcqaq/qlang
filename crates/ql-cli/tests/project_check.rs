@@ -464,9 +464,7 @@ pub fn main() -> Int {
         &normalized_stderr,
         &format!(
             "note: first failing reference manifest: {}",
-            app_root
-                .join("..")
-                .join("dep")
+            dep_root
                 .join("qlang.toml")
                 .display()
                 .to_string()
@@ -576,9 +574,7 @@ pub fn main() -> Int {
         &normalized_stderr,
         &format!(
             "note: first failing reference manifest: {}",
-            app_root
-                .join("..")
-                .join("dep")
+            dep_root
                 .join("qlang.toml")
                 .display()
                 .to_string()
@@ -783,8 +779,8 @@ pub fn main() -> Int {
         &normalized_stderr,
         &format!(
             "note: first failing reference manifest: {}",
-            app_root
-                .join("..")
+            temp.path()
+                .join("workspace")
                 .join("broken_ref")
                 .join("qlang.toml")
                 .display()
@@ -900,10 +896,8 @@ pub fn main() -> Int {
         &normalized_stderr,
         &format!(
             "note: first failing reference manifest: {}",
-            app_root
-                .join("..")
-                .join("dep")
-                .join("..")
+            temp.path()
+                .join("workspace")
                 .join("broken_ref")
                 .join("qlang.toml")
                 .display()
@@ -922,8 +916,6 @@ fn check_package_dir_sync_interfaces_points_dependency_source_failures_at_owner_
     let app_root = temp.path().join("workspace").join("app");
     std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
     std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
-    let synced_dep_manifest = app_root.join("..").join("dep").join("qlang.toml");
-    let synced_first_failure = app_root.join("..").join("dep").join("src").join("a_broken.ql");
 
     temp.write(
         "workspace/dep/qlang.toml",
@@ -1014,7 +1006,9 @@ pub fn main() -> Int {
         &normalized_stderr,
         &format!(
             "note: first failing source file: {}",
-            synced_first_failure
+            dep_root
+                .join("src")
+                .join("a_broken.ql")
                 .display()
                 .to_string()
                 .replace('\\', "/")
@@ -1037,8 +1031,8 @@ pub fn main() -> Int {
         &normalized_stderr,
         &format!(
             "hint: repair `{}` or rerun `ql project emit-interface {}` directly",
-            synced_dep_manifest.display().to_string().replace('\\', "/"),
-            synced_dep_manifest.display().to_string().replace('\\', "/")
+            dep_root.join("qlang.toml").display().to_string().replace('\\', "/"),
+            dep_root.join("qlang.toml").display().to_string().replace('\\', "/")
         ),
     )
     .expect("sync path should suggest repairing the dependency manifest directly");
