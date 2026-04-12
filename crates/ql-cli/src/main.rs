@@ -446,6 +446,7 @@ fn check_workspace_manifest(
     };
 
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let check_command_label = format_check_command_label(sync_interfaces);
     let mut sync_visited = BTreeSet::new();
     let mut synced_interfaces = BTreeSet::new();
     let mut failing_members = 0usize;
@@ -474,6 +475,26 @@ fn check_workspace_manifest(
                 continue;
             }
         };
+
+        if let Err(error) = package_name(&member_manifest) {
+            eprintln!("error: {check_command_label} {error}");
+            let rerun_command = format_workspace_member_check_rerun_command(
+                &normalize_path(&member_manifest.manifest_path),
+                sync_interfaces,
+            );
+            let rerun_hint =
+                format!("hint: rerun `{rerun_command}` after fixing the workspace member manifest");
+            report_workspace_member_failure(
+                &member_manifest.manifest_path,
+                Some(rerun_hint.as_str()),
+            );
+            failing_members += 1;
+            record_reference_failure_manifest(
+                &mut first_failing_member_manifest,
+                member_manifest.manifest_path.clone(),
+            );
+            continue;
+        }
 
         if !sync_interfaces && ensure_reference_interfaces_current(&member_manifest).is_err() {
             report_workspace_member_failure(&member_manifest.manifest_path, None);
@@ -1327,17 +1348,27 @@ fn format_workspace_member_emit_rerun_command(
     format_project_emit_interface_command(Some(manifest_path), None, changed_only, check_only)
 }
 
-fn format_workspace_member_check_rerun_command(
-    manifest_path: &str,
-    sync_interfaces: bool,
-) -> String {
+fn format_check_command(sync_interfaces: bool, manifest_path: Option<&str>) -> String {
     let mut command = String::from("ql check");
     if sync_interfaces {
         command.push_str(" --sync-interfaces");
     }
-    command.push(' ');
-    command.push_str(manifest_path);
+    if let Some(manifest_path) = manifest_path {
+        command.push(' ');
+        command.push_str(manifest_path);
+    }
     command
+}
+
+fn format_check_command_label(sync_interfaces: bool) -> String {
+    format!("`{}`", format_check_command(sync_interfaces, None))
+}
+
+fn format_workspace_member_check_rerun_command(
+    manifest_path: &str,
+    sync_interfaces: bool,
+) -> String {
+    format_check_command(sync_interfaces, Some(manifest_path))
 }
 
 fn check_package_interface_artifact(
