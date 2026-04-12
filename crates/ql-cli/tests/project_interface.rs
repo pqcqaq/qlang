@@ -774,6 +774,91 @@ pub fn exported() -> Int
 }
 
 #[test]
+fn project_emit_interface_changed_only_preserves_source_failure_hints() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-changed-only-package-source-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for changed-only source failure test");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/src/broken.ql",
+        r#"
+package demo.app
+
+pub fn broken(value: MissingType) -> Int {
+    return value
+}
+"#,
+    );
+    let manifest_path = project_root.join("qlang.toml");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--changed-only"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --changed-only` package with source failure",
+    );
+    let (_stdout, stderr) = expect_exit_code(
+        "project-interface-changed-only-package-source-failure",
+        "changed-only package interface emission with source failure",
+        &output,
+        1,
+    )
+    .expect("changed-only package interface emission with source failure should fail");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let package_note = format!("note: failing package manifest: {manifest_display}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {} --changed-only` after fixing the package interface error",
+        manifest_display
+    );
+    let default_rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        manifest_display
+    );
+    expect_stderr_contains(
+        "project-interface-changed-only-package-source-failure",
+        "changed-only package interface emission with source failure",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("changed-only package source failures should preserve `--changed-only`");
+    assert!(
+        !normalized_stderr.contains(&default_rerun_hint),
+        "changed-only package source failures should not fall back to the default rerun hint, got:\n{stderr}"
+    );
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("changed-only package source failure should include the package manifest note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("changed-only package source failure should include the rerun hint");
+    assert!(
+        package_note_index < rerun_hint_index,
+        "expected changed-only package source failure context before rerun hint, got:\n{stderr}"
+    );
+}
+
+#[test]
 fn project_emit_interface_check_accepts_valid_package_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-check-package");
@@ -1645,6 +1730,166 @@ pub fn newer() -> Int {
     assert!(
         tool_actual.contains("pub fn newer() -> Int"),
         "expected stale workspace member interface to be regenerated, got:\n{tool_actual}"
+    );
+}
+
+#[test]
+fn project_emit_interface_changed_only_preserves_workspace_output_path_hints() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-changed-only-workspace-output-path");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let tool_root = project_root.join("packages").join("tool");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for changed-only workspace output-path test");
+    std::fs::create_dir_all(tool_root.join("src"))
+        .expect("create tool package source directory for changed-only workspace output-path test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/app.qi",
+        "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+",
+    );
+    temp.write(
+        "workspace-only/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    let tool_interface = tool_root.join("tool.qi");
+    std::fs::create_dir_all(&tool_interface)
+        .expect("create blocking interface directory for changed-only workspace output-path test");
+    let tool_manifest = tool_root.join("qlang.toml");
+    let tool_manifest_display = tool_manifest.to_string_lossy().replace('\\', "/");
+    let tool_interface_display = tool_interface.to_string_lossy().replace('\\', "/");
+    let app_interface_display = app_root
+        .join("app.qi")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--changed-only"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --changed-only` workspace-only manifest with blocked member output path",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-changed-only-workspace-output-path",
+        "changed-only workspace interface emission with blocked member output path",
+        &output,
+        1,
+    )
+    .expect("changed-only workspace interface emission with blocked member output path should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-changed-only-workspace-output-path",
+        &normalized_stdout,
+        &[&format!("up-to-date interface: {app_interface_display}")],
+    )
+    .expect("changed-only workspace output-path failures should still report skipped valid members");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let package_note = format!("note: failing package manifest: {tool_manifest_display}");
+    let member_note = format!("note: failing workspace member manifest: {tool_manifest_display}");
+    let output_note = format!("note: failing interface output path: {tool_interface_display}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {} --changed-only` after fixing the interface output path",
+        tool_manifest_display
+    );
+    let default_rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the interface output path",
+        tool_manifest_display
+    );
+    expect_stderr_contains(
+        "project-interface-changed-only-workspace-output-path",
+        "changed-only workspace interface emission with blocked member output path",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("changed-only workspace output-path failures should preserve `--changed-only`");
+    assert!(
+        !normalized_stderr.contains(&default_rerun_hint),
+        "changed-only workspace output-path failures should not fall back to the default rerun hint, got:\n{stderr}"
+    );
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("changed-only workspace output-path failure should include the package manifest note");
+    let member_note_index = normalized_stderr
+        .find(&member_note)
+        .expect("changed-only workspace output-path failure should include the workspace member note");
+    let output_note_index = normalized_stderr
+        .find(&output_note)
+        .expect("changed-only workspace output-path failure should include the output-path note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("changed-only workspace output-path failure should include the rerun hint");
+    assert!(
+        package_note_index < member_note_index
+            && member_note_index < output_note_index
+            && output_note_index < rerun_hint_index,
+        "expected changed-only workspace output-path context before rerun hint, got:\n{stderr}"
+    );
+    expect_stderr_contains(
+        "project-interface-changed-only-workspace-output-path",
+        "changed-only workspace interface emission with blocked member output path",
+        &stderr,
+        "interface emission found 1 failing member(s)",
+    )
+    .expect("changed-only workspace output-path failures should still summarize failing members");
+    expect_stderr_not_contains(
+        "project-interface-changed-only-workspace-output-path",
+        "changed-only workspace interface emission with blocked member output path",
+        &normalized_stderr,
+        "note: first failing member manifest:",
+    )
+    .expect("single failing changed-only workspace output-path failures should not repeat the manifest in the final summary");
+    assert!(
+        tool_interface.is_dir(),
+        "changed-only workspace output-path failure should preserve `{}` as a directory",
+        tool_interface.display()
     );
 }
 

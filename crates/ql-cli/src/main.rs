@@ -718,7 +718,7 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
 
 fn report_build_interface_failure(path: &Path, artifact_path: &Path) {
     if let Ok(manifest) = load_project_manifest(path) {
-        report_package_interface_failure(&manifest.manifest_path, None, None, None);
+        report_package_interface_failure(&manifest.manifest_path, None, None, false, None);
     }
     eprintln!(
         "note: build artifact remains at `{}`",
@@ -730,6 +730,7 @@ fn report_package_interface_failure(
     manifest_path: &Path,
     workspace_member_manifest_path: Option<&Path>,
     requested_output_path: Option<&Path>,
+    changed_only: bool,
     additional_context_note: Option<&str>,
 ) {
     let manifest_path = normalize_path(manifest_path);
@@ -743,7 +744,8 @@ fn report_package_interface_failure(
     if let Some(additional_context_note) = additional_context_note {
         eprintln!("{additional_context_note}");
     }
-    let rerun_command = format_emit_interface_rerun_command(&manifest_path, requested_output_path);
+    let rerun_command =
+        format_emit_interface_rerun_command(&manifest_path, requested_output_path, changed_only);
     eprintln!(
         "hint: rerun `{}` after fixing the package interface error",
         rerun_command
@@ -755,6 +757,7 @@ fn report_package_interface_output_failure(
     workspace_member_manifest_path: Option<&Path>,
     output_path: &Path,
     requested_output_path: Option<&Path>,
+    changed_only: bool,
     additional_context_note: Option<&str>,
 ) {
     let manifest_path = normalize_path(manifest_path);
@@ -772,7 +775,8 @@ fn report_package_interface_output_failure(
     if let Some(additional_context_note) = additional_context_note {
         eprintln!("{additional_context_note}");
     }
-    let rerun_command = format_emit_interface_rerun_command(&manifest_path, requested_output_path);
+    let rerun_command =
+        format_emit_interface_rerun_command(&manifest_path, requested_output_path, changed_only);
     eprintln!(
         "hint: rerun `{}` after fixing the interface output path",
         rerun_command
@@ -786,6 +790,7 @@ fn report_build_interface_output_failure(path: &Path, artifact_path: &Path, outp
             None,
             output_path,
             None,
+            false,
             None,
         );
     }
@@ -865,7 +870,13 @@ fn project_emit_interface_path(
         {
             Ok(result) => report_emit_interface_result(result),
             Err(EmitPackageInterfaceError::Code(code)) => {
-                report_package_interface_failure(&manifest.manifest_path, None, output, None);
+                report_package_interface_failure(
+                    &manifest.manifest_path,
+                    None,
+                    output,
+                    changed_only,
+                    None,
+                );
                 return Err(code);
             }
             Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
@@ -874,6 +885,7 @@ fn project_emit_interface_path(
                     None,
                     &output_path,
                     output,
+                    changed_only,
                     None,
                 );
                 return Err(1);
@@ -956,6 +968,7 @@ fn project_emit_interface_path(
                         &member_manifest.manifest_path,
                         Some(&member_manifest.manifest_path),
                         None,
+                        changed_only,
                         None,
                     );
                     emission_failure_count += 1;
@@ -970,6 +983,7 @@ fn project_emit_interface_path(
                         Some(&member_manifest.manifest_path),
                         &output_path,
                         None,
+                        changed_only,
                         None,
                     );
                     emission_failure_count += 1;
@@ -1181,15 +1195,16 @@ fn report_interface_artifact_failure(
 fn format_emit_interface_rerun_command(
     manifest_path: &str,
     requested_output_path: Option<&Path>,
+    changed_only: bool,
 ) -> String {
-    if let Some(output_path) = requested_output_path {
-        format!(
-            "ql project emit-interface {manifest_path} --output {}",
-            normalize_path(output_path)
-        )
-    } else {
-        format!("ql project emit-interface {manifest_path}")
+    let mut command = format!("ql project emit-interface {manifest_path}");
+    if changed_only {
+        command.push_str(" --changed-only");
     }
+    if let Some(output_path) = requested_output_path {
+        command.push_str(&format!(" --output {}", normalize_path(output_path)));
+    }
+    command
 }
 
 fn format_emit_interface_regenerate_command(manifest_path: &str, changed_only: bool) -> String {
@@ -1397,6 +1412,7 @@ fn sync_reference_interfaces_recursive(
                         &dependency_manifest.manifest_path,
                         None,
                         None,
+                        false,
                         Some(owner_note.as_str()),
                     );
                     result.failure_count += 1;
@@ -1413,6 +1429,7 @@ fn sync_reference_interfaces_recursive(
                         None,
                         &output_path,
                         None,
+                        false,
                         Some(owner_note.as_str()),
                     );
                     result.failure_count += 1;
