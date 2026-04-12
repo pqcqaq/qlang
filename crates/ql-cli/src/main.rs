@@ -449,6 +449,7 @@ fn check_workspace_manifest(
     let mut sync_visited = BTreeSet::new();
     let mut synced_interfaces = BTreeSet::new();
     let mut failing_members = 0usize;
+    let mut first_failing_member_manifest = None;
 
     for member in &workspace.members {
         let member_path = manifest_dir.join(member);
@@ -457,12 +458,20 @@ fn check_workspace_manifest(
             Err(error) => {
                 eprintln!("error: {error}");
                 failing_members += 1;
+                record_reference_failure_manifest(
+                    &mut first_failing_member_manifest,
+                    workspace_member_manifest_path(&member_path),
+                );
                 continue;
             }
         };
 
         if !sync_interfaces && ensure_reference_interfaces_current(&member_manifest).is_err() {
             failing_members += 1;
+            record_reference_failure_manifest(
+                &mut first_failing_member_manifest,
+                member_manifest.manifest_path.clone(),
+            );
             continue;
         }
 
@@ -471,6 +480,10 @@ fn check_workspace_manifest(
                 Ok(paths) => paths,
                 Err(_) => {
                     failing_members += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest.manifest_path.clone(),
+                    );
                     continue;
                 }
             };
@@ -494,6 +507,10 @@ fn check_workspace_manifest(
                         source_root.display()
                     );
                     failing_members += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest.manifest_path.clone(),
+                    );
                     continue;
                 }
                 for module in package.modules() {
@@ -509,12 +526,22 @@ fn check_workspace_manifest(
             Err(error) => {
                 print_package_analysis_error(&error);
                 failing_members += 1;
+                record_reference_failure_manifest(
+                    &mut first_failing_member_manifest,
+                    member_manifest.manifest_path.clone(),
+                );
             }
         }
     }
 
     if failing_members > 0 {
         eprintln!("error: workspace check found {failing_members} failing member(s)");
+        if let Some(path) = &first_failing_member_manifest {
+            eprintln!(
+                "note: first failing member manifest: {}",
+                normalize_path(path)
+            );
+        }
         return Err(1);
     }
 

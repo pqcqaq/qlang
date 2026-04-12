@@ -1858,4 +1858,18 @@ pub fn main( -> Int {
         "workspace check found 2 failing member(s)",
     )
     .expect("workspace-root ql check should summarize all failing members");
+    expect_stderr_contains(
+        "project-check-workspace-failures",
+        "workspace-root ql check with multiple failing members",
+        &normalized_stderr,
+        &format!(
+            "note: first failing member manifest: {}",
+            missing_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace-root ql check should point to the first failing member manifest");
 }
