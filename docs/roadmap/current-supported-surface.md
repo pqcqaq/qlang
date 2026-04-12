@@ -58,7 +58,7 @@
 - workspace 根 `ql project graph` 在单个 member manifest 无法加载时不会整张图失败；已解析 members 会继续输出，坏 member 会落成 `package: <unresolved>` + `member_error`。
 - `ql project graph` 对 `reference_interfaces` 的 `unresolved-manifest` / `unresolved-package` 现在也会带 `detail`，直接说明是引用 manifest 语法坏了，还是引用目标没有 `[package].name`。
 - `ql project emit-interface` 支持 package 和 workspace 批量写出；`-o/--output` 仍仅支持 package。package 模式下若同一个 package 里有多个坏源码阻塞 `.qi` 发射，CLI 现在会继续打印后续坏源码诊断，最后再汇总 failing source file 数，并补一个 `first failing source file`；direct package emit 失败时现在也会补 `failing package manifest` 和可直接重跑的 `ql project emit-interface <manifest>` hint。
-- workspace 根 `ql project emit-interface` 在单个 member 发射失败时不会立刻中断；已成功的 members 会继续输出，最后再汇总失败成员数，并补一个 `first failing member manifest`。
+- workspace 根 `ql project emit-interface` 在单个 member 发射失败时不会立刻中断；已成功的 members 会继续输出，最后再汇总失败成员数，并补一个 `first failing member manifest`。如果某个 member 是因为 package 源码错误而发射失败，stderr 现在也会当场补该 member 的 `failing package manifest` 和可直接重跑的 hint，不需要只靠最终汇总回看。
 - `ql project emit-interface --changed-only` 在写出路径上只重发非 `valid` 接口；搭配 `--check` 时不会写文件，已 `valid` 的接口会报告 `up-to-date interface`。
 - `ql project emit-interface --check` 只校验当前 package/workspace 的默认 `.qi` 是否都处于 `valid` 状态；若发现 `stale` 会说明原因，若遇到 `invalid` / `unreadable` 也会直接打印 detail。
 - workspace 根 `ql project emit-interface --check` 在单个 member manifest 无法加载时也不会立刻中断；已检查 members 会先输出，最后统一汇总 failing members，并补一个 `first failing member manifest`。

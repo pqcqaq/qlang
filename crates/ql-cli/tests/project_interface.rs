@@ -791,6 +791,158 @@ name = "broken"
 }
 
 #[test]
+fn project_emit_interface_points_workspace_member_source_failures_at_manifest() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-source-failure");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let broken_root = project_root.join("packages").join("broken");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for workspace source failure test");
+    std::fs::create_dir_all(broken_root.join("src"))
+        .expect("create broken package source directory for workspace source failure test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[package]
+name = "broken"
+"#,
+    );
+    let first_failure = temp.write(
+        "workspace-only/packages/broken/src/a_broken.ql",
+        r#"
+package demo.broken
+
+pub fn broken_first(value: MissingFirst) -> Int {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/broken/src/z_broken.ql",
+        r#"
+package demo.broken
+
+pub fn broken_second(value: MissingSecond) -> Int {
+    return value
+}
+"#,
+    );
+    let app_interface = app_root.join("app.qi");
+    let broken_manifest = broken_root.join("qlang.toml");
+    let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
+    let normalized_broken_manifest = broken_manifest.display().to_string().replace('\\', "/");
+    let normalized_first_failure = first_failure.display().to_string().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` workspace member source failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-workspace-source-failure",
+        "workspace interface emission with member source failure",
+        &output,
+        1,
+    )
+    .expect("workspace interface emission with member source failure should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-workspace-source-failure",
+        &normalized_stdout,
+        &[&format!("wrote interface: {normalized_app_interface}")],
+    )
+    .expect("workspace interface emission should still write healthy members");
+    expect_stderr_contains(
+        "project-interface-workspace-source-failure",
+        "workspace interface emission with member source failure",
+        &stderr,
+        "a_broken.ql",
+    )
+    .expect("workspace interface emission should surface the first failing member source");
+    expect_stderr_contains(
+        "project-interface-workspace-source-failure",
+        "workspace interface emission with member source failure",
+        &stderr,
+        "z_broken.ql",
+    )
+    .expect("workspace interface emission should continue surfacing later member source failures");
+    expect_stderr_contains(
+        "project-interface-workspace-source-failure",
+        "workspace interface emission with member source failure",
+        &stderr,
+        "interface emission found 2 failing source file(s)",
+    )
+    .expect("workspace interface emission should preserve member source aggregation");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-workspace-source-failure",
+        "workspace interface emission with member source failure",
+        &normalized_stderr,
+        &format!("note: first failing source file: {normalized_first_failure}"),
+    )
+    .expect("workspace interface emission should point to the first failing member source file");
+    expect_stderr_contains(
+        "project-interface-workspace-source-failure",
+        "workspace interface emission with member source failure",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {normalized_broken_manifest}"),
+    )
+    .expect("workspace interface emission should point member source failures at the member manifest");
+    expect_stderr_contains(
+        "project-interface-workspace-source-failure",
+        "workspace interface emission with member source failure",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            normalized_broken_manifest
+        ),
+    )
+    .expect("workspace interface emission should suggest rerunning the failing member manifest directly");
+    expect_stderr_contains(
+        "project-interface-workspace-source-failure",
+        "workspace interface emission with member source failure",
+        &stderr,
+        "interface emission found 1 failing member(s)",
+    )
+    .expect("workspace interface emission should still summarize failing members");
+    expect_stderr_contains(
+        "project-interface-workspace-source-failure",
+        "workspace interface emission with member source failure",
+        &normalized_stderr,
+        &format!("note: first failing member manifest: {normalized_broken_manifest}"),
+    )
+    .expect("workspace interface emission should still point to the failing member manifest in the final summary");
+}
+
+#[test]
 fn project_emit_interface_changed_only_rewrites_only_stale_workspace_members() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-changed-only-workspace");

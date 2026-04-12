@@ -813,18 +813,31 @@ fn project_emit_interface_path(
                 );
             }
         } else {
+            let member_manifest = match load_project_manifest(&manifest_dir.join(member)) {
+                Ok(manifest) => manifest,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    emission_failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest_path.clone(),
+                    );
+                    continue;
+                }
+            };
             match emit_package_interface_path(
-                &manifest_dir.join(member),
+                &member_manifest.manifest_path,
                 None,
                 "`ql project emit-interface`",
                 changed_only,
             ) {
                 Ok(result) => report_emit_interface_result(result),
                 Err(_) => {
+                    report_package_interface_failure(&member_manifest.manifest_path);
                     emission_failure_count += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
-                        member_manifest_path.clone(),
+                        member_manifest.manifest_path.clone(),
                     );
                 }
             }
