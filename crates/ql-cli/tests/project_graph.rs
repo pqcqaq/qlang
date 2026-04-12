@@ -589,6 +589,7 @@ name = "broken_ref"
             "manifest: ../dep/qlang.toml",
             "status: valid",
             "transitive_reference_failures: 1",
+            "first_transitive_failure_manifest: ../broken_ref/qlang.toml",
         ],
     )
     .expect("project graph should summarize transitive reference failures on direct dependencies");
