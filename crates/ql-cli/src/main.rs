@@ -1427,6 +1427,10 @@ fn report_reference_manifest_issue(
     eprintln!("error: failed to load referenced package `{reference}`");
     eprintln!("detail: {error}");
     eprintln!(
+        "note: failing reference manifest: {}",
+        normalize_path(reference_manifest_path)
+    );
+    eprintln!(
         "hint: fix the reference in `{}` or repair `{}`",
         normalize_path(owner_manifest_path),
         normalize_path(reference_manifest_path)
@@ -1500,6 +1504,10 @@ fn report_reference_interface_artifact_issue(
         InterfaceArtifactStatus::Valid => return,
     }
 
+    eprintln!(
+        "note: failing referenced package manifest: {}",
+        normalize_path(&dependency_manifest.manifest_path)
+    );
     let owner_manifest_path = normalize_path(owner_manifest_path);
     eprintln!("note: while checking referenced package `{reference}` from `{owner_manifest_path}`");
     eprintln!(

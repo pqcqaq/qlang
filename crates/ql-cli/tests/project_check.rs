@@ -234,6 +234,22 @@ pub fn main() -> Int {
         "package-aware ql check with missing dependency interface",
         &normalized_stderr,
         &format!(
+            "note: failing referenced package manifest: {}",
+            dep_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect(
+        "missing dependency interface diagnostic should point to the referenced package manifest",
+    );
+    expect_stderr_contains(
+        "project-check-missing-interface",
+        "package-aware ql check with missing dependency interface",
+        &normalized_stderr,
+        &format!(
             "note: while checking referenced package `../dep` from `{}`",
             app_manifest.display().to_string().replace('\\', "/")
         ),
@@ -303,6 +319,22 @@ pub fn main() -> Int {
     )
     .expect("invalid referenced manifest should surface the manifest detail");
     let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-invalid-reference-manifest",
+        "package-aware ql check with invalid referenced manifest",
+        &normalized_stderr,
+        &format!(
+            "note: failing reference manifest: {}",
+            temp.path()
+                .join("workspace")
+                .join("workspace_ref")
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("invalid referenced manifest should point to the broken manifest path");
     expect_stderr_contains(
         "project-check-invalid-reference-manifest",
         "package-aware ql check with invalid referenced manifest",
@@ -389,6 +421,21 @@ pub fn main() -> Int {
         "--sync-interfaces",
     )
     .expect("invalid dependency interface diagnostic should suggest sync");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-invalid-interface",
+        "package-aware ql check with invalid dependency interface",
+        &normalized_stderr,
+        &format!(
+            "note: failing referenced package manifest: {}",
+            dep_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("invalid dependency interface should point to the referenced package manifest");
 }
 
 #[test]
@@ -660,6 +707,22 @@ pub fn main() -> Int {
     )
     .expect("sync path should surface the manifest parse detail");
     let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-sync-invalid-reference-manifest",
+        "package-aware ql check sync with invalid referenced manifest",
+        &normalized_stderr,
+        &format!(
+            "note: failing reference manifest: {}",
+            temp.path()
+                .join("workspace")
+                .join("broken_ref")
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("sync path should point to the broken manifest path");
     expect_stderr_contains(
         "project-check-sync-invalid-reference-manifest",
         "package-aware ql check sync with invalid referenced manifest",
