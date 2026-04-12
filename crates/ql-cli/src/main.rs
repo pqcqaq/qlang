@@ -1043,11 +1043,6 @@ fn sync_reference_interfaces_recursive(
                 continue;
             }
         };
-        let nested_failure_count_before = result.failure_count;
-        sync_reference_interfaces_recursive(&dependency_manifest, visited, result);
-        if result.failure_count > nested_failure_count_before {
-            continue;
-        }
         if interface_artifact_status(&dependency_manifest, &interface_path)
             != InterfaceArtifactStatus::Valid
         {
@@ -1063,6 +1058,7 @@ fn sync_reference_interfaces_recursive(
                 Err(_) => result.failure_count += 1,
             }
         }
+        sync_reference_interfaces_recursive(&dependency_manifest, visited, result);
     }
 }
 
@@ -1131,7 +1127,6 @@ fn ensure_reference_interfaces_current_recursive(
                 status,
             );
             failure_count += 1;
-            continue;
         }
         failure_count +=
             ensure_reference_interfaces_current_recursive(&dependency_manifest, visited);

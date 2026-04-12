@@ -460,6 +460,101 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn check_package_dir_reports_transitive_reference_failures_when_direct_interface_is_missing() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-transitive-reference-failures");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(temp.path().join("workspace").join("broken_ref"))
+        .expect("create broken reference directory");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+
+[references]
+packages = ["../broken_ref"]
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/lib.ql",
+        r#"
+package demo.dep
+
+pub fn exported() -> Int {
+    return 7
+}
+"#,
+    );
+    temp.write(
+        "workspace/broken_ref/qlang.toml",
+        r#"
+[package
+name = "broken_ref"
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check"]).arg(&app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check` transitive reference failures with missing direct interface",
+    );
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-transitive-reference-failures",
+        "package-aware ql check with transitive reference failures",
+        &output,
+        1,
+    )
+    .expect("transitive reference failures should fail package-aware ql check");
+    expect_stderr_contains(
+        "project-check-transitive-reference-failures",
+        "package-aware ql check with transitive reference failures",
+        &stderr,
+        "referenced package `dep` is missing interface artifact",
+    )
+    .expect("package-aware ql check should still surface the direct missing interface");
+    expect_stderr_contains(
+        "project-check-transitive-reference-failures",
+        "package-aware ql check with transitive reference failures",
+        &stderr,
+        "failed to load referenced package `../broken_ref`",
+    )
+    .expect("package-aware ql check should continue into transitive broken references");
+    expect_stderr_contains(
+        "project-check-transitive-reference-failures",
+        "package-aware ql check with transitive reference failures",
+        &stderr,
+        "interface check found 2 failing referenced package(s)",
+    )
+    .expect("package-aware ql check should summarize direct and transitive failures");
+}
+
+#[test]
 fn check_package_dir_sync_interfaces_reports_invalid_referenced_manifest() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-check-sync-invalid-reference-manifest");
@@ -647,6 +742,106 @@ pub fn main() -> Int {
         "interface sync found 2 failing referenced package(s)",
     )
     .expect("sync path should summarize all failing references");
+}
+
+#[test]
+fn check_package_dir_sync_interfaces_emits_direct_dependency_before_transitive_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-sync-transitive-reference-failures");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("app");
+    let interface_path = dep_root.join("dep.qi");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(temp.path().join("workspace").join("broken_ref"))
+        .expect("create broken reference directory");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+
+[references]
+packages = ["../broken_ref"]
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/lib.ql",
+        r#"
+package demo.dep
+
+pub fn exported() -> Int {
+    return 7
+}
+"#,
+    );
+    temp.write(
+        "workspace/broken_ref/qlang.toml",
+        r#"
+[package
+name = "broken_ref"
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check", "--sync-interfaces"]).arg(&app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --sync-interfaces` transitive reference failures",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-sync-transitive-reference-failures",
+        "package-aware ql check sync with transitive reference failures",
+        &output,
+        1,
+    )
+    .expect("transitive reference failures should still fail package-aware sync");
+    expect_stdout_contains_all(
+        "project-check-sync-transitive-reference-failures",
+        &stdout,
+        &["wrote interface: ", "dep.qi"],
+    )
+    .expect("sync path should still emit the direct dependency interface");
+    assert!(
+        interface_path.is_file(),
+        "expected synced dependency interface at `{}`",
+        interface_path.display()
+    );
+    expect_stderr_contains(
+        "project-check-sync-transitive-reference-failures",
+        "package-aware ql check sync with transitive reference failures",
+        &stderr,
+        "failed to load referenced package `../broken_ref`",
+    )
+    .expect("sync path should continue into transitive broken references");
+    expect_stderr_contains(
+        "project-check-sync-transitive-reference-failures",
+        "package-aware ql check sync with transitive reference failures",
+        &stderr,
+        "interface sync found 1 failing referenced package(s)",
+    )
+    .expect("sync path should only summarize the remaining transitive failure");
 }
 
 #[test]
