@@ -1142,6 +1142,11 @@ fn sync_reference_interfaces_recursive(
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
                 Err(_) => {
+                    report_reference_interface_sync_failure(
+                        &manifest.manifest_path,
+                        reference,
+                        &dependency_manifest.manifest_path,
+                    );
                     result.failure_count += 1;
                     record_reference_failure_manifest(
                         &mut result.first_failure_manifest,
@@ -1353,6 +1358,21 @@ fn report_reference_manifest_issue(
         "hint: fix the reference in `{}` or repair `{}`",
         owner_manifest_path.display(),
         reference_manifest_path.display()
+    );
+}
+
+fn report_reference_interface_sync_failure(
+    owner_manifest_path: &Path,
+    reference: &str,
+    dependency_manifest_path: &Path,
+) {
+    let owner_manifest_path = normalize_path(owner_manifest_path);
+    let dependency_manifest_path = normalize_path(dependency_manifest_path);
+    eprintln!(
+        "note: while syncing referenced package `{reference}` from `{owner_manifest_path}`"
+    );
+    eprintln!(
+        "hint: repair `{dependency_manifest_path}` or rerun `ql project emit-interface {dependency_manifest_path}` directly"
     );
 }
 

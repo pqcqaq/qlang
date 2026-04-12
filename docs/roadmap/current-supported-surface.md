@@ -66,7 +66,7 @@
 - `ql check` 现会在分析前显式拒绝本地依赖包的非 `valid` 默认 `.qi`（`missing` / `invalid` / `unreadable` / `stale`），并统一给出 `--sync-interfaces` / `ql project emit-interface` 修复提示；单 package 若有多个 direct / transitive failing references，也会继续逐个报告并在末尾汇总 failing referenced package 数，同时补一个 `first failing reference manifest` 指向第一处要修的 manifest。
 - `ql check` / `ql check --sync-interfaces` 现在也会把坏的引用 manifest 纳入 package-aware 诊断面：会直接说明是引用 manifest 语法错误，还是引用目标没有 `[package].name`，并指出需要修复的 owner/reference manifest。
 - workspace 根路径上的 `ql check` 不再在首个 failing member 处停止，而会继续检查其余 members，最后输出失败成员总数。
-- `ql check --sync-interfaces` 会在分析前递归同步本地依赖包的默认 `.qi`，避免把这些非 `valid` artifact 留到后续分析阶段才暴露；如果同一个 package 里同时存在可同步和不可修复的引用，已成功写出的 `.qi` 仍会输出，坏引用会继续逐个报告并在末尾汇总；当中间依赖自己的 `.qi` 缺失但更深层仍有坏引用时，当前可同步的上游 `.qi` 也会先写出，再汇总剩余 transitive failures；最终汇总同样会补一个 `first failing reference manifest`。
+- `ql check --sync-interfaces` 会在分析前递归同步本地依赖包的默认 `.qi`，避免把这些非 `valid` artifact 留到后续分析阶段才暴露；如果同一个 package 里同时存在可同步和不可修复的引用，已成功写出的 `.qi` 仍会输出，坏引用会继续逐个报告并在末尾汇总；当中间依赖自己的 `.qi` 缺失但更深层仍有坏引用时，当前可同步的上游 `.qi` 也会先写出，再汇总剩余 transitive failures；如果某个依赖在同步阶段因为自身源码错误而无法发射 `.qi`，stderr 现在也会把这次失败重新指回 owner manifest 和 reference 文本，避免只有依赖内部 diagnostics；最终汇总同样会补一个 `first failing reference manifest`。
 
 ### dependency-backed tooling
 

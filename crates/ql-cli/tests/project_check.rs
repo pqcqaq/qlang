@@ -915,6 +915,143 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn check_package_dir_sync_interfaces_points_dependency_source_failures_at_owner_reference() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-sync-source-failure-context");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    let synced_dep_manifest = app_root.join("..").join("dep").join("qlang.toml");
+    let synced_first_failure = app_root.join("..").join("dep").join("src").join("a_broken.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/a_broken.ql",
+        r#"
+package demo.dep
+
+pub fn broken_first(value: MissingFirst) -> Int {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/z_broken.ql",
+        r#"
+package demo.dep
+
+pub fn broken_second(value: MissingSecond) -> Int {
+    return value
+}
+"#,
+    );
+    let app_manifest = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check", "--sync-interfaces"]).arg(&app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --sync-interfaces` dependency source failure context",
+    );
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-sync-source-failure-context",
+        "package-aware ql check sync with dependency source failures",
+        &output,
+        1,
+    )
+    .expect("dependency source failures should fail package-aware sync");
+    expect_stderr_contains(
+        "project-check-sync-source-failure-context",
+        "package-aware ql check sync with dependency source failures",
+        &stderr,
+        "a_broken.ql",
+    )
+    .expect("sync path should surface the first failing dependency source file");
+    expect_stderr_contains(
+        "project-check-sync-source-failure-context",
+        "package-aware ql check sync with dependency source failures",
+        &stderr,
+        "z_broken.ql",
+    )
+    .expect("sync path should continue surfacing later dependency source failures");
+    expect_stderr_contains(
+        "project-check-sync-source-failure-context",
+        "package-aware ql check sync with dependency source failures",
+        &stderr,
+        "interface emission found 2 failing source file(s)",
+    )
+    .expect("sync path should preserve package-level source failure aggregation");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-sync-source-failure-context",
+        "package-aware ql check sync with dependency source failures",
+        &normalized_stderr,
+        &format!(
+            "note: first failing source file: {}",
+            synced_first_failure
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("sync path should point to the first failing dependency source file");
+    expect_stderr_contains(
+        "project-check-sync-source-failure-context",
+        "package-aware ql check sync with dependency source failures",
+        &normalized_stderr,
+        &format!(
+            "note: while syncing referenced package `../dep` from `{}`",
+            app_manifest.display().to_string().replace('\\', "/")
+        ),
+    )
+    .expect("sync path should point the dependency source failure back to the owner reference");
+    expect_stderr_contains(
+        "project-check-sync-source-failure-context",
+        "package-aware ql check sync with dependency source failures",
+        &normalized_stderr,
+        &format!(
+            "hint: repair `{}` or rerun `ql project emit-interface {}` directly",
+            synced_dep_manifest.display().to_string().replace('\\', "/"),
+            synced_dep_manifest.display().to_string().replace('\\', "/")
+        ),
+    )
+    .expect("sync path should suggest repairing the dependency manifest directly");
+    expect_stderr_contains(
+        "project-check-sync-source-failure-context",
+        "package-aware ql check sync with dependency source failures",
+        &stderr,
+        "interface sync found 1 failing referenced package(s)",
+    )
+    .expect("sync path should still summarize the failing referenced package");
+}
+
+#[test]
 fn check_package_dir_reports_stale_dependency_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-check-stale-interface");
