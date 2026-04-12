@@ -215,7 +215,9 @@ pub fn broken_second(value: MissingSecond) -> Int {
 "#,
     );
     let interface_path = project_root.join("app.qi");
+    let manifest_path = project_root.join("qlang.toml");
     let first_failure_display = first_failure.to_string_lossy().replace('\\', "/");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
 
     let mut command = ql_command(&workspace_root);
     command
@@ -267,6 +269,23 @@ pub fn broken_second(value: MissingSecond) -> Int {
         &format!("note: first failing source file: {first_failure_display}"),
     )
     .expect("package interface emission should point to the first failing source file");
+    expect_stderr_contains(
+        "project-interface-package-source-failures",
+        "package interface emission with multiple failing sources",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("package interface emission should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-interface-package-source-failures",
+        "package interface emission with multiple failing sources",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            manifest_display
+        ),
+    )
+    .expect("package interface emission should suggest rerunning package interface emission");
     assert!(
         !interface_path.is_file(),
         "failing package interface emission should not create `{}`",

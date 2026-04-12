@@ -677,16 +677,20 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
 
 fn report_build_interface_failure(path: &Path, artifact_path: &Path) {
     if let Ok(manifest) = load_project_manifest(path) {
-        let manifest_path = normalize_path(&manifest.manifest_path);
-        eprintln!("note: failing package manifest: {manifest_path}");
-        eprintln!(
-            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
-            manifest_path
-        );
+        report_package_interface_failure(&manifest.manifest_path);
     }
     eprintln!(
         "note: build artifact remains at `{}`",
         normalize_path(artifact_path)
+    );
+}
+
+fn report_package_interface_failure(manifest_path: &Path) {
+    let manifest_path = normalize_path(manifest_path);
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!(
+        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        manifest_path
     );
 }
 
@@ -752,12 +756,18 @@ fn project_emit_interface_path(
                 changed_only,
             )?);
         }
-        report_emit_interface_result(emit_package_interface_path(
+        match emit_package_interface_path(
             path,
             output,
             "`ql project emit-interface`",
             changed_only,
-        )?);
+        ) {
+            Ok(result) => report_emit_interface_result(result),
+            Err(code) => {
+                report_package_interface_failure(&manifest.manifest_path);
+                return Err(code);
+            }
+        }
         return Ok(());
     }
 
