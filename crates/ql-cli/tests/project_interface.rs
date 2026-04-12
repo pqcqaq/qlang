@@ -751,6 +751,7 @@ name = "broken"
     )
     .expect("workspace interface emission with failing member should fail");
     let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
     let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
     expect_stdout_contains_all(
         "project-interface-workspace-partial-failure",
@@ -765,6 +766,20 @@ name = "broken"
         "invalid manifest",
     )
     .expect("workspace interface emission should surface the failing member manifest error");
+    expect_stderr_contains(
+        "project-interface-workspace-partial-failure",
+        "workspace interface emission with failing member",
+        &normalized_stderr,
+        &format!(
+            "note: failing workspace member manifest: {}",
+            broken_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace interface emission should point invalid member manifests locally");
     expect_stderr_contains(
         "project-interface-workspace-partial-failure",
         "workspace interface emission with failing member",
@@ -1352,6 +1367,7 @@ name = "broken"
     )
     .expect("workspace interface check with invalid member manifest should fail");
     let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
     let normalized_app_interface = app_root
         .join("app.qi")
         .display()
@@ -1370,6 +1386,20 @@ name = "broken"
         "invalid manifest",
     )
     .expect("workspace interface check should surface the invalid member manifest");
+    expect_stderr_contains(
+        "project-interface-check-workspace-invalid-member",
+        "workspace interface check with invalid member manifest",
+        &normalized_stderr,
+        &format!(
+            "note: failing workspace member manifest: {}",
+            broken_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace interface check should point invalid member manifests locally");
     expect_stderr_contains(
         "project-interface-check-workspace-invalid-member",
         "workspace interface check with invalid member manifest",

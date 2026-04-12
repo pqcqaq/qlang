@@ -823,6 +823,7 @@ fn project_emit_interface_path(
                 Ok(manifest) => manifest,
                 Err(error) => {
                     eprintln!("error: {error}");
+                    report_workspace_member_failure(&member_manifest_path);
                     failing_member_count += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
@@ -848,6 +849,7 @@ fn project_emit_interface_path(
                 Ok(manifest) => manifest,
                 Err(error) => {
                     eprintln!("error: {error}");
+                    report_workspace_member_failure(&member_manifest_path);
                     emission_failure_count += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
