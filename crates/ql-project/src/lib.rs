@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -439,6 +440,13 @@ fn append_reference_interface_summaries(
                         relative_display_path(root, &interface_path)
                     ));
                     output.push_str(&format!("{indent}    status: {}\n", status.label()));
+                    let transitive_reference_failures =
+                        count_transitive_reference_failures(&reference_manifest);
+                    if transitive_reference_failures > 0 {
+                        output.push_str(&format!(
+                            "{indent}    transitive_reference_failures: {transitive_reference_failures}\n"
+                        ));
+                    }
                     if let Some(detail) = interface_artifact_status_detail(&interface_path, status)
                     {
                         output.push_str(&format!("{indent}    detail: {detail}\n"));
@@ -465,6 +473,45 @@ fn append_reference_interface_summaries(
             }
         }
     }
+}
+
+fn count_transitive_reference_failures(manifest: &ProjectManifest) -> usize {
+    let mut visited = BTreeSet::new();
+    count_reference_failures_recursive(manifest, &mut visited)
+}
+
+fn count_reference_failures_recursive(
+    manifest: &ProjectManifest,
+    visited: &mut BTreeSet<PathBuf>,
+) -> usize {
+    let manifest_path = manifest.manifest_path.clone();
+    if !visited.insert(manifest_path) {
+        return 0;
+    }
+
+    let manifest_dir = manifest_dir(manifest);
+    let mut failure_count = 0usize;
+    for reference in &manifest.references.packages {
+        match load_project_manifest(&manifest_dir.join(reference)) {
+            Ok(reference_manifest) => {
+                let interface_path = default_interface_path(&reference_manifest);
+                match interface_path {
+                    Ok(interface_path) => {
+                        if interface_artifact_status(&reference_manifest, &interface_path)
+                            != InterfaceArtifactStatus::Valid
+                        {
+                            failure_count += 1;
+                        }
+                    }
+                    Err(_) => failure_count += 1,
+                }
+                failure_count += count_reference_failures_recursive(&reference_manifest, visited);
+            }
+            Err(_) => failure_count += 1,
+        }
+    }
+
+    failure_count
 }
 
 fn append_stale_reason_summary(

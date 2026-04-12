@@ -509,3 +509,87 @@ name = "broken_ref"
     )
     .expect("project graph should explain unresolved reference manifest and package failures");
 }
+
+#[test]
+fn project_graph_reports_transitive_reference_failures_for_direct_dependencies() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-transitive-reference-failures");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source directory for transitive reference graph test");
+    std::fs::create_dir_all(temp.path().join("workspace").join("dep").join("src"))
+        .expect("create dependency source directory for transitive reference graph test");
+    std::fs::create_dir_all(temp.path().join("workspace").join("broken_ref"))
+        .expect("create broken reference directory for transitive reference graph test");
+
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+
+[references]
+packages = ["../broken_ref"]
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/broken_ref/qlang.toml",
+        r#"
+[package
+name = "broken_ref"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "graph"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph` transitive reference failures",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-graph-transitive-reference-failures",
+        "project graph rendering with transitive reference failures",
+        &output,
+    )
+    .expect("project graph with transitive reference failures should succeed");
+    expect_empty_stderr(
+        "project-graph-transitive-reference-failures",
+        "project graph rendering with transitive reference failures",
+        &stderr,
+    )
+    .expect("project graph with transitive reference failures should stay silent on stderr");
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-graph-transitive-reference-failures",
+        &normalized_stdout,
+        &[
+            "reference: ../dep",
+            "manifest: ../dep/qlang.toml",
+            "status: valid",
+            "transitive_reference_failures: 1",
+        ],
+    )
+    .expect("project graph should summarize transitive reference failures on direct dependencies");
+}
