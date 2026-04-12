@@ -840,6 +840,7 @@ fn project_emit_interface_path(
                 changed_only,
             )?;
             if report_package_interface_check(result).is_err() {
+                report_workspace_member_failure(&member_manifest.manifest_path);
                 failing_member_count += 1;
                 record_reference_failure_manifest(
                     &mut first_failing_member_manifest,
@@ -869,6 +870,7 @@ fn project_emit_interface_path(
                 Ok(result) => report_emit_interface_result(result),
                 Err(_) => {
                     report_package_interface_failure(&member_manifest.manifest_path);
+                    report_workspace_member_failure(&member_manifest.manifest_path);
                     emission_failure_count += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,

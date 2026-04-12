@@ -1055,6 +1055,13 @@ pub fn broken_second(value: MissingSecond) -> Int {
         "project-interface-workspace-source-failure",
         "workspace interface emission with member source failure",
         &normalized_stderr,
+        &format!("note: failing workspace member manifest: {normalized_broken_manifest}"),
+    )
+    .expect("workspace interface emission should also keep the workspace member boundary visible");
+    expect_stderr_contains(
+        "project-interface-workspace-source-failure",
+        "workspace interface emission with member source failure",
+        &normalized_stderr,
         &format!(
             "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
             normalized_broken_manifest
@@ -1379,6 +1386,20 @@ name = "tool"
         ),
     )
     .expect("workspace interface check should point stale member failures at the package manifest");
+    expect_stderr_contains(
+        "project-interface-check-workspace",
+        "workspace interface check with stale member",
+        &normalized_stderr,
+        &format!(
+            "note: failing workspace member manifest: {}",
+            tool_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace interface check should also keep the stale member boundary visible");
     expect_stderr_contains(
         "project-interface-check-workspace",
         "workspace interface check with stale member",
