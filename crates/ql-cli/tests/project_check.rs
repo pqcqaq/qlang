@@ -231,6 +231,80 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn check_package_dir_reports_invalid_referenced_manifest() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-invalid-reference-manifest");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(temp.path().join("workspace").join("workspace_ref"))
+        .expect("create workspace-only reference directory");
+
+    temp.write(
+        "workspace/workspace_ref/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/demo"]
+"#,
+    );
+    let app_manifest = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../workspace_ref"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check"]).arg(&app_root);
+    let output = run_command_capture(&mut command, "`ql check` invalid referenced manifest");
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-invalid-reference-manifest",
+        "package-aware ql check with invalid referenced manifest",
+        &output,
+        1,
+    )
+    .expect("invalid referenced manifest should fail package-aware ql check");
+    expect_stderr_contains(
+        "project-check-invalid-reference-manifest",
+        "package-aware ql check with invalid referenced manifest",
+        &stderr,
+        "failed to load referenced package `../workspace_ref`",
+    )
+    .expect("invalid referenced manifest should surface a contextual reference error");
+    expect_stderr_contains(
+        "project-check-invalid-reference-manifest",
+        "package-aware ql check with invalid referenced manifest",
+        &stderr,
+        "does not declare `[package].name`",
+    )
+    .expect("invalid referenced manifest should surface the manifest detail");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-invalid-reference-manifest",
+        "package-aware ql check with invalid referenced manifest",
+        &normalized_stderr,
+        &format!(
+            "fix the reference in `{}`",
+            app_manifest.display().to_string().replace('\\', "/")
+        ),
+    )
+    .expect("invalid referenced manifest should hint at the owning manifest");
+}
+
+#[test]
 fn check_package_dir_reports_invalid_dependency_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-check-invalid-interface");
@@ -304,6 +378,275 @@ pub fn main() -> Int {
         "--sync-interfaces",
     )
     .expect("invalid dependency interface diagnostic should suggest sync");
+}
+
+#[test]
+fn check_package_dir_reports_all_failing_references() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-multiple-reference-failures");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(temp.path().join("workspace").join("workspace_ref"))
+        .expect("create workspace-only reference directory");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/workspace_ref/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/demo"]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep", "../workspace_ref"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check"]).arg(&app_root);
+    let output = run_command_capture(&mut command, "`ql check` multiple reference failures");
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-multiple-reference-failures",
+        "package-aware ql check with multiple failing references",
+        &output,
+        1,
+    )
+    .expect("multiple failing references should fail package-aware ql check");
+    expect_stderr_contains(
+        "project-check-multiple-reference-failures",
+        "package-aware ql check with multiple failing references",
+        &stderr,
+        "referenced package `dep` is missing interface artifact",
+    )
+    .expect("package-aware ql check should still surface missing dependency interfaces");
+    expect_stderr_contains(
+        "project-check-multiple-reference-failures",
+        "package-aware ql check with multiple failing references",
+        &stderr,
+        "failed to load referenced package `../workspace_ref`",
+    )
+    .expect("package-aware ql check should continue and surface later broken manifests");
+    expect_stderr_contains(
+        "project-check-multiple-reference-failures",
+        "package-aware ql check with multiple failing references",
+        &stderr,
+        "interface check found 2 failing referenced package(s)",
+    )
+    .expect("package-aware ql check should summarize all failing references");
+}
+
+#[test]
+fn check_package_dir_sync_interfaces_reports_invalid_referenced_manifest() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-sync-invalid-reference-manifest");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(temp.path().join("workspace").join("broken_ref"))
+        .expect("create broken reference directory");
+
+    temp.write(
+        "workspace/broken_ref/qlang.toml",
+        r#"
+[package
+name = "broken_ref"
+"#,
+    );
+    let app_manifest = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../broken_ref"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check", "--sync-interfaces"]).arg(&app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --sync-interfaces` invalid referenced manifest",
+    );
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-sync-invalid-reference-manifest",
+        "package-aware ql check sync with invalid referenced manifest",
+        &output,
+        1,
+    )
+    .expect("sync path should fail on invalid referenced manifest");
+    expect_stderr_contains(
+        "project-check-sync-invalid-reference-manifest",
+        "package-aware ql check sync with invalid referenced manifest",
+        &stderr,
+        "failed to load referenced package `../broken_ref`",
+    )
+    .expect("sync path should surface a contextual reference error");
+    expect_stderr_contains(
+        "project-check-sync-invalid-reference-manifest",
+        "package-aware ql check sync with invalid referenced manifest",
+        &stderr,
+        "invalid manifest `",
+    )
+    .expect("sync path should surface the manifest parse detail");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-sync-invalid-reference-manifest",
+        "package-aware ql check sync with invalid referenced manifest",
+        &normalized_stderr,
+        &format!(
+            "fix the reference in `{}`",
+            app_manifest.display().to_string().replace('\\', "/")
+        ),
+    )
+    .expect("sync path should hint at the owning manifest");
+}
+
+#[test]
+fn check_package_dir_sync_interfaces_reports_all_failing_references() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-sync-multiple-reference-failures");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("app");
+    let interface_path = dep_root.join("dep.qi");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(temp.path().join("workspace").join("broken_ref"))
+        .expect("create broken reference directory");
+    std::fs::create_dir_all(temp.path().join("workspace").join("workspace_ref"))
+        .expect("create workspace-only reference directory");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/lib.ql",
+        r#"
+package demo.dep
+
+pub fn exported() -> Int {
+    return 7
+}
+"#,
+    );
+    temp.write(
+        "workspace/broken_ref/qlang.toml",
+        r#"
+[package
+name = "broken_ref"
+"#,
+    );
+    temp.write(
+        "workspace/workspace_ref/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/demo"]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep", "../broken_ref", "../workspace_ref"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check", "--sync-interfaces"]).arg(&app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --sync-interfaces` multiple reference failures",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-sync-multiple-reference-failures",
+        "package-aware ql check sync with multiple failing references",
+        &output,
+        1,
+    )
+    .expect("multiple failing references should fail package-aware sync");
+    expect_stdout_contains_all(
+        "project-check-sync-multiple-reference-failures",
+        &stdout,
+        &["wrote interface: ", "dep.qi"],
+    )
+    .expect("sync path should still emit interfaces for healthy references");
+    assert!(
+        interface_path.is_file(),
+        "expected synced dependency interface at `{}`",
+        interface_path.display()
+    );
+    expect_stderr_contains(
+        "project-check-sync-multiple-reference-failures",
+        "package-aware ql check sync with multiple failing references",
+        &stderr,
+        "failed to load referenced package `../broken_ref`",
+    )
+    .expect("sync path should surface broken manifests");
+    expect_stderr_contains(
+        "project-check-sync-multiple-reference-failures",
+        "package-aware ql check sync with multiple failing references",
+        &stderr,
+        "failed to load referenced package `../workspace_ref`",
+    )
+    .expect("sync path should continue and surface later invalid package references");
+    expect_stderr_contains(
+        "project-check-sync-multiple-reference-failures",
+        "package-aware ql check sync with multiple failing references",
+        &stderr,
+        "interface sync found 2 failing referenced package(s)",
+    )
+    .expect("sync path should summarize all failing references");
 }
 
 #[test]

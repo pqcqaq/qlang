@@ -813,6 +813,12 @@ enum CheckPackageInterfaceResult {
     },
 }
 
+#[derive(Default)]
+struct ReferenceInterfaceSyncResult {
+    written: Vec<PathBuf>,
+    failure_count: usize,
+}
+
 fn emit_package_interface_path(
     path: &Path,
     output: Option<&Path>,
@@ -990,60 +996,131 @@ fn sync_reference_interfaces(
         eprintln!("error: {error}");
         1
     })?;
+    let mut result = ReferenceInterfaceSyncResult::default();
+    sync_reference_interfaces_recursive(&manifest, visited, &mut result);
+    if result.failure_count > 0 {
+        for path in &result.written {
+            println!("wrote interface: {}", path.display());
+        }
+        eprintln!(
+            "error: interface sync found {} failing referenced package(s)",
+            result.failure_count
+        );
+        return Err(1);
+    }
+    Ok(result.written)
+}
+
+fn sync_reference_interfaces_recursive(
+    manifest: &ql_project::ProjectManifest,
+    visited: &mut BTreeSet<PathBuf>,
+    result: &mut ReferenceInterfaceSyncResult,
+) {
     let manifest_path = manifest.manifest_path.clone();
     if !visited.insert(manifest_path) {
-        return Ok(Vec::new());
+        return;
     }
 
-    let mut written = Vec::new();
-    for dependency_manifest in ql_project::load_reference_manifests(&manifest).map_err(|error| {
-        eprintln!("error: {error}");
-        1
-    })? {
-        written.extend(sync_reference_interfaces(
-            &dependency_manifest.manifest_path,
-            visited,
-        )?);
-        if should_sync_interface_artifact(&dependency_manifest)? {
-            let result = emit_package_interface_path(
+    for reference in &manifest.references.packages {
+        let (dependency_manifest, reference_manifest_path) =
+            match load_reference_manifest_for_interfaces(manifest, reference) {
+                Ok(result) => result,
+                Err(_) => {
+                    result.failure_count += 1;
+                    continue;
+                }
+            };
+        let interface_path = reference_interface_path_for_interfaces(
+            manifest,
+            reference,
+            &reference_manifest_path,
+            &dependency_manifest,
+        );
+        let interface_path = match interface_path {
+            Ok(path) => path,
+            Err(_) => {
+                result.failure_count += 1;
+                continue;
+            }
+        };
+        let nested_failure_count_before = result.failure_count;
+        sync_reference_interfaces_recursive(&dependency_manifest, visited, result);
+        if result.failure_count > nested_failure_count_before {
+            continue;
+        }
+        if interface_artifact_status(&dependency_manifest, &interface_path)
+            != InterfaceArtifactStatus::Valid
+        {
+            let emit_result = emit_package_interface_path(
                 &dependency_manifest.manifest_path,
                 None,
                 "`ql check --sync-interfaces`",
                 false,
-            )?;
-            if let EmitPackageInterfaceResult::Wrote(path) = result {
-                written.push(path);
+            );
+            match emit_result {
+                Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
+                Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
+                Err(_) => result.failure_count += 1,
             }
         }
     }
-    Ok(written)
 }
 
 fn ensure_reference_interfaces_current(manifest: &ql_project::ProjectManifest) -> Result<(), u8> {
-    ensure_reference_interfaces_current_recursive(manifest, &mut BTreeSet::new())
+    let failure_count =
+        ensure_reference_interfaces_current_recursive(manifest, &mut BTreeSet::new());
+    if failure_count > 0 {
+        eprintln!("error: interface check found {failure_count} failing referenced package(s)");
+        return Err(1);
+    }
+    Ok(())
 }
 
 fn ensure_reference_interfaces_current_recursive(
     manifest: &ql_project::ProjectManifest,
     visited: &mut BTreeSet<PathBuf>,
-) -> Result<(), u8> {
+) -> usize {
     let manifest_path = manifest.manifest_path.clone();
     if !visited.insert(manifest_path.clone()) {
-        return Ok(());
+        return 0;
     }
 
-    for dependency_manifest in ql_project::load_reference_manifests(manifest).map_err(|error| {
-        eprintln!("error: {error}");
-        1
-    })? {
-        let dependency_package = package_name(&dependency_manifest).map_err(|error| {
-            eprintln!("error: {error}");
-            1
-        })?;
-        let interface_path = default_interface_path(&dependency_manifest).map_err(|error| {
-            eprintln!("error: {error}");
-            1
-        })?;
+    let mut failure_count = 0usize;
+    for reference in &manifest.references.packages {
+        let (dependency_manifest, reference_manifest_path) =
+            match load_reference_manifest_for_interfaces(manifest, reference) {
+                Ok(result) => result,
+                Err(_) => {
+                    failure_count += 1;
+                    continue;
+                }
+            };
+        let dependency_package = reference_package_name_for_interfaces(
+            manifest,
+            reference,
+            &reference_manifest_path,
+            &dependency_manifest,
+        );
+        let dependency_package = match dependency_package {
+            Ok(name) => name,
+            Err(_) => {
+                failure_count += 1;
+                continue;
+            }
+        };
+        let interface_path = reference_interface_path_for_interfaces(
+            manifest,
+            reference,
+            &reference_manifest_path,
+            &dependency_manifest,
+        );
+        let interface_path = match interface_path {
+            Ok(path) => path,
+            Err(_) => {
+                failure_count += 1;
+                continue;
+            }
+        };
         let status = interface_artifact_status(&dependency_manifest, &interface_path);
         if status != InterfaceArtifactStatus::Valid {
             report_reference_interface_artifact_issue(
@@ -1053,12 +1130,106 @@ fn ensure_reference_interfaces_current_recursive(
                 &interface_path,
                 status,
             );
-            return Err(1);
+            failure_count += 1;
+            continue;
         }
-        ensure_reference_interfaces_current_recursive(&dependency_manifest, visited)?;
+        failure_count +=
+            ensure_reference_interfaces_current_recursive(&dependency_manifest, visited);
     }
 
-    Ok(())
+    failure_count
+}
+
+fn load_reference_manifest_for_interfaces(
+    owner_manifest: &ql_project::ProjectManifest,
+    reference: &str,
+) -> Result<(ql_project::ProjectManifest, PathBuf), u8> {
+    let reference_manifest_path = reference_manifest_path(owner_manifest, reference);
+    let manifest_dir = owner_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    let dependency_manifest =
+        load_project_manifest(&manifest_dir.join(reference)).map_err(|error| {
+            report_reference_manifest_issue(
+                reference,
+                &owner_manifest.manifest_path,
+                &reference_manifest_path,
+                &error,
+            );
+            1
+        })?;
+    Ok((dependency_manifest, reference_manifest_path))
+}
+
+fn reference_manifest_path(
+    owner_manifest: &ql_project::ProjectManifest,
+    reference: &str,
+) -> PathBuf {
+    let manifest_dir = owner_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    let reference_path = manifest_dir.join(reference);
+    if reference_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
+    {
+        return reference_path;
+    }
+    reference_path.join("qlang.toml")
+}
+
+fn reference_package_name_for_interfaces(
+    owner_manifest: &ql_project::ProjectManifest,
+    reference: &str,
+    reference_manifest_path: &Path,
+    dependency_manifest: &ql_project::ProjectManifest,
+) -> Result<String, u8> {
+    package_name(dependency_manifest)
+        .map(str::to_owned)
+        .map_err(|error| {
+            report_reference_manifest_issue(
+                reference,
+                &owner_manifest.manifest_path,
+                reference_manifest_path,
+                &error,
+            );
+            1
+        })
+}
+
+fn reference_interface_path_for_interfaces(
+    owner_manifest: &ql_project::ProjectManifest,
+    reference: &str,
+    reference_manifest_path: &Path,
+    dependency_manifest: &ql_project::ProjectManifest,
+) -> Result<PathBuf, u8> {
+    default_interface_path(dependency_manifest).map_err(|error| {
+        report_reference_manifest_issue(
+            reference,
+            &owner_manifest.manifest_path,
+            reference_manifest_path,
+            &error,
+        );
+        1
+    })
+}
+
+fn report_reference_manifest_issue(
+    reference: &str,
+    owner_manifest_path: &Path,
+    reference_manifest_path: &Path,
+    error: &ql_project::ProjectError,
+) {
+    eprintln!("error: failed to load referenced package `{reference}`");
+    eprintln!("detail: {error}");
+    eprintln!(
+        "hint: fix the reference in `{}` or repair `{}`",
+        owner_manifest_path.display(),
+        reference_manifest_path.display()
+    );
 }
 
 fn report_reference_interface_artifact_issue(
@@ -1116,14 +1287,6 @@ fn report_reference_interface_artifact_issue(
         dependency_package,
         dependency_manifest.manifest_path.display()
     );
-}
-
-fn should_sync_interface_artifact(manifest: &ql_project::ProjectManifest) -> Result<bool, u8> {
-    let interface_path = default_interface_path(manifest).map_err(|error| {
-        eprintln!("error: {error}");
-        1
-    })?;
-    Ok(interface_artifact_status(manifest, &interface_path) != InterfaceArtifactStatus::Valid)
 }
 
 fn analyze_source(source: &str) -> Result<(), Vec<Diagnostic>> {
