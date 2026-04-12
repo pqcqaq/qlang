@@ -2743,3 +2743,144 @@ pub fn main( -> Int {
     )
     .expect("workspace-root ql check should point to the first failing member manifest");
 }
+
+#[test]
+fn check_package_dir_preserves_invalid_manifest_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-package-invalid-manifest");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&app_root).expect("create package directory for invalid manifest test");
+
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+version = "0.1.0"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check"]).arg(&app_root);
+    let output = run_command_capture(&mut command, "`ql check` package invalid manifest");
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-package-invalid-manifest",
+        "direct package ql check with invalid manifest",
+        &output,
+        1,
+    )
+    .expect("direct package ql check with invalid manifest should fail");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let manifest_display = app_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let error_line = format!("error: `ql check` invalid manifest `{manifest_display}`");
+    let old_error_line = format!("error: invalid manifest `{manifest_display}`");
+    let package_note = format!("note: failing package manifest: {manifest_display}");
+    let rerun_hint =
+        format!("hint: rerun `ql check {manifest_display}` after fixing the package manifest");
+    expect_stderr_contains(
+        "project-check-package-invalid-manifest",
+        "direct package ql check with invalid manifest",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("direct package ql check should preserve the command label for invalid manifests");
+    expect_stderr_not_contains(
+        "project-check-package-invalid-manifest",
+        "direct package ql check with invalid manifest",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("direct package ql check should not fall back to the generic invalid manifest error");
+    expect_stderr_contains(
+        "project-check-package-invalid-manifest",
+        "direct package ql check with invalid manifest",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("direct package ql check should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-check-package-invalid-manifest",
+        "direct package ql check with invalid manifest",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("direct package ql check should suggest rerunning the same manifest path");
+}
+
+#[test]
+fn check_package_dir_sync_interfaces_preserves_invalid_manifest_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-sync-invalid-manifest");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&app_root)
+        .expect("create package directory for sync invalid manifest test");
+
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check", "--sync-interfaces"]).arg(&app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --sync-interfaces` package invalid manifest",
+    );
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-sync-invalid-manifest",
+        "direct package ql check sync with invalid manifest",
+        &output,
+        1,
+    )
+    .expect("direct package ql check sync with invalid manifest should fail");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let manifest_display = app_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let error_line = format!(
+        "error: `ql check --sync-interfaces` invalid manifest `{manifest_display}`"
+    );
+    let old_error_line = format!("error: invalid manifest `{manifest_display}`");
+    let package_note = format!("note: failing package manifest: {manifest_display}");
+    let rerun_hint = format!(
+        "hint: rerun `ql check --sync-interfaces {manifest_display}` after fixing the package manifest"
+    );
+    expect_stderr_contains(
+        "project-check-sync-invalid-manifest",
+        "direct package ql check sync with invalid manifest",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("direct package ql check sync should preserve the command label for invalid manifests");
+    expect_stderr_not_contains(
+        "project-check-sync-invalid-manifest",
+        "direct package ql check sync with invalid manifest",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect(
+        "direct package ql check sync should not fall back to the generic invalid manifest error",
+    );
+    expect_stderr_contains(
+        "project-check-sync-invalid-manifest",
+        "direct package ql check sync with invalid manifest",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("direct package ql check sync should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-check-sync-invalid-manifest",
+        "direct package ql check sync with invalid manifest",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("direct package ql check sync should suggest rerunning the same manifest path");
+}

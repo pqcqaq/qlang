@@ -349,6 +349,7 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
     let use_package_check = should_use_package_check(path)
         || (is_ql_source_file(path) && load_project_manifest(path).is_ok());
     if use_package_check {
+        let check_command_label = format_check_command_label(sync_interfaces);
         if let Ok(manifest) = load_project_manifest(path) {
             if manifest.package.is_none() && manifest.workspace.is_some() {
                 return check_workspace_manifest(&manifest, sync_interfaces);
@@ -399,6 +400,16 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
                     );
                     return Err(1);
                 }
+            }
+            Err(PackageAnalysisError::Project(error)) => {
+                if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
+                {
+                    eprintln!("error: {check_command_label} {error}");
+                    report_package_check_manifest_failure(manifest_path, sync_interfaces);
+                } else {
+                    print_package_analysis_error(&PackageAnalysisError::Project(error));
+                }
+                return Err(1);
             }
             Err(error) => {
                 print_package_analysis_error(&error);
@@ -592,6 +603,27 @@ fn report_workspace_member_failure(manifest_path: &Path, hint_line: Option<&str>
     if let Some(hint_line) = hint_line {
         eprintln!("{hint_line}");
     }
+}
+
+fn package_check_manifest_path_from_project_error(
+    error: &ql_project::ProjectError,
+) -> Option<&Path> {
+    match error {
+        ql_project::ProjectError::PackageNotDefined { path }
+        | ql_project::ProjectError::Read { path, .. }
+        | ql_project::ProjectError::Parse { path, .. } => Some(path.as_path()),
+        ql_project::ProjectError::ManifestNotFound { .. }
+        | ql_project::ProjectError::PackageSourceRootNotFound { .. } => None,
+    }
+}
+
+fn report_package_check_manifest_failure(manifest_path: &Path, sync_interfaces: bool) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_command = format_check_command(sync_interfaces, Some(&manifest_path));
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!(
+        "hint: rerun `{rerun_command}` after fixing the package manifest"
+    );
 }
 
 fn format_path(path: &Path, write: bool) -> Result<(), u8> {
@@ -1483,7 +1515,12 @@ fn sync_reference_interfaces(
     visited: &mut BTreeSet<PathBuf>,
 ) -> Result<Vec<PathBuf>, u8> {
     let manifest = load_project_manifest(path).map_err(|error| {
-        eprintln!("error: {error}");
+        if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
+            eprintln!("error: {} {error}", format_check_command_label(true));
+            report_package_check_manifest_failure(manifest_path, true);
+        } else {
+            eprintln!("error: {error}");
+        }
         1
     })?;
     let mut result = ReferenceInterfaceSyncResult::default();
