@@ -638,6 +638,21 @@ name = "broken"
         "interface emission found 1 failing member(s)",
     )
     .expect("workspace interface emission should summarize failing members");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-workspace-partial-failure",
+        "workspace interface emission with failing member",
+        &normalized_stderr,
+        &format!(
+            "note: first failing member manifest: {}",
+            broken_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace interface emission should point to the first failing member manifest");
     expect_file_exists(
         "project-interface-workspace-partial-failure",
         &app_interface,
@@ -946,6 +961,21 @@ name = "tool"
         "found 2 failing member(s)",
     )
     .expect("workspace interface check should summarize all failing members");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-check-workspace",
+        "workspace interface check with stale member",
+        &normalized_stderr,
+        &format!(
+            "note: first failing member manifest: {}",
+            tool_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace interface check should point to the first failing member manifest");
 }
 
 #[test]
@@ -1045,6 +1075,21 @@ name = "broken"
         "found 1 failing member(s)",
     )
     .expect("workspace interface check should summarize all failing members");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-check-workspace-invalid-member",
+        "workspace interface check with invalid member manifest",
+        &normalized_stderr,
+        &format!(
+            "note: first failing member manifest: {}",
+            broken_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace interface check should point to the first failing member manifest");
 }
 
 #[test]

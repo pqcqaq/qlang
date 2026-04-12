@@ -752,13 +752,19 @@ fn project_emit_interface_path(
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
     let mut failing_member_count = 0usize;
     let mut emission_failure_count = 0usize;
+    let mut first_failing_member_manifest = None;
     for member in &workspace.members {
+        let member_manifest_path = workspace_member_manifest_path(&manifest_dir.join(member));
         if check_only {
             let member_manifest = match load_project_manifest(&manifest_dir.join(member)) {
                 Ok(manifest) => manifest,
                 Err(error) => {
                     eprintln!("error: {error}");
                     failing_member_count += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest_path.clone(),
+                    );
                     continue;
                 }
             };
@@ -769,6 +775,10 @@ fn project_emit_interface_path(
             )?;
             if report_package_interface_check(result).is_err() {
                 failing_member_count += 1;
+                record_reference_failure_manifest(
+                    &mut first_failing_member_manifest,
+                    member_manifest.manifest_path.clone(),
+                );
             }
         } else {
             match emit_package_interface_path(
@@ -778,18 +788,30 @@ fn project_emit_interface_path(
                 changed_only,
             ) {
                 Ok(result) => report_emit_interface_result(result),
-                Err(_) => emission_failure_count += 1,
+                Err(_) => {
+                    emission_failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest_path.clone(),
+                    );
+                }
             }
         }
     }
 
     if check_only && failing_member_count > 0 {
         eprintln!("error: interface check found {failing_member_count} failing member(s)");
+        if let Some(path) = &first_failing_member_manifest {
+            eprintln!("note: first failing member manifest: {}", path.display());
+        }
         return Err(1);
     }
 
     if !check_only && emission_failure_count > 0 {
         eprintln!("error: interface emission found {emission_failure_count} failing member(s)");
+        if let Some(path) = &first_failing_member_manifest {
+            eprintln!("note: first failing member manifest: {}", path.display());
+        }
         return Err(1);
     }
 
@@ -1280,6 +1302,18 @@ fn report_reference_manifest_issue(
         owner_manifest_path.display(),
         reference_manifest_path.display()
     );
+}
+
+fn workspace_member_manifest_path(path: &Path) -> PathBuf {
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
+    {
+        return path.to_path_buf();
+    }
+
+    path.join("qlang.toml")
 }
 
 fn report_reference_interface_artifact_issue(
