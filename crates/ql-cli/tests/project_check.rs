@@ -443,6 +443,66 @@ pub fn main() -> Int {
         ),
     )
     .expect("invalid dependency interface should point to the referenced package manifest");
+    let error_line = format!(
+        "error: referenced package `dep` has invalid interface artifact `{}`",
+        dep_root
+            .join("dep.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let detail_line = "detail: expected `// qlang interface v1` header";
+    let failing_manifest_note = format!(
+        "note: failing referenced package manifest: {}",
+        dep_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let owner_note = format!(
+        "note: while checking referenced package `../dep` from `{}`",
+        app_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let rerun_hint = format!(
+        "hint: rerun `ql check --sync-interfaces {}` or regenerate `dep` with `ql project emit-interface {}`",
+        app_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/"),
+        dep_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let error_index = normalized_stderr
+        .find(&error_line)
+        .expect("invalid dependency interface should report the error line");
+    let detail_index = normalized_stderr
+        .find(detail_line)
+        .expect("invalid dependency interface should report parse detail");
+    let failing_manifest_index = normalized_stderr
+        .find(&failing_manifest_note)
+        .expect("invalid dependency interface should point to the referenced manifest");
+    let owner_note_index = normalized_stderr
+        .find(&owner_note)
+        .expect("invalid dependency interface should point back to the owner manifest");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("invalid dependency interface should include the repair hint");
+    assert!(
+        error_index < detail_index
+            && detail_index < failing_manifest_index
+            && failing_manifest_index < owner_note_index
+            && owner_note_index < rerun_hint_index,
+        "expected invalid dependency interface diagnostic order error -> detail -> manifests -> hint, got:\n{stderr}"
+    );
 }
 
 #[test]
@@ -1264,6 +1324,75 @@ pub fn exported() -> Int {
         "--sync-interfaces",
     )
     .expect("stale dependency interface diagnostic should suggest sync");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let error_line = format!(
+        "error: referenced package `dep` has stale interface artifact `{}`",
+        dep_root
+            .join("dep.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let reason_line = format!(
+        "reason: source newer than artifact: {}",
+        dep_root
+            .join("src")
+            .join("lib.ql")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let failing_manifest_note = format!(
+        "note: failing referenced package manifest: {}",
+        dep_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let owner_note = format!(
+        "note: while checking referenced package `../dep` from `{}`",
+        app_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let rerun_hint = format!(
+        "hint: rerun `ql check --sync-interfaces {}` or regenerate `dep` with `ql project emit-interface {}`",
+        app_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/"),
+        dep_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let error_index = normalized_stderr
+        .find(&error_line)
+        .expect("stale dependency interface should report the error line");
+    let reason_index = normalized_stderr
+        .find(&reason_line)
+        .expect("stale dependency interface should report the stale reason");
+    let failing_manifest_index = normalized_stderr
+        .find(&failing_manifest_note)
+        .expect("stale dependency interface should point to the referenced manifest");
+    let owner_note_index = normalized_stderr
+        .find(&owner_note)
+        .expect("stale dependency interface should point back to the owner manifest");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("stale dependency interface should include the repair hint");
+    assert!(
+        error_index < reason_index
+            && reason_index < failing_manifest_index
+            && failing_manifest_index < owner_note_index
+            && owner_note_index < rerun_hint_index,
+        "expected stale dependency interface diagnostic order error -> reason -> manifests -> hint, got:\n{stderr}"
+    );
 }
 
 #[test]

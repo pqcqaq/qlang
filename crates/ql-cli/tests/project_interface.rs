@@ -701,6 +701,41 @@ pub fn exported() -> Int {
         ),
     )
     .expect("invalid package interface check should point to the failing package manifest");
+    let error_line = format!(
+        "error: interface artifact `{}` is invalid",
+        project_root
+            .join("app.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let detail_line = "detail: expected `// qlang interface v1` header";
+    let package_note = format!(
+        "note: failing package manifest: {}",
+        manifest_path.display().to_string().replace('\\', "/")
+    );
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {}` to regenerate it",
+        manifest_path.display().to_string().replace('\\', "/")
+    );
+    let error_index = normalized_stderr
+        .find(&error_line)
+        .expect("invalid package interface check should report the error line");
+    let detail_index = normalized_stderr
+        .find(detail_line)
+        .expect("invalid package interface check should report parse detail");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("invalid package interface check should point to the package manifest");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("invalid package interface check should include the rerun hint");
+    assert!(
+        error_index < detail_index
+            && detail_index < package_note_index
+            && package_note_index < rerun_hint_index,
+        "expected invalid package interface check to keep detail before manifest and hint, got:\n{stderr}"
+    );
 }
 
 #[test]

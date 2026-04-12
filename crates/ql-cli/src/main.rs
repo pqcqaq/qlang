@@ -1064,6 +1064,24 @@ fn report_emit_interface_result(result: EmitPackageInterfaceResult) {
     }
 }
 
+fn report_interface_artifact_failure(
+    error_line: &str,
+    detail: Option<&str>,
+    stale_reasons: &[InterfaceArtifactStaleReason],
+    notes: &[&str],
+    hint_line: &str,
+) {
+    eprintln!("{error_line}");
+    if let Some(detail) = detail {
+        eprintln!("detail: {detail}");
+    }
+    report_interface_stale_reasons(stale_reasons);
+    for note in notes {
+        eprintln!("{note}");
+    }
+    eprintln!("{hint_line}");
+}
+
 fn check_package_interface_artifact(
     manifest: &ql_project::ProjectManifest,
     command_label: &str,
@@ -1120,25 +1138,30 @@ fn report_package_interface_check(
             stale_reasons,
         } => {
             let manifest_path = normalize_path(&manifest_path);
-            eprintln!(
+            let error_line = format!(
                 "error: interface artifact `{}` is {}",
                 normalize_path(&path),
                 status.label()
             );
-            if let Some(detail) = detail {
-                eprintln!("detail: {detail}");
-            }
-            report_interface_stale_reasons(&stale_reasons);
-            eprintln!("note: failing package manifest: {manifest_path}");
-            if let Some(workspace_member_manifest_path) = workspace_member_manifest_path {
-                eprintln!(
+            let package_note = format!("note: failing package manifest: {manifest_path}");
+            let workspace_member_note = workspace_member_manifest_path.map(|path| {
+                format!(
                     "note: failing workspace member manifest: {}",
-                    normalize_path(workspace_member_manifest_path)
-                );
+                    normalize_path(path)
+                )
+            });
+            let mut notes = vec![package_note.as_str()];
+            if let Some(workspace_member_note) = workspace_member_note.as_deref() {
+                notes.push(workspace_member_note);
             }
-            eprintln!(
-                "hint: rerun `ql project emit-interface {}` to regenerate it",
-                manifest_path
+            let hint_line =
+                format!("hint: rerun `ql project emit-interface {manifest_path}` to regenerate it");
+            report_interface_artifact_failure(
+                &error_line,
+                detail.as_deref(),
+                &stale_reasons,
+                &notes,
+                &hint_line,
             );
             Err(1)
         }
@@ -1499,59 +1522,59 @@ fn report_reference_interface_artifact_issue(
     interface_path: &Path,
     status: InterfaceArtifactStatus,
 ) {
-    match status {
-        InterfaceArtifactStatus::Missing => {
-            eprintln!(
-                "error: referenced package `{dependency_package}` is missing interface artifact `{}`",
-                normalize_path(interface_path)
-            );
-        }
+    let error_line = match status {
+        InterfaceArtifactStatus::Missing => format!(
+            "error: referenced package `{dependency_package}` is missing interface artifact `{}`",
+            normalize_path(interface_path)
+        ),
+        InterfaceArtifactStatus::Unreadable => format!(
+            "error: referenced package `{dependency_package}` has unreadable interface artifact `{}`",
+            normalize_path(interface_path)
+        ),
+        InterfaceArtifactStatus::Invalid => format!(
+            "error: referenced package `{dependency_package}` has invalid interface artifact `{}`",
+            normalize_path(interface_path)
+        ),
+        InterfaceArtifactStatus::Stale => format!(
+            "error: referenced package `{dependency_package}` has stale interface artifact `{}`",
+            normalize_path(interface_path)
+        ),
+        InterfaceArtifactStatus::Valid => return,
+    };
+    let detail = match status {
         InterfaceArtifactStatus::Unreadable => {
-            eprintln!(
-                "error: referenced package `{dependency_package}` has unreadable interface artifact `{}`",
-                normalize_path(interface_path)
-            );
-            if let Some(detail) = interface_artifact_status_detail(
-                interface_path,
-                InterfaceArtifactStatus::Unreadable,
-            ) {
-                eprintln!("detail: {detail}");
-            }
+            interface_artifact_status_detail(interface_path, InterfaceArtifactStatus::Unreadable)
         }
         InterfaceArtifactStatus::Invalid => {
-            eprintln!(
-                "error: referenced package `{dependency_package}` has invalid interface artifact `{}`",
-                normalize_path(interface_path)
-            );
-            if let Some(detail) =
-                interface_artifact_status_detail(interface_path, InterfaceArtifactStatus::Invalid)
-            {
-                eprintln!("detail: {detail}");
-            }
+            interface_artifact_status_detail(interface_path, InterfaceArtifactStatus::Invalid)
         }
-        InterfaceArtifactStatus::Stale => {
-            let stale_reasons =
-                interface_artifact_stale_reasons(dependency_manifest, interface_path);
-            eprintln!(
-                "error: referenced package `{dependency_package}` has stale interface artifact `{}`",
-                normalize_path(interface_path)
-            );
-            report_interface_stale_reasons(&stale_reasons);
-        }
-        InterfaceArtifactStatus::Valid => return,
-    }
-
-    eprintln!(
+        _ => None,
+    };
+    let stale_reasons = if status == InterfaceArtifactStatus::Stale {
+        interface_artifact_stale_reasons(dependency_manifest, interface_path)
+    } else {
+        Vec::new()
+    };
+    let failing_manifest_note = format!(
         "note: failing referenced package manifest: {}",
         normalize_path(&dependency_manifest.manifest_path)
     );
     let owner_manifest_path = normalize_path(owner_manifest_path);
-    eprintln!("note: while checking referenced package `{reference}` from `{owner_manifest_path}`");
-    eprintln!(
-        "hint: rerun `ql check --sync-interfaces {}` or regenerate `{}` with `ql project emit-interface {}`",
-        owner_manifest_path,
-        dependency_package,
+    let owner_note = format!(
+        "note: while checking referenced package `{reference}` from `{owner_manifest_path}`"
+    );
+    let hint_line = format!(
+        "hint: rerun `ql check --sync-interfaces {owner_manifest_path}` or regenerate `{dependency_package}` with `ql project emit-interface {}`",
         normalize_path(&dependency_manifest.manifest_path)
+    );
+    let notes = [failing_manifest_note.as_str(), owner_note.as_str()];
+
+    report_interface_artifact_failure(
+        &error_line,
+        detail.as_deref(),
+        &stale_reasons,
+        &notes,
+        &hint_line,
     );
 }
 
