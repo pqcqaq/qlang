@@ -1,9 +1,9 @@
 mod support;
 
 use support::{
-    expect_empty_stdout, expect_exit_code, expect_file_exists, expect_snapshot_matches,
+    TempDir, expect_empty_stdout, expect_exit_code, expect_file_exists, expect_snapshot_matches,
     expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
-    read_normalized_file, run_command_capture, workspace_root, TempDir,
+    read_normalized_file, run_command_capture, workspace_root,
 };
 
 #[test]
@@ -527,7 +527,7 @@ fn project_emit_interface_check_rejects_invalid_package_interface() {
     let project_root = temp.path().join("workspace").join("app");
     std::fs::create_dir_all(project_root.join("src"))
         .expect("create project source directory for invalid interface check test");
-    temp.write(
+    let manifest_path = temp.write(
         "workspace/app/qlang.toml",
         r#"
 [package]
@@ -575,6 +575,17 @@ pub fn exported() -> Int {
         "detail: expected `// qlang interface v1` header",
     )
     .expect("invalid package interface check should report parse detail");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-check-invalid-package",
+        "invalid package interface check",
+        &normalized_stderr,
+        &format!(
+            "note: failing package manifest: {}",
+            manifest_path.display().to_string().replace('\\', "/")
+        ),
+    )
+    .expect("invalid package interface check should point to the failing package manifest");
 }
 
 #[test]
@@ -915,7 +926,9 @@ pub fn broken_second(value: MissingSecond) -> Int {
         &normalized_stderr,
         &format!("note: failing package manifest: {normalized_broken_manifest}"),
     )
-    .expect("workspace interface emission should point member source failures at the member manifest");
+    .expect(
+        "workspace interface emission should point member source failures at the member manifest",
+    );
     expect_stderr_contains(
         "project-interface-workspace-source-failure",
         "workspace interface emission with member source failure",
@@ -1197,6 +1210,7 @@ name = "tool"
     )
     .expect("workspace interface check with stale member should fail");
     let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
     let normalized_app_interface = app_root
         .join("app.qi")
         .display()
@@ -1232,11 +1246,24 @@ name = "tool"
     expect_stderr_contains(
         "project-interface-check-workspace",
         "workspace interface check with stale member",
+        &normalized_stderr,
+        &format!(
+            "note: failing package manifest: {}",
+            tool_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace interface check should point stale member failures at the package manifest");
+    expect_stderr_contains(
+        "project-interface-check-workspace",
+        "workspace interface check with stale member",
         &stderr,
         "found 2 failing member(s)",
     )
     .expect("workspace interface check should summarize all failing members");
-    let normalized_stderr = stderr.replace('\\', "/");
     expect_stderr_contains(
         "project-interface-check-workspace",
         "workspace interface check with stale member",
@@ -1254,8 +1281,8 @@ name = "tool"
 }
 
 #[test]
-fn project_emit_interface_check_keeps_checking_other_workspace_members_when_one_member_manifest_is_invalid(
-) {
+fn project_emit_interface_check_keeps_checking_other_workspace_members_when_one_member_manifest_is_invalid()
+ {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-check-workspace-invalid-member");
     let project_root = temp.path().join("workspace-only");
@@ -1825,10 +1852,7 @@ name = "app"
         "build-emit-interface-failure",
         "build with failing interface emission",
         &normalized_stderr,
-        &format!(
-            "note: failing package manifest: {}",
-            manifest_display
-        ),
+        &format!("note: failing package manifest: {}", manifest_display),
     )
     .expect("build-side interface failure should point to the failing package manifest");
     expect_stderr_contains(
@@ -1845,10 +1869,7 @@ name = "app"
         "build-emit-interface-failure",
         "build with failing interface emission",
         &normalized_stderr,
-        &format!(
-            "note: build artifact remains at `{}`",
-            output_display
-        ),
+        &format!("note: build artifact remains at `{}`", output_display),
     )
     .expect("build-side interface failure should confirm that the build artifact was preserved");
     expect_file_exists(

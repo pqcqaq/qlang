@@ -1090,6 +1090,7 @@ fn report_package_interface_check(result: CheckPackageInterfaceResult) -> Result
             detail,
             stale_reasons,
         } => {
+            let manifest_path = normalize_path(&manifest_path);
             eprintln!(
                 "error: interface artifact `{}` is {}",
                 normalize_path(&path),
@@ -1099,9 +1100,10 @@ fn report_package_interface_check(result: CheckPackageInterfaceResult) -> Result
                 eprintln!("detail: {detail}");
             }
             report_interface_stale_reasons(&stale_reasons);
+            eprintln!("note: failing package manifest: {manifest_path}");
             eprintln!(
                 "hint: rerun `ql project emit-interface {}` to regenerate it",
-                normalize_path(&manifest_path)
+                manifest_path
             );
             Err(1)
         }
