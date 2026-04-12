@@ -457,6 +457,7 @@ fn check_workspace_manifest(
             Ok(manifest) => manifest,
             Err(error) => {
                 eprintln!("error: {error}");
+                report_workspace_member_failure(&workspace_member_manifest_path(&member_path));
                 failing_members += 1;
                 record_reference_failure_manifest(
                     &mut first_failing_member_manifest,
@@ -467,6 +468,7 @@ fn check_workspace_manifest(
         };
 
         if !sync_interfaces && ensure_reference_interfaces_current(&member_manifest).is_err() {
+            report_workspace_member_failure(&member_manifest.manifest_path);
             failing_members += 1;
             record_reference_failure_manifest(
                 &mut first_failing_member_manifest,
@@ -479,6 +481,7 @@ fn check_workspace_manifest(
             let synced_paths = match sync_reference_interfaces(&member_path, &mut sync_visited) {
                 Ok(paths) => paths,
                 Err(_) => {
+                    report_workspace_member_failure(&member_manifest.manifest_path);
                     failing_members += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
@@ -506,6 +509,7 @@ fn check_workspace_manifest(
                         "error: no `.ql` files found under `{}`",
                         source_root.display()
                     );
+                    report_workspace_member_failure(&member_manifest.manifest_path);
                     failing_members += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
@@ -525,6 +529,7 @@ fn check_workspace_manifest(
             }
             Err(error) => {
                 print_package_analysis_error(&error);
+                report_workspace_member_failure(&member_manifest.manifest_path);
                 failing_members += 1;
                 record_reference_failure_manifest(
                     &mut first_failing_member_manifest,
@@ -546,6 +551,13 @@ fn check_workspace_manifest(
     }
 
     Ok(())
+}
+
+fn report_workspace_member_failure(manifest_path: &Path) {
+    eprintln!(
+        "note: failing workspace member manifest: {}",
+        normalize_path(manifest_path)
+    );
 }
 
 fn format_path(path: &Path, write: bool) -> Result<(), u8> {

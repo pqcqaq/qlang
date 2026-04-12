@@ -1859,9 +1859,39 @@ pub fn main( -> Int {
         "project-check-workspace-failures",
         "workspace-root ql check with multiple failing members",
         &normalized_stderr,
+        &format!(
+            "note: failing workspace member manifest: {}",
+            missing_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace-root ql check should point missing-reference failures at the member manifest immediately");
+    expect_stderr_contains(
+        "project-check-workspace-failures",
+        "workspace-root ql check with multiple failing members",
+        &normalized_stderr,
         "packages/broken/src/lib.ql",
     )
     .expect("workspace-root ql check should continue and surface later source diagnostics");
+    expect_stderr_contains(
+        "project-check-workspace-failures",
+        "workspace-root ql check with multiple failing members",
+        &normalized_stderr,
+        &format!(
+            "note: failing workspace member manifest: {}",
+            broken_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect(
+        "workspace-root ql check should point source failures at the member manifest immediately",
+    );
     expect_stderr_contains(
         "project-check-workspace-failures",
         "workspace-root ql check with multiple failing members",
