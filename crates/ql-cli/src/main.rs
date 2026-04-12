@@ -1149,11 +1149,13 @@ fn sync_reference_interfaces(
             "error: interface sync found {} failing referenced package(s)",
             result.failure_count
         );
-        if let Some(path) = &result.first_failure_manifest {
-            eprintln!(
-                "note: first failing reference manifest: {}",
-                normalize_path(path)
-            );
+        if result.failure_count > 1 {
+            if let Some(path) = &result.first_failure_manifest {
+                eprintln!(
+                    "note: first failing reference manifest: {}",
+                    normalize_path(path)
+                );
+            }
         }
         return Err(1);
     }
@@ -1234,11 +1236,13 @@ fn ensure_reference_interfaces_current(manifest: &ql_project::ProjectManifest) -
             "error: interface check found {} failing referenced package(s)",
             result.failure_count
         );
-        if let Some(path) = &result.first_failure_manifest {
-            eprintln!(
-                "note: first failing reference manifest: {}",
-                normalize_path(path)
-            );
+        if result.failure_count > 1 {
+            if let Some(path) = &result.first_failure_manifest {
+                eprintln!(
+                    "note: first failing reference manifest: {}",
+                    normalize_path(path)
+                );
+            }
         }
         return Err(1);
     }

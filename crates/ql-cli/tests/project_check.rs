@@ -255,6 +255,13 @@ pub fn main() -> Int {
         ),
     )
     .expect("missing dependency interface diagnostic should point back to the owner reference");
+    expect_stderr_not_contains(
+        "project-check-missing-interface",
+        "package-aware ql check with missing dependency interface",
+        &normalized_stderr,
+        "note: first failing reference manifest:",
+    )
+    .expect("single failing references should not repeat the manifest in the final summary");
 }
 
 #[test]
@@ -733,6 +740,13 @@ pub fn main() -> Int {
         ),
     )
     .expect("sync path should hint at the owning manifest");
+    expect_stderr_not_contains(
+        "project-check-sync-invalid-reference-manifest",
+        "package-aware ql check sync with invalid referenced manifest",
+        &normalized_stderr,
+        "note: first failing reference manifest:",
+    )
+    .expect("single failing references on the sync path should not repeat the manifest in the final summary");
 }
 
 #[test]
@@ -964,22 +978,13 @@ pub fn main() -> Int {
     )
     .expect("sync path should only summarize the remaining transitive failure");
     let normalized_stderr = stderr.replace('\\', "/");
-    expect_stderr_contains(
+    expect_stderr_not_contains(
         "project-check-sync-transitive-reference-failures",
         "package-aware ql check sync with transitive reference failures",
         &normalized_stderr,
-        &format!(
-            "note: first failing reference manifest: {}",
-            temp.path()
-                .join("workspace")
-                .join("broken_ref")
-                .join("qlang.toml")
-                .display()
-                .to_string()
-                .replace('\\', "/")
-        ),
+        "note: first failing reference manifest:",
     )
-    .expect("sync path should point to the first transitive failing manifest");
+    .expect("single remaining transitive failures should not repeat the manifest in the final summary");
 }
 
 #[test]
