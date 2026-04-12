@@ -618,21 +618,28 @@ fn render_runtime_requirements_path(path: &Path) -> Result<(), u8> {
 fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Result<(), u8> {
     match build_file(path, options) {
         Ok(artifact) => {
+            let artifact_path = artifact.path.clone();
             println!(
                 "wrote {}: {}",
                 artifact.emit.as_str(),
-                artifact.path.display()
+                artifact_path.display()
             );
             if let Some(header) = artifact.c_header {
                 println!("wrote c-header: {}", header.path.display());
             }
             if emit_interface {
-                report_emit_interface_result(emit_package_interface_path(
+                match emit_package_interface_path(
                     path,
                     None,
                     "`ql build --emit-interface`",
                     false,
-                )?);
+                ) {
+                    Ok(result) => report_emit_interface_result(result),
+                    Err(code) => {
+                        report_build_interface_failure(path, &artifact_path);
+                        return Err(code);
+                    }
+                }
             }
             Ok(())
         }
@@ -666,6 +673,21 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
             Err(1)
         }
     }
+}
+
+fn report_build_interface_failure(path: &Path, artifact_path: &Path) {
+    if let Ok(manifest) = load_project_manifest(path) {
+        let manifest_path = normalize_path(&manifest.manifest_path);
+        eprintln!("note: failing package manifest: {manifest_path}");
+        eprintln!(
+            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            manifest_path
+        );
+    }
+    eprintln!(
+        "note: build artifact remains at `{}`",
+        normalize_path(artifact_path)
+    );
 }
 
 fn emit_c_header_path(path: &Path, options: &CHeaderOptions) -> Result<(), u8> {

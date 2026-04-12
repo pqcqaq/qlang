@@ -1,9 +1,9 @@
 mod support;
 
 use support::{
-    TempDir, expect_empty_stdout, expect_exit_code, expect_file_exists, expect_snapshot_matches,
+    expect_empty_stdout, expect_exit_code, expect_file_exists, expect_snapshot_matches,
     expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
-    read_normalized_file, run_command_capture, workspace_root,
+    read_normalized_file, run_command_capture, workspace_root, TempDir,
 };
 
 #[test]
@@ -979,8 +979,8 @@ name = "tool"
 }
 
 #[test]
-fn project_emit_interface_check_keeps_checking_other_workspace_members_when_one_member_manifest_is_invalid()
- {
+fn project_emit_interface_check_keeps_checking_other_workspace_members_when_one_member_manifest_is_invalid(
+) {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-check-workspace-invalid-member");
     let project_root = temp.path().join("workspace-only");
@@ -1436,4 +1436,122 @@ pub fn exported(value: Int) -> Int
         &actual,
     )
     .expect("generated qi artifact should match the build-side public interface snapshot");
+}
+
+#[test]
+fn build_with_emit_interface_points_to_failing_package_manifest() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for build-side interface failure test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    return exported(1)
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/src/broken.ql",
+        r#"
+package demo.app
+
+pub fn broken(value: MissingType) -> Int {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let output_path = project_root.join("build").join("app.ll");
+    let manifest_path = project_root.join("qlang.toml");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let output_display = output_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with failing package interface emission",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-failure",
+        "build with failing interface emission",
+        &output,
+        1,
+    )
+    .expect("build should fail when package interface emission fails");
+    expect_stdout_contains_all(
+        "build-emit-interface-failure",
+        &stdout,
+        &[&format!("wrote llvm-ir: {}", output_path.display())],
+    )
+    .expect("build-side interface failure should still report the successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-failure",
+        "build with failing interface emission",
+        &stderr,
+        "broken.ql",
+    )
+    .expect("build-side interface failure should still surface the failing package source");
+    expect_stderr_contains(
+        "build-emit-interface-failure",
+        "build with failing interface emission",
+        &stderr,
+        &format!(
+            "note: failing package manifest: {}",
+            manifest_display
+        ),
+    )
+    .expect("build-side interface failure should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-failure",
+        "build with failing interface emission",
+        &stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            manifest_display
+        ),
+    )
+    .expect("build-side interface failure should suggest rerunning package interface emission");
+    expect_stderr_contains(
+        "build-emit-interface-failure",
+        "build with failing interface emission",
+        &stderr,
+        &format!(
+            "note: build artifact remains at `{}`",
+            output_display
+        ),
+    )
+    .expect("build-side interface failure should confirm that the build artifact was preserved");
+    expect_file_exists(
+        "build-emit-interface-failure",
+        &output_path,
+        "generated llvm ir",
+        "build with failing interface emission",
+    )
+    .expect("build-side interface failure should keep the successful build artifact");
+    assert!(
+        !interface_path.is_file(),
+        "build-side interface failure should not leave behind a partial interface artifact"
+    );
 }
