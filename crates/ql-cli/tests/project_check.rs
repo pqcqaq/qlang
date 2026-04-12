@@ -1,8 +1,8 @@
 mod support;
 
 use support::{
-    TempDir, expect_exit_code, expect_stderr_contains, expect_stdout_contains_all, expect_success,
-    ql_command, run_command_capture, workspace_root,
+    TempDir, expect_exit_code, expect_stderr_contains, expect_stderr_not_contains,
+    expect_stdout_contains_all, expect_success, ql_command, run_command_capture, workspace_root,
 };
 
 #[test]
@@ -1030,12 +1030,48 @@ pub fn main() -> Int {
         "package-aware ql check sync with dependency source failures",
         &normalized_stderr,
         &format!(
-            "hint: repair `{}` or rerun `ql project emit-interface {}` directly",
-            dep_root.join("qlang.toml").display().to_string().replace('\\', "/"),
-            dep_root.join("qlang.toml").display().to_string().replace('\\', "/")
+            "note: failing package manifest: {}",
+            dep_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
         ),
     )
-    .expect("sync path should suggest repairing the dependency manifest directly");
+    .expect("sync path should point to the failing dependency manifest");
+    expect_stderr_contains(
+        "project-check-sync-source-failure-context",
+        "package-aware ql check sync with dependency source failures",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            dep_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/"),
+        ),
+    )
+    .expect("sync path should reuse the standard package rerun hint");
+    expect_stderr_not_contains(
+        "project-check-sync-source-failure-context",
+        "package-aware ql check sync with dependency source failures",
+        &normalized_stderr,
+        &format!(
+            "hint: repair `{}` or rerun `ql project emit-interface {}` directly",
+            dep_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/"),
+            dep_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("sync path should not print the old duplicate direct-rerun hint");
     expect_stderr_contains(
         "project-check-sync-source-failure-context",
         "package-aware ql check sync with dependency source failures",

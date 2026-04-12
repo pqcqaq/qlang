@@ -628,12 +628,8 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                 println!("wrote c-header: {}", header.path.display());
             }
             if emit_interface {
-                match emit_package_interface_path(
-                    path,
-                    None,
-                    "`ql build --emit-interface`",
-                    false,
-                ) {
+                match emit_package_interface_path(path, None, "`ql build --emit-interface`", false)
+                {
                     Ok(result) => report_emit_interface_result(result),
                     Err(code) => {
                         report_build_interface_failure(path, &artifact_path);
@@ -756,12 +752,8 @@ fn project_emit_interface_path(
                 changed_only,
             )?);
         }
-        match emit_package_interface_path(
-            path,
-            output,
-            "`ql project emit-interface`",
-            changed_only,
-        ) {
+        match emit_package_interface_path(path, output, "`ql project emit-interface`", changed_only)
+        {
             Ok(result) => report_emit_interface_result(result),
             Err(code) => {
                 report_package_interface_failure(&manifest.manifest_path);
@@ -847,7 +839,10 @@ fn project_emit_interface_path(
     if check_only && failing_member_count > 0 {
         eprintln!("error: interface check found {failing_member_count} failing member(s)");
         if let Some(path) = &first_failing_member_manifest {
-            eprintln!("note: first failing member manifest: {}", normalize_path(path));
+            eprintln!(
+                "note: first failing member manifest: {}",
+                normalize_path(path)
+            );
         }
         return Err(1);
     }
@@ -855,7 +850,10 @@ fn project_emit_interface_path(
     if !check_only && emission_failure_count > 0 {
         eprintln!("error: interface emission found {emission_failure_count} failing member(s)");
         if let Some(path) = &first_failing_member_manifest {
-            eprintln!("note: first failing member manifest: {}", normalize_path(path));
+            eprintln!(
+                "note: first failing member manifest: {}",
+                normalize_path(path)
+            );
         }
         return Err(1);
     }
@@ -960,9 +958,7 @@ fn emit_package_interface_path(
     }
 
     if failing_source_count > 0 {
-        eprintln!(
-            "error: interface emission found {failing_source_count} failing source file(s)"
-        );
+        eprintln!("error: interface emission found {failing_source_count} failing source file(s)");
         if let Some(path) = &first_failing_source {
             eprintln!("note: first failing source file: {}", normalize_path(path));
         }
@@ -1077,10 +1073,16 @@ fn report_interface_stale_reasons(stale_reasons: &[InterfaceArtifactStaleReason]
     for reason in stale_reasons {
         match reason {
             InterfaceArtifactStaleReason::ManifestNewer { path } => {
-                eprintln!("reason: manifest newer than artifact: {}", normalize_path(path));
+                eprintln!(
+                    "reason: manifest newer than artifact: {}",
+                    normalize_path(path)
+                );
             }
             InterfaceArtifactStaleReason::SourceNewer { path } => {
-                eprintln!("reason: source newer than artifact: {}", normalize_path(path));
+                eprintln!(
+                    "reason: source newer than artifact: {}",
+                    normalize_path(path)
+                );
             }
         }
     }
@@ -1105,7 +1107,10 @@ fn sync_reference_interfaces(
             result.failure_count
         );
         if let Some(path) = &result.first_failure_manifest {
-            eprintln!("note: first failing reference manifest: {}", normalize_path(path));
+            eprintln!(
+                "note: first failing reference manifest: {}",
+                normalize_path(path)
+            );
         }
         return Err(1);
     }
@@ -1165,11 +1170,8 @@ fn sync_reference_interfaces_recursive(
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
                 Err(_) => {
-                    report_reference_interface_sync_failure(
-                        &manifest.manifest_path,
-                        reference,
-                        &dependency_manifest.manifest_path,
-                    );
+                    report_package_interface_failure(&dependency_manifest.manifest_path);
+                    report_reference_interface_sync_failure(&manifest.manifest_path, reference);
                     result.failure_count += 1;
                     record_reference_failure_manifest(
                         &mut result.first_failure_manifest,
@@ -1190,7 +1192,10 @@ fn ensure_reference_interfaces_current(manifest: &ql_project::ProjectManifest) -
             result.failure_count
         );
         if let Some(path) = &result.first_failure_manifest {
-            eprintln!("note: first failing reference manifest: {}", normalize_path(path));
+            eprintln!(
+                "note: first failing reference manifest: {}",
+                normalize_path(path)
+            );
         }
         return Err(1);
     }
@@ -1384,19 +1389,9 @@ fn report_reference_manifest_issue(
     );
 }
 
-fn report_reference_interface_sync_failure(
-    owner_manifest_path: &Path,
-    reference: &str,
-    dependency_manifest_path: &Path,
-) {
+fn report_reference_interface_sync_failure(owner_manifest_path: &Path, reference: &str) {
     let owner_manifest_path = normalize_path(owner_manifest_path);
-    let dependency_manifest_path = normalize_path(dependency_manifest_path);
-    eprintln!(
-        "note: while syncing referenced package `{reference}` from `{owner_manifest_path}`"
-    );
-    eprintln!(
-        "hint: repair `{dependency_manifest_path}` or rerun `ql project emit-interface {dependency_manifest_path}` directly"
-    );
+    eprintln!("note: while syncing referenced package `{reference}` from `{owner_manifest_path}`");
 }
 
 fn workspace_member_manifest_path(path: &Path) -> PathBuf {
