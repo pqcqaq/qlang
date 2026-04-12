@@ -714,7 +714,7 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
 
 fn report_build_interface_failure(path: &Path, artifact_path: &Path) {
     if let Ok(manifest) = load_project_manifest(path) {
-        report_package_interface_failure(&manifest.manifest_path);
+        report_package_interface_failure(&manifest.manifest_path, None);
     }
     eprintln!(
         "note: build artifact remains at `{}`",
@@ -722,9 +722,18 @@ fn report_build_interface_failure(path: &Path, artifact_path: &Path) {
     );
 }
 
-fn report_package_interface_failure(manifest_path: &Path) {
+fn report_package_interface_failure(
+    manifest_path: &Path,
+    workspace_member_manifest_path: Option<&Path>,
+) {
     let manifest_path = normalize_path(manifest_path);
     eprintln!("note: failing package manifest: {manifest_path}");
+    if let Some(workspace_member_manifest_path) = workspace_member_manifest_path {
+        eprintln!(
+            "note: failing workspace member manifest: {}",
+            normalize_path(workspace_member_manifest_path)
+        );
+    }
     eprintln!(
         "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
         manifest_path
@@ -787,17 +796,20 @@ fn project_emit_interface_path(
 
     if manifest.package.is_some() {
         if check_only {
-            return report_package_interface_check(check_package_interface_artifact(
-                &manifest,
-                "`ql project emit-interface --check`",
-                changed_only,
-            )?);
+            return report_package_interface_check(
+                check_package_interface_artifact(
+                    &manifest,
+                    "`ql project emit-interface --check`",
+                    changed_only,
+                )?,
+                None,
+            );
         }
         match emit_package_interface_path(path, output, "`ql project emit-interface`", changed_only)
         {
             Ok(result) => report_emit_interface_result(result),
             Err(code) => {
-                report_package_interface_failure(&manifest.manifest_path);
+                report_package_interface_failure(&manifest.manifest_path, None);
                 return Err(code);
             }
         }
@@ -839,8 +851,8 @@ fn project_emit_interface_path(
                 "`ql project emit-interface --check`",
                 changed_only,
             )?;
-            if report_package_interface_check(result).is_err() {
-                report_workspace_member_failure(&member_manifest.manifest_path);
+            if report_package_interface_check(result, Some(&member_manifest.manifest_path)).is_err()
+            {
                 failing_member_count += 1;
                 record_reference_failure_manifest(
                     &mut first_failing_member_manifest,
@@ -869,8 +881,10 @@ fn project_emit_interface_path(
             ) {
                 Ok(result) => report_emit_interface_result(result),
                 Err(_) => {
-                    report_package_interface_failure(&member_manifest.manifest_path);
-                    report_workspace_member_failure(&member_manifest.manifest_path);
+                    report_package_interface_failure(
+                        &member_manifest.manifest_path,
+                        Some(&member_manifest.manifest_path),
+                    );
                     emission_failure_count += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
@@ -1085,7 +1099,10 @@ fn check_package_interface_artifact(
     Ok(CheckPackageInterfaceResult::Ok(output_path))
 }
 
-fn report_package_interface_check(result: CheckPackageInterfaceResult) -> Result<(), u8> {
+fn report_package_interface_check(
+    result: CheckPackageInterfaceResult,
+    workspace_member_manifest_path: Option<&Path>,
+) -> Result<(), u8> {
     match result {
         CheckPackageInterfaceResult::Ok(path) => {
             println!("ok interface: {}", path.display());
@@ -1113,6 +1130,12 @@ fn report_package_interface_check(result: CheckPackageInterfaceResult) -> Result
             }
             report_interface_stale_reasons(&stale_reasons);
             eprintln!("note: failing package manifest: {manifest_path}");
+            if let Some(workspace_member_manifest_path) = workspace_member_manifest_path {
+                eprintln!(
+                    "note: failing workspace member manifest: {}",
+                    normalize_path(workspace_member_manifest_path)
+                );
+            }
             eprintln!(
                 "hint: rerun `ql project emit-interface {}` to regenerate it",
                 manifest_path
@@ -1225,7 +1248,7 @@ fn sync_reference_interfaces_recursive(
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
                 Err(_) => {
-                    report_package_interface_failure(&dependency_manifest.manifest_path);
+                    report_package_interface_failure(&dependency_manifest.manifest_path, None);
                     report_reference_interface_sync_failure(&manifest.manifest_path, reference);
                     result.failure_count += 1;
                     record_reference_failure_manifest(

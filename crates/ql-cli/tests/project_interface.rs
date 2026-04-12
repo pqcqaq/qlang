@@ -1068,6 +1068,26 @@ pub fn broken_second(value: MissingSecond) -> Int {
         ),
     )
     .expect("workspace interface emission should suggest rerunning the failing member manifest directly");
+    let package_note = format!("note: failing package manifest: {normalized_broken_manifest}");
+    let member_note =
+        format!("note: failing workspace member manifest: {normalized_broken_manifest}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        normalized_broken_manifest
+    );
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("workspace source failure should include the package manifest note");
+    let member_note_index = normalized_stderr
+        .find(&member_note)
+        .expect("workspace source failure should include the workspace member note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("workspace source failure should include the rerun hint");
+    assert!(
+        package_note_index < member_note_index && member_note_index < rerun_hint_index,
+        "expected workspace source failure context before hint, got:\n{stderr}"
+    );
     expect_stderr_contains(
         "project-interface-workspace-source-failure",
         "workspace interface emission with member source failure",
@@ -1400,6 +1420,43 @@ name = "tool"
         ),
     )
     .expect("workspace interface check should also keep the stale member boundary visible");
+    let package_note = format!(
+        "note: failing package manifest: {}",
+        tool_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let member_note = format!(
+        "note: failing workspace member manifest: {}",
+        tool_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {}` to regenerate it",
+        tool_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("workspace stale member failure should include the package manifest note");
+    let member_note_index = normalized_stderr
+        .find(&member_note)
+        .expect("workspace stale member failure should include the workspace member note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("workspace stale member failure should include the rerun hint");
+    assert!(
+        package_note_index < member_note_index && member_note_index < rerun_hint_index,
+        "expected workspace stale member context before hint, got:\n{stderr}"
+    );
     expect_stderr_contains(
         "project-interface-check-workspace",
         "workspace interface check with stale member",
