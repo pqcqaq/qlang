@@ -2884,3 +2884,176 @@ name = "app"
     )
     .expect("direct package ql check sync should suggest rerunning the same manifest path");
 }
+
+#[test]
+fn check_package_dir_preserves_missing_source_root_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-package-missing-source-root");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&app_root)
+        .expect("create package directory for missing source root test");
+
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check"]).arg(&app_root);
+    let output = run_command_capture(&mut command, "`ql check` package missing source root");
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-package-missing-source-root",
+        "direct package ql check with missing source root",
+        &output,
+        1,
+    )
+    .expect("direct package ql check with missing source root should fail");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let manifest_display = app_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let source_root_display = app_root
+        .join("src")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let error_line = format!(
+        "error: `ql check` package source directory `{source_root_display}` does not exist"
+    );
+    let old_error_line =
+        format!("error: package source directory `{source_root_display}` does not exist");
+    let package_note = format!("note: failing package manifest: {manifest_display}");
+    let source_root_note = format!("note: failing package source root: {source_root_display}");
+    let rerun_hint = format!(
+        "hint: rerun `ql check {manifest_display}` after fixing the package source root"
+    );
+    expect_stderr_contains(
+        "project-check-package-missing-source-root",
+        "direct package ql check with missing source root",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("direct package ql check should preserve the command label for missing source roots");
+    expect_stderr_not_contains(
+        "project-check-package-missing-source-root",
+        "direct package ql check with missing source root",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("direct package ql check should not fall back to the generic missing source-root error");
+    expect_stderr_contains(
+        "project-check-package-missing-source-root",
+        "direct package ql check with missing source root",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("direct package ql check should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-check-package-missing-source-root",
+        "direct package ql check with missing source root",
+        &normalized_stderr,
+        &source_root_note,
+    )
+    .expect("direct package ql check should point to the missing source root");
+    expect_stderr_contains(
+        "project-check-package-missing-source-root",
+        "direct package ql check with missing source root",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("direct package ql check should suggest rerunning the same manifest path");
+}
+
+#[test]
+fn check_package_dir_sync_interfaces_preserves_missing_source_root_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-sync-missing-source-root");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&app_root)
+        .expect("create package directory for sync missing source root test");
+
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check", "--sync-interfaces"]).arg(&app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --sync-interfaces` package missing source root",
+    );
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-sync-missing-source-root",
+        "direct package ql check sync with missing source root",
+        &output,
+        1,
+    )
+    .expect("direct package ql check sync with missing source root should fail");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let manifest_display = app_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let source_root_display = app_root
+        .join("src")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let error_line = format!(
+        "error: `ql check --sync-interfaces` package source directory `{source_root_display}` does not exist"
+    );
+    let old_error_line =
+        format!("error: package source directory `{source_root_display}` does not exist");
+    let package_note = format!("note: failing package manifest: {manifest_display}");
+    let source_root_note = format!("note: failing package source root: {source_root_display}");
+    let rerun_hint = format!(
+        "hint: rerun `ql check --sync-interfaces {manifest_display}` after fixing the package source root"
+    );
+    expect_stderr_contains(
+        "project-check-sync-missing-source-root",
+        "direct package ql check sync with missing source root",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("direct package ql check sync should preserve the command label for missing source roots");
+    expect_stderr_not_contains(
+        "project-check-sync-missing-source-root",
+        "direct package ql check sync with missing source root",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect(
+        "direct package ql check sync should not fall back to the generic missing source-root error",
+    );
+    expect_stderr_contains(
+        "project-check-sync-missing-source-root",
+        "direct package ql check sync with missing source root",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("direct package ql check sync should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-check-sync-missing-source-root",
+        "direct package ql check sync with missing source root",
+        &normalized_stderr,
+        &source_root_note,
+    )
+    .expect("direct package ql check sync should point to the missing source root");
+    expect_stderr_contains(
+        "project-check-sync-missing-source-root",
+        "direct package ql check sync with missing source root",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("direct package ql check sync should suggest rerunning the same manifest path");
+}

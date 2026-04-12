@@ -350,10 +350,12 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
         || (is_ql_source_file(path) && load_project_manifest(path).is_ok());
     if use_package_check {
         let check_command_label = format_check_command_label(sync_interfaces);
+        let mut package_manifest_path = None;
         if let Ok(manifest) = load_project_manifest(path) {
             if manifest.package.is_none() && manifest.workspace.is_some() {
                 return check_workspace_manifest(&manifest, sync_interfaces);
             }
+            package_manifest_path = Some(manifest.manifest_path.clone());
             if !sync_interfaces {
                 ensure_reference_interfaces_current(&manifest)?;
             }
@@ -406,6 +408,16 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
                 {
                     eprintln!("error: {check_command_label} {error}");
                     report_package_check_manifest_failure(manifest_path, sync_interfaces);
+                } else if let ql_project::ProjectError::PackageSourceRootNotFound { path } = &error
+                {
+                    eprintln!("error: {check_command_label} {error}");
+                    report_package_check_source_root_failure(
+                        package_manifest_path
+                            .as_deref()
+                            .expect("package source root failures require a loaded manifest"),
+                        path,
+                        sync_interfaces,
+                    );
                 } else {
                     print_package_analysis_error(&PackageAnalysisError::Project(error));
                 }
@@ -623,6 +635,23 @@ fn report_package_check_manifest_failure(manifest_path: &Path, sync_interfaces: 
     eprintln!("note: failing package manifest: {manifest_path}");
     eprintln!(
         "hint: rerun `{rerun_command}` after fixing the package manifest"
+    );
+}
+
+fn report_package_check_source_root_failure(
+    manifest_path: &Path,
+    source_root: &Path,
+    sync_interfaces: bool,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_command = format_check_command(sync_interfaces, Some(&manifest_path));
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!(
+        "note: failing package source root: {}",
+        normalize_path(source_root)
+    );
+    eprintln!(
+        "hint: rerun `{rerun_command}` after fixing the package source root"
     );
 }
 
