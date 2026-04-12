@@ -541,11 +541,13 @@ fn check_workspace_manifest(
 
     if failing_members > 0 {
         eprintln!("error: workspace check found {failing_members} failing member(s)");
-        if let Some(path) = &first_failing_member_manifest {
-            eprintln!(
-                "note: first failing member manifest: {}",
-                normalize_path(path)
-            );
+        if failing_members > 1 {
+            if let Some(path) = &first_failing_member_manifest {
+                eprintln!(
+                    "note: first failing member manifest: {}",
+                    normalize_path(path)
+                );
+            }
         }
         return Err(1);
     }
@@ -879,22 +881,26 @@ fn project_emit_interface_path(
 
     if check_only && failing_member_count > 0 {
         eprintln!("error: interface check found {failing_member_count} failing member(s)");
-        if let Some(path) = &first_failing_member_manifest {
-            eprintln!(
-                "note: first failing member manifest: {}",
-                normalize_path(path)
-            );
+        if failing_member_count > 1 {
+            if let Some(path) = &first_failing_member_manifest {
+                eprintln!(
+                    "note: first failing member manifest: {}",
+                    normalize_path(path)
+                );
+            }
         }
         return Err(1);
     }
 
     if !check_only && emission_failure_count > 0 {
         eprintln!("error: interface emission found {emission_failure_count} failing member(s)");
-        if let Some(path) = &first_failing_member_manifest {
-            eprintln!(
-                "note: first failing member manifest: {}",
-                normalize_path(path)
-            );
+        if emission_failure_count > 1 {
+            if let Some(path) = &first_failing_member_manifest {
+                eprintln!(
+                    "note: first failing member manifest: {}",
+                    normalize_path(path)
+                );
+            }
         }
         return Err(1);
     }

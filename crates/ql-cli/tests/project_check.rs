@@ -984,7 +984,9 @@ pub fn main() -> Int {
         &normalized_stderr,
         "note: first failing reference manifest:",
     )
-    .expect("single remaining transitive failures should not repeat the manifest in the final summary");
+    .expect(
+        "single remaining transitive failures should not repeat the manifest in the final summary",
+    );
 }
 
 #[test]
@@ -1768,6 +1770,114 @@ pub fn main() -> Int {
         stderr.trim().is_empty(),
         "expected workspace-root ql check stderr to stay empty, got:\n{stderr}"
     );
+}
+
+#[test]
+fn check_workspace_root_dedupes_single_failing_member_summary() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-workspace-single-failure");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+    let broken_root = temp
+        .path()
+        .join("workspace")
+        .join("packages")
+        .join("broken");
+    let app_source = app_root.join("src").join("lib.ql");
+    let workspace_manifest = temp.path().join("workspace");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(&broken_root).expect("create broken member directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/broken/qlang.toml",
+        r#"
+[package
+name = "broken"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check"]).arg(&workspace_manifest);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check` workspace root with single failing member",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-workspace-single-failure",
+        "workspace-root ql check with single failing member",
+        &output,
+        1,
+    )
+    .expect("workspace-root ql check with a single failing member should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-check-workspace-single-failure",
+        &normalized_stdout,
+        &[&format!(
+            "ok: {}",
+            app_source.display().to_string().replace('\\', "/")
+        )],
+    )
+    .expect("workspace-root ql check should still report healthy members before failing");
+    expect_stderr_contains(
+        "project-check-workspace-single-failure",
+        "workspace-root ql check with single failing member",
+        &stderr,
+        "invalid manifest",
+    )
+    .expect("workspace-root ql check should surface the broken member manifest");
+    expect_stderr_contains(
+        "project-check-workspace-single-failure",
+        "workspace-root ql check with single failing member",
+        &normalized_stderr,
+        &format!(
+            "note: failing workspace member manifest: {}",
+            broken_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace-root ql check should point the broken member locally");
+    expect_stderr_contains(
+        "project-check-workspace-single-failure",
+        "workspace-root ql check with single failing member",
+        &stderr,
+        "workspace check found 1 failing member(s)",
+    )
+    .expect("workspace-root ql check should summarize the single failing member");
+    expect_stderr_not_contains(
+        "project-check-workspace-single-failure",
+        "workspace-root ql check with single failing member",
+        &normalized_stderr,
+        "note: first failing member manifest:",
+    )
+    .expect("single failing workspace members should not repeat the manifest in the final summary");
 }
 
 #[test]
