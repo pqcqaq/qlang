@@ -1223,6 +1223,145 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn check_package_dir_sync_interfaces_points_dependency_output_failures_at_interface_target() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-sync-output-path-failure");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(dep_root.join("src"))
+        .expect("create dependency source directory for sync output-path failure test");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app source directory for sync output-path failure test");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/src/lib.ql",
+        r#"
+package demo.dep
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    let interface_path = dep_root.join("dep.qi");
+    std::fs::create_dir_all(&interface_path)
+        .expect("create blocking interface directory for dependency sync test");
+    let app_manifest = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let dep_manifest = dep_root.join("qlang.toml");
+    let dep_manifest_display = dep_manifest.to_string_lossy().replace('\\', "/");
+    let interface_display = interface_path.to_string_lossy().replace('\\', "/");
+    let app_manifest_display = app_manifest.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check", "--sync-interfaces"]).arg(&app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --sync-interfaces` dependency blocked output path",
+    );
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-sync-output-path-failure",
+        "package-aware ql check sync with dependency blocked output path",
+        &output,
+        1,
+    )
+    .expect("dependency output-path failures should fail package-aware sync");
+    expect_stderr_contains(
+        "project-check-sync-output-path-failure",
+        "package-aware ql check sync with dependency blocked output path",
+        &stderr,
+        "failed to write interface",
+    )
+    .expect("sync path should surface the dependency write failure");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let package_note = format!("note: failing package manifest: {dep_manifest_display}");
+    let output_note = format!("note: failing interface output path: {interface_display}");
+    let owner_note =
+        format!("note: while syncing referenced package `../dep` from `{app_manifest_display}`");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the interface output path",
+        dep_manifest_display
+    );
+    let old_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        dep_manifest_display
+    );
+    expect_stderr_contains(
+        "project-check-sync-output-path-failure",
+        "package-aware ql check sync with dependency blocked output path",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("sync path should still point to the dependency manifest");
+    expect_stderr_contains(
+        "project-check-sync-output-path-failure",
+        "package-aware ql check sync with dependency blocked output path",
+        &normalized_stderr,
+        &output_note,
+    )
+    .expect("sync path should point to the blocked dependency interface path");
+    expect_stderr_contains(
+        "project-check-sync-output-path-failure",
+        "package-aware ql check sync with dependency blocked output path",
+        &normalized_stderr,
+        &owner_note,
+    )
+    .expect("sync path should still point back to the owner reference");
+    expect_stderr_contains(
+        "project-check-sync-output-path-failure",
+        "package-aware ql check sync with dependency blocked output path",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("sync path should suggest fixing the dependency output path");
+    expect_stderr_not_contains(
+        "project-check-sync-output-path-failure",
+        "package-aware ql check sync with dependency blocked output path",
+        &normalized_stderr,
+        &old_hint,
+    )
+    .expect("sync path should not reuse the source-failure rerun hint for output-path failures");
+    expect_stderr_contains(
+        "project-check-sync-output-path-failure",
+        "package-aware ql check sync with dependency blocked output path",
+        &stderr,
+        "interface sync found 1 failing referenced package(s)",
+    )
+    .expect("sync path should still summarize the failing referenced package");
+    assert!(
+        interface_path.is_dir(),
+        "sync output-path failure test should preserve `{}` as a directory",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn check_package_dir_reports_stale_dependency_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-check-stale-interface");

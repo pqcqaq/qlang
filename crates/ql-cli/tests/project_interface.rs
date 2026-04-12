@@ -409,6 +409,124 @@ pub fn broken(value: MissingType) -> Int {
 }
 
 #[test]
+fn project_emit_interface_points_blocked_output_paths_at_interface_target() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-output-path-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for blocked output path test");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    let interface_path = project_root.join("app.qi");
+    std::fs::create_dir_all(&interface_path)
+        .expect("create blocking interface directory for emit-interface test");
+    let manifest_path = project_root.join("qlang.toml");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let interface_display = interface_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` package with blocked interface output path",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-output-path-failure",
+        "package interface emission with blocked output path",
+        &output,
+        1,
+    )
+    .expect("package interface emission should fail when the interface output path is blocked");
+    expect_empty_stdout(
+        "project-interface-output-path-failure",
+        "package interface emission with blocked output path",
+        &stdout,
+    )
+    .expect("blocked output path should not report a written interface");
+    expect_stderr_contains(
+        "project-interface-output-path-failure",
+        "package interface emission with blocked output path",
+        &stderr,
+        "failed to write interface",
+    )
+    .expect("blocked output path should surface a write failure");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let package_note = format!("note: failing package manifest: {manifest_display}");
+    let output_note = format!("note: failing interface output path: {interface_display}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the interface output path",
+        manifest_display
+    );
+    let old_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        manifest_display
+    );
+    expect_stderr_contains(
+        "project-interface-output-path-failure",
+        "package interface emission with blocked output path",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("blocked output path should still point to the package manifest");
+    expect_stderr_contains(
+        "project-interface-output-path-failure",
+        "package interface emission with blocked output path",
+        &normalized_stderr,
+        &output_note,
+    )
+    .expect("blocked output path should point to the failing interface target");
+    expect_stderr_contains(
+        "project-interface-output-path-failure",
+        "package interface emission with blocked output path",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("blocked output path should suggest fixing the interface output path");
+    expect_stderr_not_contains(
+        "project-interface-output-path-failure",
+        "package interface emission with blocked output path",
+        &normalized_stderr,
+        &old_hint,
+    )
+    .expect("blocked output path should not pretend that package source diagnostics are the issue");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("blocked output path should include the package manifest note");
+    let output_note_index = normalized_stderr
+        .find(&output_note)
+        .expect("blocked output path should include the output-path note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("blocked output path should include the rerun hint");
+    assert!(
+        package_note_index < output_note_index && output_note_index < rerun_hint_index,
+        "expected blocked output path context before rerun hint, got:\n{stderr}"
+    );
+    assert!(
+        interface_path.is_dir(),
+        "blocked output path test should preserve `{}` as a directory",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn project_emit_interface_changed_only_skips_up_to_date_package_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-changed-only-package");
@@ -2263,5 +2381,133 @@ name = "app"
     assert!(
         !interface_path.is_file(),
         "build-side single source failure should not leave behind a partial interface artifact"
+    );
+}
+
+#[test]
+fn build_with_emit_interface_points_blocked_output_paths_at_interface_target() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-output-path-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for blocked build-side interface output test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    return exported(1)
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let interface_path = project_root.join("app.qi");
+    std::fs::create_dir_all(&interface_path)
+        .expect("create blocking interface directory for build-side emit-interface test");
+    let output_path = project_root.join("build").join("app.ll");
+    let manifest_path = project_root.join("qlang.toml");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let interface_display = interface_path.to_string_lossy().replace('\\', "/");
+    let output_display = output_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with blocked interface output path",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-output-path-failure",
+        "build with blocked interface output path",
+        &output,
+        1,
+    )
+    .expect("build should fail when `--emit-interface` cannot write the default `.qi` path");
+    expect_stdout_contains_all(
+        "build-emit-interface-output-path-failure",
+        &stdout,
+        &[&format!("wrote llvm-ir: {}", output_path.display())],
+    )
+    .expect("build-side blocked output path should still report the successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-output-path-failure",
+        "build with blocked interface output path",
+        &stderr,
+        "failed to write interface",
+    )
+    .expect("build-side blocked output path should surface a write failure");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let package_note = format!("note: failing package manifest: {manifest_display}");
+    let output_note = format!("note: failing interface output path: {interface_display}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the interface output path",
+        manifest_display
+    );
+    let old_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        manifest_display
+    );
+    expect_stderr_contains(
+        "build-emit-interface-output-path-failure",
+        "build with blocked interface output path",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("build-side blocked output path should still point to the package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-output-path-failure",
+        "build with blocked interface output path",
+        &normalized_stderr,
+        &output_note,
+    )
+    .expect("build-side blocked output path should point to the failing interface target");
+    expect_stderr_contains(
+        "build-emit-interface-output-path-failure",
+        "build with blocked interface output path",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("build-side blocked output path should suggest fixing the interface output path");
+    expect_stderr_not_contains(
+        "build-emit-interface-output-path-failure",
+        "build with blocked interface output path",
+        &normalized_stderr,
+        &old_hint,
+    )
+    .expect("build-side blocked output path should not reuse the package-source failure hint");
+    expect_stderr_contains(
+        "build-emit-interface-output-path-failure",
+        "build with blocked interface output path",
+        &normalized_stderr,
+        &format!("note: build artifact remains at `{}`", output_display),
+    )
+    .expect("build-side blocked output path should confirm that the build artifact was preserved");
+    expect_file_exists(
+        "build-emit-interface-output-path-failure",
+        &output_path,
+        "generated llvm ir",
+        "build with blocked interface output path",
+    )
+    .expect("build-side blocked output path should keep the successful build artifact");
+    assert!(
+        interface_path.is_dir(),
+        "build-side blocked output path test should preserve `{}` as a directory",
+        interface_path.display()
     );
 }

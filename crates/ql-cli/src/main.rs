@@ -672,9 +672,13 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                 match emit_package_interface_path(path, None, "`ql build --emit-interface`", false)
                 {
                     Ok(result) => report_emit_interface_result(result),
-                    Err(code) => {
+                    Err(EmitPackageInterfaceError::Code(code)) => {
                         report_build_interface_failure(path, &artifact_path);
                         return Err(code);
+                    }
+                    Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
+                        report_build_interface_output_failure(path, &artifact_path, &output_path);
+                        return Err(1);
                     }
                 }
             }
@@ -737,6 +741,39 @@ fn report_package_interface_failure(
     eprintln!(
         "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
         manifest_path
+    );
+}
+
+fn report_package_interface_output_failure(
+    manifest_path: &Path,
+    workspace_member_manifest_path: Option<&Path>,
+    output_path: &Path,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    eprintln!("note: failing package manifest: {manifest_path}");
+    if let Some(workspace_member_manifest_path) = workspace_member_manifest_path {
+        eprintln!(
+            "note: failing workspace member manifest: {}",
+            normalize_path(workspace_member_manifest_path)
+        );
+    }
+    eprintln!(
+        "note: failing interface output path: {}",
+        normalize_path(output_path)
+    );
+    eprintln!(
+        "hint: rerun `ql project emit-interface {}` after fixing the interface output path",
+        manifest_path
+    );
+}
+
+fn report_build_interface_output_failure(path: &Path, artifact_path: &Path, output_path: &Path) {
+    if let Ok(manifest) = load_project_manifest(path) {
+        report_package_interface_output_failure(&manifest.manifest_path, None, output_path);
+    }
+    eprintln!(
+        "note: build artifact remains at `{}`",
+        normalize_path(artifact_path)
     );
 }
 
@@ -808,9 +845,17 @@ fn project_emit_interface_path(
         match emit_package_interface_path(path, output, "`ql project emit-interface`", changed_only)
         {
             Ok(result) => report_emit_interface_result(result),
-            Err(code) => {
+            Err(EmitPackageInterfaceError::Code(code)) => {
                 report_package_interface_failure(&manifest.manifest_path, None);
                 return Err(code);
+            }
+            Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
+                report_package_interface_output_failure(
+                    &manifest.manifest_path,
+                    None,
+                    &output_path,
+                );
+                return Err(1);
             }
         }
         return Ok(());
@@ -880,10 +925,22 @@ fn project_emit_interface_path(
                 changed_only,
             ) {
                 Ok(result) => report_emit_interface_result(result),
-                Err(_) => {
+                Err(EmitPackageInterfaceError::Code(_)) => {
                     report_package_interface_failure(
                         &member_manifest.manifest_path,
                         Some(&member_manifest.manifest_path),
+                    );
+                    emission_failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest.manifest_path.clone(),
+                    );
+                }
+                Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
+                    report_package_interface_output_failure(
+                        &member_manifest.manifest_path,
+                        Some(&member_manifest.manifest_path),
+                        &output_path,
                     );
                     emission_failure_count += 1;
                     record_reference_failure_manifest(
@@ -941,6 +998,11 @@ enum CheckPackageInterfaceResult {
     },
 }
 
+enum EmitPackageInterfaceError {
+    Code(u8),
+    OutputPathFailure { output_path: PathBuf },
+}
+
 #[derive(Default)]
 struct ReferenceInterfaceSyncResult {
     written: Vec<PathBuf>,
@@ -959,14 +1021,14 @@ fn emit_package_interface_path(
     output: Option<&Path>,
     command_label: &str,
     changed_only: bool,
-) -> Result<EmitPackageInterfaceResult, u8> {
+) -> Result<EmitPackageInterfaceResult, EmitPackageInterfaceError> {
     let manifest = load_project_manifest(path).map_err(|error| {
         eprintln!("error: {error}");
-        1
+        EmitPackageInterfaceError::Code(1)
     })?;
     let package_name = package_name(&manifest).map_err(|error| {
         eprintln!("error: {command_label} {error}");
-        1
+        EmitPackageInterfaceError::Code(1)
     })?;
     let output_path = output.map(Path::to_path_buf).unwrap_or_else(|| {
         default_interface_path(&manifest).expect("package emit should have a default qi path")
@@ -980,7 +1042,7 @@ fn emit_package_interface_path(
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
     let files = collect_package_sources(&manifest).map_err(|error| {
         eprintln!("error: {error}");
-        1
+        EmitPackageInterfaceError::Code(1)
     })?;
 
     let mut rendered_modules = Vec::new();
@@ -1027,7 +1089,7 @@ fn emit_package_interface_path(
                 eprintln!("note: first failing source file: {}", normalize_path(path));
             }
         }
-        return Err(1);
+        return Err(EmitPackageInterfaceError::Code(1));
     }
 
     if let Some(parent) = output_path.parent()
@@ -1038,7 +1100,9 @@ fn emit_package_interface_path(
                 "error: failed to create interface output directory `{}`: {error}",
                 parent.display()
             );
-            1
+            EmitPackageInterfaceError::OutputPathFailure {
+                output_path: output_path.clone(),
+            }
         })?;
     }
 
@@ -1048,7 +1112,9 @@ fn emit_package_interface_path(
             "error: failed to write interface `{}`: {error}",
             output_path.display()
         );
-        1
+        EmitPackageInterfaceError::OutputPathFailure {
+            output_path: output_path.clone(),
+        }
     })?;
     Ok(EmitPackageInterfaceResult::Wrote(output_path))
 }
@@ -1270,8 +1336,21 @@ fn sync_reference_interfaces_recursive(
             match emit_result {
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
-                Err(_) => {
+                Err(EmitPackageInterfaceError::Code(_)) => {
                     report_package_interface_failure(&dependency_manifest.manifest_path, None);
+                    report_reference_interface_sync_failure(&manifest.manifest_path, reference);
+                    result.failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut result.first_failure_manifest,
+                        dependency_manifest.manifest_path.clone(),
+                    );
+                }
+                Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
+                    report_package_interface_output_failure(
+                        &dependency_manifest.manifest_path,
+                        None,
+                        &output_path,
+                    );
                     report_reference_interface_sync_failure(&manifest.manifest_path, reference);
                     result.failure_count += 1;
                     record_reference_failure_manifest(
