@@ -457,18 +457,26 @@ fn check_workspace_manifest(
             Ok(manifest) => manifest,
             Err(error) => {
                 eprintln!("error: {error}");
-                report_workspace_member_failure(&workspace_member_manifest_path(&member_path));
+                let member_manifest_path = workspace_member_manifest_path(&member_path);
+                let rerun_command = format_workspace_member_check_rerun_command(
+                    &normalize_path(&member_manifest_path),
+                    sync_interfaces,
+                );
+                let rerun_hint = format!(
+                    "hint: rerun `{rerun_command}` after fixing the workspace member manifest"
+                );
+                report_workspace_member_failure(&member_manifest_path, Some(rerun_hint.as_str()));
                 failing_members += 1;
                 record_reference_failure_manifest(
                     &mut first_failing_member_manifest,
-                    workspace_member_manifest_path(&member_path),
+                    member_manifest_path,
                 );
                 continue;
             }
         };
 
         if !sync_interfaces && ensure_reference_interfaces_current(&member_manifest).is_err() {
-            report_workspace_member_failure(&member_manifest.manifest_path);
+            report_workspace_member_failure(&member_manifest.manifest_path, None);
             failing_members += 1;
             record_reference_failure_manifest(
                 &mut first_failing_member_manifest,
@@ -481,7 +489,7 @@ fn check_workspace_manifest(
             let synced_paths = match sync_reference_interfaces(&member_path, &mut sync_visited) {
                 Ok(paths) => paths,
                 Err(_) => {
-                    report_workspace_member_failure(&member_manifest.manifest_path);
+                    report_workspace_member_failure(&member_manifest.manifest_path, None);
                     failing_members += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
@@ -509,7 +517,7 @@ fn check_workspace_manifest(
                         "error: no `.ql` files found under `{}`",
                         source_root.display()
                     );
-                    report_workspace_member_failure(&member_manifest.manifest_path);
+                    report_workspace_member_failure(&member_manifest.manifest_path, None);
                     failing_members += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
@@ -529,7 +537,7 @@ fn check_workspace_manifest(
             }
             Err(error) => {
                 print_package_analysis_error(&error);
-                report_workspace_member_failure(&member_manifest.manifest_path);
+                report_workspace_member_failure(&member_manifest.manifest_path, None);
                 failing_members += 1;
                 record_reference_failure_manifest(
                     &mut first_failing_member_manifest,
@@ -555,11 +563,14 @@ fn check_workspace_manifest(
     Ok(())
 }
 
-fn report_workspace_member_failure(manifest_path: &Path) {
+fn report_workspace_member_failure(manifest_path: &Path, hint_line: Option<&str>) {
     eprintln!(
         "note: failing workspace member manifest: {}",
         normalize_path(manifest_path)
     );
+    if let Some(hint_line) = hint_line {
+        eprintln!("{hint_line}");
+    }
 }
 
 fn format_path(path: &Path, write: bool) -> Result<(), u8> {
@@ -915,7 +926,18 @@ fn project_emit_interface_path(
                 Ok(manifest) => manifest,
                 Err(error) => {
                     eprintln!("error: {error}");
-                    report_workspace_member_failure(&member_manifest_path);
+                    let rerun_command = format_workspace_member_emit_rerun_command(
+                        &normalize_path(&member_manifest_path),
+                        changed_only,
+                        check_only,
+                    );
+                    let rerun_hint = format!(
+                        "hint: rerun `{rerun_command}` after fixing the workspace member manifest"
+                    );
+                    report_workspace_member_failure(
+                        &member_manifest_path,
+                        Some(rerun_hint.as_str()),
+                    );
                     failing_member_count += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
@@ -947,7 +969,18 @@ fn project_emit_interface_path(
                 Ok(manifest) => manifest,
                 Err(error) => {
                     eprintln!("error: {error}");
-                    report_workspace_member_failure(&member_manifest_path);
+                    let rerun_command = format_workspace_member_emit_rerun_command(
+                        &normalize_path(&member_manifest_path),
+                        changed_only,
+                        check_only,
+                    );
+                    let rerun_hint = format!(
+                        "hint: rerun `{rerun_command}` after fixing the workspace member manifest"
+                    );
+                    report_workspace_member_failure(
+                        &member_manifest_path,
+                        Some(rerun_hint.as_str()),
+                    );
                     emission_failure_count += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
@@ -1213,6 +1246,31 @@ fn format_emit_interface_regenerate_command(manifest_path: &str, changed_only: b
     } else {
         format!("ql project emit-interface {manifest_path}")
     }
+}
+
+fn format_workspace_member_emit_rerun_command(
+    manifest_path: &str,
+    changed_only: bool,
+    check_only: bool,
+) -> String {
+    let mut command = format!("ql project emit-interface {manifest_path}");
+    if changed_only {
+        command.push_str(" --changed-only");
+    }
+    if check_only {
+        command.push_str(" --check");
+    }
+    command
+}
+
+fn format_workspace_member_check_rerun_command(manifest_path: &str, sync_interfaces: bool) -> String {
+    let mut command = String::from("ql check");
+    if sync_interfaces {
+        command.push_str(" --sync-interfaces");
+    }
+    command.push(' ');
+    command.push_str(manifest_path);
+    command
 }
 
 fn check_package_interface_artifact(

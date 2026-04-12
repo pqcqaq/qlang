@@ -2183,6 +2183,21 @@ name = "broken"
         ),
     )
     .expect("workspace-root ql check should point the broken member locally");
+    let rerun_hint = format!(
+        "hint: rerun `ql check {}` after fixing the workspace member manifest",
+        broken_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    expect_stderr_contains(
+        "project-check-workspace-single-failure",
+        "workspace-root ql check with single failing member",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("workspace-root ql check should suggest rerunning the broken member directly after repair");
     expect_stderr_contains(
         "project-check-workspace-single-failure",
         "workspace-root ql check with single failing member",

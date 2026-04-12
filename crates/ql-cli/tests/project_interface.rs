@@ -1309,6 +1309,21 @@ name = "broken"
         ),
     )
     .expect("workspace interface emission should point invalid member manifests locally");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {}` after fixing the workspace member manifest",
+        broken_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    expect_stderr_contains(
+        "project-interface-workspace-partial-failure",
+        "workspace interface emission with failing member",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("workspace interface emission should suggest rerunning the broken member directly after repair");
     expect_stderr_contains(
         "project-interface-workspace-partial-failure",
         "workspace interface emission with failing member",
@@ -2252,6 +2267,21 @@ name = "broken"
         ),
     )
     .expect("workspace interface check should point invalid member manifests locally");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {} --check` after fixing the workspace member manifest",
+        broken_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    expect_stderr_contains(
+        "project-interface-check-workspace-invalid-member",
+        "workspace interface check with invalid member manifest",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("workspace interface check should suggest rerunning the broken member directly after repair");
     expect_stderr_contains(
         "project-interface-check-workspace-invalid-member",
         "workspace interface check with invalid member manifest",
