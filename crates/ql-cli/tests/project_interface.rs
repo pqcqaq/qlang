@@ -1434,6 +1434,87 @@ pub fn broken_second(value: MissingSecond) -> Int {
 }
 
 #[test]
+fn project_emit_interface_check_changed_only_preserves_regenerate_hint_for_invalid_package() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-changed-only-invalid-package");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for changed-only invalid interface check test");
+    let manifest_path = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write("workspace/app/app.qi", "broken interface\n");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--changed-only", "--check"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --changed-only --check` invalid package",
+    );
+    let (_stdout, stderr) = expect_exit_code(
+        "project-interface-check-changed-only-invalid-package",
+        "changed-only invalid package interface check",
+        &output,
+        1,
+    )
+    .expect("changed-only invalid package interface check should fail");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let package_note = format!(
+        "note: failing package manifest: {}",
+        manifest_path.display().to_string().replace('\\', "/")
+    );
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {} --changed-only` to regenerate it",
+        manifest_path.display().to_string().replace('\\', "/")
+    );
+    let default_rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {}` to regenerate it",
+        manifest_path.display().to_string().replace('\\', "/")
+    );
+    expect_stderr_contains(
+        "project-interface-check-changed-only-invalid-package",
+        "changed-only invalid package interface check",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("changed-only invalid package interface check should preserve `--changed-only`");
+    assert!(
+        !normalized_stderr.contains(&default_rerun_hint),
+        "changed-only invalid package interface check should not fall back to the default rerun hint, got:\n{stderr}"
+    );
+    let detail_line = "detail: expected `// qlang interface v1` header";
+    let detail_index = normalized_stderr
+        .find(detail_line)
+        .expect("changed-only invalid package interface check should report parse detail");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("changed-only invalid package interface check should include the package manifest note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("changed-only invalid package interface check should include the rerun hint");
+    assert!(
+        detail_index < package_note_index && package_note_index < rerun_hint_index,
+        "expected changed-only invalid package interface check to keep detail before manifest and hint, got:\n{stderr}"
+    );
+}
+
+#[test]
 fn project_emit_interface_changed_only_rewrites_only_stale_workspace_members() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-changed-only-workspace");
@@ -1766,6 +1847,14 @@ name = "tool"
             .replace('\\', "/")
     );
     let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {} --changed-only` to regenerate it",
+        tool_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let default_rerun_hint = format!(
         "hint: rerun `ql project emit-interface {}` to regenerate it",
         tool_root
             .join("qlang.toml")
@@ -1785,6 +1874,10 @@ name = "tool"
     assert!(
         package_note_index < member_note_index && member_note_index < rerun_hint_index,
         "expected workspace stale member context before hint, got:\n{stderr}"
+    );
+    assert!(
+        !normalized_stderr.contains(&default_rerun_hint),
+        "changed-only workspace interface check should not fall back to the default rerun hint, got:\n{stderr}"
     );
     expect_stderr_contains(
         "project-interface-check-workspace",

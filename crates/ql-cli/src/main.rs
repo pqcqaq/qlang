@@ -844,6 +844,7 @@ fn project_emit_interface_path(
                     changed_only,
                 )?,
                 None,
+                changed_only,
             );
         }
         match emit_package_interface_path(path, output, "`ql project emit-interface`", changed_only)
@@ -901,7 +902,12 @@ fn project_emit_interface_path(
                 "`ql project emit-interface --check`",
                 changed_only,
             )?;
-            if report_package_interface_check(result, Some(&member_manifest.manifest_path)).is_err()
+            if report_package_interface_check(
+                result,
+                Some(&member_manifest.manifest_path),
+                changed_only,
+            )
+            .is_err()
             {
                 failing_member_count += 1;
                 record_reference_failure_manifest(
@@ -1169,6 +1175,14 @@ fn format_emit_interface_rerun_command(
     }
 }
 
+fn format_emit_interface_regenerate_command(manifest_path: &str, changed_only: bool) -> String {
+    if changed_only {
+        format!("ql project emit-interface {manifest_path} --changed-only")
+    } else {
+        format!("ql project emit-interface {manifest_path}")
+    }
+}
+
 fn check_package_interface_artifact(
     manifest: &ql_project::ProjectManifest,
     command_label: &str,
@@ -1207,6 +1221,7 @@ fn check_package_interface_artifact(
 fn report_package_interface_check(
     result: CheckPackageInterfaceResult,
     workspace_member_manifest_path: Option<&Path>,
+    changed_only: bool,
 ) -> Result<(), u8> {
     match result {
         CheckPackageInterfaceResult::Ok(path) => {
@@ -1241,8 +1256,9 @@ fn report_package_interface_check(
             if let Some(workspace_member_note) = workspace_member_note.as_deref() {
                 notes.push(workspace_member_note);
             }
-            let hint_line =
-                format!("hint: rerun `ql project emit-interface {manifest_path}` to regenerate it");
+            let regenerate_command =
+                format_emit_interface_regenerate_command(&manifest_path, changed_only);
+            let hint_line = format!("hint: rerun `{regenerate_command}` to regenerate it");
             report_interface_artifact_failure(
                 &error_line,
                 detail.as_deref(),
