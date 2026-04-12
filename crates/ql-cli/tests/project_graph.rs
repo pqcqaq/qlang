@@ -70,7 +70,7 @@ pub fn run() -> Int
         .expect("successful project graph rendering should stay silent on stderr");
 
     let expected = format!(
-        "manifest: {}\npackage: app\nworkspace_members:\n  - packages/app\n  - packages/core\nreferences:\n  - ../core\n  - ../runtime\ninterface:\n  path: app.qi\n  status: invalid\n  detail: expected `// qlang interface v1` header\nreference_interfaces:\n  - reference: ../core\n    package: core\n    path: ../core/core.qi\n    status: missing\n  - reference: ../runtime\n    package: runtime\n    path: ../runtime/runtime.qi\n    status: valid\n",
+        "manifest: {}\npackage: app\nworkspace_members:\n  - packages/app\n  - packages/core\nreferences:\n  - ../core\n  - ../runtime\ninterface:\n  path: app.qi\n  status: invalid\n  detail: expected `// qlang interface v1` header\nreference_interfaces:\n  - reference: ../core\n    manifest: ../core/qlang.toml\n    package: core\n    path: ../core/core.qi\n    status: missing\n  - reference: ../runtime\n    manifest: ../runtime/qlang.toml\n    package: runtime\n    path: ../runtime/runtime.qi\n    status: valid\n",
         manifest_path.to_string_lossy().replace('\\', "/")
     );
     expect_snapshot_matches(
@@ -226,7 +226,7 @@ pub fn exported() -> Int {
     .expect("stale interface graph rendering should stay silent on stderr");
 
     let expected = format!(
-        "manifest: {}\npackage: app\nworkspace_members: []\nreferences:\n  - ../dep\ninterface:\n  path: app.qi\n  status: stale\n  stale_reasons:\n    - manifest: qlang.toml\nreference_interfaces:\n  - reference: ../dep\n    package: dep\n    path: ../dep/dep.qi\n    status: stale\n    stale_reasons:\n      - source: ../dep/src/lib.ql\n",
+        "manifest: {}\npackage: app\nworkspace_members: []\nreferences:\n  - ../dep\ninterface:\n  path: app.qi\n  status: stale\n  stale_reasons:\n    - manifest: qlang.toml\nreference_interfaces:\n  - reference: ../dep\n    manifest: ../dep/qlang.toml\n    package: dep\n    path: ../dep/dep.qi\n    status: stale\n    stale_reasons:\n      - source: ../dep/src/lib.ql\n",
         manifest_path.to_string_lossy().replace('\\', "/")
     );
     expect_snapshot_matches(
@@ -322,7 +322,7 @@ pub fn exported() -> Int
     .expect("workspace root project graph rendering should stay silent on stderr");
 
     let expected = format!(
-        "manifest: {}\npackage: <none>\nworkspace_members:\n  - packages/app\n  - packages/tool\nreferences: []\nworkspace_packages:\n  - member: packages/app\n    manifest: packages/app/qlang.toml\n    package: app\n    interface:\n      path: packages/app/app.qi\n      status: valid\n    references:\n      - ../../dep\n    reference_interfaces:\n      - reference: ../../dep\n        package: dep\n        path: dep/dep.qi\n        status: valid\n  - member: packages/tool\n    manifest: packages/tool/qlang.toml\n    package: tool\n    interface:\n      path: packages/tool/tool.qi\n      status: missing\n    references: []\n    reference_interfaces: []\n",
+        "manifest: {}\npackage: <none>\nworkspace_members:\n  - packages/app\n  - packages/tool\nreferences: []\nworkspace_packages:\n  - member: packages/app\n    manifest: packages/app/qlang.toml\n    package: app\n    interface:\n      path: packages/app/app.qi\n      status: valid\n    references:\n      - ../../dep\n    reference_interfaces:\n      - reference: ../../dep\n        manifest: dep/qlang.toml\n        package: dep\n        path: dep/dep.qi\n        status: valid\n  - member: packages/tool\n    manifest: packages/tool/qlang.toml\n    package: tool\n    interface:\n      path: packages/tool/tool.qi\n      status: missing\n    references: []\n    reference_interfaces: []\n",
         manifest_path.to_string_lossy().replace('\\', "/")
     );
     expect_snapshot_matches(
@@ -494,12 +494,15 @@ name = "broken_ref"
         &normalized_stdout,
         &[
             "reference: ../dep",
+            "manifest: ../dep/qlang.toml",
             "status: valid",
             "reference: ../workspace_ref",
+            "manifest: ../workspace_ref/qlang.toml",
             "status: unresolved-package",
             "detail: manifest `",
             "does not declare `[package].name`",
             "reference: ../broken_ref",
+            "manifest: ../broken_ref/qlang.toml",
             "status: unresolved-manifest",
             "detail: invalid manifest `",
         ],
