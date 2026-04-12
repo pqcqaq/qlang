@@ -817,6 +817,13 @@ enum CheckPackageInterfaceResult {
 struct ReferenceInterfaceSyncResult {
     written: Vec<PathBuf>,
     failure_count: usize,
+    first_failure_manifest: Option<PathBuf>,
+}
+
+#[derive(Default)]
+struct ReferenceInterfaceCheckResult {
+    failure_count: usize,
+    first_failure_manifest: Option<PathBuf>,
 }
 
 fn emit_package_interface_path(
@@ -1006,6 +1013,9 @@ fn sync_reference_interfaces(
             "error: interface sync found {} failing referenced package(s)",
             result.failure_count
         );
+        if let Some(path) = &result.first_failure_manifest {
+            eprintln!("note: first failing reference manifest: {}", path.display());
+        }
         return Err(1);
     }
     Ok(result.written)
@@ -1027,6 +1037,10 @@ fn sync_reference_interfaces_recursive(
                 Ok(result) => result,
                 Err(_) => {
                     result.failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut result.first_failure_manifest,
+                        reference_manifest_path(manifest, reference),
+                    );
                     continue;
                 }
             };
@@ -1040,6 +1054,10 @@ fn sync_reference_interfaces_recursive(
             Ok(path) => path,
             Err(_) => {
                 result.failure_count += 1;
+                record_reference_failure_manifest(
+                    &mut result.first_failure_manifest,
+                    reference_manifest_path.clone(),
+                );
                 continue;
             }
         };
@@ -1055,7 +1073,13 @@ fn sync_reference_interfaces_recursive(
             match emit_result {
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
-                Err(_) => result.failure_count += 1,
+                Err(_) => {
+                    result.failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut result.first_failure_manifest,
+                        dependency_manifest.manifest_path.clone(),
+                    );
+                }
             }
         }
         sync_reference_interfaces_recursive(&dependency_manifest, visited, result);
@@ -1063,10 +1087,15 @@ fn sync_reference_interfaces_recursive(
 }
 
 fn ensure_reference_interfaces_current(manifest: &ql_project::ProjectManifest) -> Result<(), u8> {
-    let failure_count =
-        ensure_reference_interfaces_current_recursive(manifest, &mut BTreeSet::new());
-    if failure_count > 0 {
-        eprintln!("error: interface check found {failure_count} failing referenced package(s)");
+    let result = ensure_reference_interfaces_current_recursive(manifest, &mut BTreeSet::new());
+    if result.failure_count > 0 {
+        eprintln!(
+            "error: interface check found {} failing referenced package(s)",
+            result.failure_count
+        );
+        if let Some(path) = &result.first_failure_manifest {
+            eprintln!("note: first failing reference manifest: {}", path.display());
+        }
         return Err(1);
     }
     Ok(())
@@ -1075,19 +1104,23 @@ fn ensure_reference_interfaces_current(manifest: &ql_project::ProjectManifest) -
 fn ensure_reference_interfaces_current_recursive(
     manifest: &ql_project::ProjectManifest,
     visited: &mut BTreeSet<PathBuf>,
-) -> usize {
+) -> ReferenceInterfaceCheckResult {
     let manifest_path = manifest.manifest_path.clone();
     if !visited.insert(manifest_path.clone()) {
-        return 0;
+        return ReferenceInterfaceCheckResult::default();
     }
 
-    let mut failure_count = 0usize;
+    let mut result = ReferenceInterfaceCheckResult::default();
     for reference in &manifest.references.packages {
         let (dependency_manifest, reference_manifest_path) =
             match load_reference_manifest_for_interfaces(manifest, reference) {
                 Ok(result) => result,
                 Err(_) => {
-                    failure_count += 1;
+                    result.failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut result.first_failure_manifest,
+                        reference_manifest_path(manifest, reference),
+                    );
                     continue;
                 }
             };
@@ -1100,7 +1133,11 @@ fn ensure_reference_interfaces_current_recursive(
         let dependency_package = match dependency_package {
             Ok(name) => name,
             Err(_) => {
-                failure_count += 1;
+                result.failure_count += 1;
+                record_reference_failure_manifest(
+                    &mut result.first_failure_manifest,
+                    reference_manifest_path.clone(),
+                );
                 continue;
             }
         };
@@ -1113,7 +1150,11 @@ fn ensure_reference_interfaces_current_recursive(
         let interface_path = match interface_path {
             Ok(path) => path,
             Err(_) => {
-                failure_count += 1;
+                result.failure_count += 1;
+                record_reference_failure_manifest(
+                    &mut result.first_failure_manifest,
+                    reference_manifest_path.clone(),
+                );
                 continue;
             }
         };
@@ -1126,13 +1167,27 @@ fn ensure_reference_interfaces_current_recursive(
                 &interface_path,
                 status,
             );
-            failure_count += 1;
+            result.failure_count += 1;
+            record_reference_failure_manifest(
+                &mut result.first_failure_manifest,
+                dependency_manifest.manifest_path.clone(),
+            );
         }
-        failure_count +=
+        let nested_result =
             ensure_reference_interfaces_current_recursive(&dependency_manifest, visited);
+        result.failure_count += nested_result.failure_count;
+        if result.first_failure_manifest.is_none() {
+            result.first_failure_manifest = nested_result.first_failure_manifest;
+        }
     }
 
-    failure_count
+    result
+}
+
+fn record_reference_failure_manifest(slot: &mut Option<PathBuf>, path: PathBuf) {
+    if slot.is_none() {
+        *slot = Some(path);
+    }
 }
 
 fn load_reference_manifest_for_interfaces(

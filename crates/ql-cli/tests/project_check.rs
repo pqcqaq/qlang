@@ -457,6 +457,23 @@ pub fn main() -> Int {
         "interface check found 2 failing referenced package(s)",
     )
     .expect("package-aware ql check should summarize all failing references");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-multiple-reference-failures",
+        "package-aware ql check with multiple failing references",
+        &normalized_stderr,
+        &format!(
+            "note: first failing reference manifest: {}",
+            app_root
+                .join("..")
+                .join("dep")
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("package-aware ql check should point to the first failing reference manifest");
 }
 
 #[test]
@@ -552,6 +569,23 @@ pub fn main() -> Int {
         "interface check found 2 failing referenced package(s)",
     )
     .expect("package-aware ql check should summarize direct and transitive failures");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-transitive-reference-failures",
+        "package-aware ql check with transitive reference failures",
+        &normalized_stderr,
+        &format!(
+            "note: first failing reference manifest: {}",
+            app_root
+                .join("..")
+                .join("dep")
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("package-aware ql check should point to the first failing direct manifest");
 }
 
 #[test]
@@ -742,6 +776,23 @@ pub fn main() -> Int {
         "interface sync found 2 failing referenced package(s)",
     )
     .expect("sync path should summarize all failing references");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-sync-multiple-reference-failures",
+        "package-aware ql check sync with multiple failing references",
+        &normalized_stderr,
+        &format!(
+            "note: first failing reference manifest: {}",
+            app_root
+                .join("..")
+                .join("broken_ref")
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("sync path should point to the first failing reference manifest");
 }
 
 #[test]
@@ -842,6 +893,25 @@ pub fn main() -> Int {
         "interface sync found 1 failing referenced package(s)",
     )
     .expect("sync path should only summarize the remaining transitive failure");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-sync-transitive-reference-failures",
+        "package-aware ql check sync with transitive reference failures",
+        &normalized_stderr,
+        &format!(
+            "note: first failing reference manifest: {}",
+            app_root
+                .join("..")
+                .join("dep")
+                .join("..")
+                .join("broken_ref")
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("sync path should point to the first transitive failing manifest");
 }
 
 #[test]
