@@ -865,20 +865,32 @@ fn project_emit_interface_path(
         return Err(1);
     }
 
+    let emit_command_label =
+        format_project_emit_interface_command_label(output, changed_only, false);
+    let check_command_label = format_project_emit_interface_command_label(None, changed_only, true);
+
     if manifest.package.is_some() {
         if check_only {
-            return report_package_interface_check(
-                check_package_interface_artifact(
-                    &manifest,
-                    "`ql project emit-interface --check`",
-                    changed_only,
-                )?,
-                None,
+            let result = match check_package_interface_artifact(
+                &manifest,
+                check_command_label.as_str(),
                 changed_only,
-            );
+            ) {
+                Ok(result) => result,
+                Err(code) => {
+                    report_package_interface_failure(
+                        &manifest.manifest_path,
+                        None,
+                        None,
+                        changed_only,
+                        None,
+                    );
+                    return Err(code);
+                }
+            };
+            return report_package_interface_check(result, None, changed_only);
         }
-        match emit_package_interface_path(path, output, "`ql project emit-interface`", changed_only)
-        {
+        match emit_package_interface_path(path, output, emit_command_label.as_str(), changed_only) {
             Ok(result) => report_emit_interface_result(result),
             Err(EmitPackageInterfaceError::Code(code)) => {
                 report_package_interface_failure(
@@ -946,11 +958,33 @@ fn project_emit_interface_path(
                     continue;
                 }
             };
-            let result = check_package_interface_artifact(
+            let result = match check_package_interface_artifact(
                 &member_manifest,
-                "`ql project emit-interface --check`",
+                check_command_label.as_str(),
                 changed_only,
-            )?;
+            ) {
+                Ok(result) => result,
+                Err(_) => {
+                    let rerun_command = format_workspace_member_emit_rerun_command(
+                        &normalize_path(&member_manifest.manifest_path),
+                        changed_only,
+                        check_only,
+                    );
+                    let rerun_hint = format!(
+                        "hint: rerun `{rerun_command}` after fixing the workspace member manifest"
+                    );
+                    report_workspace_member_failure(
+                        &member_manifest.manifest_path,
+                        Some(rerun_hint.as_str()),
+                    );
+                    failing_member_count += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest.manifest_path.clone(),
+                    );
+                    continue;
+                }
+            };
             if report_package_interface_check(
                 result,
                 Some(&member_manifest.manifest_path),
@@ -992,7 +1026,7 @@ fn project_emit_interface_path(
             match emit_package_interface_path(
                 &member_manifest.manifest_path,
                 None,
-                "`ql project emit-interface`",
+                emit_command_label.as_str(),
                 changed_only,
             ) {
                 Ok(result) => report_emit_interface_result(result),
@@ -1230,14 +1264,51 @@ fn format_emit_interface_rerun_command(
     requested_output_path: Option<&Path>,
     changed_only: bool,
 ) -> String {
-    let mut command = format!("ql project emit-interface {manifest_path}");
+    format_project_emit_interface_command(
+        Some(manifest_path),
+        requested_output_path,
+        changed_only,
+        false,
+    )
+}
+
+fn format_project_emit_interface_command(
+    manifest_path: Option<&str>,
+    requested_output_path: Option<&Path>,
+    changed_only: bool,
+    check_only: bool,
+) -> String {
+    let mut command = String::from("ql project emit-interface");
+    if let Some(manifest_path) = manifest_path {
+        command.push(' ');
+        command.push_str(manifest_path);
+    }
     if changed_only {
         command.push_str(" --changed-only");
+    }
+    if check_only {
+        command.push_str(" --check");
     }
     if let Some(output_path) = requested_output_path {
         command.push_str(&format!(" --output {}", normalize_path(output_path)));
     }
     command
+}
+
+fn format_project_emit_interface_command_label(
+    requested_output_path: Option<&Path>,
+    changed_only: bool,
+    check_only: bool,
+) -> String {
+    format!(
+        "`{}`",
+        format_project_emit_interface_command(
+            None,
+            requested_output_path,
+            changed_only,
+            check_only,
+        )
+    )
 }
 
 fn format_emit_interface_regenerate_command(manifest_path: &str, changed_only: bool) -> String {
@@ -1253,17 +1324,13 @@ fn format_workspace_member_emit_rerun_command(
     changed_only: bool,
     check_only: bool,
 ) -> String {
-    let mut command = format!("ql project emit-interface {manifest_path}");
-    if changed_only {
-        command.push_str(" --changed-only");
-    }
-    if check_only {
-        command.push_str(" --check");
-    }
-    command
+    format_project_emit_interface_command(Some(manifest_path), None, changed_only, check_only)
 }
 
-fn format_workspace_member_check_rerun_command(manifest_path: &str, sync_interfaces: bool) -> String {
+fn format_workspace_member_check_rerun_command(
+    manifest_path: &str,
+    sync_interfaces: bool,
+) -> String {
     let mut command = String::from("ql check");
     if sync_interfaces {
         command.push_str(" --sync-interfaces");

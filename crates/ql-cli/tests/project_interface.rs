@@ -859,6 +859,196 @@ pub fn broken(value: MissingType) -> Int {
 }
 
 #[test]
+fn project_emit_interface_changed_only_preserves_workspace_non_package_member_command_label() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-changed-only-workspace-not-package");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let broken_root = project_root.join("packages").join("broken");
+    let tool_root = project_root.join("packages").join("tool");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for changed-only workspace semantic-invalid member test");
+    std::fs::create_dir_all(&broken_root).expect(
+        "create broken package directory for changed-only workspace semantic-invalid member test",
+    );
+    std::fs::create_dir_all(tool_root.join("src"))
+        .expect("create tool package source directory for changed-only workspace semantic-invalid member test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/app.qi",
+        "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+",
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[workspace]
+members = []
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn exported() -> Int {
+    return 2
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/tool.qi",
+        "\
+// qlang interface v1
+// package: tool
+
+// source: src/lib.ql
+package demo.tool
+
+pub fn exported() -> Int
+",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--changed-only"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --changed-only` workspace manifest with non-package member",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-changed-only-workspace-not-package",
+        "changed-only workspace interface emission with non-package member",
+        &output,
+        1,
+    )
+    .expect("changed-only workspace interface emission with non-package member should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let app_interface = app_root
+        .join("app.qi")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let tool_interface = tool_root
+        .join("tool.qi")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-changed-only-workspace-not-package",
+        &normalized_stdout,
+        &[
+            &format!("up-to-date interface: {app_interface}"),
+            &format!("up-to-date interface: {tool_interface}"),
+        ],
+    )
+    .expect(
+        "changed-only workspace interface emission should continue reporting later valid members",
+    );
+    let broken_manifest = broken_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let error_line = format!(
+        "error: `ql project emit-interface --changed-only` manifest `{broken_manifest}` does not declare `[package].name`"
+    );
+    let old_error_line = format!(
+        "error: `ql project emit-interface` manifest `{broken_manifest}` does not declare `[package].name`"
+    );
+    let package_note = format!("note: failing package manifest: {broken_manifest}");
+    let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {broken_manifest} --changed-only` after fixing the package interface error"
+    );
+    expect_stderr_contains(
+        "project-interface-changed-only-workspace-not-package",
+        "changed-only workspace interface emission with non-package member",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("changed-only workspace semantic-invalid member errors should preserve the full command label");
+    expect_stderr_not_contains(
+        "project-interface-changed-only-workspace-not-package",
+        "changed-only workspace interface emission with non-package member",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("changed-only workspace semantic-invalid member errors should not fall back to the default command label");
+    let error_line_index = normalized_stderr
+        .find(&error_line)
+        .expect("changed-only workspace semantic-invalid member errors should include the full command label");
+    let package_note_index = normalized_stderr.find(&package_note).expect(
+        "changed-only workspace semantic-invalid member errors should include the failing package note",
+    );
+    let member_note_index = normalized_stderr.find(&member_note).expect(
+        "changed-only workspace semantic-invalid member errors should include the local member note",
+    );
+    let rerun_hint_index = normalized_stderr.find(&rerun_hint).expect(
+        "changed-only workspace semantic-invalid member errors should include the rerun hint",
+    );
+    assert!(
+        error_line_index < package_note_index
+            && package_note_index < member_note_index
+            && member_note_index < rerun_hint_index,
+        "expected changed-only workspace semantic-invalid member context before rerun hint, got:\n{stderr}"
+    );
+    expect_stderr_contains(
+        "project-interface-changed-only-workspace-not-package",
+        "changed-only workspace interface emission with non-package member",
+        &stderr,
+        "interface emission found 1 failing member(s)",
+    )
+    .expect("changed-only workspace semantic-invalid member failures should still summarize failing members");
+    expect_stderr_not_contains(
+        "project-interface-changed-only-workspace-not-package",
+        "changed-only workspace interface emission with non-package member",
+        &normalized_stderr,
+        "note: first failing member manifest:",
+    )
+    .expect("single changed-only workspace semantic-invalid member failures should not repeat the manifest in the final summary");
+}
+
+#[test]
 fn project_emit_interface_check_accepts_valid_package_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-check-package");
@@ -1602,9 +1792,9 @@ pub fn exported() -> Int {
     let detail_index = normalized_stderr
         .find(detail_line)
         .expect("changed-only invalid package interface check should report parse detail");
-    let package_note_index = normalized_stderr
-        .find(&package_note)
-        .expect("changed-only invalid package interface check should include the package manifest note");
+    let package_note_index = normalized_stderr.find(&package_note).expect(
+        "changed-only invalid package interface check should include the package manifest note",
+    );
     let rerun_hint_index = normalized_stderr
         .find(&rerun_hint)
         .expect("changed-only invalid package interface check should include the rerun hint");
@@ -1838,14 +2028,18 @@ pub fn exported() -> Int {
         &output,
         1,
     )
-    .expect("changed-only workspace interface emission with blocked member output path should fail");
+    .expect(
+        "changed-only workspace interface emission with blocked member output path should fail",
+    );
     let normalized_stdout = stdout.replace('\\', "/");
     expect_stdout_contains_all(
         "project-interface-changed-only-workspace-output-path",
         &normalized_stdout,
         &[&format!("up-to-date interface: {app_interface_display}")],
     )
-    .expect("changed-only workspace output-path failures should still report skipped valid members");
+    .expect(
+        "changed-only workspace output-path failures should still report skipped valid members",
+    );
     let normalized_stderr = stderr.replace('\\', "/");
     let package_note = format!("note: failing package manifest: {tool_manifest_display}");
     let member_note = format!("note: failing workspace member manifest: {tool_manifest_display}");
@@ -1869,12 +2063,12 @@ pub fn exported() -> Int {
         !normalized_stderr.contains(&default_rerun_hint),
         "changed-only workspace output-path failures should not fall back to the default rerun hint, got:\n{stderr}"
     );
-    let package_note_index = normalized_stderr
-        .find(&package_note)
-        .expect("changed-only workspace output-path failure should include the package manifest note");
-    let member_note_index = normalized_stderr
-        .find(&member_note)
-        .expect("changed-only workspace output-path failure should include the workspace member note");
+    let package_note_index = normalized_stderr.find(&package_note).expect(
+        "changed-only workspace output-path failure should include the package manifest note",
+    );
+    let member_note_index = normalized_stderr.find(&member_note).expect(
+        "changed-only workspace output-path failure should include the workspace member note",
+    );
     let output_note_index = normalized_stderr
         .find(&output_note)
         .expect("changed-only workspace output-path failure should include the output-path note");
@@ -2296,6 +2490,188 @@ name = "broken"
         "note: first failing member manifest:",
     )
     .expect("single failing workspace members should not repeat the manifest in the final summary");
+}
+
+#[test]
+fn project_emit_interface_check_changed_only_continues_after_workspace_non_package_member() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-changed-only-workspace-not-package");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let broken_root = project_root.join("packages").join("broken");
+    let tool_root = project_root.join("packages").join("tool");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for changed-only workspace semantic-invalid member test");
+    std::fs::create_dir_all(&broken_root).expect(
+        "create broken package directory for changed-only workspace semantic-invalid member test",
+    );
+    std::fs::create_dir_all(tool_root.join("src"))
+        .expect("create tool package source directory for changed-only workspace semantic-invalid member test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/app.qi",
+        "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+",
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[workspace]
+members = []
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn exported() -> Int {
+    return 2
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/tool.qi",
+        "\
+// qlang interface v1
+// package: tool
+
+// source: src/lib.ql
+package demo.tool
+
+pub fn exported() -> Int
+",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--changed-only", "--check"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --changed-only --check` workspace manifest with non-package member",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-check-changed-only-workspace-not-package",
+        "changed-only workspace interface check with non-package member",
+        &output,
+        1,
+    )
+    .expect("changed-only workspace interface check with non-package member should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let app_interface = app_root
+        .join("app.qi")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let tool_interface = tool_root
+        .join("tool.qi")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-check-changed-only-workspace-not-package",
+        &normalized_stdout,
+        &[
+            &format!("up-to-date interface: {app_interface}"),
+            &format!("up-to-date interface: {tool_interface}"),
+        ],
+    )
+    .expect("changed-only workspace interface check should continue reporting later valid members");
+    let broken_manifest = broken_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let error_line = format!(
+        "error: `ql project emit-interface --changed-only --check` manifest `{broken_manifest}` does not declare `[package].name`"
+    );
+    let old_error_line = format!(
+        "error: `ql project emit-interface --check` manifest `{broken_manifest}` does not declare `[package].name`"
+    );
+    let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {broken_manifest} --changed-only --check` after fixing the workspace member manifest"
+    );
+    expect_stderr_contains(
+        "project-interface-check-changed-only-workspace-not-package",
+        "changed-only workspace interface check with non-package member",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("changed-only workspace semantic-invalid member errors should preserve the full command label");
+    expect_stderr_not_contains(
+        "project-interface-check-changed-only-workspace-not-package",
+        "changed-only workspace interface check with non-package member",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("changed-only workspace semantic-invalid member errors should not fall back to the default command label");
+    let error_line_index = normalized_stderr
+        .find(&error_line)
+        .expect("changed-only workspace semantic-invalid member errors should include the full command label");
+    let member_note_index = normalized_stderr
+        .find(&member_note)
+        .expect("changed-only workspace semantic-invalid member errors should include the local member note");
+    let rerun_hint_index = normalized_stderr.find(&rerun_hint).expect(
+        "changed-only workspace semantic-invalid member errors should include the rerun hint",
+    );
+    assert!(
+        error_line_index < member_note_index && member_note_index < rerun_hint_index,
+        "expected changed-only workspace semantic-invalid member context before rerun hint, got:\n{stderr}"
+    );
+    expect_stderr_contains(
+        "project-interface-check-changed-only-workspace-not-package",
+        "changed-only workspace interface check with non-package member",
+        &stderr,
+        "found 1 failing member(s)",
+    )
+    .expect("changed-only workspace semantic-invalid member failures should still summarize failing members");
+    expect_stderr_not_contains(
+        "project-interface-check-changed-only-workspace-not-package",
+        "changed-only workspace interface check with non-package member",
+        &normalized_stderr,
+        "note: first failing member manifest:",
+    )
+    .expect("single changed-only workspace semantic-invalid member failures should not repeat the manifest in the final summary");
 }
 
 #[test]
