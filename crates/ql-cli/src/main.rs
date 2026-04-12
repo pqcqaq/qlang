@@ -900,26 +900,50 @@ fn emit_package_interface_path(
     })?;
 
     let mut rendered_modules = Vec::new();
+    let mut failing_source_count = 0usize;
+    let mut first_failing_source = None;
     for file in files {
         let source = fs::read_to_string(&file).map_err(|error| {
             eprintln!("error: failed to read `{}`: {error}", file.display());
-            1
-        })?;
+            error
+        });
+        let source = match source {
+            Ok(source) => source,
+            Err(_) => {
+                failing_source_count += 1;
+                record_first_failing_path(&mut first_failing_source, &file);
+                continue;
+            }
+        };
         let analysis = match analyze_semantics(&source) {
             Ok(analysis) => analysis,
             Err(diagnostics) => {
                 print_diagnostics(&file, &source, &diagnostics);
-                return Err(1);
+                failing_source_count += 1;
+                record_first_failing_path(&mut first_failing_source, &file);
+                continue;
             }
         };
         if analysis.has_errors() {
             print_diagnostics(&file, &source, analysis.diagnostics());
-            return Err(1);
+            failing_source_count += 1;
+            record_first_failing_path(&mut first_failing_source, &file);
+            continue;
         }
         if let Some(rendered) = render_module_interface(analysis.ast()) {
             let relative = file.strip_prefix(manifest_dir).unwrap_or(&file);
             rendered_modules.push((normalize_path(relative), rendered));
         }
+    }
+
+    if failing_source_count > 0 {
+        eprintln!(
+            "error: interface emission found {failing_source_count} failing source file(s)"
+        );
+        if let Some(path) = &first_failing_source {
+            eprintln!("note: first failing source file: {}", path.display());
+        }
+        return Err(1);
     }
 
     if let Some(parent) = output_path.parent()
@@ -1231,6 +1255,12 @@ fn ensure_reference_interfaces_current_recursive(
 fn record_reference_failure_manifest(slot: &mut Option<PathBuf>, path: PathBuf) {
     if slot.is_none() {
         *slot = Some(path);
+    }
+}
+
+fn record_first_failing_path(slot: &mut Option<PathBuf>, path: &Path) {
+    if slot.is_none() {
+        *slot = Some(path.to_path_buf());
     }
 }
 

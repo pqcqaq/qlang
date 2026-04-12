@@ -171,6 +171,110 @@ pub type Pair = (Int, Int)
 }
 
 #[test]
+fn project_emit_interface_reports_all_failing_package_sources() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-package-source-failures");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for package source failure test");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.api
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    let first_failure = temp.write(
+        "workspace/app/src/a_broken.ql",
+        r#"
+package demo.api
+
+pub fn broken_first(value: MissingFirst) -> Int {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/src/z_broken.ql",
+        r#"
+package demo.api
+
+pub fn broken_second(value: MissingSecond) -> Int {
+    return value
+}
+"#,
+    );
+    let interface_path = project_root.join("app.qi");
+    let first_failure_display = first_failure.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` package with multiple failing sources",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-package-source-failures",
+        "package interface emission with multiple failing sources",
+        &output,
+        1,
+    )
+    .expect("package interface emission with multiple failing sources should fail");
+    expect_empty_stdout(
+        "project-interface-package-source-failures",
+        "package interface emission with multiple failing sources",
+        &stdout,
+    )
+    .expect("failing package interface emission should not report a written artifact");
+    expect_stderr_contains(
+        "project-interface-package-source-failures",
+        "package interface emission with multiple failing sources",
+        &stderr,
+        "a_broken.ql",
+    )
+    .expect("package interface emission should report the first failing source file");
+    expect_stderr_contains(
+        "project-interface-package-source-failures",
+        "package interface emission with multiple failing sources",
+        &stderr,
+        "z_broken.ql",
+    )
+    .expect("package interface emission should continue reporting later failing source files");
+    expect_stderr_contains(
+        "project-interface-package-source-failures",
+        "package interface emission with multiple failing sources",
+        &stderr,
+        "interface emission found 2 failing source file(s)",
+    )
+    .expect("package interface emission should summarize all failing source files");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-package-source-failures",
+        "package interface emission with multiple failing sources",
+        &normalized_stderr,
+        &format!("note: first failing source file: {first_failure_display}"),
+    )
+    .expect("package interface emission should point to the first failing source file");
+    assert!(
+        !interface_path.is_file(),
+        "failing package interface emission should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn project_emit_interface_changed_only_skips_up_to_date_package_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-changed-only-package");
@@ -1459,12 +1563,22 @@ fn main() -> Int {
 }
 "#,
     );
-    temp.write(
-        "workspace/app/src/broken.ql",
+    let first_failure = temp.write(
+        "workspace/app/src/a_broken.ql",
         r#"
 package demo.app
 
-pub fn broken(value: MissingType) -> Int {
+pub fn broken_first(value: MissingFirst) -> Int {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/src/z_broken.ql",
+        r#"
+package demo.app
+
+pub fn broken_second(value: MissingSecond) -> Int {
     return value
 }
 "#,
@@ -1481,6 +1595,7 @@ name = "app"
     let interface_path = project_root.join("app.qi");
     let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
     let output_display = output_path.to_string_lossy().replace('\\', "/");
+    let first_failure_display = first_failure.to_string_lossy().replace('\\', "/");
 
     let mut command = ql_command(&workspace_root);
     command
@@ -1510,13 +1625,35 @@ name = "app"
         "build-emit-interface-failure",
         "build with failing interface emission",
         &stderr,
-        "broken.ql",
+        "a_broken.ql",
     )
     .expect("build-side interface failure should still surface the failing package source");
     expect_stderr_contains(
         "build-emit-interface-failure",
         "build with failing interface emission",
         &stderr,
+        "z_broken.ql",
+    )
+    .expect("build-side interface failure should continue surfacing later package source failures");
+    expect_stderr_contains(
+        "build-emit-interface-failure",
+        "build with failing interface emission",
+        &stderr,
+        "interface emission found 2 failing source file(s)",
+    )
+    .expect("build-side interface failure should summarize all failing package sources");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-failure",
+        "build with failing interface emission",
+        &normalized_stderr,
+        &format!("note: first failing source file: {first_failure_display}"),
+    )
+    .expect("build-side interface failure should point to the first failing package source");
+    expect_stderr_contains(
+        "build-emit-interface-failure",
+        "build with failing interface emission",
+        &normalized_stderr,
         &format!(
             "note: failing package manifest: {}",
             manifest_display
@@ -1526,7 +1663,7 @@ name = "app"
     expect_stderr_contains(
         "build-emit-interface-failure",
         "build with failing interface emission",
-        &stderr,
+        &normalized_stderr,
         &format!(
             "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
             manifest_display
@@ -1536,7 +1673,7 @@ name = "app"
     expect_stderr_contains(
         "build-emit-interface-failure",
         "build with failing interface emission",
-        &stderr,
+        &normalized_stderr,
         &format!(
             "note: build artifact remains at `{}`",
             output_display
