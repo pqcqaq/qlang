@@ -1006,8 +1006,10 @@ fn emit_package_interface_path(
 
     if failing_source_count > 0 {
         eprintln!("error: interface emission found {failing_source_count} failing source file(s)");
-        if let Some(path) = &first_failing_source {
-            eprintln!("note: first failing source file: {}", normalize_path(path));
+        if failing_source_count > 1 {
+            if let Some(path) = &first_failing_source {
+                eprintln!("note: first failing source file: {}", normalize_path(path));
+            }
         }
         return Err(1);
     }

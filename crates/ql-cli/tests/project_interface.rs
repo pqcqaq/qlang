@@ -294,6 +294,121 @@ pub fn broken_second(value: MissingSecond) -> Int {
 }
 
 #[test]
+fn project_emit_interface_dedupes_single_failing_package_source_summary() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-single-package-source-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for single package source failure test");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.api
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    let broken_source = temp.write(
+        "workspace/app/src/broken.ql",
+        r#"
+package demo.api
+
+pub fn broken(value: MissingType) -> Int {
+    return value
+}
+"#,
+    );
+    let interface_path = project_root.join("app.qi");
+    let manifest_path = project_root.join("qlang.toml");
+    let normalized_stderr_path = broken_source.to_string_lossy().replace('\\', "/");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` package with single failing source",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-single-package-source-failure",
+        "package interface emission with single failing source",
+        &output,
+        1,
+    )
+    .expect("package interface emission with a single failing source should fail");
+    expect_empty_stdout(
+        "project-interface-single-package-source-failure",
+        "package interface emission with single failing source",
+        &stdout,
+    )
+    .expect("single failing package interface emission should not report a written artifact");
+    expect_stderr_contains(
+        "project-interface-single-package-source-failure",
+        "package interface emission with single failing source",
+        &stderr,
+        "broken.ql",
+    )
+    .expect("package interface emission should surface the broken source file");
+    expect_stderr_contains(
+        "project-interface-single-package-source-failure",
+        "package interface emission with single failing source",
+        &stderr,
+        "interface emission found 1 failing source file(s)",
+    )
+    .expect("package interface emission should summarize the single failing source");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_not_contains(
+        "project-interface-single-package-source-failure",
+        "package interface emission with single failing source",
+        &normalized_stderr,
+        "note: first failing source file:",
+    )
+    .expect(
+        "single failing package sources should not repeat the source path in the final summary",
+    );
+    expect_stderr_contains(
+        "project-interface-single-package-source-failure",
+        "package interface emission with single failing source",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("package interface emission should still point to the failing package manifest");
+    expect_stderr_contains(
+        "project-interface-single-package-source-failure",
+        "package interface emission with single failing source",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            manifest_display
+        ),
+    )
+    .expect("package interface emission should still suggest rerunning package interface emission");
+    expect_stderr_contains(
+        "project-interface-single-package-source-failure",
+        "package interface emission with single failing source",
+        &normalized_stderr,
+        &normalized_stderr_path,
+    )
+    .expect("package interface emission should still surface the broken source path locally");
+    assert!(
+        !interface_path.is_file(),
+        "single failing package interface emission should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn project_emit_interface_changed_only_skips_up_to_date_package_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-changed-only-package");
@@ -1896,5 +2011,144 @@ name = "app"
     assert!(
         !interface_path.is_file(),
         "build-side interface failure should not leave behind a partial interface artifact"
+    );
+}
+
+#[test]
+fn build_with_emit_interface_dedupes_single_failing_source_summary() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-single-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for single build-side interface failure test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    return exported(1)
+}
+"#,
+    );
+    let broken_source = temp.write(
+        "workspace/app/src/broken.ql",
+        r#"
+package demo.app
+
+pub fn broken(value: MissingType) -> Int {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let output_path = project_root.join("build").join("app.ll");
+    let manifest_path = project_root.join("qlang.toml");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let output_display = output_path.to_string_lossy().replace('\\', "/");
+    let broken_source_display = broken_source.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with single failing package interface source",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-single-failure",
+        "build with single failing interface source",
+        &output,
+        1,
+    )
+    .expect("build should fail when package interface emission has a single failing source");
+    expect_stdout_contains_all(
+        "build-emit-interface-single-failure",
+        &stdout,
+        &[&format!("wrote llvm-ir: {}", output_path.display())],
+    )
+    .expect("build-side single source failure should still report the successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-single-failure",
+        "build with single failing interface source",
+        &stderr,
+        "broken.ql",
+    )
+    .expect("build-side single source failure should surface the broken source file");
+    expect_stderr_contains(
+        "build-emit-interface-single-failure",
+        "build with single failing interface source",
+        &stderr,
+        "interface emission found 1 failing source file(s)",
+    )
+    .expect("build-side single source failure should summarize the single failing source");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_not_contains(
+        "build-emit-interface-single-failure",
+        "build with single failing interface source",
+        &normalized_stderr,
+        "note: first failing source file:",
+    )
+    .expect(
+        "single failing build-side sources should not repeat the source path in the final summary",
+    );
+    expect_stderr_contains(
+        "build-emit-interface-single-failure",
+        "build with single failing interface source",
+        &normalized_stderr,
+        &broken_source_display,
+    )
+    .expect("build-side single source failure should still surface the broken source path locally");
+    expect_stderr_contains(
+        "build-emit-interface-single-failure",
+        "build with single failing interface source",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {}", manifest_display),
+    )
+    .expect("build-side single source failure should still point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-single-failure",
+        "build with single failing interface source",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            manifest_display
+        ),
+    )
+    .expect("build-side single source failure should still suggest rerunning package interface emission");
+    expect_stderr_contains(
+        "build-emit-interface-single-failure",
+        "build with single failing interface source",
+        &normalized_stderr,
+        &format!("note: build artifact remains at `{}`", output_display),
+    )
+    .expect(
+        "build-side single source failure should confirm that the build artifact was preserved",
+    );
+    expect_file_exists(
+        "build-emit-interface-single-failure",
+        &output_path,
+        "generated llvm ir",
+        "build with single failing interface source",
+    )
+    .expect("build-side single source failure should keep the successful build artifact");
+    assert!(
+        !interface_path.is_file(),
+        "build-side single source failure should not leave behind a partial interface artifact"
     );
 }
