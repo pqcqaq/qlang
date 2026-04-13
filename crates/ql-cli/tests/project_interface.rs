@@ -3370,6 +3370,110 @@ version = "0.1.0"
 }
 
 #[test]
+fn build_with_emit_interface_preserves_dylib_export_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-dylib-exports");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for dylib export test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = project_root.join("build").join("app.dll");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "dylib", "--release", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with a dylib export configuration failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-dylib-exports",
+        "build with dylib export configuration failure",
+        &output,
+        1,
+    )
+    .expect("build should fail when dylib emission has no public extern exports");
+    expect_snapshot_matches(
+        "build-emit-interface-dylib-exports",
+        "build with dylib export configuration failure stdout",
+        "",
+        &stdout,
+    )
+    .expect("dylib export configuration failure should not report a successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-dylib-exports",
+        "build with dylib export configuration failure",
+        &stderr,
+        "requires at least one public top-level `extern \"c\"` function definition",
+    )
+    .expect("dylib export configuration failure should surface the missing export requirement");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-dylib-exports",
+        "build with dylib export configuration failure",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("dylib export configuration failure should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-dylib-exports",
+        "build with dylib export configuration failure",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit dylib --release --output {} --emit-interface` after fixing the dylib export surface",
+            source_display, output_display
+        ),
+    )
+    .expect("dylib export configuration failure should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-dylib-exports",
+        "build with dylib export configuration failure",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect(
+        "dylib export configuration failure should not claim that a build artifact was preserved",
+    );
+    assert!(
+        !output_path.is_file(),
+        "dylib export configuration failure should not create `{}`",
+        output_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "dylib export configuration failure should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn build_with_emit_interface_preserves_toolchain_rerun_hint() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-build-emit-interface-toolchain-failure");

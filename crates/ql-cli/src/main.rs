@@ -931,7 +931,9 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
         Err(BuildError::InvalidInput(message)) => {
             eprintln!("error: {message}");
             if emit_interface {
-                if unsupported_build_header_emit(options) {
+                if missing_dylib_exports(&message, options) {
+                    report_build_export_configuration_failure(path, options, emit_interface);
+                } else if unsupported_build_header_emit(options) {
                     report_build_header_configuration_failure(path, options, emit_interface);
                 } else if let Some(header_output_path) =
                     colliding_build_header_output_path(path, options)
@@ -1076,6 +1078,12 @@ fn unsupported_build_header_emit(options: &BuildOptions) -> bool {
         )
 }
 
+fn missing_dylib_exports(message: &str, options: &BuildOptions) -> bool {
+    options.emit == BuildEmit::DynamicLibrary
+        && message
+            .contains("requires at least one public top-level `extern \"c\"` function definition")
+}
+
 fn format_build_command(path: &Path, options: &BuildOptions, emit_interface: bool) -> String {
     let mut command = format!("ql build {}", normalize_path(path));
     command.push_str(&format!(" --emit {}", build_emit_cli_value(options.emit)));
@@ -1136,6 +1144,19 @@ fn report_build_toolchain_failure(path: &Path, options: &BuildOptions, emit_inte
         options,
         emit_interface,
         "after fixing the build toolchain",
+    );
+}
+
+fn report_build_export_configuration_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+) {
+    report_build_package_rerun_hint(
+        path,
+        options,
+        emit_interface,
+        "after fixing the dylib export surface",
     );
 }
 
