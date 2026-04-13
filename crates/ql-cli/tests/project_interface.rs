@@ -3250,6 +3250,126 @@ version = "0.1.0"
 }
 
 #[test]
+fn build_with_emit_interface_preserves_header_configuration_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-header-config");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for header configuration test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = project_root.join("build").join("app.ll");
+    let header_path = project_root.join("include").join("app.ffi.h");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+    let header_display = header_path.display().to_string().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--release", "--output"])
+        .arg(&output_path)
+        .args(["--header-surface", "both", "--header-output"])
+        .arg(&header_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with unsupported build header configuration",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-header-config",
+        "build with unsupported build header configuration",
+        &output,
+        1,
+    )
+    .expect("build should fail when build-side headers are requested for a non-library emit");
+    expect_snapshot_matches(
+        "build-emit-interface-header-config",
+        "build with unsupported build header configuration stdout",
+        "",
+        &stdout,
+    )
+    .expect("unsupported build header configuration should not report a successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-header-config",
+        "build with unsupported build header configuration",
+        &stderr,
+        "only supports `dylib` and `staticlib`",
+    )
+    .expect("unsupported build header configuration should surface the compatibility error");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-header-config",
+        "build with unsupported build header configuration",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("unsupported build header configuration should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-header-config",
+        "build with unsupported build header configuration",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit llvm-ir --release --output {} --header-surface both --header-output {} --emit-interface` after fixing the build header configuration",
+            source_display, output_display, header_display
+        ),
+    )
+    .expect("unsupported build header configuration should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-header-config",
+        "build with unsupported build header configuration",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect("unsupported build header configuration should not claim that a build artifact was preserved");
+    expect_stderr_not_contains(
+        "build-emit-interface-header-config",
+        "build with unsupported build header configuration",
+        &normalized_stderr,
+        "note: failing build header output path:",
+    )
+    .expect(
+        "unsupported build header configuration should not be mislabeled as an output-path failure",
+    );
+    assert!(
+        !output_path.is_file(),
+        "unsupported build header configuration should not create `{}`",
+        output_path.display()
+    );
+    assert!(
+        !header_path.is_file(),
+        "unsupported build header configuration should not create `{}`",
+        header_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "unsupported build header configuration should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn build_with_emit_interface_preserves_toolchain_rerun_hint() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-build-emit-interface-toolchain-failure");

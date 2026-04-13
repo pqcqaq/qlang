@@ -931,7 +931,10 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
         Err(BuildError::InvalidInput(message)) => {
             eprintln!("error: {message}");
             if emit_interface {
-                if let Some(header_output_path) = colliding_build_header_output_path(path, options)
+                if unsupported_build_header_emit(options) {
+                    report_build_header_configuration_failure(path, options, emit_interface);
+                } else if let Some(header_output_path) =
+                    colliding_build_header_output_path(path, options)
                 {
                     report_build_header_output_path_failure(
                         path,
@@ -1065,6 +1068,14 @@ fn colliding_build_header_output_path(path: &Path, options: &BuildOptions) -> Op
     (header_output_path == output_path).then_some(header_output_path)
 }
 
+fn unsupported_build_header_emit(options: &BuildOptions) -> bool {
+    options.c_header.is_some()
+        && !matches!(
+            options.emit,
+            BuildEmit::DynamicLibrary | BuildEmit::StaticLibrary
+        )
+}
+
 fn format_build_command(path: &Path, options: &BuildOptions, emit_interface: bool) -> String {
     let mut command = format!("ql build {}", normalize_path(path));
     command.push_str(&format!(" --emit {}", build_emit_cli_value(options.emit)));
@@ -1165,6 +1176,21 @@ fn report_build_header_output_path_failure(
         );
         let rerun_command = format_build_command(path, options, emit_interface);
         eprintln!("hint: rerun `{rerun_command}` after fixing the build header output path");
+    }
+}
+
+fn report_build_header_configuration_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+) {
+    if let Ok(manifest) = load_project_manifest(path) {
+        eprintln!(
+            "note: failing package manifest: {}",
+            normalize_path(&manifest.manifest_path)
+        );
+        let rerun_command = format_build_command(path, options, emit_interface);
+        eprintln!("hint: rerun `{rerun_command}` after fixing the build header configuration");
     }
 }
 
