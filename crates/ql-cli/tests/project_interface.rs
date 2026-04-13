@@ -5258,6 +5258,7 @@ name = "app"
     let manifest_path = project_root.join("qlang.toml");
     let interface_path = project_root.join("app.qi");
     let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let source_display = source_path.to_string_lossy().replace('\\', "/");
     let output_display = output_path.to_string_lossy().replace('\\', "/");
     let broken_source_display = broken_source.to_string_lossy().replace('\\', "/");
 
@@ -5328,11 +5329,21 @@ name = "app"
         "build with single failing interface source",
         &normalized_stderr,
         &format!(
+            "hint: rerun `ql build {} --emit llvm-ir --output {} --emit-interface` after fixing the package interface error",
+            source_display, output_display
+        ),
+    )
+    .expect("build-side single source failure should preserve the original build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-single-failure",
+        "build with single failing interface source",
+        &normalized_stderr,
+        &format!(
             "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
             manifest_display
         ),
     )
-    .expect("build-side single source failure should still suggest rerunning package interface emission");
+    .expect("build-side single source failure should not fall back to a project-only rerun hint");
     expect_stderr_contains(
         "build-emit-interface-single-failure",
         "build with single failing interface source",
