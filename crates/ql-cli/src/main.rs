@@ -959,7 +959,7 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
             eprintln!("error: failed to access `{}`: {error}", io_path.display());
             if emit_interface {
                 if let Some(output_path) = build_output_path(path, options) {
-                    if io_path == output_path {
+                    if io_targets_build_output_path(&io_path, &output_path) {
                         report_build_output_path_failure(
                             path,
                             options,
@@ -1084,6 +1084,10 @@ fn unsupported_build_header_emit(options: &BuildOptions) -> bool {
 
 fn missing_build_input_path(path: &Path, message: &str) -> bool {
     !path.is_file() && message.contains("is not a file")
+}
+
+fn io_targets_build_output_path(io_path: &Path, output_path: &Path) -> bool {
+    io_path == output_path || output_path.starts_with(io_path)
 }
 
 fn missing_dylib_exports(message: &str, options: &BuildOptions) -> bool {
