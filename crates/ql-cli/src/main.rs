@@ -968,7 +968,7 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                         );
                     } else if let Some(header_output_path) = build_header_output_path(path, options)
                     {
-                        if io_path == header_output_path {
+                        if io_targets_build_header_output_path(&io_path, &header_output_path) {
                             report_build_header_output_path_failure(
                                 path,
                                 options,
@@ -1087,6 +1087,10 @@ fn missing_build_input_path(path: &Path, message: &str) -> bool {
 }
 
 fn io_targets_build_output_path(io_path: &Path, output_path: &Path) -> bool {
+    io_path == output_path || output_path.starts_with(io_path)
+}
+
+fn io_targets_build_header_output_path(io_path: &Path, output_path: &Path) -> bool {
     io_path == output_path || output_path.starts_with(io_path)
 }
 

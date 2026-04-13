@@ -4207,6 +4207,156 @@ version = "0.1.0"
 }
 
 #[test]
+fn build_with_emit_interface_points_to_blocked_build_header_output_parent_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-build-header-output-parent-path-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for blocked build-header parent test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = dynamic_library_output_path(&project_root.join("build"), "app");
+    let blocked_parent = project_root.join("blocked-include");
+    temp.write("workspace/app/blocked-include", "not-a-directory");
+    let header_path = blocked_parent.join("app.h");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+    let header_display = header_path.display().to_string().replace('\\', "/");
+    let parent_display = blocked_parent.display().to_string().replace('\\', "/");
+    let clang_path = write_mock_clang_success_script(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .env("QLANG_CLANG", &clang_path)
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "dylib", "--release", "--output"])
+        .arg(&output_path)
+        .args(["--header-surface", "both", "--header-output"])
+        .arg(&header_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with blocked build header output parent path",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-build-header-output-parent-path-failure",
+        "build with blocked build header output parent path",
+        &output,
+        1,
+    )
+    .expect("build should fail when the build header output parent path is blocked");
+    expect_snapshot_matches(
+        "build-emit-interface-build-header-output-parent-path-failure",
+        "build with blocked build header output parent path stdout",
+        "",
+        &stdout,
+    )
+    .expect(
+        "blocked build header output parent path should not report a successful build artifact",
+    );
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-parent-path-failure",
+        "build with blocked build header output parent path",
+        &stderr,
+        "failed to access",
+    )
+    .expect("blocked build header output parent path should surface the access failure");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-parent-path-failure",
+        "build with blocked build header output parent path",
+        &normalized_stderr,
+        &parent_display,
+    )
+    .expect("blocked build header output parent path should surface the blocked parent path");
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-parent-path-failure",
+        "build with blocked build header output parent path",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("blocked build header output parent path should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-parent-path-failure",
+        "build with blocked build header output parent path",
+        &normalized_stderr,
+        &format!("note: failing build header output path: {header_display}"),
+    )
+    .expect(
+        "blocked build header output parent path should still point to the requested header path",
+    );
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-parent-path-failure",
+        "build with blocked build header output parent path",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit dylib --release --output {} --header-surface both --header-output {} --emit-interface` after fixing the build header output path",
+            source_display, output_display, header_display
+        ),
+    )
+    .expect("blocked build header output parent path should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-build-header-output-parent-path-failure",
+        "build with blocked build header output parent path",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect(
+        "blocked build header output parent path should not claim that a build artifact was preserved",
+    );
+    expect_stderr_not_contains(
+        "build-emit-interface-build-header-output-parent-path-failure",
+        "build with blocked build header output parent path",
+        &normalized_stderr,
+        "note: failing build output path:",
+    )
+    .expect(
+        "blocked build header output parent path should not be mislabeled as the primary build output path",
+    );
+    assert!(
+        !output_path.is_file(),
+        "blocked build header output parent path should remove `{}` after header failure",
+        output_path.display()
+    );
+    assert!(
+        blocked_parent.is_file(),
+        "blocked build header output parent path test should preserve `{}` as a file",
+        blocked_parent.display()
+    );
+    assert!(
+        !header_path.exists(),
+        "blocked build header output parent path should not create `{}`",
+        header_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "blocked build header output parent path should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn build_with_emit_interface_points_to_colliding_build_header_output_path() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-build-emit-interface-build-header-output-collision");
