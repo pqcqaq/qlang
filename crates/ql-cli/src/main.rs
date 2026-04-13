@@ -608,7 +608,23 @@ fn check_workspace_manifest(
             }
             Err(error) => {
                 print_package_analysis_error(&error);
-                report_workspace_member_failure(&member_manifest.manifest_path, None);
+                let rerun_hint = match &error {
+                    PackageAnalysisError::SourceDiagnostics { .. } => {
+                        let manifest_path = normalize_path(&member_manifest.manifest_path);
+                        let rerun_command = format_workspace_member_check_rerun_command(
+                            &manifest_path,
+                            sync_interfaces,
+                        );
+                        Some(format!(
+                            "hint: rerun `{rerun_command}` after fixing the package sources"
+                        ))
+                    }
+                    _ => None,
+                };
+                report_workspace_member_failure(
+                    &member_manifest.manifest_path,
+                    rerun_hint.as_deref(),
+                );
                 failing_members += 1;
                 record_reference_failure_manifest(
                     &mut first_failing_member_manifest,
