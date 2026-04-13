@@ -430,6 +430,14 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
             }
             Err(error) => {
                 print_package_analysis_error(&error);
+                if matches!(&error, PackageAnalysisError::SourceDiagnostics { .. }) {
+                    report_package_check_source_diagnostics_failure(
+                        package_manifest_path
+                            .as_deref()
+                            .expect("package source diagnostics require a loaded manifest"),
+                        sync_interfaces,
+                    );
+                }
                 return Err(1);
             }
         }
@@ -776,6 +784,15 @@ fn report_package_check_no_sources_failure(
     );
     eprintln!(
         "hint: rerun `{rerun_command}` after adding package source files"
+    );
+}
+
+fn report_package_check_source_diagnostics_failure(manifest_path: &Path, sync_interfaces: bool) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_command = format_check_command(sync_interfaces, Some(&manifest_path));
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!(
+        "hint: rerun `{rerun_command}` after fixing the package sources"
     );
 }
 
