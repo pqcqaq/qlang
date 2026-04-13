@@ -917,11 +917,22 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                 {
                     Ok(result) => report_emit_interface_result(result),
                     Err(EmitPackageInterfaceError::Code(code)) => {
-                        report_build_interface_failure(path, &artifact_path);
+                        report_build_interface_failure(
+                            path,
+                            options,
+                            emit_interface,
+                            &artifact_path,
+                        );
                         return Err(code);
                     }
                     Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
-                        report_build_interface_output_failure(path, &artifact_path, &output_path);
+                        report_build_interface_output_failure(
+                            path,
+                            options,
+                            emit_interface,
+                            &artifact_path,
+                            &output_path,
+                        );
                         return Err(1);
                     }
                 }
@@ -1308,10 +1319,18 @@ fn report_build_header_configuration_failure(
     }
 }
 
-fn report_build_interface_failure(path: &Path, artifact_path: &Path) {
-    if let Ok(manifest) = load_project_manifest(path) {
-        report_package_interface_failure(&manifest.manifest_path, None, None, false, None);
-    }
+fn report_build_interface_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+    artifact_path: &Path,
+) {
+    report_build_package_rerun_hint(
+        path,
+        options,
+        emit_interface,
+        "after fixing the package interface error",
+    );
     eprintln!(
         "note: build artifact remains at `{}`",
         normalize_path(artifact_path)
@@ -1375,16 +1394,24 @@ fn report_package_interface_output_failure(
     );
 }
 
-fn report_build_interface_output_failure(path: &Path, artifact_path: &Path, output_path: &Path) {
+fn report_build_interface_output_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+    artifact_path: &Path,
+    output_path: &Path,
+) {
     if let Ok(manifest) = load_project_manifest(path) {
-        report_package_interface_output_failure(
-            &manifest.manifest_path,
-            None,
-            output_path,
-            None,
-            false,
-            None,
+        eprintln!(
+            "note: failing package manifest: {}",
+            normalize_path(&manifest.manifest_path)
         );
+        eprintln!(
+            "note: failing interface output path: {}",
+            normalize_path(output_path)
+        );
+        let rerun_command = format_build_command(path, options, emit_interface);
+        eprintln!("hint: rerun `{rerun_command}` after fixing the interface output path");
     }
     eprintln!(
         "note: build artifact remains at `{}`",

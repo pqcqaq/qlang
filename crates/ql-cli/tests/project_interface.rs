@@ -5112,6 +5112,7 @@ name = "app"
     let manifest_path = project_root.join("qlang.toml");
     let interface_path = project_root.join("app.qi");
     let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let source_display = source_path.to_string_lossy().replace('\\', "/");
     let output_display = output_path.to_string_lossy().replace('\\', "/");
     let first_failure_display = first_failure.to_string_lossy().replace('\\', "/");
 
@@ -5180,11 +5181,21 @@ name = "app"
         "build with failing interface emission",
         &normalized_stderr,
         &format!(
+            "hint: rerun `ql build {} --emit llvm-ir --output {} --emit-interface` after fixing the package interface error",
+            source_display, output_display
+        ),
+    )
+    .expect("build-side interface failure should preserve the original build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-failure",
+        "build with failing interface emission",
+        &normalized_stderr,
+        &format!(
             "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
             manifest_display
         ),
     )
-    .expect("build-side interface failure should suggest rerunning package interface emission");
+    .expect("build-side interface failure should not fall back to a project-only rerun hint");
     expect_stderr_contains(
         "build-emit-interface-failure",
         "build with failing interface emission",
@@ -5380,6 +5391,7 @@ name = "app"
     let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
     let interface_display = interface_path.to_string_lossy().replace('\\', "/");
     let output_display = output_path.to_string_lossy().replace('\\', "/");
+    let source_display = source_path.to_string_lossy().replace('\\', "/");
 
     let mut command = ql_command(&workspace_root);
     command
@@ -5416,8 +5428,8 @@ name = "app"
     let package_note = format!("note: failing package manifest: {manifest_display}");
     let output_note = format!("note: failing interface output path: {interface_display}");
     let rerun_hint = format!(
-        "hint: rerun `ql project emit-interface {}` after fixing the interface output path",
-        manifest_display
+        "hint: rerun `ql build {} --emit llvm-ir --output {} --emit-interface` after fixing the interface output path",
+        source_display, output_display
     );
     let old_hint = format!(
         "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
@@ -5444,6 +5456,16 @@ name = "app"
         &rerun_hint,
     )
     .expect("build-side blocked output path should suggest fixing the interface output path");
+    expect_stderr_not_contains(
+        "build-emit-interface-output-path-failure",
+        "build with blocked interface output path",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after fixing the interface output path",
+            manifest_display
+        ),
+    )
+    .expect("build-side blocked output path should not fall back to a project-only rerun hint");
     expect_stderr_not_contains(
         "build-emit-interface-output-path-failure",
         "build with blocked interface output path",
