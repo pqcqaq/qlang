@@ -947,6 +947,9 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                     path.display()
                 );
             }
+            if emit_interface {
+                report_build_toolchain_failure(path, options, emit_interface);
+            }
             Err(1)
         }
         Err(BuildError::Diagnostics {
@@ -999,10 +1002,11 @@ fn format_build_command(path: &Path, options: &BuildOptions, emit_interface: boo
     command
 }
 
-fn report_build_source_diagnostics_failure(
+fn report_build_package_rerun_hint(
     path: &Path,
     options: &BuildOptions,
     emit_interface: bool,
+    reason: &str,
 ) {
     if let Ok(manifest) = load_project_manifest(path) {
         eprintln!(
@@ -1010,8 +1014,30 @@ fn report_build_source_diagnostics_failure(
             normalize_path(&manifest.manifest_path)
         );
         let rerun_command = format_build_command(path, options, emit_interface);
-        eprintln!("hint: rerun `{rerun_command}` after fixing the package sources");
+        eprintln!("hint: rerun `{rerun_command}` {reason}");
     }
+}
+
+fn report_build_source_diagnostics_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+) {
+    report_build_package_rerun_hint(
+        path,
+        options,
+        emit_interface,
+        "after fixing the package sources",
+    );
+}
+
+fn report_build_toolchain_failure(path: &Path, options: &BuildOptions, emit_interface: bool) {
+    report_build_package_rerun_hint(
+        path,
+        options,
+        emit_interface,
+        "after fixing the build toolchain",
+    );
 }
 
 fn report_build_interface_failure(path: &Path, artifact_path: &Path) {

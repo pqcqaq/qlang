@@ -1,10 +1,37 @@
 mod support;
 
 use support::{
-    TempDir, expect_empty_stdout, expect_exit_code, expect_file_exists, expect_snapshot_matches,
-    expect_stderr_contains, expect_stderr_not_contains, expect_stdout_contains_all, expect_success,
-    ql_command, read_normalized_file, run_command_capture, workspace_root,
+    TempDir, dynamic_library_output_path, expect_empty_stdout, expect_exit_code,
+    expect_file_exists, expect_snapshot_matches, expect_stderr_contains,
+    expect_stderr_not_contains, expect_stdout_contains_all, expect_success, ql_command,
+    read_normalized_file, run_command_capture, workspace_root,
 };
+
+fn write_mock_clang_failure_script(temp: &TempDir) -> std::path::PathBuf {
+    if cfg!(windows) {
+        temp.write(
+            "mock-clang-fail.cmd",
+            "@echo off\r\necho mock clang failure 1>&2\r\nexit /b 9\r\n",
+        )
+    } else {
+        let script = temp.write(
+            "mock-clang-fail.sh",
+            "#!/bin/sh\necho 'mock clang failure' 1>&2\nexit 9\n",
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&script)
+                .expect("read mock clang failure script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&script, permissions)
+                .expect("mark mock clang failure script executable");
+        }
+        script
+    }
+}
 
 #[test]
 fn project_emit_interface_writes_public_qi_surface() {
@@ -3135,6 +3162,133 @@ version = "0.1.0"
         !header_path.is_file(),
         "build-side source diagnostics should not create `{}`",
         header_path.display()
+    );
+}
+
+#[test]
+fn build_with_emit_interface_preserves_toolchain_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-toolchain-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for build-side toolchain failure test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = dynamic_library_output_path(&project_root.join("build"), "app");
+    let header_path = project_root.join("include").join("app.h");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+    let header_display = header_path.display().to_string().replace('\\', "/");
+    let clang_path = write_mock_clang_failure_script(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .env("QLANG_CLANG", &clang_path)
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "dylib", "--release", "--output"])
+        .arg(&output_path)
+        .args(["--header-surface", "both", "--header-output"])
+        .arg(&header_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with build-side toolchain failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-toolchain-failure",
+        "build with toolchain failure before interface emission",
+        &output,
+        1,
+    )
+    .expect("build should fail when the configured toolchain fails");
+    expect_snapshot_matches(
+        "build-emit-interface-toolchain-failure",
+        "build with toolchain failure stdout",
+        "",
+        &stdout,
+    )
+    .expect("build-side toolchain failure should not report a successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-failure",
+        "build with toolchain failure before interface emission",
+        &stderr,
+        "mock clang failure",
+    )
+    .expect("build-side toolchain failure should surface the toolchain stderr");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-failure",
+        "build with toolchain failure before interface emission",
+        &normalized_stderr,
+        "note: preserved intermediate artifact at `",
+    )
+    .expect("build-side toolchain failure should report preserved intermediate artifacts");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-failure",
+        "build with toolchain failure before interface emission",
+        &normalized_stderr,
+        ".codegen.ll",
+    )
+    .expect("build-side toolchain failure should preserve intermediate LLVM IR");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-failure",
+        "build with toolchain failure before interface emission",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("build-side toolchain failure should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-failure",
+        "build with toolchain failure before interface emission",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit dylib --release --output {} --header-surface both --header-output {} --emit-interface` after fixing the build toolchain",
+            source_display, output_display, header_display
+        ),
+    )
+    .expect("build-side toolchain failure should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-toolchain-failure",
+        "build with toolchain failure before interface emission",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect("build-side toolchain failure should not claim that a build artifact was preserved");
+    assert!(
+        !output_path.is_file(),
+        "build-side toolchain failure should not create `{}`",
+        output_path.display()
+    );
+    assert!(
+        !header_path.is_file(),
+        "build-side toolchain failure should not create `{}`",
+        header_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "build-side toolchain failure should not create `{}`",
+        interface_path.display()
     );
 }
 
