@@ -946,6 +946,16 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                             emit_interface,
                             &output_path,
                         );
+                    } else if let Some(header_output_path) = build_header_output_path(path, options)
+                    {
+                        if io_path == header_output_path {
+                            report_build_header_output_path_failure(
+                                path,
+                                options,
+                                emit_interface,
+                                &header_output_path,
+                            );
+                        }
                     }
                 }
             }
@@ -999,6 +1009,43 @@ fn build_output_path(path: &Path, options: &BuildOptions) -> Option<PathBuf> {
             default_output_path(&build_root, path, options.profile, options.emit)
         }),
     }
+}
+
+fn build_header_output_path(path: &Path, options: &BuildOptions) -> Option<PathBuf> {
+    let header = options.c_header.as_ref()?;
+    match &header.output {
+        Some(output_path) => Some(output_path.clone()),
+        None => {
+            let artifact_path = build_output_path(path, options)?;
+            Some(default_build_header_output_path(
+                &artifact_path,
+                path,
+                header.surface,
+            ))
+        }
+    }
+}
+
+fn default_build_header_output_path(
+    artifact_path: &Path,
+    input_path: &Path,
+    surface: CHeaderSurface,
+) -> PathBuf {
+    let stem = input_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("module");
+    let file_name = match surface {
+        CHeaderSurface::Exports => format!("{stem}.h"),
+        CHeaderSurface::Imports => format!("{stem}.imports.h"),
+        CHeaderSurface::Both => format!("{stem}.ffi.h"),
+    };
+    artifact_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(file_name)
 }
 
 fn format_build_command(path: &Path, options: &BuildOptions, emit_interface: bool) -> String {
@@ -1081,6 +1128,26 @@ fn report_build_output_path_failure(
         );
         let rerun_command = format_build_command(path, options, emit_interface);
         eprintln!("hint: rerun `{rerun_command}` after fixing the build output path");
+    }
+}
+
+fn report_build_header_output_path_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+    output_path: &Path,
+) {
+    if let Ok(manifest) = load_project_manifest(path) {
+        eprintln!(
+            "note: failing package manifest: {}",
+            normalize_path(&manifest.manifest_path)
+        );
+        eprintln!(
+            "note: failing build header output path: {}",
+            normalize_path(output_path)
+        );
+        let rerun_command = format_build_command(path, options, emit_interface);
+        eprintln!("hint: rerun `{rerun_command}` after fixing the build header output path");
     }
 }
 

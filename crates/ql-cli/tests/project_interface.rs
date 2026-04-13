@@ -33,6 +33,90 @@ fn write_mock_clang_failure_script(temp: &TempDir) -> std::path::PathBuf {
     }
 }
 
+fn write_mock_clang_success_script(temp: &TempDir) -> std::path::PathBuf {
+    if cfg!(windows) {
+        let script = temp.write(
+            "mock-clang-success.ps1",
+            r#"
+param([string[]]$args)
+$out = $null
+$isCompile = $false
+$isShared = $false
+for ($i = 0; $i -lt $args.Count; $i++) {
+    if ($args[$i] -eq '-c') { $isCompile = $true }
+    if ($args[$i] -eq '-shared' -or $args[$i] -eq '-dynamiclib') { $isShared = $true }
+    if ($args[$i] -eq '-o') { $out = $args[$i + 1] }
+}
+if ($null -eq $out) { Write-Error 'missing -o'; exit 1 }
+if ($isCompile) {
+    Set-Content -Path $out -NoNewline -Value 'mock-object'
+} elseif ($isShared) {
+    Set-Content -Path $out -NoNewline -Value 'mock-dylib'
+} else {
+    Set-Content -Path $out -NoNewline -Value 'mock-executable'
+}
+"#,
+        );
+        temp.write(
+            "mock-clang-success.cmd",
+            &format!(
+                "@echo off\r\npowershell.exe -ExecutionPolicy Bypass -File \"{}\" %*\r\n",
+                script.display()
+            ),
+        )
+    } else {
+        let script = temp.write(
+            "mock-clang-success.sh",
+            r#"#!/bin/sh
+out=""
+is_compile=0
+is_shared=0
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-c" ]; then
+    is_compile=1
+    shift
+    continue
+  fi
+  if [ "$1" = "-shared" ] || [ "$1" = "-dynamiclib" ]; then
+    is_shared=1
+    shift
+    continue
+  fi
+  if [ "$1" = "-o" ]; then
+    out="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+if [ "$out" = "" ]; then
+  echo "missing -o" 1>&2
+  exit 1
+fi
+if [ "$is_compile" -eq 1 ]; then
+  printf 'mock-object' > "$out"
+elif [ "$is_shared" -eq 1 ]; then
+  printf 'mock-dylib' > "$out"
+else
+  printf 'mock-executable' > "$out"
+fi
+"#,
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&script)
+                .expect("read mock clang success script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&script, permissions)
+                .expect("mark mock clang success script executable");
+        }
+        script
+    }
+}
+
 #[test]
 fn project_emit_interface_writes_public_qi_surface() {
     let workspace_root = workspace_root();
@@ -3403,6 +3487,137 @@ version = "0.1.0"
     assert!(
         !interface_path.is_file(),
         "blocked build output path should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
+fn build_with_emit_interface_points_to_blocked_build_header_output_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-build-header-output-path-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for blocked build-header test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = dynamic_library_output_path(&project_root.join("build"), "app");
+    let header_path = project_root.join("include").join("app.h");
+    std::fs::create_dir_all(&header_path)
+        .expect("create blocking directory at the build header output path");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+    let header_display = header_path.display().to_string().replace('\\', "/");
+    let clang_path = write_mock_clang_success_script(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .env("QLANG_CLANG", &clang_path)
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "dylib", "--release", "--output"])
+        .arg(&output_path)
+        .args(["--header-surface", "both", "--header-output"])
+        .arg(&header_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with blocked build header output path",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-build-header-output-path-failure",
+        "build with blocked build header output path",
+        &output,
+        1,
+    )
+    .expect("build should fail when the build header output path is blocked");
+    expect_snapshot_matches(
+        "build-emit-interface-build-header-output-path-failure",
+        "build with blocked build header output path stdout",
+        "",
+        &stdout,
+    )
+    .expect("blocked build header output path should not report a successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-path-failure",
+        "build with blocked build header output path",
+        &stderr,
+        "failed to access",
+    )
+    .expect("blocked build header output path should surface the access failure");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-path-failure",
+        "build with blocked build header output path",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("blocked build header output path should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-path-failure",
+        "build with blocked build header output path",
+        &normalized_stderr,
+        &format!("note: failing build header output path: {header_display}"),
+    )
+    .expect("blocked build header output path should point to the blocked header target");
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-path-failure",
+        "build with blocked build header output path",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit dylib --release --output {} --header-surface both --header-output {} --emit-interface` after fixing the build header output path",
+            source_display, output_display, header_display
+        ),
+    )
+    .expect("blocked build header output path should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-build-header-output-path-failure",
+        "build with blocked build header output path",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect(
+        "blocked build header output path should not claim that a build artifact was preserved",
+    );
+    expect_stderr_not_contains(
+        "build-emit-interface-build-header-output-path-failure",
+        "build with blocked build header output path",
+        &normalized_stderr,
+        "note: failing build output path:",
+    )
+    .expect("blocked build header output path should not be mislabeled as the primary build output path");
+    assert!(
+        !output_path.is_file(),
+        "blocked build header output path should remove `{}` after header failure",
+        output_path.display()
+    );
+    assert!(
+        header_path.is_dir(),
+        "blocked build header output path test should preserve `{}` as a directory",
+        header_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "blocked build header output path should not create `{}`",
         interface_path.display()
     );
 }
