@@ -5061,6 +5061,242 @@ version = "0.1.0"
 }
 
 #[test]
+fn build_with_emit_interface_points_to_build_side_package_manifest_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-package-manifest");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for build-side package manifest failure test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    return exported(1)
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[workspace]
+members = []
+"#,
+    );
+    let output_path = project_root.join("build").join("app.ll");
+    let manifest_path = project_root.join("qlang.toml");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let source_display = source_path.to_string_lossy().replace('\\', "/");
+    let output_display = output_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with build-side package manifest failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-package-manifest-failure",
+        "build with missing package manifest metadata",
+        &output,
+        1,
+    )
+    .expect("build should fail when build-side interface emission cannot resolve package metadata");
+    expect_stdout_contains_all(
+        "build-emit-interface-package-manifest-failure",
+        &stdout,
+        &[&format!("wrote llvm-ir: {}", output_path.display())],
+    )
+    .expect(
+        "build-side package manifest failure should still report the successful build artifact",
+    );
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-package-manifest-failure",
+        "build with missing package manifest metadata",
+        &normalized_stderr,
+        &format!(
+            "error: `ql build --emit-interface` manifest `{}` does not declare `[package].name`",
+            manifest_display
+        ),
+    )
+    .expect("build-side package manifest failure should preserve the build command label");
+    expect_stderr_contains(
+        "build-emit-interface-package-manifest-failure",
+        "build with missing package manifest metadata",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {}", manifest_display),
+    )
+    .expect("build-side package manifest failure should point to the failing manifest");
+    expect_stderr_contains(
+        "build-emit-interface-package-manifest-failure",
+        "build with missing package manifest metadata",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit llvm-ir --output {} --emit-interface` after fixing the package manifest",
+            source_display, output_display
+        ),
+    )
+    .expect("build-side package manifest failure should preserve the original build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-package-manifest-failure",
+        "build with missing package manifest metadata",
+        &normalized_stderr,
+        "after fixing the package interface error",
+    )
+    .expect("build-side package manifest failure should not fall back to a generic interface-error hint");
+    expect_stderr_contains(
+        "build-emit-interface-package-manifest-failure",
+        "build with missing package manifest metadata",
+        &normalized_stderr,
+        &format!("note: build artifact remains at `{}`", output_display),
+    )
+    .expect(
+        "build-side package manifest failure should confirm that the build artifact was preserved",
+    );
+    expect_file_exists(
+        "build-emit-interface-package-manifest-failure",
+        &output_path,
+        "generated llvm ir",
+        "build with missing package manifest metadata",
+    )
+    .expect("build-side package manifest failure should keep the successful build artifact");
+}
+
+#[test]
+fn build_with_emit_interface_points_to_build_side_package_source_root_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-package-source-root");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&project_root)
+        .expect("create project root for build-side package source root failure test");
+    let source_path = temp.write(
+        "workspace/app/entry.ql",
+        r#"
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    return exported(1)
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let output_path = project_root.join("build").join("app.ll");
+    let manifest_path = project_root.join("qlang.toml");
+    let source_root = project_root.join("src");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let source_root_display = source_root.to_string_lossy().replace('\\', "/");
+    let source_display = source_path.to_string_lossy().replace('\\', "/");
+    let output_display = output_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with build-side package source root failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-package-source-root-failure",
+        "build with missing package source root",
+        &output,
+        1,
+    )
+    .expect(
+        "build should fail when build-side interface emission cannot find the package source root",
+    );
+    expect_stdout_contains_all(
+        "build-emit-interface-package-source-root-failure",
+        &stdout,
+        &[&format!("wrote llvm-ir: {}", output_path.display())],
+    )
+    .expect(
+        "build-side package source root failure should still report the successful build artifact",
+    );
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-package-source-root-failure",
+        "build with missing package source root",
+        &normalized_stderr,
+        &format!(
+            "error: `ql build --emit-interface` package source directory `{}` does not exist",
+            source_root_display
+        ),
+    )
+    .expect("build-side package source root failure should preserve the build command label");
+    expect_stderr_contains(
+        "build-emit-interface-package-source-root-failure",
+        "build with missing package source root",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {}", manifest_display),
+    )
+    .expect("build-side package source root failure should point to the failing manifest");
+    expect_stderr_contains(
+        "build-emit-interface-package-source-root-failure",
+        "build with missing package source root",
+        &normalized_stderr,
+        &format!("note: failing package source root: {}", source_root_display),
+    )
+    .expect("build-side package source root failure should point to the missing source root");
+    expect_stderr_contains(
+        "build-emit-interface-package-source-root-failure",
+        "build with missing package source root",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit llvm-ir --output {} --emit-interface` after fixing the package source root",
+            source_display, output_display
+        ),
+    )
+    .expect("build-side package source root failure should preserve the original build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-package-source-root-failure",
+        "build with missing package source root",
+        &normalized_stderr,
+        "after fixing the package interface error",
+    )
+    .expect("build-side package source root failure should not fall back to a generic interface-error hint");
+    expect_stderr_contains(
+        "build-emit-interface-package-source-root-failure",
+        "build with missing package source root",
+        &normalized_stderr,
+        &format!("note: build artifact remains at `{}`", output_display),
+    )
+    .expect("build-side package source root failure should confirm that the build artifact was preserved");
+    expect_file_exists(
+        "build-emit-interface-package-source-root-failure",
+        &output_path,
+        "generated llvm ir",
+        "build with missing package source root",
+    )
+    .expect("build-side package source root failure should keep the successful build artifact");
+    assert!(
+        !interface_path.is_file(),
+        "build-side package source root failure should not leave behind a partial interface artifact"
+    );
+}
+
+#[test]
 fn build_with_emit_interface_points_to_failing_package_manifest() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-build-emit-interface-failure");

@@ -925,6 +925,30 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                         );
                         return Err(code);
                     }
+                    Err(EmitPackageInterfaceError::ManifestFailure { manifest_path }) => {
+                        report_build_interface_manifest_failure(
+                            path,
+                            options,
+                            emit_interface,
+                            &artifact_path,
+                            &manifest_path,
+                        );
+                        return Err(1);
+                    }
+                    Err(EmitPackageInterfaceError::SourceRootFailure {
+                        manifest_path,
+                        source_root,
+                    }) => {
+                        report_build_interface_source_root_failure(
+                            path,
+                            options,
+                            emit_interface,
+                            &artifact_path,
+                            &manifest_path,
+                            &source_root,
+                        );
+                        return Err(1);
+                    }
                     Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
                         report_build_interface_output_failure(
                             path,
@@ -1337,6 +1361,49 @@ fn report_build_interface_failure(
     );
 }
 
+fn report_build_interface_manifest_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+    artifact_path: &Path,
+    manifest_path: &Path,
+) {
+    eprintln!(
+        "note: failing package manifest: {}",
+        normalize_path(manifest_path)
+    );
+    let rerun_command = format_build_command(path, options, emit_interface);
+    eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
+    eprintln!(
+        "note: build artifact remains at `{}`",
+        normalize_path(artifact_path)
+    );
+}
+
+fn report_build_interface_source_root_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+    artifact_path: &Path,
+    manifest_path: &Path,
+    source_root: &Path,
+) {
+    eprintln!(
+        "note: failing package manifest: {}",
+        normalize_path(manifest_path)
+    );
+    eprintln!(
+        "note: failing package source root: {}",
+        normalize_path(source_root)
+    );
+    let rerun_command = format_build_command(path, options, emit_interface);
+    eprintln!("hint: rerun `{rerun_command}` after fixing the package source root");
+    eprintln!(
+        "note: build artifact remains at `{}`",
+        normalize_path(artifact_path)
+    );
+}
+
 fn report_package_interface_failure(
     manifest_path: &Path,
     workspace_member_manifest_path: Option<&Path>,
@@ -1510,6 +1577,17 @@ fn project_emit_interface_path(
                 );
                 return Err(code);
             }
+            Err(EmitPackageInterfaceError::ManifestFailure { .. })
+            | Err(EmitPackageInterfaceError::SourceRootFailure { .. }) => {
+                report_package_interface_failure(
+                    &manifest.manifest_path,
+                    None,
+                    output,
+                    changed_only,
+                    None,
+                );
+                return Err(1);
+            }
             Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
                 report_package_interface_output_failure(
                     &manifest.manifest_path,
@@ -1652,6 +1730,21 @@ fn project_emit_interface_path(
                         member_manifest.manifest_path.clone(),
                     );
                 }
+                Err(EmitPackageInterfaceError::ManifestFailure { .. })
+                | Err(EmitPackageInterfaceError::SourceRootFailure { .. }) => {
+                    report_package_interface_failure(
+                        &member_manifest.manifest_path,
+                        Some(&member_manifest.manifest_path),
+                        None,
+                        changed_only,
+                        None,
+                    );
+                    emission_failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest.manifest_path.clone(),
+                    );
+                }
                 Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
                     report_package_interface_output_failure(
                         &member_manifest.manifest_path,
@@ -1719,7 +1812,16 @@ enum CheckPackageInterfaceResult {
 
 enum EmitPackageInterfaceError {
     Code(u8),
-    OutputPathFailure { output_path: PathBuf },
+    ManifestFailure {
+        manifest_path: PathBuf,
+    },
+    SourceRootFailure {
+        manifest_path: PathBuf,
+        source_root: PathBuf,
+    },
+    OutputPathFailure {
+        output_path: PathBuf,
+    },
 }
 
 #[derive(Default)]
@@ -1747,7 +1849,9 @@ fn emit_package_interface_path(
     })?;
     let package_name = package_name(&manifest).map_err(|error| {
         eprintln!("error: {command_label} {error}");
-        EmitPackageInterfaceError::Code(1)
+        EmitPackageInterfaceError::ManifestFailure {
+            manifest_path: manifest.manifest_path.clone(),
+        }
     })?;
     let output_path = output.map(Path::to_path_buf).unwrap_or_else(|| {
         default_interface_path(&manifest).expect("package emit should have a default qi path")
@@ -1759,9 +1863,21 @@ fn emit_package_interface_path(
     }
 
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
-    let files = collect_package_sources(&manifest).map_err(|error| {
-        eprintln!("error: {error}");
-        EmitPackageInterfaceError::Code(1)
+    let files = collect_package_sources(&manifest).map_err(|error| match error {
+        ql_project::ProjectError::PackageSourceRootNotFound { path } => {
+            eprintln!(
+                "error: {command_label} package source directory `{}` does not exist",
+                normalize_path(&path)
+            );
+            EmitPackageInterfaceError::SourceRootFailure {
+                manifest_path: manifest.manifest_path.clone(),
+                source_root: path,
+            }
+        }
+        error => {
+            eprintln!("error: {error}");
+            EmitPackageInterfaceError::Code(1)
+        }
     })?;
 
     let mut rendered_modules = Vec::new();
@@ -2154,6 +2270,23 @@ fn sync_reference_interfaces_recursive(
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
                 Err(EmitPackageInterfaceError::Code(_)) => {
+                    let owner_note =
+                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
+                    report_package_interface_failure(
+                        &dependency_manifest.manifest_path,
+                        None,
+                        None,
+                        false,
+                        Some(owner_note.as_str()),
+                    );
+                    result.failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut result.first_failure_manifest,
+                        dependency_manifest.manifest_path.clone(),
+                    );
+                }
+                Err(EmitPackageInterfaceError::ManifestFailure { .. })
+                | Err(EmitPackageInterfaceError::SourceRootFailure { .. }) => {
                     let owner_note =
                         format_reference_interface_sync_note(&manifest.manifest_path, reference);
                     report_package_interface_failure(
