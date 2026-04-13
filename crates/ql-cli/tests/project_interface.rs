@@ -4,7 +4,7 @@ use support::{
     TempDir, dynamic_library_output_path, expect_empty_stdout, expect_exit_code,
     expect_file_exists, expect_snapshot_matches, expect_stderr_contains,
     expect_stderr_not_contains, expect_stdout_contains_all, expect_success, ql_command,
-    read_normalized_file, run_command_capture, workspace_root,
+    read_normalized_file, run_command_capture, static_library_output_path, workspace_root,
 };
 
 #[cfg(windows)]
@@ -89,6 +89,64 @@ exit 9
             permissions.set_mode(0o755);
             std::fs::set_permissions(&script, permissions)
                 .expect("mark mock clang output-path failure script executable");
+        }
+        script
+    }
+}
+
+fn write_mock_archiver_output_path_failure_script(temp: &TempDir) -> std::path::PathBuf {
+    if cfg!(windows) {
+        let script = temp.write(
+            "mock-archiver-output-path-fail.ps1",
+            r#"
+param([string[]]$args)
+$out = $null
+foreach ($arg in $args) {
+    if ($arg.StartsWith('/OUT:')) {
+        $out = $arg.Substring(5)
+    }
+}
+if ($null -eq $out -and $args.Count -ge 2) {
+    $out = $args[1]
+}
+if ($null -eq $out) { Write-Error 'missing output path'; exit 1 }
+Write-Error "cannot open file '$out': Permission denied"
+exit 8
+"#,
+        );
+        temp.write(
+            "mock-archiver-output-path-fail.cmd",
+            &format!(
+                "@echo off\r\npowershell.exe -ExecutionPolicy Bypass -File \"{}\" %*\r\n",
+                script.display()
+            ),
+        )
+    } else {
+        let script = temp.write(
+            "mock-archiver-output-path-fail.sh",
+            r#"#!/bin/sh
+out=""
+if [ "$#" -ge 2 ]; then
+  out="$2"
+fi
+if [ "$out" = "" ]; then
+  echo "missing output path" 1>&2
+  exit 1
+fi
+echo "cannot open file '$out': Permission denied" 1>&2
+exit 8
+"#,
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&script)
+                .expect("read mock archiver output-path failure script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&script, permissions)
+                .expect("mark mock archiver output-path failure script executable");
         }
         script
     }
@@ -4185,6 +4243,180 @@ version = "0.1.0"
     assert!(
         preserved_ir,
         "toolchain output-path failure should preserve an intermediate LLVM IR file near `{}`",
+        output_path.display()
+    );
+}
+
+#[test]
+fn build_with_emit_interface_points_archiver_output_failures_at_build_output_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-archiver-output-path-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for archiver output-path failure test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = static_library_output_path(&project_root.join("build"), "app");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+    let output_file_name = output_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("static library output should have a UTF-8 filename");
+    let clang_path = write_mock_clang_success_script(&temp);
+    let archiver_path = write_mock_archiver_output_path_failure_script(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .env("QLANG_CLANG", &clang_path)
+        .env("QLANG_AR", &archiver_path)
+        .env("QLANG_AR_STYLE", "lib")
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "staticlib", "--release", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with an archiver output-path failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure",
+        &output,
+        1,
+    )
+    .expect("build should fail when the archiver cannot open the requested output path");
+    expect_snapshot_matches(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure stdout",
+        "",
+        &stdout,
+    )
+    .expect("archiver output-path failure should not report a successful build artifact");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure",
+        &normalized_stderr,
+        "cannot open file '",
+    )
+    .expect("archiver output-path failure should surface the blocked archive file");
+    expect_stderr_contains(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure",
+        &normalized_stderr,
+        output_file_name,
+    )
+    .expect("archiver output-path failure should still mention the requested archive filename");
+    expect_stderr_contains(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure",
+        &normalized_stderr,
+        "Permission denied",
+    )
+    .expect("archiver output-path failure should keep the output-path access reason");
+    expect_stderr_contains(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure",
+        &normalized_stderr,
+        "note: preserved intermediate artifact at `",
+    )
+    .expect("archiver output-path failure should still report preserved intermediate artifacts");
+    expect_stderr_contains(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure",
+        &normalized_stderr,
+        ".codegen.obj",
+    )
+    .expect("archiver output-path failure should preserve the intermediate object");
+    expect_stderr_contains(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("archiver output-path failure should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure",
+        &normalized_stderr,
+        &format!("note: failing build output path: {output_display}"),
+    )
+    .expect("archiver output-path failure should point to the requested archive path");
+    expect_stderr_contains(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit staticlib --release --output {} --emit-interface` after fixing the build output path",
+            source_display, output_display
+        ),
+    )
+    .expect("archiver output-path failure should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit staticlib --release --output {} --emit-interface` after fixing the build toolchain",
+            source_display, output_display
+        ),
+    )
+    .expect("archiver output-path failure should not reuse the generic build-toolchain hint");
+    expect_stderr_not_contains(
+        "build-emit-interface-archiver-output-path-failure",
+        "build with archiver output-path failure",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect("archiver output-path failure should not claim that a build artifact was preserved");
+    assert!(
+        !output_path.is_file(),
+        "archiver output-path failure should not create `{}`",
+        output_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "archiver output-path failure should not create `{}`",
+        interface_path.display()
+    );
+    let preserved_obj = std::fs::read_dir(
+        output_path
+            .parent()
+            .expect("static library output should have a parent"),
+    )
+    .expect("read preserved intermediate directory after archiver output-path failure")
+    .filter_map(Result::ok)
+    .map(|entry| entry.path())
+    .any(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.contains(".codegen.obj"))
+    });
+    assert!(
+        preserved_obj,
+        "archiver output-path failure should preserve an intermediate object near `{}`",
         output_path.display()
     );
 }

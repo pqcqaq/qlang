@@ -1128,6 +1128,11 @@ fn toolchain_targets_build_output_path(error: &ToolchainError, output_path: &Pat
                     "could not open output file",
                     "can't open output file",
                     "failed to open output file",
+                    "unable to open file",
+                    "cannot open file",
+                    "could not open file",
+                    "can't open file",
+                    "failed to open file",
                 ]
                 .iter()
                 .any(|message| output_failure.contains(message))
