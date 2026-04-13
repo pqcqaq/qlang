@@ -72,6 +72,7 @@
 - direct package `ql check` / `ql check --sync-interfaces` 在 package `src/` 目录缺失时，局部 error line 现在也会保留真实命令标签，并补 `failing package manifest`、`failing package source root` 和针对该 manifest 的直接 rerun hint。
 - direct package `ql check` / `ql check --sync-interfaces` 在 package `src/` 目录存在但没有任何 `.ql` 源文件时，局部 error line 现在也会保留真实命令标签，并补 `failing package manifest`、`failing package source root` 和针对该 manifest 的直接 rerun hint。
 - direct package `ql check` / `ql check --sync-interfaces` 在 package 源码本身报 diagnostics 时，现在也会在 diagnostics 之后补 `failing package manifest` 与针对该 manifest 的直接 rerun hint。
+- direct package `ql check` / `ql check --sync-interfaces` 在 package 因 reference failure 失败时，现在也会在局部 reference diagnostics 之后补 `failing package manifest` 与针对该 manifest 的直接 rerun hint。
 - workspace 根 `ql check` / `ql check --sync-interfaces` 在 member package 的 `src/` 目录缺失时，局部 error line 现在也会保留真实命令标签，并补 `failing package manifest`、`failing workspace member manifest`、`failing package source root` 和针对该 member manifest 的直接 rerun hint。
 - workspace 根 `ql check` / `ql check --sync-interfaces` 在 member package 的 `src/` 目录存在但没有任何 `.ql` 源文件时，局部 error line 现在也会保留真实命令标签，并补 `failing package manifest`、`failing workspace member manifest`、`failing package source root` 和针对该 member manifest 的直接 rerun hint。
 - workspace 根路径上的 `ql check` 不再在首个 failing member 处停止，而会继续检查其余 members；每个失败 member 的错误块现在也会立即补一个 `failing workspace member manifest`，只有多失败场景的最终汇总才会再补 `first failing member manifest`；如果 member manifest 能加载但没有 `[package].name`，局部 error line 和 rerun hint 现在也会保留真实命令标签（包括 `--sync-interfaces`）。

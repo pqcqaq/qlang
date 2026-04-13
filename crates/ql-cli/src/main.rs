@@ -356,12 +356,25 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
                 return check_workspace_manifest(&manifest, sync_interfaces);
             }
             package_manifest_path = Some(manifest.manifest_path.clone());
-            if !sync_interfaces {
-                ensure_reference_interfaces_current(&manifest)?;
+            if !sync_interfaces && ensure_reference_interfaces_current(&manifest).is_err() {
+                report_package_check_reference_failure(&manifest.manifest_path, sync_interfaces);
+                return Err(1);
             }
         }
         if sync_interfaces {
-            for interface_path in sync_reference_interfaces(path, &mut BTreeSet::new())? {
+            let synced_paths = match sync_reference_interfaces(path, &mut BTreeSet::new()) {
+                Ok(paths) => paths,
+                Err(_) => {
+                    report_package_check_reference_failure(
+                        package_manifest_path
+                            .as_deref()
+                            .expect("direct package reference sync failures require a loaded manifest"),
+                        sync_interfaces,
+                    );
+                    return Err(1);
+                }
+            };
+            for interface_path in synced_paths {
                 println!("wrote interface: {}", interface_path.display());
             }
         }
@@ -793,6 +806,15 @@ fn report_package_check_source_diagnostics_failure(manifest_path: &Path, sync_in
     eprintln!("note: failing package manifest: {manifest_path}");
     eprintln!(
         "hint: rerun `{rerun_command}` after fixing the package sources"
+    );
+}
+
+fn report_package_check_reference_failure(manifest_path: &Path, sync_interfaces: bool) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_command = format_check_command(sync_interfaces, Some(&manifest_path));
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!(
+        "hint: rerun `{rerun_command}` after fixing the referenced package or reference manifest"
     );
 }
 

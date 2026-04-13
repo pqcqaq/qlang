@@ -255,6 +255,45 @@ pub fn main() -> Int {
         ),
     )
     .expect("missing dependency interface diagnostic should point back to the owner reference");
+    let package_note = format!(
+        "note: failing package manifest: {}",
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    let rerun_hint = format!(
+        "hint: rerun `ql check {}` after fixing the referenced package or reference manifest",
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    expect_stderr_contains(
+        "project-check-missing-interface",
+        "package-aware ql check with missing dependency interface",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("missing dependency interface diagnostic should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-check-missing-interface",
+        "package-aware ql check with missing dependency interface",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("missing dependency interface diagnostic should suggest rerunning the package manifest directly");
+    let owner_note = format!(
+        "note: while checking referenced package `../dep` from `{}`",
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    let owner_note_index = normalized_stderr
+        .find(&owner_note)
+        .expect("missing dependency interface diagnostic should include the owner note");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("missing dependency interface diagnostic should include the package note");
+    let rerun_hint_index = normalized_stderr
+        .rfind(&rerun_hint)
+        .expect("missing dependency interface diagnostic should include the direct rerun hint");
+    assert!(
+        owner_note_index < package_note_index && package_note_index < rerun_hint_index,
+        "expected direct package reference context before direct rerun hint, got:\n{stderr}"
+    );
     expect_stderr_not_contains(
         "project-check-missing-interface",
         "package-aware ql check with missing dependency interface",
@@ -800,6 +839,51 @@ pub fn main() -> Int {
         ),
     )
     .expect("sync path should hint at the owning manifest");
+    let package_note = format!(
+        "note: failing package manifest: {}",
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    let rerun_hint = format!(
+        "hint: rerun `ql check --sync-interfaces {}` after fixing the referenced package or reference manifest",
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    expect_stderr_contains(
+        "project-check-sync-invalid-reference-manifest",
+        "package-aware ql check sync with invalid referenced manifest",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("sync path should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-check-sync-invalid-reference-manifest",
+        "package-aware ql check sync with invalid referenced manifest",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("sync path should suggest rerunning the package manifest directly");
+    let reference_note = format!(
+        "note: failing reference manifest: {}",
+        temp.path()
+            .join("workspace")
+            .join("broken_ref")
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let reference_note_index = normalized_stderr
+        .find(&reference_note)
+        .expect("sync path should include the failing reference note");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("sync path should include the package note");
+    let rerun_hint_index = normalized_stderr
+        .rfind(&rerun_hint)
+        .expect("sync path should include the direct rerun hint");
+    assert!(
+        reference_note_index < package_note_index && package_note_index < rerun_hint_index,
+        "expected direct package sync reference context before direct rerun hint, got:\n{stderr}"
+    );
     expect_stderr_not_contains(
         "project-check-sync-invalid-reference-manifest",
         "package-aware ql check sync with invalid referenced manifest",
