@@ -958,7 +958,9 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
         }) => {
             eprintln!("error: failed to access `{}`: {error}", io_path.display());
             if emit_interface {
-                if let Some(output_path) = build_output_path(path, options) {
+                if io_path == path {
+                    report_build_input_path_failure(path, options, emit_interface);
+                } else if let Some(output_path) = build_output_path(path, options) {
                     if io_targets_build_output_path(&io_path, &output_path) {
                         report_build_output_path_failure(
                             path,

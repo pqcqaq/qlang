@@ -7,6 +7,9 @@ use support::{
     read_normalized_file, run_command_capture, workspace_root,
 };
 
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
+
 fn write_mock_clang_failure_script(temp: &TempDir) -> std::path::PathBuf {
     if cfg!(windows) {
         temp.write(
@@ -3701,6 +3704,131 @@ version = "0.1.0"
     assert!(
         !interface_path.is_file(),
         "missing build input path should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn build_with_emit_interface_points_to_unreadable_build_input_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-input-read-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for unreadable build input test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let source_lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&source_path)
+        .expect("open source file with an exclusive share mode");
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = project_root.join("build").join("app.ll");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--release", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with an unreadable build input path",
+    );
+    drop(source_lock);
+
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-input-read-failure",
+        "build with unreadable build input path",
+        &output,
+        1,
+    )
+    .expect("build should fail when the build input file cannot be read");
+    expect_snapshot_matches(
+        "build-emit-interface-input-read-failure",
+        "build with unreadable build input path stdout",
+        "",
+        &stdout,
+    )
+    .expect("unreadable build input path should not report a successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-input-read-failure",
+        "build with unreadable build input path",
+        &stderr,
+        "failed to access",
+    )
+    .expect("unreadable build input path should surface the access failure");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-input-read-failure",
+        "build with unreadable build input path",
+        &normalized_stderr,
+        &source_display,
+    )
+    .expect("unreadable build input path should surface the locked source path");
+    expect_stderr_contains(
+        "build-emit-interface-input-read-failure",
+        "build with unreadable build input path",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("unreadable build input path should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-input-read-failure",
+        "build with unreadable build input path",
+        &normalized_stderr,
+        &format!("note: failing build input path: {source_display}"),
+    )
+    .expect("unreadable build input path should point to the unreadable source path");
+    expect_stderr_contains(
+        "build-emit-interface-input-read-failure",
+        "build with unreadable build input path",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit llvm-ir --release --output {} --emit-interface` after fixing the build input path",
+            source_display, output_display
+        ),
+    )
+    .expect("unreadable build input path should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-input-read-failure",
+        "build with unreadable build input path",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect("unreadable build input path should not claim that a build artifact was preserved");
+    assert!(
+        !output_path.exists(),
+        "unreadable build input path should not create `{}`",
+        output_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "unreadable build input path should not create `{}`",
         interface_path.display()
     );
 }
