@@ -2165,10 +2165,31 @@ name = "broken"
     expect_stderr_contains(
         "project-check-workspace-single-failure",
         "workspace-root ql check with single failing member",
-        &stderr,
-        "invalid manifest",
+        &normalized_stderr,
+        &format!(
+            "error: `ql check` invalid manifest `{}`",
+            broken_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
     )
-    .expect("workspace-root ql check should surface the broken member manifest");
+    .expect("workspace-root ql check should preserve the command label for broken member manifests");
+    expect_stderr_not_contains(
+        "project-check-workspace-single-failure",
+        "workspace-root ql check with single failing member",
+        &normalized_stderr,
+        &format!(
+            "error: invalid manifest `{}`",
+            broken_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace-root ql check should not fall back to the generic broken member error line");
     expect_stderr_contains(
         "project-check-workspace-single-failure",
         "workspace-root ql check with single failing member",
@@ -2214,6 +2235,136 @@ name = "broken"
         "note: first failing member manifest:",
     )
     .expect("single failing workspace members should not repeat the manifest in the final summary");
+}
+
+#[test]
+fn check_workspace_root_sync_preserves_broken_member_manifest_label() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-workspace-sync-single-failure");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+    let broken_root = temp
+        .path()
+        .join("workspace")
+        .join("packages")
+        .join("broken");
+    let app_source = app_root.join("src").join("lib.ql");
+    let workspace_manifest = temp.path().join("workspace");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(&broken_root).expect("create broken member directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/broken/qlang.toml",
+        r#"
+[package
+name = "broken"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["check", "--sync-interfaces"])
+        .arg(&workspace_manifest);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --sync-interfaces` workspace root with single failing member",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-workspace-sync-single-failure",
+        "workspace-root ql check sync with single failing member",
+        &output,
+        1,
+    )
+    .expect("workspace-root ql check sync with a single failing member should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-check-workspace-sync-single-failure",
+        &normalized_stdout,
+        &[&format!(
+            "ok: {}",
+            app_source.display().to_string().replace('\\', "/")
+        )],
+    )
+    .expect("workspace-root ql check sync should still report healthy members before failing");
+    let broken_manifest = broken_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let error_line = format!(
+        "error: `ql check --sync-interfaces` invalid manifest `{broken_manifest}`"
+    );
+    let old_error_line = format!("error: invalid manifest `{broken_manifest}`");
+    let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
+    let rerun_hint = format!(
+        "hint: rerun `ql check --sync-interfaces {broken_manifest}` after fixing the workspace member manifest"
+    );
+    expect_stderr_contains(
+        "project-check-workspace-sync-single-failure",
+        "workspace-root ql check sync with single failing member",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("workspace-root ql check sync should preserve the command label for broken member manifests");
+    expect_stderr_not_contains(
+        "project-check-workspace-sync-single-failure",
+        "workspace-root ql check sync with single failing member",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("workspace-root ql check sync should not fall back to the generic broken member error line");
+    expect_stderr_contains(
+        "project-check-workspace-sync-single-failure",
+        "workspace-root ql check sync with single failing member",
+        &normalized_stderr,
+        &member_note,
+    )
+    .expect("workspace-root ql check sync should point the broken member locally");
+    expect_stderr_contains(
+        "project-check-workspace-sync-single-failure",
+        "workspace-root ql check sync with single failing member",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("workspace-root ql check sync should suggest rerunning the broken member directly after repair");
+    expect_stderr_contains(
+        "project-check-workspace-sync-single-failure",
+        "workspace-root ql check sync with single failing member",
+        &stderr,
+        "workspace check found 1 failing member(s)",
+    )
+    .expect("workspace-root ql check sync should summarize the single failing member");
+    expect_stderr_not_contains(
+        "project-check-workspace-sync-single-failure",
+        "workspace-root ql check sync with single failing member",
+        &normalized_stderr,
+        "note: first failing member manifest:",
+    )
+    .expect("single failing sync workspace members should not repeat the manifest in the final summary");
 }
 
 #[test]

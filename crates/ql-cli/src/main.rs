@@ -485,7 +485,7 @@ fn check_workspace_manifest(
         let member_manifest = match load_project_manifest(&member_path) {
             Ok(manifest) => manifest,
             Err(error) => {
-                eprintln!("error: {error}");
+                eprintln!("error: {check_command_label} {error}");
                 let member_manifest_path = workspace_member_manifest_path(&member_path);
                 let rerun_command = format_workspace_member_check_rerun_command(
                     &normalize_path(&member_manifest_path),
