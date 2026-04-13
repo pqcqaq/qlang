@@ -956,23 +956,61 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
         }) => {
             print_diagnostics(&diagnostic_path, &source, &diagnostics);
             if emit_interface {
-                report_build_source_diagnostics_failure(path);
+                report_build_source_diagnostics_failure(path, options, emit_interface);
             }
             Err(1)
         }
     }
 }
 
-fn report_build_source_diagnostics_failure(path: &Path) {
+fn build_emit_cli_value(emit: BuildEmit) -> &'static str {
+    match emit {
+        BuildEmit::LlvmIr => "llvm-ir",
+        BuildEmit::Assembly => "asm",
+        BuildEmit::Object => "obj",
+        BuildEmit::Executable => "exe",
+        BuildEmit::DynamicLibrary => "dylib",
+        BuildEmit::StaticLibrary => "staticlib",
+    }
+}
+
+fn format_build_command(path: &Path, options: &BuildOptions, emit_interface: bool) -> String {
+    let mut command = format!("ql build {}", normalize_path(path));
+    command.push_str(&format!(" --emit {}", build_emit_cli_value(options.emit)));
+    if options.profile == BuildProfile::Release {
+        command.push_str(" --release");
+    }
+    if let Some(output) = &options.output {
+        command.push_str(&format!(" --output {}", normalize_path(output)));
+    }
+    if let Some(header) = &options.c_header {
+        if header.surface != CHeaderSurface::Exports {
+            command.push_str(&format!(" --header-surface {}", header.surface.as_str()));
+        } else if header.output.is_none() {
+            command.push_str(" --header");
+        }
+        if let Some(output) = &header.output {
+            command.push_str(&format!(" --header-output {}", normalize_path(output)));
+        }
+    }
+    if emit_interface {
+        command.push_str(" --emit-interface");
+    }
+    command
+}
+
+fn report_build_source_diagnostics_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+) {
     if let Ok(manifest) = load_project_manifest(path) {
         eprintln!(
             "note: failing package manifest: {}",
             normalize_path(&manifest.manifest_path)
         );
-        eprintln!(
-            "hint: rerun `ql build {} --emit-interface` after fixing the package sources",
-            normalize_path(path)
-        );
+        let rerun_command = format_build_command(path, options, emit_interface);
+        eprintln!("hint: rerun `{rerun_command}` after fixing the package sources");
     }
 }
 

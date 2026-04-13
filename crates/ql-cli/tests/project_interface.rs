@@ -3047,17 +3047,22 @@ version = "0.1.0"
     );
 
     let manifest_path = project_root.join("qlang.toml");
-    let output_path = project_root.join("build").join("app.ll");
+    let output_path = project_root.join("build").join("app.lib");
+    let header_path = project_root.join("include").join("app.h");
     let interface_path = project_root.join("app.qi");
     let manifest_display = manifest_path.display().to_string().replace('\\', "/");
     let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+    let header_display = header_path.display().to_string().replace('\\', "/");
 
     let mut command = ql_command(&workspace_root);
     command
         .arg("build")
         .arg(&source_path)
-        .args(["--emit", "llvm-ir", "--output"])
+        .args(["--emit", "staticlib", "--release", "--output"])
         .arg(&output_path)
+        .args(["--header-surface", "both", "--header-output"])
+        .arg(&header_path)
         .arg("--emit-interface");
     let output = run_command_capture(
         &mut command,
@@ -3104,11 +3109,11 @@ version = "0.1.0"
         "build with source diagnostics before interface emission",
         &normalized_stderr,
         &format!(
-            "hint: rerun `ql build {} --emit-interface` after fixing the package sources",
-            source_display
+            "hint: rerun `ql build {} --emit staticlib --release --output {} --header-surface both --header-output {} --emit-interface` after fixing the package sources",
+            source_display, output_display, header_display
         ),
     )
-    .expect("build-side source diagnostics should preserve a direct rerun hint");
+    .expect("build-side source diagnostics should preserve the build rerun options");
     expect_stderr_not_contains(
         "build-emit-interface-build-diagnostics",
         "build with source diagnostics before interface emission",
@@ -3125,6 +3130,11 @@ version = "0.1.0"
         !interface_path.is_file(),
         "build-side source diagnostics should not create `{}`",
         interface_path.display()
+    );
+    assert!(
+        !header_path.is_file(),
+        "build-side source diagnostics should not create `{}`",
+        header_path.display()
     );
 }
 
