@@ -372,8 +372,13 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
                         "package-aware `ql check` should only succeed for package manifests",
                     );
                     eprintln!(
-                        "error: no `.ql` files found under `{}`",
+                        "error: {check_command_label} no `.ql` files found under `{}`",
                         source_root.display()
+                    );
+                    report_package_check_no_sources_failure(
+                        &package.manifest().manifest_path,
+                        &source_root,
+                        sync_interfaces,
                     );
                     return Err(1);
                 }
@@ -652,6 +657,23 @@ fn report_package_check_source_root_failure(
     );
     eprintln!(
         "hint: rerun `{rerun_command}` after fixing the package source root"
+    );
+}
+
+fn report_package_check_no_sources_failure(
+    manifest_path: &Path,
+    source_root: &Path,
+    sync_interfaces: bool,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_command = format_check_command(sync_interfaces, Some(&manifest_path));
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!(
+        "note: failing package source root: {}",
+        normalize_path(source_root)
+    );
+    eprintln!(
+        "hint: rerun `{rerun_command}` after adding package source files"
     );
 }
 

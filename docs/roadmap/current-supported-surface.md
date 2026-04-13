@@ -70,6 +70,7 @@
 - `ql check` / `ql check --sync-interfaces` 现在也会把坏的引用 manifest 纳入 package-aware 诊断面：会直接说明是引用 manifest 语法错误，还是引用目标没有 `[package].name`，并在局部错误块里补 `failing reference manifest` 与 owner/reference 修复提示。
 - direct package `ql check` / `ql check --sync-interfaces` 在目标 manifest 自身无效时，局部 error line 现在也会保留真实命令标签，并立即补 `failing package manifest` 和针对该 manifest 的直接 rerun hint，不再退回泛化 project error。
 - direct package `ql check` / `ql check --sync-interfaces` 在 package `src/` 目录缺失时，局部 error line 现在也会保留真实命令标签，并补 `failing package manifest`、`failing package source root` 和针对该 manifest 的直接 rerun hint。
+- direct package `ql check` / `ql check --sync-interfaces` 在 package `src/` 目录存在但没有任何 `.ql` 源文件时，局部 error line 现在也会保留真实命令标签，并补 `failing package manifest`、`failing package source root` 和针对该 manifest 的直接 rerun hint。
 - workspace 根路径上的 `ql check` 不再在首个 failing member 处停止，而会继续检查其余 members；每个失败 member 的错误块现在也会立即补一个 `failing workspace member manifest`，只有多失败场景的最终汇总才会再补 `first failing member manifest`；如果 member manifest 能加载但没有 `[package].name`，局部 error line 和 rerun hint 现在也会保留真实命令标签（包括 `--sync-interfaces`）。
 - `ql check --sync-interfaces` 会在分析前递归同步本地依赖包的默认 `.qi`，避免把这些非 `valid` artifact 留到后续分析阶段才暴露；如果同一个 package 里同时存在可同步和不可修复的引用，已成功写出的 `.qi` 仍会输出，坏引用会继续逐个报告并在末尾汇总；当中间依赖自己的 `.qi` 缺失但更深层仍有坏引用时，当前可同步的上游 `.qi` 也会先写出，再汇总剩余 transitive failures；如果某个依赖在同步阶段因为自身源码错误或默认输出路径失败而无法发射 `.qi`，stderr 现在会先补 `failing package manifest`、输出路径/源码局部原因和 owner manifest / reference 上下文，再给统一的 `ql project emit-interface <manifest>` 修复提示，避免同一条失败链路里把 hint 提前到上下文前面；最终汇总只在多失败场景下补 `first failing reference manifest`。
 
