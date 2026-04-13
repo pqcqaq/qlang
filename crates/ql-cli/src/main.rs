@@ -11,7 +11,7 @@ use ql_analysis::{
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
     BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderError,
-    CHeaderOptions, CHeaderSurface, build_file, emit_c_header,
+    CHeaderOptions, CHeaderSurface, build_file, default_output_path, emit_c_header,
 };
 use ql_fmt::format_source;
 use ql_project::{
@@ -932,8 +932,23 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
             eprintln!("error: {message}");
             Err(1)
         }
-        Err(BuildError::Io { path, error }) => {
-            eprintln!("error: failed to access `{}`: {error}", path.display());
+        Err(BuildError::Io {
+            path: io_path,
+            error,
+        }) => {
+            eprintln!("error: failed to access `{}`: {error}", io_path.display());
+            if emit_interface {
+                if let Some(output_path) = build_output_path(path, options) {
+                    if io_path == output_path {
+                        report_build_output_path_failure(
+                            path,
+                            options,
+                            emit_interface,
+                            &output_path,
+                        );
+                    }
+                }
+            }
             Err(1)
         }
         Err(BuildError::Toolchain {
@@ -974,6 +989,15 @@ fn build_emit_cli_value(emit: BuildEmit) -> &'static str {
         BuildEmit::Executable => "exe",
         BuildEmit::DynamicLibrary => "dylib",
         BuildEmit::StaticLibrary => "staticlib",
+    }
+}
+
+fn build_output_path(path: &Path, options: &BuildOptions) -> Option<PathBuf> {
+    match &options.output {
+        Some(output_path) => Some(output_path.clone()),
+        None => env::current_dir().ok().map(|build_root| {
+            default_output_path(&build_root, path, options.profile, options.emit)
+        }),
     }
 }
 
@@ -1038,6 +1062,26 @@ fn report_build_toolchain_failure(path: &Path, options: &BuildOptions, emit_inte
         emit_interface,
         "after fixing the build toolchain",
     );
+}
+
+fn report_build_output_path_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+    output_path: &Path,
+) {
+    if let Ok(manifest) = load_project_manifest(path) {
+        eprintln!(
+            "note: failing package manifest: {}",
+            normalize_path(&manifest.manifest_path)
+        );
+        eprintln!(
+            "note: failing build output path: {}",
+            normalize_path(output_path)
+        );
+        let rerun_command = format_build_command(path, options, emit_interface);
+        eprintln!("hint: rerun `{rerun_command}` after fixing the build output path");
+    }
 }
 
 fn report_build_interface_failure(path: &Path, artifact_path: &Path) {

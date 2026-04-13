@@ -3293,6 +3293,121 @@ version = "0.1.0"
 }
 
 #[test]
+fn build_with_emit_interface_points_to_blocked_build_output_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-build-output-path-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for blocked build-output test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    return exported(1)
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = project_root.join("build").join("blocked.ll");
+    std::fs::create_dir_all(&output_path)
+        .expect("create blocking directory at the build output path");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--release", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with blocked build output path",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-build-output-path-failure",
+        "build with blocked build output path",
+        &output,
+        1,
+    )
+    .expect("build should fail when the primary build output path is blocked");
+    expect_snapshot_matches(
+        "build-emit-interface-build-output-path-failure",
+        "build with blocked build output path stdout",
+        "",
+        &stdout,
+    )
+    .expect("blocked build output path should not report a successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-build-output-path-failure",
+        "build with blocked build output path",
+        &stderr,
+        "failed to access",
+    )
+    .expect("blocked build output path should surface the access failure");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-build-output-path-failure",
+        "build with blocked build output path",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("blocked build output path should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-build-output-path-failure",
+        "build with blocked build output path",
+        &normalized_stderr,
+        &format!("note: failing build output path: {output_display}"),
+    )
+    .expect("blocked build output path should point to the blocked build artifact path");
+    expect_stderr_contains(
+        "build-emit-interface-build-output-path-failure",
+        "build with blocked build output path",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit llvm-ir --release --output {} --emit-interface` after fixing the build output path",
+            source_display, output_display
+        ),
+    )
+    .expect("blocked build output path should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-build-output-path-failure",
+        "build with blocked build output path",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect("blocked build output path should not claim that a build artifact was preserved");
+    assert!(
+        output_path.is_dir(),
+        "blocked build output path test should preserve `{}` as a directory",
+        output_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "blocked build output path should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn build_with_emit_interface_points_to_failing_package_manifest() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-build-emit-interface-failure");

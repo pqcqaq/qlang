@@ -1,6 +1,6 @@
 # 当前支持基线
 
-> 最后同步：2026-04-12
+> 最后同步：2026-04-13
 
 这页只回答“今天真实可依赖的能力边界”。
 
@@ -65,7 +65,7 @@
 - `ql project emit-interface --check` 只校验当前 package/workspace 的默认 `.qi` 是否都处于 `valid` 状态；若发现 `stale` 会说明原因，若遇到 `invalid` / `unreadable` 也会直接打印 detail；package 级和 workspace member 级的 check 失败现在也会补 `failing package manifest`，不再只剩 artifact 路径。
 - workspace 根 `ql project emit-interface --check` 在单个 member manifest 无法加载时也不会立刻中断；已检查 members 会先输出，member manifest 加载失败的局部错误块现在也会立即补 `failing workspace member manifest` 和针对该 member manifest 的直接 rerun hint；如果 member manifest 能加载但没有 `[package].name`，这条路径现在也不会提前退出，局部 error line 会保留真实命令标签（如 `--changed-only --check`），然后继续检查后续 members；如果 member 的默认 `.qi` 自身 `missing` / `invalid` / `unreadable` / `stale`，局部错误块现在也会先补 `failing package manifest` 和 `failing workspace member manifest`，再给修复 hint。最后统一汇总 failing members；只有多失败场景才额外补 `first failing member manifest`。
 - `ql build --emit-interface` 会在成功 build 后写出当前 package 的默认 `.qi`；如果 build 已成功但 package 内其他源码导致接口发射失败，stderr 现在会先汇总所有 failing source file；只有多失败场景才额外补 `first failing source file`，随后再补 failing package manifest，并明确已经生成的 build artifact 仍保留在原输出路径。
-- 如果 `ql build --emit-interface` 在 build 阶段就因为目标 package 源码 diagnostics 或 toolchain 失败，stderr 现在也会补 `failing package manifest`，并按最终 build 选项重建直接重跑 hint（保留 `--emit` / `--release` / `--output` / C header 相关参数）；toolchain 失败时仍会保留 intermediate artifact 提示，但不会误报最终 build artifact 已保留。
+- 如果 `ql build --emit-interface` 在 build 阶段就因为目标 package 源码 diagnostics、toolchain，或主 build 输出路径本身不可写而失败，stderr 现在也会补 `failing package manifest`，并按最终 build 选项重建直接重跑 hint（保留 `--emit` / `--release` / `--output` / C header 相关参数）；主输出路径失败时会额外补 `failing build output path`，toolchain 失败时仍会保留 intermediate artifact 提示，但不会误报最终 build artifact 已保留。
 - `.qi` 维护相关失败输出现在统一走规范化路径显示：source diagnostics、`first failing source file`、`first failing member/reference manifest`、stale reasons、owner/reference hints 都会去掉 `../` 噪音，且这些 `first failing *` 指针现在都只在多失败场景保留，避免同一条失败链路里出现多种路径写法和重复目标。
 - `ql check` 现会在分析前显式拒绝本地依赖包的非 `valid` 默认 `.qi`（`missing` / `invalid` / `unreadable` / `stale`），并统一给出 `--sync-interfaces` / `ql project emit-interface` 修复提示；这些 dependency artifact 失败现在也会在局部错误块里补 `failing referenced package manifest`，再补 owner manifest + reference 文本上下文，不再只剩依赖包名和 artifact 路径；`invalid` / `unreadable` / `stale` 这几类 dependency `.qi` 失败块现在也和 package/workspace 一样固定为 `error -> detail/reason -> manifest/context -> hint` 顺序；单 package 若有多个 direct / transitive failing references，也会继续逐个报告并在末尾汇总 failing referenced package 数，多失败时再补一个 `first failing reference manifest` 指向第一处要修的 manifest。
 - `ql check` / `ql check --sync-interfaces` 现在也会把坏的引用 manifest 纳入 package-aware 诊断面：会直接说明是引用 manifest 语法错误，还是引用目标没有 `[package].name`，并在局部错误块里补 `failing reference manifest` 与 owner/reference 修复提示。
