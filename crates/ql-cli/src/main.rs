@@ -11,7 +11,7 @@ use ql_analysis::{
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
     BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderError,
-    CHeaderOptions, CHeaderSurface, build_file, default_output_path, emit_c_header,
+    CHeaderOptions, CHeaderSurface, ToolchainError, build_file, default_output_path, emit_c_header,
 };
 use ql_fmt::format_source;
 use ql_project::{
@@ -995,7 +995,20 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                 );
             }
             if emit_interface {
-                report_build_toolchain_failure(path, options, emit_interface);
+                if let Some(output_path) = build_output_path(path, options) {
+                    if toolchain_targets_build_output_path(&error, &output_path) {
+                        report_build_output_path_failure(
+                            path,
+                            options,
+                            emit_interface,
+                            &output_path,
+                        );
+                    } else {
+                        report_build_toolchain_failure(path, options, emit_interface);
+                    }
+                } else {
+                    report_build_toolchain_failure(path, options, emit_interface);
+                }
             }
             Err(1)
         }
@@ -1094,6 +1107,33 @@ fn io_targets_build_output_path(io_path: &Path, output_path: &Path) -> bool {
 
 fn io_targets_build_header_output_path(io_path: &Path, output_path: &Path) -> bool {
     io_path == output_path || output_path.starts_with(io_path)
+}
+
+fn toolchain_targets_build_output_path(error: &ToolchainError, output_path: &Path) -> bool {
+    match error {
+        ToolchainError::InvocationFailed { stderr, .. } => {
+            let output_failure = stderr.to_ascii_lowercase();
+            let collapsed_output_failure = output_failure
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>();
+            let mentions_output_path = collapsed_output_failure
+                .contains(&normalize_path(output_path).to_ascii_lowercase())
+                || collapsed_output_failure
+                    .contains(&output_path.display().to_string().to_ascii_lowercase());
+            mentions_output_path
+                && [
+                    "unable to open output file",
+                    "cannot open output file",
+                    "could not open output file",
+                    "can't open output file",
+                    "failed to open output file",
+                ]
+                .iter()
+                .any(|message| output_failure.contains(message))
+        }
+        ToolchainError::NotFound { .. } => false,
+    }
 }
 
 fn missing_dylib_exports(message: &str, options: &BuildOptions) -> bool {

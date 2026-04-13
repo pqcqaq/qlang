@@ -36,6 +36,64 @@ fn write_mock_clang_failure_script(temp: &TempDir) -> std::path::PathBuf {
     }
 }
 
+fn write_mock_clang_output_path_failure_script(temp: &TempDir) -> std::path::PathBuf {
+    if cfg!(windows) {
+        let script = temp.write(
+            "mock-clang-output-path-fail.ps1",
+            r#"
+param([string[]]$args)
+$out = $null
+for ($i = 0; $i -lt $args.Count; $i++) {
+    if ($args[$i] -eq '-o') { $out = $args[$i + 1] }
+}
+if ($null -eq $out) { Write-Error 'missing -o'; exit 1 }
+Write-Error "unable to open output file '$out': Permission denied"
+exit 9
+"#,
+        );
+        temp.write(
+            "mock-clang-output-path-fail.cmd",
+            &format!(
+                "@echo off\r\npowershell.exe -ExecutionPolicy Bypass -File \"{}\" %*\r\n",
+                script.display()
+            ),
+        )
+    } else {
+        let script = temp.write(
+            "mock-clang-output-path-fail.sh",
+            r#"#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    out="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+if [ "$out" = "" ]; then
+  echo "missing -o" 1>&2
+  exit 1
+fi
+echo "unable to open output file '$out': Permission denied" 1>&2
+exit 9
+"#,
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&script)
+                .expect("read mock clang output-path failure script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&script, permissions)
+                .expect("mark mock clang output-path failure script executable");
+        }
+        script
+    }
+}
+
 fn write_mock_clang_success_script(temp: &TempDir) -> std::path::PathBuf {
     if cfg!(windows) {
         let script = temp.write(
@@ -3957,6 +4015,177 @@ version = "0.1.0"
         !interface_path.is_file(),
         "build-side toolchain failure should not create `{}`",
         interface_path.display()
+    );
+}
+
+#[test]
+fn build_with_emit_interface_points_toolchain_output_failures_at_build_output_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-toolchain-output-path-failure");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for toolchain output-path failure test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = project_root.join("build").join("app.obj");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+    let output_file_name = output_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("object output should have a UTF-8 filename");
+    let clang_path = write_mock_clang_output_path_failure_script(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .env("QLANG_CLANG", &clang_path)
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "obj", "--release", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with a toolchain output-path failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure",
+        &output,
+        1,
+    )
+    .expect("build should fail when the toolchain cannot open the requested output path");
+    expect_snapshot_matches(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure stdout",
+        "",
+        &stdout,
+    )
+    .expect("toolchain output-path failure should not report a successful build artifact");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure",
+        &normalized_stderr,
+        "unable to open output file '",
+    )
+    .expect("toolchain output-path failure should surface the blocked output file");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure",
+        &normalized_stderr,
+        output_file_name,
+    )
+    .expect("toolchain output-path failure should still mention the requested output filename");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure",
+        &normalized_stderr,
+        "Permission denied",
+    )
+    .expect("toolchain output-path failure should keep the output-path access reason");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure",
+        &normalized_stderr,
+        "note: preserved intermediate artifact at `",
+    )
+    .expect("toolchain output-path failure should still report preserved intermediate artifacts");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure",
+        &normalized_stderr,
+        ".codegen.ll",
+    )
+    .expect("toolchain output-path failure should preserve intermediate LLVM IR");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("toolchain output-path failure should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure",
+        &normalized_stderr,
+        &format!("note: failing build output path: {output_display}"),
+    )
+    .expect("toolchain output-path failure should point to the requested build artifact path");
+    expect_stderr_contains(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit obj --release --output {} --emit-interface` after fixing the build output path",
+            source_display, output_display
+        ),
+    )
+    .expect("toolchain output-path failure should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit obj --release --output {} --emit-interface` after fixing the build toolchain",
+            source_display, output_display
+        ),
+    )
+    .expect("toolchain output-path failure should not reuse the generic build-toolchain hint");
+    expect_stderr_not_contains(
+        "build-emit-interface-toolchain-output-path-failure",
+        "build with toolchain output-path failure",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect("toolchain output-path failure should not claim that a build artifact was preserved");
+    assert!(
+        !output_path.is_file(),
+        "toolchain output-path failure should not create `{}`",
+        output_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "toolchain output-path failure should not create `{}`",
+        interface_path.display()
+    );
+    let preserved_ir = std::fs::read_dir(
+        output_path
+            .parent()
+            .expect("object output should have a parent"),
+    )
+    .expect("read preserved intermediate directory after toolchain output-path failure")
+    .filter_map(Result::ok)
+    .map(|entry| entry.path())
+    .any(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.contains(".codegen.ll"))
+    });
+    assert!(
+        preserved_ir,
+        "toolchain output-path failure should preserve an intermediate LLVM IR file near `{}`",
+        output_path.display()
     );
 }
 
