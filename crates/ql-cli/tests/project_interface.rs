@@ -3596,6 +3596,116 @@ version = "0.1.0"
 }
 
 #[test]
+fn build_with_emit_interface_points_to_failing_build_input_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-input-path");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for build input path test");
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let missing_source_path = project_root.join("src").join("missing.ql");
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = project_root.join("build").join("app.ll");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = missing_source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&missing_source_path)
+        .args(["--emit", "llvm-ir", "--release", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with a missing build input path",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-input-path",
+        "build with missing build input path",
+        &output,
+        1,
+    )
+    .expect("build should fail when the requested build input path is not a file");
+    expect_snapshot_matches(
+        "build-emit-interface-input-path",
+        "build with missing build input path stdout",
+        "",
+        &stdout,
+    )
+    .expect("missing build input path should not report a successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-input-path",
+        "build with missing build input path",
+        &stderr,
+        "is not a file",
+    )
+    .expect("missing build input path should surface the invalid input error");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-input-path",
+        "build with missing build input path",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("missing build input path should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-input-path",
+        "build with missing build input path",
+        &normalized_stderr,
+        &format!("note: failing build input path: {source_display}"),
+    )
+    .expect("missing build input path should point to the invalid source path");
+    expect_stderr_contains(
+        "build-emit-interface-input-path",
+        "build with missing build input path",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit llvm-ir --release --output {} --emit-interface` after fixing the build input path",
+            source_display, output_display
+        ),
+    )
+    .expect("missing build input path should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-input-path",
+        "build with missing build input path",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect("missing build input path should not claim that a build artifact was preserved");
+    assert!(
+        !output_path.is_file(),
+        "missing build input path should not create `{}`",
+        output_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "missing build input path should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn build_with_emit_interface_preserves_toolchain_rerun_hint() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-build-emit-interface-toolchain-failure");

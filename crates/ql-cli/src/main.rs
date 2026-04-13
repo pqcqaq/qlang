@@ -931,7 +931,9 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
         Err(BuildError::InvalidInput(message)) => {
             eprintln!("error: {message}");
             if emit_interface {
-                if missing_dylib_exports(&message, options) {
+                if missing_build_input_path(path, &message) {
+                    report_build_input_path_failure(path, options, emit_interface);
+                } else if missing_dylib_exports(&message, options) {
                     report_build_export_configuration_failure(path, options, emit_interface);
                 } else if missing_build_header_import_surface(&message, options) {
                     report_build_header_import_surface_failure(path, options, emit_interface);
@@ -1080,6 +1082,10 @@ fn unsupported_build_header_emit(options: &BuildOptions) -> bool {
         )
 }
 
+fn missing_build_input_path(path: &Path, message: &str) -> bool {
+    !path.is_file() && message.contains("is not a file")
+}
+
 fn missing_dylib_exports(message: &str, options: &BuildOptions) -> bool {
     options.emit == BuildEmit::DynamicLibrary
         && message
@@ -1178,6 +1184,18 @@ fn report_build_header_import_surface_failure(
         emit_interface,
         "after fixing the build header import surface",
     );
+}
+
+fn report_build_input_path_failure(path: &Path, options: &BuildOptions, emit_interface: bool) {
+    if let Ok(manifest) = load_project_manifest(path) {
+        eprintln!(
+            "note: failing package manifest: {}",
+            normalize_path(&manifest.manifest_path)
+        );
+        eprintln!("note: failing build input path: {}", normalize_path(path));
+        let rerun_command = format_build_command(path, options, emit_interface);
+        eprintln!("hint: rerun `{rerun_command}` after fixing the build input path");
+    }
 }
 
 fn report_build_output_path_failure(
