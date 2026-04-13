@@ -3021,6 +3021,114 @@ pub fn exported(value: Int) -> Int
 }
 
 #[test]
+fn build_with_emit_interface_preserves_build_diagnostic_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-build-diagnostics");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for build-side diagnostics test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn broken(value: MissingType) -> Int {
+    return value
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = project_root.join("build").join("app.ll");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with build-side source diagnostics",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-build-diagnostics",
+        "build with source diagnostics before interface emission",
+        &output,
+        1,
+    )
+    .expect("build should fail when the requested source has diagnostics");
+    expect_snapshot_matches(
+        "build-emit-interface-build-diagnostics",
+        "build with source diagnostics stdout",
+        "",
+        &stdout,
+    )
+    .expect("build-side source diagnostics should not report a successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-build-diagnostics",
+        "build with source diagnostics before interface emission",
+        &stderr,
+        "MissingType",
+    )
+    .expect("build-side source diagnostics should still surface the failing symbol");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-build-diagnostics",
+        "build with source diagnostics before interface emission",
+        &normalized_stderr,
+        &source_display,
+    )
+    .expect("build-side source diagnostics should point at the failing build source");
+    expect_stderr_contains(
+        "build-emit-interface-build-diagnostics",
+        "build with source diagnostics before interface emission",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("build-side source diagnostics should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-build-diagnostics",
+        "build with source diagnostics before interface emission",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit-interface` after fixing the package sources",
+            source_display
+        ),
+    )
+    .expect("build-side source diagnostics should preserve a direct rerun hint");
+    expect_stderr_not_contains(
+        "build-emit-interface-build-diagnostics",
+        "build with source diagnostics before interface emission",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect("build-side source diagnostics should not claim that a build artifact was preserved");
+    assert!(
+        !output_path.is_file(),
+        "build-side source diagnostics should not create `{}`",
+        output_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "build-side source diagnostics should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn build_with_emit_interface_points_to_failing_package_manifest() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-build-emit-interface-failure");

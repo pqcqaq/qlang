@@ -366,9 +366,9 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
                 Ok(paths) => paths,
                 Err(_) => {
                     report_package_check_reference_failure(
-                        package_manifest_path
-                            .as_deref()
-                            .expect("direct package reference sync failures require a loaded manifest"),
+                        package_manifest_path.as_deref().expect(
+                            "direct package reference sync failures require a loaded manifest",
+                        ),
                         sync_interfaces,
                     );
                     return Err(1);
@@ -721,9 +721,7 @@ fn report_workspace_member_package_check_source_root_failure(
         "note: failing package source root: {}",
         normalize_path(source_root)
     );
-    eprintln!(
-        "hint: rerun `{rerun_command}` after fixing the package source root"
-    );
+    eprintln!("hint: rerun `{rerun_command}` after fixing the package source root");
 }
 
 fn report_workspace_member_package_check_no_sources_failure(
@@ -740,9 +738,7 @@ fn report_workspace_member_package_check_no_sources_failure(
         "note: failing package source root: {}",
         normalize_path(source_root)
     );
-    eprintln!(
-        "hint: rerun `{rerun_command}` after adding package source files"
-    );
+    eprintln!("hint: rerun `{rerun_command}` after adding package source files");
 }
 
 fn package_check_manifest_path_from_project_error(
@@ -761,9 +757,7 @@ fn report_package_check_manifest_failure(manifest_path: &Path, sync_interfaces: 
     let manifest_path = normalize_path(manifest_path);
     let rerun_command = format_check_command(sync_interfaces, Some(&manifest_path));
     eprintln!("note: failing package manifest: {manifest_path}");
-    eprintln!(
-        "hint: rerun `{rerun_command}` after fixing the package manifest"
-    );
+    eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
 }
 
 fn report_package_check_source_root_failure(
@@ -778,9 +772,7 @@ fn report_package_check_source_root_failure(
         "note: failing package source root: {}",
         normalize_path(source_root)
     );
-    eprintln!(
-        "hint: rerun `{rerun_command}` after fixing the package source root"
-    );
+    eprintln!("hint: rerun `{rerun_command}` after fixing the package source root");
 }
 
 fn report_package_check_no_sources_failure(
@@ -795,18 +787,14 @@ fn report_package_check_no_sources_failure(
         "note: failing package source root: {}",
         normalize_path(source_root)
     );
-    eprintln!(
-        "hint: rerun `{rerun_command}` after adding package source files"
-    );
+    eprintln!("hint: rerun `{rerun_command}` after adding package source files");
 }
 
 fn report_package_check_source_diagnostics_failure(manifest_path: &Path, sync_interfaces: bool) {
     let manifest_path = normalize_path(manifest_path);
     let rerun_command = format_check_command(sync_interfaces, Some(&manifest_path));
     eprintln!("note: failing package manifest: {manifest_path}");
-    eprintln!(
-        "hint: rerun `{rerun_command}` after fixing the package sources"
-    );
+    eprintln!("hint: rerun `{rerun_command}` after fixing the package sources");
 }
 
 fn report_package_check_reference_failure(manifest_path: &Path, sync_interfaces: bool) {
@@ -962,13 +950,29 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
             Err(1)
         }
         Err(BuildError::Diagnostics {
-            path,
+            path: diagnostic_path,
             source,
             diagnostics,
         }) => {
-            print_diagnostics(&path, &source, &diagnostics);
+            print_diagnostics(&diagnostic_path, &source, &diagnostics);
+            if emit_interface {
+                report_build_source_diagnostics_failure(path);
+            }
             Err(1)
         }
+    }
+}
+
+fn report_build_source_diagnostics_failure(path: &Path) {
+    if let Ok(manifest) = load_project_manifest(path) {
+        eprintln!(
+            "note: failing package manifest: {}",
+            normalize_path(&manifest.manifest_path)
+        );
+        eprintln!(
+            "hint: rerun `ql build {} --emit-interface` after fixing the package sources",
+            normalize_path(path)
+        );
     }
 }
 
