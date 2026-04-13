@@ -3474,6 +3474,128 @@ version = "0.1.0"
 }
 
 #[test]
+fn build_with_emit_interface_preserves_header_import_surface_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-header-imports");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for header import surface test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = project_root.join("build").join("app.lib");
+    let header_path = project_root.join("include").join("app.imports.h");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+    let header_display = header_path.display().to_string().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "staticlib", "--release", "--output"])
+        .arg(&output_path)
+        .args(["--header-surface", "imports", "--header-output"])
+        .arg(&header_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with a build header import surface failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-header-imports",
+        "build with build header import surface failure",
+        &output,
+        1,
+    )
+    .expect("build should fail when the requested build header import surface is empty");
+    expect_snapshot_matches(
+        "build-emit-interface-header-imports",
+        "build with build header import surface failure stdout",
+        "",
+        &stdout,
+    )
+    .expect("build header import surface failure should not report a successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-header-imports",
+        "build with build header import surface failure",
+        &stderr,
+        "does not define any imported `extern \"c\"` function declarations",
+    )
+    .expect("build header import surface failure should surface the missing import requirement");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-header-imports",
+        "build with build header import surface failure",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("build header import surface failure should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-header-imports",
+        "build with build header import surface failure",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit staticlib --release --output {} --header-surface imports --header-output {} --emit-interface` after fixing the build header import surface",
+            source_display, output_display, header_display
+        ),
+    )
+    .expect("build header import surface failure should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-header-imports",
+        "build with build header import surface failure",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect(
+        "build header import surface failure should not claim that a build artifact was preserved",
+    );
+    expect_stderr_not_contains(
+        "build-emit-interface-header-imports",
+        "build with build header import surface failure",
+        &normalized_stderr,
+        "note: failing build header output path:",
+    )
+    .expect(
+        "build header import surface failure should not be mislabeled as a header output-path failure",
+    );
+    assert!(
+        !output_path.is_file(),
+        "build header import surface failure should not create `{}`",
+        output_path.display()
+    );
+    assert!(
+        !header_path.is_file(),
+        "build header import surface failure should not create `{}`",
+        header_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "build header import surface failure should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn build_with_emit_interface_preserves_toolchain_rerun_hint() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-build-emit-interface-toolchain-failure");

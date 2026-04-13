@@ -933,6 +933,8 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
             if emit_interface {
                 if missing_dylib_exports(&message, options) {
                     report_build_export_configuration_failure(path, options, emit_interface);
+                } else if missing_build_header_import_surface(&message, options) {
+                    report_build_header_import_surface_failure(path, options, emit_interface);
                 } else if unsupported_build_header_emit(options) {
                     report_build_header_configuration_failure(path, options, emit_interface);
                 } else if let Some(header_output_path) =
@@ -1084,6 +1086,11 @@ fn missing_dylib_exports(message: &str, options: &BuildOptions) -> bool {
             .contains("requires at least one public top-level `extern \"c\"` function definition")
 }
 
+fn missing_build_header_import_surface(message: &str, options: &BuildOptions) -> bool {
+    options.c_header.is_some()
+        && message.contains("does not define any imported `extern \"c\"` function declarations")
+}
+
 fn format_build_command(path: &Path, options: &BuildOptions, emit_interface: bool) -> String {
     let mut command = format!("ql build {}", normalize_path(path));
     command.push_str(&format!(" --emit {}", build_emit_cli_value(options.emit)));
@@ -1157,6 +1164,19 @@ fn report_build_export_configuration_failure(
         options,
         emit_interface,
         "after fixing the dylib export surface",
+    );
+}
+
+fn report_build_header_import_surface_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+) {
+    report_build_package_rerun_hint(
+        path,
+        options,
+        emit_interface,
+        "after fixing the build header import surface",
     );
 }
 
