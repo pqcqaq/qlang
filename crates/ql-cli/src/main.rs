@@ -584,6 +584,24 @@ fn check_workspace_manifest(
                     );
                 }
             }
+            Err(PackageAnalysisError::Project(
+                ql_project::ProjectError::PackageSourceRootNotFound { path },
+            )) => {
+                eprintln!(
+                    "error: {check_command_label} package source directory `{}` does not exist",
+                    normalize_path(&path)
+                );
+                report_workspace_member_package_check_source_root_failure(
+                    &member_manifest.manifest_path,
+                    &path,
+                    sync_interfaces,
+                );
+                failing_members += 1;
+                record_reference_failure_manifest(
+                    &mut first_failing_member_manifest,
+                    member_manifest.manifest_path.clone(),
+                );
+            }
             Err(error) => {
                 print_package_analysis_error(&error);
                 report_workspace_member_failure(&member_manifest.manifest_path, None);
@@ -620,6 +638,25 @@ fn report_workspace_member_failure(manifest_path: &Path, hint_line: Option<&str>
     if let Some(hint_line) = hint_line {
         eprintln!("{hint_line}");
     }
+}
+
+fn report_workspace_member_package_check_source_root_failure(
+    manifest_path: &Path,
+    source_root: &Path,
+    sync_interfaces: bool,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_command =
+        format_workspace_member_check_rerun_command(&manifest_path, sync_interfaces);
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!("note: failing workspace member manifest: {manifest_path}");
+    eprintln!(
+        "note: failing package source root: {}",
+        normalize_path(source_root)
+    );
+    eprintln!(
+        "hint: rerun `{rerun_command}` after fixing the package source root"
+    );
 }
 
 fn package_check_manifest_path_from_project_error(
