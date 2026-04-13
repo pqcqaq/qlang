@@ -563,10 +563,14 @@ fn check_workspace_manifest(
                         "package-aware `ql check` should only succeed for package manifests",
                     );
                     eprintln!(
-                        "error: no `.ql` files found under `{}`",
+                        "error: {check_command_label} no `.ql` files found under `{}`",
                         source_root.display()
                     );
-                    report_workspace_member_failure(&member_manifest.manifest_path, None);
+                    report_workspace_member_package_check_no_sources_failure(
+                        &member_manifest.manifest_path,
+                        &source_root,
+                        sync_interfaces,
+                    );
                     failing_members += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
@@ -656,6 +660,25 @@ fn report_workspace_member_package_check_source_root_failure(
     );
     eprintln!(
         "hint: rerun `{rerun_command}` after fixing the package source root"
+    );
+}
+
+fn report_workspace_member_package_check_no_sources_failure(
+    manifest_path: &Path,
+    source_root: &Path,
+    sync_interfaces: bool,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_command =
+        format_workspace_member_check_rerun_command(&manifest_path, sync_interfaces);
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!("note: failing workspace member manifest: {manifest_path}");
+    eprintln!(
+        "note: failing package source root: {}",
+        normalize_path(source_root)
+    );
+    eprintln!(
+        "hint: rerun `{rerun_command}` after adding package source files"
     );
 }
 
