@@ -3623,6 +3623,121 @@ version = "0.1.0"
 }
 
 #[test]
+fn build_with_emit_interface_points_to_colliding_build_header_output_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-build-header-output-collision");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for header collision test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+extern "c" pub fn q_add(left: Int, right: Int) -> Int {
+    return left + right
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+version = "0.1.0"
+"#,
+    );
+
+    let manifest_path = project_root.join("qlang.toml");
+    let output_path = project_root.join("build").join("app.lib");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.display().to_string().replace('\\', "/");
+    let source_display = source_path.display().to_string().replace('\\', "/");
+    let output_display = output_path.display().to_string().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "staticlib", "--release", "--output"])
+        .arg(&output_path)
+        .args(["--header-output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with colliding build header output path",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-build-header-output-collision",
+        "build with colliding build header output path",
+        &output,
+        1,
+    )
+    .expect(
+        "build should fail when the build header output path collides with the primary artifact",
+    );
+    expect_snapshot_matches(
+        "build-emit-interface-build-header-output-collision",
+        "build with colliding build header output path stdout",
+        "",
+        &stdout,
+    )
+    .expect("colliding build header output path should not report a successful build artifact");
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-collision",
+        "build with colliding build header output path",
+        &stderr,
+        "must differ from the primary artifact output",
+    )
+    .expect("colliding build header output path should surface the collision message");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-collision",
+        "build with colliding build header output path",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("colliding build header output path should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-collision",
+        "build with colliding build header output path",
+        &normalized_stderr,
+        &format!("note: failing build header output path: {output_display}"),
+    )
+    .expect("colliding build header output path should point to the colliding header target");
+    expect_stderr_contains(
+        "build-emit-interface-build-header-output-collision",
+        "build with colliding build header output path",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit staticlib --release --output {} --header-output {} --emit-interface` after fixing the build header output path",
+            source_display, output_display, output_display
+        ),
+    )
+    .expect("colliding build header output path should preserve the build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-build-header-output-collision",
+        "build with colliding build header output path",
+        &normalized_stderr,
+        "note: build artifact remains at `",
+    )
+    .expect(
+        "colliding build header output path should not claim that a build artifact was preserved",
+    );
+    assert!(
+        !output_path.is_file(),
+        "colliding build header output path should not create `{}`",
+        output_path.display()
+    );
+    assert!(
+        !interface_path.is_file(),
+        "colliding build header output path should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn build_with_emit_interface_points_to_failing_package_manifest() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-build-emit-interface-failure");

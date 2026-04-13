@@ -930,6 +930,17 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
         }
         Err(BuildError::InvalidInput(message)) => {
             eprintln!("error: {message}");
+            if emit_interface {
+                if let Some(header_output_path) = colliding_build_header_output_path(path, options)
+                {
+                    report_build_header_output_path_failure(
+                        path,
+                        options,
+                        emit_interface,
+                        &header_output_path,
+                    );
+                }
+            }
             Err(1)
         }
         Err(BuildError::Io {
@@ -1046,6 +1057,12 @@ fn default_build_header_output_path(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."))
         .join(file_name)
+}
+
+fn colliding_build_header_output_path(path: &Path, options: &BuildOptions) -> Option<PathBuf> {
+    let output_path = build_output_path(path, options)?;
+    let header_output_path = build_header_output_path(path, options)?;
+    (header_output_path == output_path).then_some(header_output_path)
 }
 
 fn format_build_command(path: &Path, options: &BuildOptions, emit_interface: bool) -> String {
