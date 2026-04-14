@@ -1899,6 +1899,14 @@ pub fn exported() -> Int {
     )
     .expect("invalid package interface check should point to the failing package manifest");
     let error_line = format!(
+        "error: `ql project emit-interface --check` interface artifact `{}` is invalid",
+        project_root
+            .join("app.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let old_error_line = format!(
         "error: interface artifact `{}` is invalid",
         project_root
             .join("app.qi")
@@ -1918,6 +1926,13 @@ pub fn exported() -> Int {
     let error_index = normalized_stderr
         .find(&error_line)
         .expect("invalid package interface check should report the error line");
+    expect_stderr_not_contains(
+        "project-interface-check-invalid-package",
+        "invalid package interface check",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("invalid package interface check should not fall back to the unlabeled artifact error");
     let detail_index = normalized_stderr
         .find(detail_line)
         .expect("invalid package interface check should report parse detail");
@@ -2554,6 +2569,22 @@ pub fn exported() -> Int {
     )
     .expect("changed-only invalid package interface check should fail");
     let normalized_stderr = stderr.replace('\\', "/");
+    let error_line = format!(
+        "error: `ql project emit-interface --changed-only --check` interface artifact `{}` is invalid",
+        project_root
+            .join("app.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let old_error_line = format!(
+        "error: interface artifact `{}` is invalid",
+        project_root
+            .join("app.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
     let package_note = format!(
         "note: failing package manifest: {}",
         manifest_path.display().to_string().replace('\\', "/")
@@ -2578,9 +2609,26 @@ pub fn exported() -> Int {
         "changed-only invalid package interface check should not fall back to the default rerun hint, got:\n{stderr}"
     );
     let detail_line = "detail: expected `// qlang interface v1` header";
+    expect_stderr_contains(
+        "project-interface-check-changed-only-invalid-package",
+        "changed-only invalid package interface check",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("changed-only invalid package interface check should preserve the full command label");
+    expect_stderr_not_contains(
+        "project-interface-check-changed-only-invalid-package",
+        "changed-only invalid package interface check",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("changed-only invalid package interface check should not fall back to the unlabeled artifact error");
     let detail_index = normalized_stderr
         .find(detail_line)
         .expect("changed-only invalid package interface check should report parse detail");
+    let error_index = normalized_stderr
+        .find(&error_line)
+        .expect("changed-only invalid package interface check should report the error line");
     let package_note_index = normalized_stderr.find(&package_note).expect(
         "changed-only invalid package interface check should include the package manifest note",
     );
@@ -2588,7 +2636,9 @@ pub fn exported() -> Int {
         .find(&rerun_hint)
         .expect("changed-only invalid package interface check should include the rerun hint");
     assert!(
-        detail_index < package_note_index && package_note_index < rerun_hint_index,
+        error_index < detail_index
+            && detail_index < package_note_index
+            && package_note_index < rerun_hint_index,
         "expected changed-only invalid package interface check to keep detail before manifest and hint, got:\n{stderr}"
     );
 }
@@ -3081,6 +3131,30 @@ name = "tool"
             .to_string()
             .replace('\\', "/")
     );
+    let stale_error_line = format!(
+        "error: `ql project emit-interface --check` interface artifact `{}` is stale",
+        tool_root
+            .join("tool.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let missing_error_line = format!(
+        "error: `ql project emit-interface --check` interface artifact `{}` is missing",
+        broken_root
+            .join("broken.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let old_stale_error_line = format!(
+        "error: interface artifact `{}` is stale",
+        tool_root
+            .join("tool.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
     let member_note = format!(
         "note: failing workspace member manifest: {}",
         tool_root
@@ -3090,14 +3164,6 @@ name = "tool"
             .replace('\\', "/")
     );
     let rerun_hint = format!(
-        "hint: rerun `ql project emit-interface {} --changed-only` to regenerate it",
-        tool_root
-            .join("qlang.toml")
-            .display()
-            .to_string()
-            .replace('\\', "/")
-    );
-    let default_rerun_hint = format!(
         "hint: rerun `ql project emit-interface {}` to regenerate it",
         tool_root
             .join("qlang.toml")
@@ -3105,6 +3171,35 @@ name = "tool"
             .to_string()
             .replace('\\', "/")
     );
+    let old_changed_only_rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {} --changed-only` to regenerate it",
+        tool_root
+            .join("qlang.toml")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    expect_stderr_contains(
+        "project-interface-check-workspace",
+        "workspace interface check with stale member",
+        &normalized_stderr,
+        &stale_error_line,
+    )
+    .expect("workspace interface check should preserve the direct check command label for stale artifacts");
+    expect_stderr_contains(
+        "project-interface-check-workspace",
+        "workspace interface check with stale member",
+        &normalized_stderr,
+        &missing_error_line,
+    )
+    .expect("workspace interface check should preserve the direct check command label for missing artifacts");
+    expect_stderr_not_contains(
+        "project-interface-check-workspace",
+        "workspace interface check with stale member",
+        &normalized_stderr,
+        &old_stale_error_line,
+    )
+    .expect("workspace interface check should not fall back to the unlabeled artifact error");
     let package_note_index = normalized_stderr
         .find(&package_note)
         .expect("workspace stale member failure should include the package manifest note");
@@ -3119,8 +3214,8 @@ name = "tool"
         "expected workspace stale member context before hint, got:\n{stderr}"
     );
     assert!(
-        !normalized_stderr.contains(&default_rerun_hint),
-        "changed-only workspace interface check should not fall back to the default rerun hint, got:\n{stderr}"
+        !normalized_stderr.contains(&old_changed_only_rerun_hint),
+        "workspace interface check should not fall back to the changed-only rerun hint, got:\n{stderr}"
     );
     expect_stderr_contains(
         "project-interface-check-workspace",
@@ -3809,6 +3904,51 @@ name = "tool"
         "found 2 failing member(s)",
     )
     .expect("changed-only workspace interface check should summarize all failing members");
+    let stale_error_line = format!(
+        "error: `ql project emit-interface --changed-only --check` interface artifact `{}` is stale",
+        tool_root
+            .join("tool.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let missing_error_line = format!(
+        "error: `ql project emit-interface --changed-only --check` interface artifact `{}` is missing",
+        broken_root
+            .join("broken.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let old_stale_error_line = format!(
+        "error: interface artifact `{}` is stale",
+        tool_root
+            .join("tool.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    expect_stderr_contains(
+        "project-interface-check-changed-only-workspace",
+        "changed-only workspace interface check with stale member",
+        &stderr,
+        &stale_error_line,
+    )
+    .expect("changed-only workspace interface check should preserve the full command label for stale artifacts");
+    expect_stderr_contains(
+        "project-interface-check-changed-only-workspace",
+        "changed-only workspace interface check with stale member",
+        &stderr,
+        &missing_error_line,
+    )
+    .expect("changed-only workspace interface check should preserve the full command label for missing artifacts");
+    expect_stderr_not_contains(
+        "project-interface-check-changed-only-workspace",
+        "changed-only workspace interface check with stale member",
+        &stderr,
+        &old_stale_error_line,
+    )
+    .expect("changed-only workspace interface check should not fall back to the unlabeled artifact error");
     let app_metadata_after = std::fs::metadata(&app_interface)
         .expect("read app interface metadata after changed-only workspace check")
         .modified()

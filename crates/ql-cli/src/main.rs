@@ -1778,7 +1778,12 @@ fn project_emit_interface_path(
                     return Err(code);
                 }
             };
-            return report_package_interface_check(result, None, changed_only);
+            return report_package_interface_check(
+                result,
+                None,
+                check_command_label.as_str(),
+                changed_only,
+            );
         }
         match emit_package_interface_path(path, output, emit_command_label.as_str(), changed_only) {
             Ok(result) => report_emit_interface_result(result),
@@ -1937,6 +1942,7 @@ fn project_emit_interface_path(
             if report_package_interface_check(
                 result,
                 Some(&member_manifest.manifest_path),
+                check_command_label.as_str(),
                 changed_only,
             )
             .is_err()
@@ -2437,6 +2443,7 @@ fn check_package_interface_artifact(
 fn report_package_interface_check(
     result: CheckPackageInterfaceResult,
     workspace_member_manifest_path: Option<&Path>,
+    command_label: &str,
     changed_only: bool,
 ) -> Result<(), u8> {
     match result {
@@ -2457,7 +2464,7 @@ fn report_package_interface_check(
         } => {
             let manifest_path = normalize_path(&manifest_path);
             let error_line = format!(
-                "error: interface artifact `{}` is {}",
+                "error: {command_label} interface artifact `{}` is {}",
                 normalize_path(&path),
                 status.label()
             );
