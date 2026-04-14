@@ -306,6 +306,10 @@ fn append_workspace_member_error(
     ));
     output.push_str("    package: <unresolved>\n");
     output.push_str(&format!(
+        "    member_status: {}\n",
+        project_graph_member_status(error)
+    ));
+    output.push_str(&format!(
         "    member_error: {}\n",
         project_graph_error_display_relative(root, error)
     ));
@@ -354,6 +358,14 @@ fn project_error_missing_package_name_manifest_path(error: &ProjectError) -> Opt
             Some(path.as_path())
         }
         _ => None,
+    }
+}
+
+fn project_graph_member_status(error: &ProjectError) -> &'static str {
+    if project_error_missing_package_name_manifest_path(error).is_some() {
+        "unresolved-package"
+    } else {
+        "unresolved-manifest"
     }
 }
 

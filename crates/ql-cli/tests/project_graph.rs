@@ -453,7 +453,7 @@ name = "broken"
 
     let normalized_manifest = manifest_path.to_string_lossy().replace('\\', "/");
     let expected_prefix = format!(
-        "manifest: {normalized_manifest}\npackage: <none>\nworkspace_members:\n  - packages/app\n  - packages/broken\nreferences: []\nworkspace_packages:\n  - member: packages/app\n    manifest: packages/app/qlang.toml\n    package: app\n    interface:\n      path: packages/app/app.qi\n      status: valid\n    references: []\n    reference_interfaces: []\n  - member: packages/broken\n    manifest: packages/broken/qlang.toml\n    package: <unresolved>\n    member_error: invalid manifest `"
+        "manifest: {normalized_manifest}\npackage: <none>\nworkspace_members:\n  - packages/app\n  - packages/broken\nreferences: []\nworkspace_packages:\n  - member: packages/app\n    manifest: packages/app/qlang.toml\n    package: app\n    interface:\n      path: packages/app/app.qi\n      status: valid\n    references: []\n    reference_interfaces: []\n  - member: packages/broken\n    manifest: packages/broken/qlang.toml\n    package: <unresolved>\n    member_status: unresolved-manifest\n    member_error: invalid manifest `"
     );
     assert!(
         stdout.replace('\\', "/").starts_with(&expected_prefix),
@@ -543,6 +543,7 @@ version = "0.1.0"
             "    package: app",
             "  - member: packages/broken",
             "    package: <unresolved>",
+            "    member_status: unresolved-package",
             "    member_error: manifest `packages/broken/qlang.toml` does not declare `[package].name`",
         ],
     )
