@@ -639,6 +639,98 @@ pub fn broken(value: MissingType) -> Int {
 }
 
 #[test]
+fn project_emit_interface_points_to_empty_package_source_root() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-empty-package-source-root");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create empty package source root for emit-interface test");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let interface_path = project_root.join("app.qi");
+    let manifest_path = project_root.join("qlang.toml");
+    let source_root = project_root.join("src");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let source_root_display = source_root.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` package with empty source root",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-empty-source-root",
+        "package interface emission with empty source root",
+        &output,
+        1,
+    )
+    .expect(
+        "package interface emission should fail when the package source root has no `.ql` files",
+    );
+    expect_empty_stdout(
+        "project-interface-empty-source-root",
+        "package interface emission with empty source root",
+        &stdout,
+    )
+    .expect("empty package source root should not report a written interface");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-empty-source-root",
+        "package interface emission with empty source root",
+        &normalized_stderr,
+        &format!(
+            "error: `ql project emit-interface` no `.ql` files found under `{}`",
+            source_root_display
+        ),
+    )
+    .expect("empty package source root should be reported as a no-source failure");
+    expect_stderr_contains(
+        "project-interface-empty-source-root",
+        "package interface emission with empty source root",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("empty package source root should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-interface-empty-source-root",
+        "package interface emission with empty source root",
+        &normalized_stderr,
+        &format!("note: failing package source root: {source_root_display}"),
+    )
+    .expect("empty package source root should point to the empty source root");
+    expect_stderr_contains(
+        "project-interface-empty-source-root",
+        "package interface emission with empty source root",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after adding package source files",
+            manifest_display
+        ),
+    )
+    .expect("empty package source root should suggest adding package source files");
+    expect_stderr_not_contains(
+        "project-interface-empty-source-root",
+        "package interface emission with empty source root",
+        &normalized_stderr,
+        "after fixing the package interface error",
+    )
+    .expect("empty package source root should not fall back to the generic interface-error hint");
+    assert!(
+        !interface_path.exists(),
+        "empty package source root should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn project_emit_interface_points_blocked_output_paths_at_interface_target() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-output-path-failure");
@@ -5293,6 +5385,133 @@ name = "app"
     assert!(
         !interface_path.is_file(),
         "build-side package source root failure should not leave behind a partial interface artifact"
+    );
+}
+
+#[test]
+fn build_with_emit_interface_points_to_empty_build_side_package_source_root() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-empty-package-source-root");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create empty package source root for build-side empty-source-root test");
+    let source_path = temp.write(
+        "workspace/app/entry.ql",
+        r#"
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    return exported(1)
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let output_path = project_root.join("build").join("app.ll");
+    let manifest_path = project_root.join("qlang.toml");
+    let source_root = project_root.join("src");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let source_root_display = source_root.to_string_lossy().replace('\\', "/");
+    let source_display = source_path.to_string_lossy().replace('\\', "/");
+    let output_display = output_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with empty build-side package source root",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-empty-package-source-root",
+        "build with empty package source root",
+        &output,
+        1,
+    )
+    .expect(
+        "build should fail when build-side interface emission sees an empty package source root",
+    );
+    expect_stdout_contains_all(
+        "build-emit-interface-empty-package-source-root",
+        &stdout,
+        &[&format!("wrote llvm-ir: {}", output_path.display())],
+    )
+    .expect(
+        "build-side empty package source root should still report the successful build artifact",
+    );
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-empty-package-source-root",
+        "build with empty package source root",
+        &normalized_stderr,
+        &format!(
+            "error: `ql build --emit-interface` no `.ql` files found under `{}`",
+            source_root_display
+        ),
+    )
+    .expect("build-side empty package source root should be reported as a no-source failure");
+    expect_stderr_contains(
+        "build-emit-interface-empty-package-source-root",
+        "build with empty package source root",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {}", manifest_display),
+    )
+    .expect("build-side empty package source root should point to the failing manifest");
+    expect_stderr_contains(
+        "build-emit-interface-empty-package-source-root",
+        "build with empty package source root",
+        &normalized_stderr,
+        &format!("note: failing package source root: {}", source_root_display),
+    )
+    .expect("build-side empty package source root should point to the empty source root");
+    expect_stderr_contains(
+        "build-emit-interface-empty-package-source-root",
+        "build with empty package source root",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit llvm-ir --output {} --emit-interface` after adding package source files",
+            source_display, output_display
+        ),
+    )
+    .expect("build-side empty package source root should preserve the original build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-empty-package-source-root",
+        "build with empty package source root",
+        &normalized_stderr,
+        "after fixing the package interface error",
+    )
+    .expect("build-side empty package source root should not fall back to a generic interface-error hint");
+    expect_stderr_contains(
+        "build-emit-interface-empty-package-source-root",
+        "build with empty package source root",
+        &normalized_stderr,
+        &format!("note: build artifact remains at `{}`", output_display),
+    )
+    .expect(
+        "build-side empty package source root should confirm that the build artifact was preserved",
+    );
+    expect_file_exists(
+        "build-emit-interface-empty-package-source-root",
+        &output_path,
+        "generated llvm ir",
+        "build with empty package source root",
+    )
+    .expect("build-side empty package source root should keep the successful build artifact");
+    assert!(
+        !interface_path.is_file(),
+        "build-side empty package source root should not leave behind a partial interface artifact"
     );
 }
 

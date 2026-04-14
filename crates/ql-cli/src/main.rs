@@ -935,6 +935,20 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                         );
                         return Err(1);
                     }
+                    Err(EmitPackageInterfaceError::NoSourceFilesFailure {
+                        manifest_path,
+                        source_root,
+                    }) => {
+                        report_build_interface_no_sources_failure(
+                            path,
+                            options,
+                            emit_interface,
+                            &artifact_path,
+                            &manifest_path,
+                            &source_root,
+                        );
+                        return Err(1);
+                    }
                     Err(EmitPackageInterfaceError::SourceRootFailure {
                         manifest_path,
                         source_root,
@@ -1404,6 +1418,30 @@ fn report_build_interface_source_root_failure(
     );
 }
 
+fn report_build_interface_no_sources_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+    artifact_path: &Path,
+    manifest_path: &Path,
+    source_root: &Path,
+) {
+    eprintln!(
+        "note: failing package manifest: {}",
+        normalize_path(manifest_path)
+    );
+    eprintln!(
+        "note: failing package source root: {}",
+        normalize_path(source_root)
+    );
+    let rerun_command = format_build_command(path, options, emit_interface);
+    eprintln!("hint: rerun `{rerun_command}` after adding package source files");
+    eprintln!(
+        "note: build artifact remains at `{}`",
+        normalize_path(artifact_path)
+    );
+}
+
 fn report_package_interface_failure(
     manifest_path: &Path,
     workspace_member_manifest_path: Option<&Path>,
@@ -1426,6 +1464,37 @@ fn report_package_interface_failure(
         format_emit_interface_rerun_command(&manifest_path, requested_output_path, changed_only);
     eprintln!(
         "hint: rerun `{}` after fixing the package interface error",
+        rerun_command
+    );
+}
+
+fn report_package_interface_no_sources_failure(
+    manifest_path: &Path,
+    workspace_member_manifest_path: Option<&Path>,
+    source_root: &Path,
+    requested_output_path: Option<&Path>,
+    changed_only: bool,
+    additional_context_note: Option<&str>,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    eprintln!("note: failing package manifest: {manifest_path}");
+    if let Some(workspace_member_manifest_path) = workspace_member_manifest_path {
+        eprintln!(
+            "note: failing workspace member manifest: {}",
+            normalize_path(workspace_member_manifest_path)
+        );
+    }
+    eprintln!(
+        "note: failing package source root: {}",
+        normalize_path(source_root)
+    );
+    if let Some(additional_context_note) = additional_context_note {
+        eprintln!("{additional_context_note}");
+    }
+    let rerun_command =
+        format_emit_interface_rerun_command(&manifest_path, requested_output_path, changed_only);
+    eprintln!(
+        "hint: rerun `{}` after adding package source files",
         rerun_command
     );
 }
@@ -1576,6 +1645,17 @@ fn project_emit_interface_path(
                     None,
                 );
                 return Err(code);
+            }
+            Err(EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. }) => {
+                report_package_interface_no_sources_failure(
+                    &manifest.manifest_path,
+                    None,
+                    &source_root,
+                    output,
+                    changed_only,
+                    None,
+                );
+                return Err(1);
             }
             Err(EmitPackageInterfaceError::ManifestFailure { .. })
             | Err(EmitPackageInterfaceError::SourceRootFailure { .. }) => {
@@ -1730,6 +1810,21 @@ fn project_emit_interface_path(
                         member_manifest.manifest_path.clone(),
                     );
                 }
+                Err(EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. }) => {
+                    report_package_interface_no_sources_failure(
+                        &member_manifest.manifest_path,
+                        Some(&member_manifest.manifest_path),
+                        &source_root,
+                        None,
+                        changed_only,
+                        None,
+                    );
+                    emission_failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest.manifest_path.clone(),
+                    );
+                }
                 Err(EmitPackageInterfaceError::ManifestFailure { .. })
                 | Err(EmitPackageInterfaceError::SourceRootFailure { .. }) => {
                     report_package_interface_failure(
@@ -1815,6 +1910,10 @@ enum EmitPackageInterfaceError {
     ManifestFailure {
         manifest_path: PathBuf,
     },
+    NoSourceFilesFailure {
+        manifest_path: PathBuf,
+        source_root: PathBuf,
+    },
     SourceRootFailure {
         manifest_path: PathBuf,
         source_root: PathBuf,
@@ -1863,6 +1962,8 @@ fn emit_package_interface_path(
     }
 
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let source_root =
+        package_source_root(&manifest).expect("package interface emission requires a package");
     let files = collect_package_sources(&manifest).map_err(|error| match error {
         ql_project::ProjectError::PackageSourceRootNotFound { path } => {
             eprintln!(
@@ -1879,6 +1980,16 @@ fn emit_package_interface_path(
             EmitPackageInterfaceError::Code(1)
         }
     })?;
+    if files.is_empty() {
+        eprintln!(
+            "error: {command_label} no `.ql` files found under `{}`",
+            normalize_path(&source_root)
+        );
+        return Err(EmitPackageInterfaceError::NoSourceFilesFailure {
+            manifest_path: manifest.manifest_path.clone(),
+            source_root,
+        });
+    }
 
     let mut rendered_modules = Vec::new();
     let mut failing_source_count = 0usize;
@@ -2275,6 +2386,23 @@ fn sync_reference_interfaces_recursive(
                     report_package_interface_failure(
                         &dependency_manifest.manifest_path,
                         None,
+                        None,
+                        false,
+                        Some(owner_note.as_str()),
+                    );
+                    result.failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut result.first_failure_manifest,
+                        dependency_manifest.manifest_path.clone(),
+                    );
+                }
+                Err(EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. }) => {
+                    let owner_note =
+                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
+                    report_package_interface_no_sources_failure(
+                        &dependency_manifest.manifest_path,
+                        None,
+                        &source_root,
                         None,
                         false,
                         Some(owner_note.as_str()),
