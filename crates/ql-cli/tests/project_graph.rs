@@ -851,6 +851,7 @@ pub fn exported() -> Int {
             "status: valid",
             "transitive_reference_failures: 1",
             "first_transitive_failure_manifest: ../leaf/qlang.toml",
+            "first_transitive_failure_path: ../leaf/leaf.qi",
             "first_transitive_failure_status: stale",
             "first_transitive_failure_stale_reasons:",
             "- source: ../leaf/src/lib.ql",

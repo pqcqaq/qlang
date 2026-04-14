@@ -513,6 +513,12 @@ fn append_reference_interface_summaries(
                                 "{indent}    first_transitive_failure_manifest: {}\n",
                                 relative_display_path(root, &first_failure.manifest_path)
                             ));
+                            if let Some(interface_path) = &first_failure.interface_path {
+                                output.push_str(&format!(
+                                    "{indent}    first_transitive_failure_path: {}\n",
+                                    relative_display_path(root, interface_path)
+                                ));
+                            }
                             output.push_str(&format!(
                                 "{indent}    first_transitive_failure_status: {}\n",
                                 first_failure.status
@@ -573,6 +579,7 @@ fn append_reference_interface_summaries(
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TransitiveReferenceFailure {
     manifest_path: PathBuf,
+    interface_path: Option<PathBuf>,
     status: &'static str,
     detail: Option<String>,
     stale_reasons: Vec<InterfaceArtifactStaleReason>,
@@ -624,6 +631,7 @@ fn summarize_reference_failures_recursive(
                             record_first_transitive_reference_failure(
                                 &mut summary,
                                 reference_manifest.manifest_path.clone(),
+                                Some(interface_path.clone()),
                                 status.label(),
                                 interface_artifact_status_detail(&interface_path, status),
                                 if status == InterfaceArtifactStatus::Stale {
@@ -642,6 +650,7 @@ fn summarize_reference_failures_recursive(
                         record_first_transitive_reference_failure(
                             &mut summary,
                             reference_manifest.manifest_path.clone(),
+                            None,
                             "unresolved-package",
                             Some(project_graph_error_display_relative(root, &error)),
                             Vec::new(),
@@ -660,6 +669,7 @@ fn summarize_reference_failures_recursive(
                 record_first_transitive_reference_failure(
                     &mut summary,
                     reference_manifest_path,
+                    None,
                     "unresolved-manifest",
                     Some(project_graph_error_display_relative(root, &error)),
                     Vec::new(),
@@ -674,6 +684,7 @@ fn summarize_reference_failures_recursive(
 fn record_first_transitive_reference_failure(
     summary: &mut TransitiveReferenceFailureSummary,
     manifest_path: PathBuf,
+    interface_path: Option<PathBuf>,
     status: &'static str,
     detail: Option<String>,
     stale_reasons: Vec<InterfaceArtifactStaleReason>,
@@ -682,6 +693,7 @@ fn record_first_transitive_reference_failure(
         .first_failure
         .get_or_insert(TransitiveReferenceFailure {
             manifest_path,
+            interface_path,
             status,
             detail,
             stale_reasons,
