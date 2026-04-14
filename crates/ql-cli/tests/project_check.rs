@@ -665,7 +665,7 @@ pub fn main() -> Int {
         "project-check-multiple-reference-failures",
         "package-aware ql check with multiple failing references",
         &stderr,
-        "interface check found 2 failing referenced package(s)",
+        "`ql check` found 2 failing referenced package(s)",
     )
     .expect("package-aware ql check should summarize all failing references");
     let normalized_stderr = stderr.replace('\\', "/");
@@ -775,7 +775,7 @@ pub fn main() -> Int {
         "project-check-transitive-reference-failures",
         "package-aware ql check with transitive reference failures",
         &stderr,
-        "interface check found 2 failing referenced package(s)",
+        "`ql check` found 2 failing referenced package(s)",
     )
     .expect("package-aware ql check should summarize direct and transitive failures");
     let normalized_stderr = stderr.replace('\\', "/");
@@ -1058,7 +1058,7 @@ pub fn main() -> Int {
         "project-check-sync-multiple-reference-failures",
         "package-aware ql check sync with multiple failing references",
         &stderr,
-        "interface sync found 2 failing referenced package(s)",
+        "`ql check --sync-interfaces` found 2 failing referenced package(s)",
     )
     .expect("sync path should summarize all failing references");
     let normalized_stderr = stderr.replace('\\', "/");
@@ -1175,7 +1175,7 @@ pub fn main() -> Int {
         "project-check-sync-transitive-reference-failures",
         "package-aware ql check sync with transitive reference failures",
         &stderr,
-        "interface sync found 1 failing referenced package(s)",
+        "`ql check --sync-interfaces` found 1 failing referenced package(s)",
     )
     .expect("sync path should only summarize the remaining transitive failure");
     let normalized_stderr = stderr.replace('\\', "/");
@@ -1278,7 +1278,7 @@ pub fn main() -> Int {
         "project-check-sync-source-failure-context",
         "package-aware ql check sync with dependency source failures",
         &stderr,
-        "interface emission found 2 failing source file(s)",
+        "`ql check --sync-interfaces` found 2 failing source file(s)",
     )
     .expect("sync path should preserve package-level source failure aggregation");
     let normalized_stderr = stderr.replace('\\', "/");
@@ -1391,7 +1391,7 @@ pub fn main() -> Int {
         "project-check-sync-source-failure-context",
         "package-aware ql check sync with dependency source failures",
         &stderr,
-        "interface sync found 1 failing referenced package(s)",
+        "`ql check --sync-interfaces` found 1 failing referenced package(s)",
     )
     .expect("sync path should still summarize the failing referenced package");
 }
@@ -1543,7 +1543,7 @@ pub fn main() -> Int {
         "project-check-sync-output-path-failure",
         "package-aware ql check sync with dependency blocked output path",
         &stderr,
-        "interface sync found 1 failing referenced package(s)",
+        "`ql check --sync-interfaces` found 1 failing referenced package(s)",
     )
     .expect("sync path should still summarize the failing referenced package");
     assert!(
@@ -2381,7 +2381,7 @@ name = "broken"
         "project-check-workspace-single-failure",
         "workspace-root ql check with single failing member",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check` found 1 failing member(s)",
     )
     .expect("workspace-root ql check should summarize the single failing member");
     expect_stderr_not_contains(
@@ -2511,7 +2511,7 @@ name = "broken"
         "project-check-workspace-sync-single-failure",
         "workspace-root ql check sync with single failing member",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check --sync-interfaces` found 1 failing member(s)",
     )
     .expect("workspace-root ql check sync should summarize the single failing member");
     expect_stderr_not_contains(
@@ -2672,7 +2672,7 @@ pub fn main() -> Int {
         "project-check-workspace-non-package-member",
         "workspace-root ql check with non-package member",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check` found 1 failing member(s)",
     )
     .expect("workspace-root ql check should summarize the single non-package member");
     expect_stderr_not_contains(
@@ -2838,7 +2838,7 @@ pub fn main() -> Int {
         "project-check-workspace-sync-non-package-member",
         "workspace-root ql check sync with non-package member",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check --sync-interfaces` found 1 failing member(s)",
     )
     .expect("workspace-root ql check sync should summarize the single non-package member");
     expect_stderr_not_contains(
@@ -3000,7 +3000,7 @@ pub fn main() -> Int {
         "project-check-workspace-missing-member-package-name",
         "workspace-root ql check with missing member package name",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check` found 1 failing member(s)",
     )
     .expect("workspace-root ql check should summarize the single missing member package name");
     expect_stderr_not_contains(
@@ -3168,7 +3168,7 @@ pub fn main() -> Int {
         "project-check-workspace-sync-missing-member-package-name",
         "workspace-root ql check sync with missing member package name",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check --sync-interfaces` found 1 failing member(s)",
     )
     .expect("workspace-root ql check sync should summarize the single missing member package name");
     expect_stderr_not_contains(
@@ -3358,7 +3358,7 @@ pub fn main() -> Int {
         "project-check-workspace-missing-source-root",
         "workspace-root ql check with missing source root member",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check` found 1 failing member(s)",
     )
     .expect("workspace-root ql check should summarize the single missing source-root member");
     expect_stderr_not_contains(
@@ -3548,7 +3548,7 @@ pub fn main() -> Int {
         "project-check-workspace-sync-missing-source-root",
         "workspace-root ql check sync with missing source root member",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check --sync-interfaces` found 1 failing member(s)",
     )
     .expect("workspace-root ql check sync should summarize the single missing source-root member");
     expect_stderr_not_contains(
@@ -3734,7 +3734,7 @@ pub fn main() -> Int {
         "project-check-workspace-empty-source-root",
         "workspace-root ql check with empty source root member",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check` found 1 failing member(s)",
     )
     .expect("workspace-root ql check should summarize the single empty source-root member");
     expect_stderr_not_contains(
@@ -3923,7 +3923,7 @@ pub fn main() -> Int {
         "project-check-workspace-sync-empty-source-root",
         "workspace-root ql check sync with empty source root member",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check --sync-interfaces` found 1 failing member(s)",
     )
     .expect("workspace-root ql check sync should summarize the single empty source-root member");
     expect_stderr_not_contains(
@@ -4090,7 +4090,7 @@ pub fn main() -> Int {
         "project-check-workspace-source-diagnostics",
         "workspace-root ql check with source diagnostics",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check` found 1 failing member(s)",
     )
     .expect("workspace-root ql check should summarize the single source-diagnostic member");
     expect_stderr_not_contains(
@@ -4260,7 +4260,7 @@ pub fn main() -> Int {
         "project-check-workspace-sync-source-diagnostics",
         "workspace-root ql check sync with source diagnostics",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check --sync-interfaces` found 1 failing member(s)",
     )
     .expect("workspace-root ql check sync should summarize the single source-diagnostic member");
     expect_stderr_not_contains(
@@ -4461,7 +4461,7 @@ pub fn main() -> Int {
         "project-check-workspace-reference-failure",
         "workspace-root ql check with reference failure",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check` found 1 failing member(s)",
     )
     .expect("workspace-root ql check should summarize the single reference-failing member");
     expect_stderr_not_contains(
@@ -4664,7 +4664,7 @@ pub fn main() -> Int {
         "project-check-workspace-sync-reference-failure",
         "workspace-root ql check sync with reference failure",
         &stderr,
-        "workspace check found 1 failing member(s)",
+        "`ql check --sync-interfaces` found 1 failing member(s)",
     )
     .expect("workspace-root ql check sync should summarize the single reference-failing member");
     expect_stderr_not_contains(
@@ -4877,7 +4877,7 @@ pub fn main( -> Int {
         "project-check-workspace-failures",
         "workspace-root ql check with multiple failing members",
         &stderr,
-        "workspace check found 2 failing member(s)",
+        "`ql check` found 2 failing member(s)",
     )
     .expect("workspace-root ql check should summarize all failing members");
     expect_stderr_contains(

@@ -671,7 +671,9 @@ fn check_workspace_manifest(
     }
 
     if failing_members > 0 {
-        eprintln!("error: workspace check found {failing_members} failing member(s)");
+        eprintln!(
+            "error: {check_command_label} found {failing_members} failing member(s)"
+        );
         if failing_members > 1 {
             if let Some(path) = &first_failing_member_manifest {
                 eprintln!(
@@ -2521,18 +2523,19 @@ fn sync_reference_interfaces(
     path: &Path,
     visited: &mut BTreeSet<PathBuf>,
 ) -> Result<Vec<PathBuf>, u8> {
+    let check_command_label = format_check_command_label(true);
     let manifest = load_project_manifest(path).map_err(|error| {
         if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error)
         {
             eprintln!(
                 "error: {} manifest `{}` does not declare `[package].name`",
-                format_check_command_label(true),
+                check_command_label,
                 normalize_path(manifest_path)
             );
             report_package_check_manifest_failure(manifest_path, true);
         } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
         {
-            eprintln!("error: {} {error}", format_check_command_label(true));
+            eprintln!("error: {check_command_label} {error}");
             report_package_check_manifest_failure(manifest_path, true);
         } else {
             eprintln!("error: {error}");
@@ -2546,7 +2549,7 @@ fn sync_reference_interfaces(
             println!("wrote interface: {}", path.display());
         }
         eprintln!(
-            "error: interface sync found {} failing referenced package(s)",
+            "error: {check_command_label} found {} failing referenced package(s)",
             result.failure_count
         );
         if result.failure_count > 1 {
@@ -2689,10 +2692,11 @@ fn sync_reference_interfaces_recursive(
 }
 
 fn ensure_reference_interfaces_current(manifest: &ql_project::ProjectManifest) -> Result<(), u8> {
+    let check_command_label = format_check_command_label(false);
     let result = ensure_reference_interfaces_current_recursive(manifest, &mut BTreeSet::new());
     if result.failure_count > 0 {
         eprintln!(
-            "error: interface check found {} failing referenced package(s)",
+            "error: {check_command_label} found {} failing referenced package(s)",
             result.failure_count
         );
         if result.failure_count > 1 {
