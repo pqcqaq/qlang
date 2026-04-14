@@ -488,7 +488,7 @@ pub fn broken_second(value: MissingSecond) -> Int {
         "project-interface-package-source-failures",
         "package interface emission with multiple failing sources",
         &stderr,
-        "interface emission found 2 failing source file(s)",
+        "error: `ql project emit-interface` found 2 failing source file(s)",
     )
     .expect("package interface emission should summarize all failing source files");
     let normalized_stderr = stderr.replace('\\', "/");
@@ -594,7 +594,7 @@ pub fn broken(value: MissingType) -> Int {
         "project-interface-single-package-source-failure",
         "package interface emission with single failing source",
         &stderr,
-        "interface emission found 1 failing source file(s)",
+        "error: `ql project emit-interface` found 1 failing source file(s)",
     )
     .expect("package interface emission should summarize the single failing source");
     let normalized_stderr = stderr.replace('\\', "/");
@@ -1528,7 +1528,7 @@ pub fn exported() -> Int
         "project-interface-changed-only-workspace-not-package",
         "changed-only workspace interface emission with non-package member",
         &stderr,
-        "interface emission found 1 failing member(s)",
+        "error: `ql project emit-interface --changed-only` found 1 failing member(s)",
     )
     .expect("changed-only workspace semantic-invalid member failures should still summarize failing members");
     expect_stderr_not_contains(
@@ -1664,7 +1664,7 @@ name = "broken"
         "project-interface-workspace-missing-member-source-root",
         "workspace interface emission with missing member source root",
         &stderr,
-        "interface emission found 1 failing member(s)",
+        "error: `ql project emit-interface` found 1 failing member(s)",
     )
     .expect("workspace interface emission should still summarize failing members");
     expect_stderr_not_contains(
@@ -2161,7 +2161,7 @@ name = "broken"
         "project-interface-workspace-partial-failure",
         "workspace interface emission with failing member",
         &stderr,
-        "interface emission found 1 failing member(s)",
+        "error: `ql project emit-interface` found 1 failing member(s)",
     )
     .expect("workspace interface emission should summarize failing members");
     expect_stderr_not_contains(
@@ -2322,7 +2322,7 @@ version = "0.1.0"
         "project-interface-workspace-missing-package-manifest",
         "workspace interface emission with member missing package manifest",
         &stderr,
-        "interface emission found 1 failing member(s)",
+        "error: `ql project emit-interface` found 1 failing member(s)",
     )
     .expect("workspace interface emission should still summarize failing members");
     expect_stderr_not_contains(
@@ -2454,7 +2454,7 @@ pub fn broken_second(value: MissingSecond) -> Int {
         "project-interface-workspace-source-failure",
         "workspace interface emission with member source failure",
         &stderr,
-        "interface emission found 2 failing source file(s)",
+        "error: `ql project emit-interface` found 2 failing source file(s)",
     )
     .expect("workspace interface emission should preserve member source aggregation");
     let normalized_stderr = stderr.replace('\\', "/");
@@ -2515,7 +2515,7 @@ pub fn broken_second(value: MissingSecond) -> Int {
         "project-interface-workspace-source-failure",
         "workspace interface emission with member source failure",
         &stderr,
-        "interface emission found 1 failing member(s)",
+        "error: `ql project emit-interface` found 1 failing member(s)",
     )
     .expect("workspace interface emission should still summarize failing members");
     expect_stderr_not_contains(
@@ -2924,7 +2924,7 @@ pub fn exported() -> Int {
         "project-interface-changed-only-workspace-output-path",
         "changed-only workspace interface emission with blocked member output path",
         &stderr,
-        "interface emission found 1 failing member(s)",
+        "error: `ql project emit-interface --changed-only` found 1 failing member(s)",
     )
     .expect("changed-only workspace output-path failures should still summarize failing members");
     expect_stderr_not_contains(
@@ -3220,8 +3220,8 @@ name = "tool"
     expect_stderr_contains(
         "project-interface-check-workspace",
         "workspace interface check with stale member",
-        &stderr,
-        "found 2 failing member(s)",
+        &normalized_stderr,
+        "error: `ql project emit-interface --check` found 2 failing member(s)",
     )
     .expect("workspace interface check should summarize all failing members");
     expect_stderr_contains(
@@ -3866,6 +3866,7 @@ name = "tool"
     )
     .expect("changed-only workspace interface check with stale member should fail");
     let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
     let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
     expect_snapshot_matches(
         "project-interface-check-changed-only-workspace",
@@ -3900,8 +3901,8 @@ name = "tool"
     expect_stderr_contains(
         "project-interface-check-changed-only-workspace",
         "changed-only workspace interface check with stale member",
-        &stderr,
-        "found 2 failing member(s)",
+        &normalized_stderr,
+        "error: `ql project emit-interface --changed-only --check` found 2 failing member(s)",
     )
     .expect("changed-only workspace interface check should summarize all failing members");
     let stale_error_line = format!(
@@ -6399,7 +6400,7 @@ name = "app"
         "build-emit-interface-failure",
         "build with failing interface emission",
         &stderr,
-        "interface emission found 2 failing source file(s)",
+        "error: `ql build --emit-interface` found 2 failing source file(s)",
     )
     .expect("build-side interface failure should summarize all failing package sources");
     let normalized_stderr = stderr.replace('\\', "/");
@@ -6538,7 +6539,7 @@ name = "app"
         "build-emit-interface-single-failure",
         "build with single failing interface source",
         &stderr,
-        "interface emission found 1 failing source file(s)",
+        "error: `ql build --emit-interface` found 1 failing source file(s)",
     )
     .expect("build-side single source failure should summarize the single failing source");
     let normalized_stderr = stderr.replace('\\', "/");

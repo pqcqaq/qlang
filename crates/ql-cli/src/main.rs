@@ -2080,7 +2080,9 @@ fn project_emit_interface_path(
     }
 
     if check_only && failing_member_count > 0 {
-        eprintln!("error: interface check found {failing_member_count} failing member(s)");
+        eprintln!(
+            "error: {check_command_label} found {failing_member_count} failing member(s)"
+        );
         if failing_member_count > 1 {
             if let Some(path) = &first_failing_member_manifest {
                 eprintln!(
@@ -2093,7 +2095,9 @@ fn project_emit_interface_path(
     }
 
     if !check_only && emission_failure_count > 0 {
-        eprintln!("error: interface emission found {emission_failure_count} failing member(s)");
+        eprintln!(
+            "error: {emit_command_label} found {emission_failure_count} failing member(s)"
+        );
         if emission_failure_count > 1 {
             if let Some(path) = &first_failing_member_manifest {
                 eprintln!(
@@ -2249,7 +2253,7 @@ fn emit_package_interface_path(
     }
 
     if failing_source_count > 0 {
-        eprintln!("error: interface emission found {failing_source_count} failing source file(s)");
+        eprintln!("error: {command_label} found {failing_source_count} failing source file(s)");
         if failing_source_count > 1 {
             if let Some(path) = &first_failing_source {
                 eprintln!("note: first failing source file: {}", normalize_path(path));
