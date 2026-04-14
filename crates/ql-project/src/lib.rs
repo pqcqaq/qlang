@@ -484,6 +484,18 @@ fn append_reference_interface_summaries(
                                     "{indent}    first_transitive_failure_detail: {detail}\n"
                                 ));
                             }
+                            if !first_failure.stale_reasons.is_empty() {
+                                output.push_str(&format!(
+                                    "{indent}    first_transitive_failure_stale_reasons:\n"
+                                ));
+                                for reason in &first_failure.stale_reasons {
+                                    output.push_str(&format!(
+                                        "{indent}      - {}: {}\n",
+                                        reason.label(),
+                                        relative_display_path(root, reason.path())
+                                    ));
+                                }
+                            }
                         }
                     }
                     if let Some(detail) = interface_artifact_status_detail(&interface_path, status)
@@ -519,6 +531,7 @@ struct TransitiveReferenceFailure {
     manifest_path: PathBuf,
     status: &'static str,
     detail: Option<String>,
+    stale_reasons: Vec<InterfaceArtifactStaleReason>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -567,6 +580,14 @@ fn summarize_reference_failures_recursive(
                                 reference_manifest.manifest_path.clone(),
                                 status.label(),
                                 interface_artifact_status_detail(&interface_path, status),
+                                if status == InterfaceArtifactStatus::Stale {
+                                    interface_artifact_stale_reasons(
+                                        &reference_manifest,
+                                        &interface_path,
+                                    )
+                                } else {
+                                    Vec::new()
+                                },
                             );
                         }
                     }
@@ -577,6 +598,7 @@ fn summarize_reference_failures_recursive(
                             reference_manifest.manifest_path.clone(),
                             "unresolved-package",
                             Some(error.to_string()),
+                            Vec::new(),
                         );
                     }
                 }
@@ -594,6 +616,7 @@ fn summarize_reference_failures_recursive(
                     reference_manifest_path,
                     "unresolved-manifest",
                     Some(project_graph_error_display(&error)),
+                    Vec::new(),
                 );
             }
         }
@@ -607,6 +630,7 @@ fn record_first_transitive_reference_failure(
     manifest_path: PathBuf,
     status: &'static str,
     detail: Option<String>,
+    stale_reasons: Vec<InterfaceArtifactStaleReason>,
 ) {
     summary
         .first_failure
@@ -614,6 +638,7 @@ fn record_first_transitive_reference_failure(
             manifest_path,
             status,
             detail,
+            stale_reasons,
         });
 }
 
