@@ -305,7 +305,30 @@ fn append_workspace_member_error(
         relative_display_path(root, manifest_path)
     ));
     output.push_str("    package: <unresolved>\n");
-    output.push_str(&format!("    member_error: {error}\n"));
+    output.push_str(&format!(
+        "    member_error: {}\n",
+        project_graph_error_display(error)
+    ));
+}
+
+fn project_graph_error_display(error: &ProjectError) -> String {
+    if let Some(path) = project_error_missing_package_name_manifest_path(error) {
+        return format!(
+            "manifest `{}` does not declare `[package].name`",
+            display_path(path)
+        );
+    }
+    error.to_string()
+}
+
+fn project_error_missing_package_name_manifest_path(error: &ProjectError) -> Option<&Path> {
+    match error {
+        ProjectError::PackageNotDefined { path } => Some(path.as_path()),
+        ProjectError::Parse { path, message } if message == "`[package].name` must be present" => {
+            Some(path.as_path())
+        }
+        _ => None,
+    }
 }
 
 fn project_manifest_path(path: &Path) -> PathBuf {

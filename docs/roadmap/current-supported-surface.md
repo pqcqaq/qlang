@@ -55,7 +55,7 @@
 
 - package directory、`qlang.toml`、包内源码路径、workspace-only 根 manifest 都可进入 package-aware `check` 流程。
 - `ql project graph` 会展示 package/member、references，以及默认 `.qi` 的 `valid` / `missing` / `invalid` / `stale` 状态；`stale` 会给出 `stale_reasons`，`invalid` / `unreadable` 也会给出一行 `detail`；每条 `reference_interfaces` 现在也会显式带出对应的 reference manifest 路径，方便直接定位引用项；如果 direct dependency 下面还有更深层坏引用，也会补一个保守的 `transitive_reference_failures` 计数和 `first_transitive_failure_manifest`。
-- workspace 根 `ql project graph` 在单个 member manifest 无法加载时不会整张图失败；已解析 members 会继续输出，坏 member 会落成 `package: <unresolved>` + `member_error`。
+- workspace 根 `ql project graph` 在单个 member manifest 无法加载时不会整张图失败；已解析 members 会继续输出，坏 member 会落成 `package: <unresolved>` + `member_error`；如果坏 member 的问题是缺 `[package].name`，`member_error` 现在也会收敛成 `manifest ... does not declare [package].name`。direct `ql project graph` 命中同一问题时，stderr 也会保留 `ql project graph` 命令标签。
 - `ql project graph` 对 `reference_interfaces` 的 `unresolved-manifest` / `unresolved-package` 现在也会带 `detail`，直接说明是引用 manifest 语法坏了，还是引用目标没有 `[package].name`。
 - `ql project emit-interface` 支持 package 和 workspace 批量写出；`-o/--output` 仍仅支持 package。package 模式下若同一个 package 里有多个坏源码阻塞 `.qi` 发射，CLI 现在会继续打印后续坏源码诊断，最后再汇总 failing source file 数；只有多失败场景才额外补 `first failing source file`。direct package emit 失败时现在也会补 `failing package manifest` 和可直接重跑的 `ql project emit-interface <manifest>` hint；如果失败点其实是 manifest 缺 `[package].name`、package `src/` 根目录缺失，或 `src/` 目录存在但没有任何 `.ql` 文件，也会分别改成 `package manifest` / `package source root` / “先补源码文件” 这类更具体的修复提示，不再统称为 `package interface error`，也不再静默写出空 `.qi`。
 - direct package `ql project emit-interface --output <path>` 如果因为源码错误或目标路径不可写而失败，stderr 里的重跑 hint 现在会保留同一个 `--output <path>`，不再退回默认 `.qi` 路径。

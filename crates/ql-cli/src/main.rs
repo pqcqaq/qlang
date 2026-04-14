@@ -1704,7 +1704,14 @@ fn emit_c_header_path(path: &Path, options: &CHeaderOptions) -> Result<(), u8> {
 
 fn project_graph_path(path: &Path) -> Result<(), u8> {
     let manifest = load_project_manifest(path).map_err(|error| {
-        eprintln!("error: {error}");
+        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error) {
+            eprintln!(
+                "error: `ql project graph` manifest `{}` does not declare `[package].name`",
+                normalize_path(manifest_path)
+            );
+        } else {
+            eprintln!("error: {error}");
+        }
         1
     })?;
     let rendered = render_project_graph_resolved(&manifest).map_err(|error| {

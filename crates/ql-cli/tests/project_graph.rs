@@ -2,8 +2,8 @@ mod support;
 
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_snapshot_matches,
-    expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
-    run_command_capture, workspace_root,
+    expect_stderr_contains, expect_stderr_not_contains, expect_stdout_contains_all,
+    expect_success, ql_command, run_command_capture, workspace_root,
 };
 
 #[test]
@@ -119,6 +119,62 @@ packages = ["../core"]
         "`qlang.toml` requires `[package]` or `[workspace]`",
     )
     .expect("invalid manifest diagnostic should mention the minimum section contract");
+}
+
+#[test]
+fn project_graph_preserves_missing_package_name_error_surface() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-missing-package-name");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&project_root)
+        .expect("create project directory for missing package name graph test");
+    let manifest_path = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+version = "0.1.0"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "graph"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph` missing package manifest metadata",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-graph-missing-package-name",
+        "project graph rendering with missing package name",
+        &output,
+        1,
+    )
+    .expect("project graph should fail when the manifest does not declare `[package].name`");
+    expect_empty_stdout(
+        "project-graph-missing-package-name",
+        "project graph rendering with missing package name",
+        &stdout,
+    )
+    .expect("project graph should not print stdout when package metadata is missing");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    expect_stderr_contains(
+        "project-graph-missing-package-name",
+        "project graph rendering with missing package name",
+        &normalized_stderr,
+        &format!(
+            "error: `ql project graph` manifest `{manifest_display}` does not declare `[package].name`"
+        ),
+    )
+    .expect("project graph should preserve the command label for missing package names");
+    expect_stderr_not_contains(
+        "project-graph-missing-package-name",
+        "project graph rendering with missing package name",
+        &normalized_stderr,
+        &format!(
+            "error: invalid manifest `{manifest_display}`: `[package].name` must be present"
+        ),
+    )
+    .expect("project graph should not fall back to the parse-error missing package-name message");
 }
 
 #[test]
@@ -409,6 +465,98 @@ name = "broken"
         stdout.contains("packages/broken/qlang.toml")
             || stdout.contains("packages\\broken\\qlang.toml"),
         "expected workspace graph to mention the broken member manifest path, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn project_graph_keeps_resolved_workspace_members_when_one_member_manifest_is_missing_package_name(
+) {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-workspace-missing-package-name-member");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages").join("app").join("src"))
+        .expect("create workspace app directory for missing package name member graph test");
+    std::fs::create_dir_all(project_root.join("packages").join("broken"))
+        .expect("create workspace broken directory for missing package name member graph test");
+
+    let manifest_path = temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/app.qi",
+        r#"
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn run() -> Int
+"#,
+    );
+    let broken_manifest = temp.write(
+        "workspace/packages/broken/qlang.toml",
+        r#"
+[package]
+version = "0.1.0"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "graph"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph` workspace root with missing package-name member",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-graph-workspace-missing-package-name-member",
+        "workspace root project graph rendering with missing package name member",
+        &output,
+    )
+    .expect(
+        "workspace root graph should still render when one member manifest is missing `[package].name`",
+    );
+    expect_empty_stderr(
+        "project-graph-workspace-missing-package-name-member",
+        "workspace root project graph rendering with missing package name member",
+        &stderr,
+    )
+    .expect("workspace root graph with missing package name member should stay silent on stderr");
+
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_manifest = manifest_path.to_string_lossy().replace('\\', "/");
+    let broken_manifest_display = broken_manifest.to_string_lossy().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-graph-workspace-missing-package-name-member",
+        &normalized_stdout,
+        &[
+            &format!("manifest: {normalized_manifest}"),
+            "  - member: packages/app",
+            "    package: app",
+            "  - member: packages/broken",
+            "    package: <unresolved>",
+            &format!(
+                "    member_error: manifest `{broken_manifest_display}` does not declare `[package].name`"
+            ),
+        ],
+    )
+    .expect(
+        "workspace graph should keep resolved members and normalize missing package-name member errors",
+    );
+    assert!(
+        !normalized_stdout.contains("`[package].name` must be present"),
+        "expected workspace graph to normalize missing package-name member errors, got:\n{stdout}"
     );
 }
 
