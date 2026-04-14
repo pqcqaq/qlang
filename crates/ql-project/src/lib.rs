@@ -470,13 +470,20 @@ fn append_reference_interface_summaries(
                             "{indent}    transitive_reference_failures: {}\n",
                             transitive_reference_failures.count
                         ));
-                        if let Some(first_failure_manifest) =
-                            &transitive_reference_failures.first_failure_manifest
-                        {
+                        if let Some(first_failure) = &transitive_reference_failures.first_failure {
                             output.push_str(&format!(
                                 "{indent}    first_transitive_failure_manifest: {}\n",
-                                relative_display_path(root, first_failure_manifest)
+                                relative_display_path(root, &first_failure.manifest_path)
                             ));
+                            output.push_str(&format!(
+                                "{indent}    first_transitive_failure_status: {}\n",
+                                first_failure.status
+                            ));
+                            if let Some(detail) = &first_failure.detail {
+                                output.push_str(&format!(
+                                    "{indent}    first_transitive_failure_detail: {detail}\n"
+                                ));
+                            }
                         }
                     }
                     if let Some(detail) = interface_artifact_status_detail(&interface_path, status)
@@ -507,9 +514,17 @@ fn append_reference_interface_summaries(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TransitiveReferenceFailure {
+    manifest_path: PathBuf,
+    status: &'static str,
+    detail: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct TransitiveReferenceFailureSummary {
     count: usize,
-    first_failure_manifest: Option<PathBuf>,
+    first_failure: Option<TransitiveReferenceFailure>,
 }
 
 fn summarize_transitive_reference_failures(
@@ -527,14 +542,14 @@ fn summarize_reference_failures_recursive(
     if !visited.insert(manifest_path) {
         return TransitiveReferenceFailureSummary {
             count: 0,
-            first_failure_manifest: None,
+            first_failure: None,
         };
     }
 
     let manifest_dir = manifest_dir(manifest);
     let mut summary = TransitiveReferenceFailureSummary {
         count: 0,
-        first_failure_manifest: None,
+        first_failure: None,
     };
     for reference in &manifest.references.packages {
         let reference_manifest_path = project_manifest_path(&manifest_dir.join(reference));
@@ -543,39 +558,63 @@ fn summarize_reference_failures_recursive(
                 let interface_path = default_interface_path(&reference_manifest);
                 match interface_path {
                     Ok(interface_path) => {
-                        if interface_artifact_status(&reference_manifest, &interface_path)
-                            != InterfaceArtifactStatus::Valid
-                        {
+                        let status =
+                            interface_artifact_status(&reference_manifest, &interface_path);
+                        if status != InterfaceArtifactStatus::Valid {
                             summary.count += 1;
-                            summary
-                                .first_failure_manifest
-                                .get_or_insert(reference_manifest.manifest_path.clone());
+                            record_first_transitive_reference_failure(
+                                &mut summary,
+                                reference_manifest.manifest_path.clone(),
+                                status.label(),
+                                interface_artifact_status_detail(&interface_path, status),
+                            );
                         }
                     }
-                    Err(_) => {
+                    Err(error) => {
                         summary.count += 1;
-                        summary
-                            .first_failure_manifest
-                            .get_or_insert(reference_manifest.manifest_path.clone());
+                        record_first_transitive_reference_failure(
+                            &mut summary,
+                            reference_manifest.manifest_path.clone(),
+                            "unresolved-package",
+                            Some(error.to_string()),
+                        );
                     }
                 }
                 let nested_summary =
                     summarize_reference_failures_recursive(&reference_manifest, visited);
                 summary.count += nested_summary.count;
-                if summary.first_failure_manifest.is_none() {
-                    summary.first_failure_manifest = nested_summary.first_failure_manifest;
+                if summary.first_failure.is_none() {
+                    summary.first_failure = nested_summary.first_failure;
                 }
             }
-            Err(_) => {
+            Err(error) => {
                 summary.count += 1;
-                summary
-                    .first_failure_manifest
-                    .get_or_insert(reference_manifest_path);
+                record_first_transitive_reference_failure(
+                    &mut summary,
+                    reference_manifest_path,
+                    "unresolved-manifest",
+                    Some(project_graph_error_display(&error)),
+                );
             }
         }
     }
 
     summary
+}
+
+fn record_first_transitive_reference_failure(
+    summary: &mut TransitiveReferenceFailureSummary,
+    manifest_path: PathBuf,
+    status: &'static str,
+    detail: Option<String>,
+) {
+    summary
+        .first_failure
+        .get_or_insert(TransitiveReferenceFailure {
+            manifest_path,
+            status,
+            detail,
+        });
 }
 
 fn append_stale_reason_summary(

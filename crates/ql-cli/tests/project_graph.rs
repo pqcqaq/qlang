@@ -2,8 +2,8 @@ mod support;
 
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_snapshot_matches,
-    expect_stderr_contains, expect_stderr_not_contains, expect_stdout_contains_all,
-    expect_success, ql_command, run_command_capture, workspace_root,
+    expect_stderr_contains, expect_stderr_not_contains, expect_stdout_contains_all, expect_success,
+    ql_command, run_command_capture, workspace_root,
 };
 
 #[test]
@@ -170,9 +170,7 @@ version = "0.1.0"
         "project-graph-missing-package-name",
         "project graph rendering with missing package name",
         &normalized_stderr,
-        &format!(
-            "error: invalid manifest `{manifest_display}`: `[package].name` must be present"
-        ),
+        &format!("error: invalid manifest `{manifest_display}`: `[package].name` must be present"),
     )
     .expect("project graph should not fall back to the parse-error missing package-name message");
 }
@@ -469,8 +467,8 @@ name = "broken"
 }
 
 #[test]
-fn project_graph_keeps_resolved_workspace_members_when_one_member_manifest_is_missing_package_name(
-) {
+fn project_graph_keeps_resolved_workspace_members_when_one_member_manifest_is_missing_package_name()
+{
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-graph-workspace-missing-package-name-member");
     let project_root = temp.path().join("workspace");
@@ -738,6 +736,8 @@ name = "broken_ref"
             "status: valid",
             "transitive_reference_failures: 1",
             "first_transitive_failure_manifest: ../broken_ref/qlang.toml",
+            "first_transitive_failure_status: unresolved-manifest",
+            "first_transitive_failure_detail: invalid manifest `",
         ],
     )
     .expect("project graph should summarize transitive reference failures on direct dependencies");
