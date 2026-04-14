@@ -1923,11 +1923,25 @@ fn project_emit_interface_path(
                         member_manifest.manifest_path.clone(),
                     );
                 }
-                Err(EmitPackageInterfaceError::ManifestFailure { .. })
-                | Err(EmitPackageInterfaceError::SourceRootFailure { .. }) => {
-                    report_package_interface_failure(
+                Err(EmitPackageInterfaceError::ManifestFailure { .. }) => {
+                    report_package_interface_manifest_failure(
                         &member_manifest.manifest_path,
                         Some(&member_manifest.manifest_path),
+                        None,
+                        changed_only,
+                        None,
+                    );
+                    emission_failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest.manifest_path.clone(),
+                    );
+                }
+                Err(EmitPackageInterfaceError::SourceRootFailure { source_root, .. }) => {
+                    report_package_interface_source_root_failure(
+                        &member_manifest.manifest_path,
+                        Some(&member_manifest.manifest_path),
+                        &source_root,
                         None,
                         changed_only,
                         None,

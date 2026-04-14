@@ -1490,7 +1490,7 @@ pub fn exported() -> Int
     let package_note = format!("note: failing package manifest: {broken_manifest}");
     let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
     let rerun_hint = format!(
-        "hint: rerun `ql project emit-interface {broken_manifest} --changed-only` after fixing the package interface error"
+        "hint: rerun `ql project emit-interface {broken_manifest} --changed-only` after fixing the package manifest"
     );
     expect_stderr_contains(
         "project-interface-changed-only-workspace-not-package",
@@ -1538,6 +1538,142 @@ pub fn exported() -> Int
         "note: first failing member manifest:",
     )
     .expect("single changed-only workspace semantic-invalid member failures should not repeat the manifest in the final summary");
+}
+
+#[test]
+fn project_emit_interface_points_to_workspace_member_missing_package_source_root() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-missing-member-source-root");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let broken_root = project_root.join("packages").join("broken");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for workspace member source-root test");
+    std::fs::create_dir_all(&broken_root)
+        .expect("create broken package directory for workspace member source-root test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[package]
+name = "broken"
+"#,
+    );
+    let app_interface = app_root.join("app.qi");
+    let broken_manifest = broken_root.join("qlang.toml");
+    let broken_source_root = broken_root.join("src");
+    let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
+    let normalized_broken_manifest = broken_manifest.display().to_string().replace('\\', "/");
+    let normalized_broken_source_root = broken_source_root.display().to_string().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` workspace member missing package source root",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-workspace-missing-member-source-root",
+        "workspace interface emission with missing member source root",
+        &output,
+        1,
+    )
+    .expect("workspace interface emission with missing member source root should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-workspace-missing-member-source-root",
+        &normalized_stdout,
+        &[&format!("wrote interface: {normalized_app_interface}")],
+    )
+    .expect("workspace interface emission should still write healthy members");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-workspace-missing-member-source-root",
+        "workspace interface emission with missing member source root",
+        &normalized_stderr,
+        &format!(
+            "error: `ql project emit-interface` package source directory `{}` does not exist",
+            normalized_broken_source_root
+        ),
+    )
+    .expect("workspace member source-root failure should preserve the emit-interface command label");
+    expect_stderr_contains(
+        "project-interface-workspace-missing-member-source-root",
+        "workspace interface emission with missing member source root",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {normalized_broken_manifest}"),
+    )
+    .expect("workspace member source-root failure should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-interface-workspace-missing-member-source-root",
+        "workspace interface emission with missing member source root",
+        &normalized_stderr,
+        &format!("note: failing workspace member manifest: {normalized_broken_manifest}"),
+    )
+    .expect("workspace member source-root failure should keep the workspace member boundary visible");
+    expect_stderr_contains(
+        "project-interface-workspace-missing-member-source-root",
+        "workspace interface emission with missing member source root",
+        &normalized_stderr,
+        &format!("note: failing package source root: {normalized_broken_source_root}"),
+    )
+    .expect("workspace member source-root failure should point to the missing source root");
+    expect_stderr_contains(
+        "project-interface-workspace-missing-member-source-root",
+        "workspace interface emission with missing member source root",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after fixing the package source root",
+            normalized_broken_manifest
+        ),
+    )
+    .expect("workspace member source-root failure should suggest fixing the package source root directly");
+    expect_stderr_not_contains(
+        "project-interface-workspace-missing-member-source-root",
+        "workspace interface emission with missing member source root",
+        &normalized_stderr,
+        "after fixing the package interface error",
+    )
+    .expect("workspace member source-root failure should not fall back to the generic interface-error hint");
+    expect_stderr_contains(
+        "project-interface-workspace-missing-member-source-root",
+        "workspace interface emission with missing member source root",
+        &stderr,
+        "interface emission found 1 failing member(s)",
+    )
+    .expect("workspace interface emission should still summarize failing members");
+    expect_stderr_not_contains(
+        "project-interface-workspace-missing-member-source-root",
+        "workspace interface emission with missing member source root",
+        &normalized_stderr,
+        "note: first failing member manifest:",
+    )
+    .expect("single workspace member source-root failures should not repeat the manifest in the final summary");
 }
 
 #[test]
