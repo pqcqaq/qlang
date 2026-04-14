@@ -557,13 +557,9 @@ fn check_workspace_manifest(
         }
 
         if !sync_interfaces && ensure_reference_interfaces_current(&member_manifest).is_err() {
-            let rerun_hint = format_workspace_member_reference_failure_rerun_hint(
+            report_workspace_member_package_check_reference_failure(
                 &member_manifest.manifest_path,
                 sync_interfaces,
-            );
-            report_workspace_member_failure(
-                &member_manifest.manifest_path,
-                Some(rerun_hint.as_str()),
             );
             failing_members += 1;
             record_reference_failure_manifest(
@@ -577,13 +573,9 @@ fn check_workspace_manifest(
             let synced_paths = match sync_reference_interfaces(&member_path, &mut sync_visited) {
                 Ok(paths) => paths,
                 Err(_) => {
-                    let rerun_hint = format_workspace_member_reference_failure_rerun_hint(
+                    report_workspace_member_package_check_reference_failure(
                         &member_manifest.manifest_path,
                         sync_interfaces,
-                    );
-                    report_workspace_member_failure(
-                        &member_manifest.manifest_path,
-                        Some(rerun_hint.as_str()),
                     );
                     failing_members += 1;
                     record_reference_failure_manifest(
@@ -753,6 +745,20 @@ fn report_workspace_member_package_check_source_diagnostics_failure(
     eprintln!("note: failing package manifest: {manifest_path}");
     eprintln!("note: failing workspace member manifest: {manifest_path}");
     eprintln!("hint: rerun `{rerun_command}` after fixing the package sources");
+}
+
+fn report_workspace_member_package_check_reference_failure(
+    manifest_path: &Path,
+    sync_interfaces: bool,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_hint = format_workspace_member_reference_failure_rerun_hint(
+        Path::new(&manifest_path),
+        sync_interfaces,
+    );
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!("note: failing workspace member manifest: {manifest_path}");
+    eprintln!("{rerun_hint}");
 }
 
 fn report_workspace_member_package_check_manifest_failure(

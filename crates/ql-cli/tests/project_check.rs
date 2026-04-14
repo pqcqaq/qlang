@@ -4324,6 +4324,7 @@ pub fn main() -> Int {
         .to_string()
         .replace('\\', "/");
     let reference_note = format!("note: failing reference manifest: {broken_ref_manifest}");
+    let package_note = format!("note: failing package manifest: {broken_manifest}");
     let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
     let rerun_hint = format!(
         "hint: rerun `ql check {broken_manifest}` after fixing the referenced package or reference manifest"
@@ -4359,6 +4360,9 @@ pub fn main() -> Int {
     let reference_note_index = normalized_stderr
         .find(&reference_note)
         .expect("workspace-root ql check should include the reference note");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("workspace-root ql check should include the package manifest note");
     let member_note_index = normalized_stderr
         .find(&member_note)
         .expect("workspace-root ql check should include the member note");
@@ -4366,7 +4370,9 @@ pub fn main() -> Int {
         .find(&rerun_hint)
         .expect("workspace-root ql check should include the rerun hint");
     assert!(
-        reference_note_index < member_note_index && member_note_index < rerun_hint_index,
+        reference_note_index < package_note_index
+            && package_note_index < member_note_index
+            && member_note_index < rerun_hint_index,
         "expected workspace reference failure context before member rerun hint, got:\n{stderr}"
     );
     expect_stderr_contains(
@@ -4511,6 +4517,7 @@ pub fn main() -> Int {
         .to_string()
         .replace('\\', "/");
     let reference_note = format!("note: failing reference manifest: {broken_ref_manifest}");
+    let package_note = format!("note: failing package manifest: {broken_manifest}");
     let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
     let rerun_hint = format!(
         "hint: rerun `ql check --sync-interfaces {broken_manifest}` after fixing the referenced package or reference manifest"
@@ -4546,6 +4553,9 @@ pub fn main() -> Int {
     let reference_note_index = normalized_stderr
         .find(&reference_note)
         .expect("workspace-root ql check sync should include the reference note");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("workspace-root ql check sync should include the package manifest note");
     let member_note_index = normalized_stderr
         .find(&member_note)
         .expect("workspace-root ql check sync should include the member note");
@@ -4553,7 +4563,9 @@ pub fn main() -> Int {
         .find(&rerun_hint)
         .expect("workspace-root ql check sync should include the rerun hint");
     assert!(
-        reference_note_index < member_note_index && member_note_index < rerun_hint_index,
+        reference_note_index < package_note_index
+            && package_note_index < member_note_index
+            && member_note_index < rerun_hint_index,
         "expected workspace sync reference failure context before member rerun hint, got:\n{stderr}"
     );
     expect_stderr_contains(
