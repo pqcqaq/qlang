@@ -741,6 +741,18 @@ fn report_workspace_member_package_check_no_sources_failure(
     eprintln!("hint: rerun `{rerun_command}` after adding package source files");
 }
 
+fn report_workspace_member_package_interface_check_manifest_failure(
+    manifest_path: &Path,
+    changed_only: bool,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_command =
+        format_workspace_member_emit_rerun_command(&manifest_path, changed_only, true);
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!("note: failing workspace member manifest: {manifest_path}");
+    eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
+}
+
 fn package_check_manifest_path_from_project_error(
     error: &ql_project::ProjectError,
 ) -> Option<&Path> {
@@ -1801,19 +1813,33 @@ fn project_emit_interface_path(
             let member_manifest = match load_project_manifest(&manifest_dir.join(member)) {
                 Ok(manifest) => manifest,
                 Err(error) => {
-                    eprintln!("error: {error}");
-                    let rerun_command = format_workspace_member_emit_rerun_command(
-                        &normalize_path(&member_manifest_path),
-                        changed_only,
-                        check_only,
-                    );
-                    let rerun_hint = format!(
-                        "hint: rerun `{rerun_command}` after fixing the workspace member manifest"
-                    );
-                    report_workspace_member_failure(
-                        &member_manifest_path,
-                        Some(rerun_hint.as_str()),
-                    );
+                    if let Some(manifest_path) =
+                        package_missing_name_manifest_path_from_project_error(&error)
+                    {
+                        eprintln!(
+                            "error: {} manifest `{}` does not declare `[package].name`",
+                            check_command_label,
+                            normalize_path(manifest_path)
+                        );
+                        report_workspace_member_package_interface_check_manifest_failure(
+                            manifest_path,
+                            changed_only,
+                        );
+                    } else {
+                        eprintln!("error: {error}");
+                        let rerun_command = format_workspace_member_emit_rerun_command(
+                            &normalize_path(&member_manifest_path),
+                            changed_only,
+                            check_only,
+                        );
+                        let rerun_hint = format!(
+                            "hint: rerun `{rerun_command}` after fixing the workspace member manifest"
+                        );
+                        report_workspace_member_failure(
+                            &member_manifest_path,
+                            Some(rerun_hint.as_str()),
+                        );
+                    }
                     failing_member_count += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,
@@ -1822,6 +1848,19 @@ fn project_emit_interface_path(
                     continue;
                 }
             };
+            if let Err(error) = package_name(&member_manifest) {
+                eprintln!("error: {check_command_label} {error}");
+                report_workspace_member_package_interface_check_manifest_failure(
+                    &member_manifest.manifest_path,
+                    changed_only,
+                );
+                failing_member_count += 1;
+                record_reference_failure_manifest(
+                    &mut first_failing_member_manifest,
+                    member_manifest.manifest_path.clone(),
+                );
+                continue;
+            }
             let result = match check_package_interface_artifact(
                 &member_manifest,
                 check_command_label.as_str(),
