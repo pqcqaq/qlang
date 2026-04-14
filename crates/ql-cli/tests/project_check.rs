@@ -214,13 +214,36 @@ pub fn main() -> Int {
         1,
     )
     .expect("missing dependency interface should fail package-aware ql check");
+    let error_line = format!(
+        "error: `ql check` referenced package `dep` is missing interface artifact `{}`",
+        dep_root
+            .join("dep.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let old_error_line = format!(
+        "error: referenced package `dep` is missing interface artifact `{}`",
+        dep_root
+            .join("dep.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
     expect_stderr_contains(
         "project-check-missing-interface",
         "package-aware ql check with missing dependency interface",
         &stderr,
-        "referenced package `dep` is missing interface artifact",
+        &error_line,
     )
-    .expect("missing dependency interface should surface a clear error");
+    .expect("missing dependency interface should preserve the ql check command label");
+    expect_stderr_not_contains(
+        "project-check-missing-interface",
+        "package-aware ql check with missing dependency interface",
+        &stderr,
+        &old_error_line,
+    )
+    .expect("missing dependency interface should not fall back to the unlabeled artifact error");
     expect_stderr_contains(
         "project-check-missing-interface",
         "package-aware ql check with missing dependency interface",
@@ -492,6 +515,14 @@ pub fn main() -> Int {
     )
     .expect("invalid dependency interface should point to the referenced package manifest");
     let error_line = format!(
+        "error: `ql check` referenced package `dep` has invalid interface artifact `{}`",
+        dep_root
+            .join("dep.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let old_error_line = format!(
         "error: referenced package `dep` has invalid interface artifact `{}`",
         dep_root
             .join("dep.qi")
@@ -499,6 +530,13 @@ pub fn main() -> Int {
             .to_string()
             .replace('\\', "/")
     );
+    expect_stderr_not_contains(
+        "project-check-invalid-interface",
+        "package-aware ql check with invalid dependency interface",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("invalid dependency interface should not fall back to the unlabeled artifact error");
     let detail_line = "detail: expected `// qlang interface v1` header";
     let failing_manifest_note = format!(
         "note: failing referenced package manifest: {}",
@@ -1619,6 +1657,14 @@ pub fn exported() -> Int {
     .expect("stale dependency interface diagnostic should suggest sync");
     let normalized_stderr = stderr.replace('\\', "/");
     let error_line = format!(
+        "error: `ql check` referenced package `dep` has stale interface artifact `{}`",
+        dep_root
+            .join("dep.qi")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    );
+    let old_error_line = format!(
         "error: referenced package `dep` has stale interface artifact `{}`",
         dep_root
             .join("dep.qi")
@@ -1667,6 +1713,13 @@ pub fn exported() -> Int {
     let error_index = normalized_stderr
         .find(&error_line)
         .expect("stale dependency interface should report the error line");
+    expect_stderr_not_contains(
+        "project-check-stale-interface",
+        "package-aware ql check with stale dependency interface",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("stale dependency interface should not fall back to the unlabeled artifact error");
     let reason_index = normalized_stderr
         .find(&reason_line)
         .expect("stale dependency interface should report the stale reason");
@@ -4772,9 +4825,16 @@ pub fn main( -> Int {
         "project-check-workspace-failures",
         "workspace-root ql check with multiple failing members",
         &stderr,
-        "referenced package `missing_dep` is missing interface artifact",
+        "error: `ql check` referenced package `missing_dep` is missing interface artifact",
     )
-    .expect("workspace-root ql check should surface missing dependency interfaces");
+    .expect("workspace-root ql check should preserve the ql check command label for missing dependency interfaces");
+    expect_stderr_not_contains(
+        "project-check-workspace-failures",
+        "workspace-root ql check with multiple failing members",
+        &stderr,
+        "error: referenced package `missing_dep` is missing interface artifact",
+    )
+    .expect("workspace-root ql check should not fall back to the unlabeled artifact error");
     let normalized_stderr = stderr.replace('\\', "/");
     expect_stderr_contains(
         "project-check-workspace-failures",

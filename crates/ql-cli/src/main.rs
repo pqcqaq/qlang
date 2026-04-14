@@ -2924,21 +2924,22 @@ fn report_reference_interface_artifact_issue(
     interface_path: &Path,
     status: InterfaceArtifactStatus,
 ) {
+    let check_command_label = format_check_command_label(false);
     let error_line = match status {
         InterfaceArtifactStatus::Missing => format!(
-            "error: referenced package `{dependency_package}` is missing interface artifact `{}`",
+            "error: {check_command_label} referenced package `{dependency_package}` is missing interface artifact `{}`",
             normalize_path(interface_path)
         ),
         InterfaceArtifactStatus::Unreadable => format!(
-            "error: referenced package `{dependency_package}` has unreadable interface artifact `{}`",
+            "error: {check_command_label} referenced package `{dependency_package}` has unreadable interface artifact `{}`",
             normalize_path(interface_path)
         ),
         InterfaceArtifactStatus::Invalid => format!(
-            "error: referenced package `{dependency_package}` has invalid interface artifact `{}`",
+            "error: {check_command_label} referenced package `{dependency_package}` has invalid interface artifact `{}`",
             normalize_path(interface_path)
         ),
         InterfaceArtifactStatus::Stale => format!(
-            "error: referenced package `{dependency_package}` has stale interface artifact `{}`",
+            "error: {check_command_label} referenced package `{dependency_package}` has stale interface artifact `{}`",
             normalize_path(interface_path)
         ),
         InterfaceArtifactStatus::Valid => return,
