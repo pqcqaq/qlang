@@ -1905,19 +1905,36 @@ fn project_emit_interface_path(
             let member_manifest = match load_project_manifest(&manifest_dir.join(member)) {
                 Ok(manifest) => manifest,
                 Err(error) => {
-                    eprintln!("error: {error}");
-                    let rerun_command = format_workspace_member_emit_rerun_command(
-                        &normalize_path(&member_manifest_path),
-                        changed_only,
-                        check_only,
-                    );
-                    let rerun_hint = format!(
-                        "hint: rerun `{rerun_command}` after fixing the workspace member manifest"
-                    );
-                    report_workspace_member_failure(
-                        &member_manifest_path,
-                        Some(rerun_hint.as_str()),
-                    );
+                    if let Some(manifest_path) =
+                        package_missing_name_manifest_path_from_project_error(&error)
+                    {
+                        eprintln!(
+                            "error: {} manifest `{}` does not declare `[package].name`",
+                            emit_command_label,
+                            normalize_path(manifest_path)
+                        );
+                        report_package_interface_manifest_failure(
+                            manifest_path,
+                            Some(manifest_path),
+                            None,
+                            changed_only,
+                            None,
+                        );
+                    } else {
+                        eprintln!("error: {error}");
+                        let rerun_command = format_workspace_member_emit_rerun_command(
+                            &normalize_path(&member_manifest_path),
+                            changed_only,
+                            check_only,
+                        );
+                        let rerun_hint = format!(
+                            "hint: rerun `{rerun_command}` after fixing the workspace member manifest"
+                        );
+                        report_workspace_member_failure(
+                            &member_manifest_path,
+                            Some(rerun_hint.as_str()),
+                        );
+                    }
                     emission_failure_count += 1;
                     record_reference_failure_manifest(
                         &mut first_failing_member_manifest,

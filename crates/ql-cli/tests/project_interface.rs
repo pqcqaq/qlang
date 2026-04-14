@@ -2171,6 +2171,167 @@ name = "broken"
 }
 
 #[test]
+fn project_emit_interface_points_to_workspace_member_missing_package_manifest() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-missing-package-manifest");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let broken_root = project_root.join("packages").join("broken");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for workspace missing-package-manifest test");
+    std::fs::create_dir_all(&broken_root)
+        .expect("create broken package directory for workspace missing-package-manifest test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[package]
+version = "0.1.0"
+"#,
+    );
+    let app_interface = app_root.join("app.qi");
+    let broken_interface = broken_root.join("broken.qi");
+    let broken_manifest = broken_root.join("qlang.toml");
+    let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
+    let normalized_broken_manifest = broken_manifest.display().to_string().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` workspace member missing package manifest",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-workspace-missing-package-manifest",
+        "workspace interface emission with member missing package manifest",
+        &output,
+        1,
+    )
+    .expect("workspace interface emission with member missing package manifest should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-workspace-missing-package-manifest",
+        &normalized_stdout,
+        &[&format!("wrote interface: {normalized_app_interface}")],
+    )
+    .expect("workspace interface emission should still write healthy members before failing");
+    let error_line = format!(
+        "error: `ql project emit-interface` manifest `{normalized_broken_manifest}` does not declare `[package].name`"
+    );
+    let package_note = format!("note: failing package manifest: {normalized_broken_manifest}");
+    let member_note =
+        format!("note: failing workspace member manifest: {normalized_broken_manifest}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {normalized_broken_manifest}` after fixing the package manifest"
+    );
+    expect_stderr_contains(
+        "project-interface-workspace-missing-package-manifest",
+        "workspace interface emission with member missing package manifest",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("workspace interface emission should preserve the emit command label for missing package metadata");
+    expect_stderr_contains(
+        "project-interface-workspace-missing-package-manifest",
+        "workspace interface emission with member missing package manifest",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("workspace interface emission should point missing package metadata at the package manifest");
+    expect_stderr_contains(
+        "project-interface-workspace-missing-package-manifest",
+        "workspace interface emission with member missing package manifest",
+        &normalized_stderr,
+        &member_note,
+    )
+    .expect("workspace interface emission should keep the workspace member boundary visible");
+    expect_stderr_contains(
+        "project-interface-workspace-missing-package-manifest",
+        "workspace interface emission with member missing package manifest",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("workspace interface emission should suggest fixing the package manifest directly");
+    expect_stderr_not_contains(
+        "project-interface-workspace-missing-package-manifest",
+        "workspace interface emission with member missing package manifest",
+        &normalized_stderr,
+        "after fixing the workspace member manifest",
+    )
+    .expect("workspace interface emission should not fall back to the workspace-member-manifest hint");
+    let error_line_index = normalized_stderr
+        .find(&error_line)
+        .expect("workspace interface emission should include the error line");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("workspace interface emission should include the package manifest note");
+    let member_note_index = normalized_stderr
+        .find(&member_note)
+        .expect("workspace interface emission should include the workspace member note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("workspace interface emission should include the rerun hint");
+    assert!(
+        error_line_index < package_note_index
+            && package_note_index < member_note_index
+            && member_note_index < rerun_hint_index,
+        "expected workspace interface emission missing-package-manifest context before rerun hint, got:\n{stderr}"
+    );
+    expect_stderr_contains(
+        "project-interface-workspace-missing-package-manifest",
+        "workspace interface emission with member missing package manifest",
+        &stderr,
+        "interface emission found 1 failing member(s)",
+    )
+    .expect("workspace interface emission should still summarize failing members");
+    expect_stderr_not_contains(
+        "project-interface-workspace-missing-package-manifest",
+        "workspace interface emission with member missing package manifest",
+        &normalized_stderr,
+        "note: first failing member manifest:",
+    )
+    .expect("single failing workspace members should not repeat the manifest in the final summary");
+    expect_file_exists(
+        "project-interface-workspace-missing-package-manifest",
+        &app_interface,
+        "workspace app qi",
+        "workspace interface emission with member missing package manifest",
+    )
+    .expect("workspace interface emission should still create the healthy member interface");
+    assert!(
+        !broken_interface.is_file(),
+        "expected failing workspace member not to create `{}`",
+        broken_interface.display()
+    );
+}
+
+#[test]
 fn project_emit_interface_points_workspace_member_source_failures_at_manifest() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-workspace-source-failure");
