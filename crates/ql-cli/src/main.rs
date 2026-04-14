@@ -753,6 +753,20 @@ fn package_check_manifest_path_from_project_error(
     }
 }
 
+fn package_missing_name_manifest_path_from_project_error(
+    error: &ql_project::ProjectError,
+) -> Option<&Path> {
+    match error {
+        ql_project::ProjectError::PackageNotDefined { path } => Some(path.as_path()),
+        ql_project::ProjectError::Parse { path, message }
+            if message == "`[package].name` must be present" =>
+        {
+            Some(path.as_path())
+        }
+        _ => None,
+    }
+}
+
 fn report_package_check_manifest_failure(manifest_path: &Path, sync_interfaces: bool) {
     let manifest_path = normalize_path(manifest_path);
     let rerun_command = format_check_command(sync_interfaces, Some(&manifest_path));
@@ -1468,6 +1482,63 @@ fn report_package_interface_failure(
     );
 }
 
+fn report_package_interface_manifest_failure(
+    manifest_path: &Path,
+    workspace_member_manifest_path: Option<&Path>,
+    requested_output_path: Option<&Path>,
+    changed_only: bool,
+    additional_context_note: Option<&str>,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    eprintln!("note: failing package manifest: {manifest_path}");
+    if let Some(workspace_member_manifest_path) = workspace_member_manifest_path {
+        eprintln!(
+            "note: failing workspace member manifest: {}",
+            normalize_path(workspace_member_manifest_path)
+        );
+    }
+    if let Some(additional_context_note) = additional_context_note {
+        eprintln!("{additional_context_note}");
+    }
+    let rerun_command =
+        format_emit_interface_rerun_command(&manifest_path, requested_output_path, changed_only);
+    eprintln!(
+        "hint: rerun `{}` after fixing the package manifest",
+        rerun_command
+    );
+}
+
+fn report_package_interface_source_root_failure(
+    manifest_path: &Path,
+    workspace_member_manifest_path: Option<&Path>,
+    source_root: &Path,
+    requested_output_path: Option<&Path>,
+    changed_only: bool,
+    additional_context_note: Option<&str>,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    eprintln!("note: failing package manifest: {manifest_path}");
+    if let Some(workspace_member_manifest_path) = workspace_member_manifest_path {
+        eprintln!(
+            "note: failing workspace member manifest: {}",
+            normalize_path(workspace_member_manifest_path)
+        );
+    }
+    eprintln!(
+        "note: failing package source root: {}",
+        normalize_path(source_root)
+    );
+    if let Some(additional_context_note) = additional_context_note {
+        eprintln!("{additional_context_note}");
+    }
+    let rerun_command =
+        format_emit_interface_rerun_command(&manifest_path, requested_output_path, changed_only);
+    eprintln!(
+        "hint: rerun `{}` after fixing the package source root",
+        rerun_command
+    );
+}
+
 fn report_package_interface_no_sources_failure(
     manifest_path: &Path,
     workspace_member_manifest_path: Option<&Path>,
@@ -1599,11 +1670,6 @@ fn project_emit_interface_path(
     changed_only: bool,
     check_only: bool,
 ) -> Result<(), u8> {
-    let manifest = load_project_manifest(path).map_err(|error| {
-        eprintln!("error: {error}");
-        1
-    })?;
-
     if check_only && output.is_some() {
         eprintln!("error: `ql project emit-interface --check` does not support `--output`");
         return Err(1);
@@ -1612,6 +1678,28 @@ fn project_emit_interface_path(
     let emit_command_label =
         format_project_emit_interface_command_label(output, changed_only, false);
     let check_command_label = format_project_emit_interface_command_label(None, changed_only, true);
+    let manifest = load_project_manifest(path).map_err(|error| {
+        if !check_only {
+            if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error)
+            {
+                eprintln!(
+                    "error: {} manifest `{}` does not declare `[package].name`",
+                    emit_command_label,
+                    normalize_path(manifest_path)
+                );
+                report_package_interface_manifest_failure(
+                    manifest_path,
+                    None,
+                    output,
+                    changed_only,
+                    None,
+                );
+                return 1;
+            }
+        }
+        eprintln!("error: {error}");
+        1
+    })?;
 
     if manifest.package.is_some() {
         if check_only {
@@ -1646,6 +1734,16 @@ fn project_emit_interface_path(
                 );
                 return Err(code);
             }
+            Err(EmitPackageInterfaceError::ManifestFailure { .. }) => {
+                report_package_interface_manifest_failure(
+                    &manifest.manifest_path,
+                    None,
+                    output,
+                    changed_only,
+                    None,
+                );
+                return Err(1);
+            }
             Err(EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. }) => {
                 report_package_interface_no_sources_failure(
                     &manifest.manifest_path,
@@ -1657,11 +1755,11 @@ fn project_emit_interface_path(
                 );
                 return Err(1);
             }
-            Err(EmitPackageInterfaceError::ManifestFailure { .. })
-            | Err(EmitPackageInterfaceError::SourceRootFailure { .. }) => {
-                report_package_interface_failure(
+            Err(EmitPackageInterfaceError::SourceRootFailure { source_root, .. }) => {
+                report_package_interface_source_root_failure(
                     &manifest.manifest_path,
                     None,
+                    &source_root,
                     output,
                     changed_only,
                     None,

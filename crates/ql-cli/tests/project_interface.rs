@@ -639,6 +639,176 @@ pub fn broken(value: MissingType) -> Int {
 }
 
 #[test]
+fn project_emit_interface_points_to_invalid_package_manifest() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-invalid-package-manifest");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&project_root)
+        .expect("create project root for invalid package manifest emit-interface test");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+"#,
+    );
+    let manifest_path = project_root.join("qlang.toml");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` invalid package manifest",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-invalid-package-manifest",
+        "package interface emission with invalid package manifest",
+        &output,
+        1,
+    )
+    .expect("package interface emission should fail when the manifest does not declare `[package].name`");
+    expect_empty_stdout(
+        "project-interface-invalid-package-manifest",
+        "package interface emission with invalid package manifest",
+        &stdout,
+    )
+    .expect("invalid package manifest should not report a written interface");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-invalid-package-manifest",
+        "package interface emission with invalid package manifest",
+        &normalized_stderr,
+        &format!(
+            "error: `ql project emit-interface` manifest `{}` does not declare `[package].name`",
+            manifest_display
+        ),
+    )
+    .expect("invalid package manifest should preserve the emit-interface command label");
+    expect_stderr_contains(
+        "project-interface-invalid-package-manifest",
+        "package interface emission with invalid package manifest",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("invalid package manifest should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-interface-invalid-package-manifest",
+        "package interface emission with invalid package manifest",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after fixing the package manifest",
+            manifest_display
+        ),
+    )
+    .expect("invalid package manifest should suggest fixing the package manifest directly");
+    expect_stderr_not_contains(
+        "project-interface-invalid-package-manifest",
+        "package interface emission with invalid package manifest",
+        &normalized_stderr,
+        "after fixing the package interface error",
+    )
+    .expect("invalid package manifest should not fall back to the generic interface-error hint");
+    assert!(
+        !interface_path.exists(),
+        "invalid package manifest should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
+fn project_emit_interface_points_to_missing_package_source_root() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-missing-package-source-root");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&project_root)
+        .expect("create project root for missing package source root emit-interface test");
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let manifest_path = project_root.join("qlang.toml");
+    let source_root = project_root.join("src");
+    let interface_path = project_root.join("app.qi");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let source_root_display = source_root.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` missing package source root",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-missing-package-source-root",
+        "package interface emission with missing package source root",
+        &output,
+        1,
+    )
+    .expect("package interface emission should fail when the package source root is missing");
+    expect_empty_stdout(
+        "project-interface-missing-package-source-root",
+        "package interface emission with missing package source root",
+        &stdout,
+    )
+    .expect("missing package source root should not report a written interface");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-missing-package-source-root",
+        "package interface emission with missing package source root",
+        &normalized_stderr,
+        &format!(
+            "error: `ql project emit-interface` package source directory `{}` does not exist",
+            source_root_display
+        ),
+    )
+    .expect("missing package source root should preserve the emit-interface command label");
+    expect_stderr_contains(
+        "project-interface-missing-package-source-root",
+        "package interface emission with missing package source root",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("missing package source root should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-interface-missing-package-source-root",
+        "package interface emission with missing package source root",
+        &normalized_stderr,
+        &format!("note: failing package source root: {source_root_display}"),
+    )
+    .expect("missing package source root should point to the missing source root");
+    expect_stderr_contains(
+        "project-interface-missing-package-source-root",
+        "package interface emission with missing package source root",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after fixing the package source root",
+            manifest_display
+        ),
+    )
+    .expect("missing package source root should suggest fixing the package source root directly");
+    expect_stderr_not_contains(
+        "project-interface-missing-package-source-root",
+        "package interface emission with missing package source root",
+        &normalized_stderr,
+        "after fixing the package interface error",
+    )
+    .expect("missing package source root should not fall back to the generic interface-error hint");
+    assert!(
+        !interface_path.exists(),
+        "missing package source root should not create `{}`",
+        interface_path.display()
+    );
+}
+
+#[test]
 fn project_emit_interface_points_to_empty_package_source_root() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-empty-package-source-root");
