@@ -365,12 +365,9 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
             let synced_paths = match sync_reference_interfaces(path, &mut BTreeSet::new()) {
                 Ok(paths) => paths,
                 Err(_) => {
-                    report_package_check_reference_failure(
-                        package_manifest_path.as_deref().expect(
-                            "direct package reference sync failures require a loaded manifest",
-                        ),
-                        sync_interfaces,
-                    );
+                    if let Some(manifest_path) = package_manifest_path.as_deref() {
+                        report_package_check_reference_failure(manifest_path, sync_interfaces);
+                    }
                     return Err(1);
                 }
             };
@@ -422,7 +419,17 @@ fn check_path(path: &Path, sync_interfaces: bool) -> Result<(), u8> {
                 }
             }
             Err(PackageAnalysisError::Project(error)) => {
-                if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
+                if let Some(manifest_path) =
+                    package_missing_name_manifest_path_from_project_error(&error)
+                {
+                    eprintln!(
+                        "error: {} manifest `{}` does not declare `[package].name`",
+                        check_command_label,
+                        normalize_path(manifest_path)
+                    );
+                    report_package_check_manifest_failure(manifest_path, sync_interfaces);
+                } else if let Some(manifest_path) =
+                    package_check_manifest_path_from_project_error(&error)
                 {
                     eprintln!("error: {check_command_label} {error}");
                     report_package_check_manifest_failure(manifest_path, sync_interfaces);
@@ -2497,7 +2504,16 @@ fn sync_reference_interfaces(
     visited: &mut BTreeSet<PathBuf>,
 ) -> Result<Vec<PathBuf>, u8> {
     let manifest = load_project_manifest(path).map_err(|error| {
-        if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
+        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error)
+        {
+            eprintln!(
+                "error: {} manifest `{}` does not declare `[package].name`",
+                format_check_command_label(true),
+                normalize_path(manifest_path)
+            );
+            report_package_check_manifest_failure(manifest_path, true);
+        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
+        {
             eprintln!("error: {} {error}", format_check_command_label(true));
             report_package_check_manifest_failure(manifest_path, true);
         } else {
