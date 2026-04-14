@@ -350,13 +350,22 @@ pub fn main() -> Int {
         1,
     )
     .expect("invalid referenced manifest should fail package-aware ql check");
+    let error_line = "error: `ql check` failed to load referenced package `../workspace_ref`";
+    let old_error_line = "error: failed to load referenced package `../workspace_ref`";
     expect_stderr_contains(
         "project-check-invalid-reference-manifest",
         "package-aware ql check with invalid referenced manifest",
         &stderr,
-        "failed to load referenced package `../workspace_ref`",
+        error_line,
     )
-    .expect("invalid referenced manifest should surface a contextual reference error");
+    .expect("invalid referenced manifest should preserve the ql check command label");
+    expect_stderr_not_contains(
+        "project-check-invalid-reference-manifest",
+        "package-aware ql check with invalid referenced manifest",
+        &stderr,
+        old_error_line,
+    )
+    .expect("invalid referenced manifest should not fall back to the unlabeled reference error");
     expect_stderr_contains(
         "project-check-invalid-reference-manifest",
         "package-aware ql check with invalid referenced manifest",
@@ -798,13 +807,23 @@ pub fn main() -> Int {
         1,
     )
     .expect("sync path should fail on invalid referenced manifest");
+    let error_line =
+        "error: `ql check --sync-interfaces` failed to load referenced package `../broken_ref`";
+    let old_error_line = "error: failed to load referenced package `../broken_ref`";
     expect_stderr_contains(
         "project-check-sync-invalid-reference-manifest",
         "package-aware ql check sync with invalid referenced manifest",
         &stderr,
-        "failed to load referenced package `../broken_ref`",
+        error_line,
     )
-    .expect("sync path should surface a contextual reference error");
+    .expect("sync path should preserve the ql check sync command label");
+    expect_stderr_not_contains(
+        "project-check-sync-invalid-reference-manifest",
+        "package-aware ql check sync with invalid referenced manifest",
+        &stderr,
+        old_error_line,
+    )
+    .expect("sync path should not fall back to the unlabeled reference error");
     expect_stderr_contains(
         "project-check-sync-invalid-reference-manifest",
         "package-aware ql check sync with invalid referenced manifest",
@@ -4329,13 +4348,23 @@ pub fn main() -> Int {
     let rerun_hint = format!(
         "hint: rerun `ql check {broken_manifest}` after fixing the referenced package or reference manifest"
     );
+    let error_line =
+        "error: `ql check` failed to load referenced package `../../broken_ref`";
+    let old_error_line = "error: failed to load referenced package `../../broken_ref`";
     expect_stderr_contains(
         "project-check-workspace-reference-failure",
         "workspace-root ql check with reference failure",
         &normalized_stderr,
-        "failed to load referenced package `../../broken_ref`",
+        error_line,
     )
-    .expect("workspace-root ql check should surface the broken reference");
+    .expect("workspace-root ql check should preserve the ql check command label");
+    expect_stderr_not_contains(
+        "project-check-workspace-reference-failure",
+        "workspace-root ql check with reference failure",
+        &normalized_stderr,
+        old_error_line,
+    )
+    .expect("workspace-root ql check should not fall back to the unlabeled reference error");
     expect_stderr_contains(
         "project-check-workspace-reference-failure",
         "workspace-root ql check with reference failure",
@@ -4522,13 +4551,23 @@ pub fn main() -> Int {
     let rerun_hint = format!(
         "hint: rerun `ql check --sync-interfaces {broken_manifest}` after fixing the referenced package or reference manifest"
     );
+    let error_line =
+        "error: `ql check --sync-interfaces` failed to load referenced package `../../broken_ref`";
+    let old_error_line = "error: failed to load referenced package `../../broken_ref`";
     expect_stderr_contains(
         "project-check-workspace-sync-reference-failure",
         "workspace-root ql check sync with reference failure",
         &normalized_stderr,
-        "failed to load referenced package `../../broken_ref`",
+        error_line,
     )
-    .expect("workspace-root ql check sync should surface the broken reference");
+    .expect("workspace-root ql check sync should preserve the ql check sync command label");
+    expect_stderr_not_contains(
+        "project-check-workspace-sync-reference-failure",
+        "workspace-root ql check sync with reference failure",
+        &normalized_stderr,
+        old_error_line,
+    )
+    .expect("workspace-root ql check sync should not fall back to the unlabeled reference error");
     expect_stderr_contains(
         "project-check-workspace-sync-reference-failure",
         "workspace-root ql check sync with reference failure",

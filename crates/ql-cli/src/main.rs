@@ -2563,7 +2563,7 @@ fn sync_reference_interfaces_recursive(
 
     for reference in &manifest.references.packages {
         let (dependency_manifest, reference_manifest_path) =
-            match load_reference_manifest_for_interfaces(manifest, reference) {
+            match load_reference_manifest_for_interfaces(manifest, reference, true) {
                 Ok(result) => result,
                 Err(_) => {
                     result.failure_count += 1;
@@ -2579,6 +2579,7 @@ fn sync_reference_interfaces_recursive(
             reference,
             &reference_manifest_path,
             &dependency_manifest,
+            true,
         );
         let interface_path = match interface_path {
             Ok(path) => path,
@@ -2708,7 +2709,7 @@ fn ensure_reference_interfaces_current_recursive(
     let mut result = ReferenceInterfaceCheckResult::default();
     for reference in &manifest.references.packages {
         let (dependency_manifest, reference_manifest_path) =
-            match load_reference_manifest_for_interfaces(manifest, reference) {
+            match load_reference_manifest_for_interfaces(manifest, reference, false) {
                 Ok(result) => result,
                 Err(_) => {
                     result.failure_count += 1;
@@ -2724,6 +2725,7 @@ fn ensure_reference_interfaces_current_recursive(
             reference,
             &reference_manifest_path,
             &dependency_manifest,
+            false,
         );
         let dependency_package = match dependency_package {
             Ok(name) => name,
@@ -2741,6 +2743,7 @@ fn ensure_reference_interfaces_current_recursive(
             reference,
             &reference_manifest_path,
             &dependency_manifest,
+            false,
         );
         let interface_path = match interface_path {
             Ok(path) => path,
@@ -2795,6 +2798,7 @@ fn record_first_failing_path(slot: &mut Option<PathBuf>, path: &Path) {
 fn load_reference_manifest_for_interfaces(
     owner_manifest: &ql_project::ProjectManifest,
     reference: &str,
+    sync_interfaces: bool,
 ) -> Result<(ql_project::ProjectManifest, PathBuf), u8> {
     let reference_manifest_path = reference_manifest_path(owner_manifest, reference);
     let manifest_dir = owner_manifest
@@ -2804,6 +2808,7 @@ fn load_reference_manifest_for_interfaces(
     let dependency_manifest =
         load_project_manifest(&manifest_dir.join(reference)).map_err(|error| {
             report_reference_manifest_issue(
+                sync_interfaces,
                 reference,
                 &owner_manifest.manifest_path,
                 &reference_manifest_path,
@@ -2838,11 +2843,13 @@ fn reference_package_name_for_interfaces(
     reference: &str,
     reference_manifest_path: &Path,
     dependency_manifest: &ql_project::ProjectManifest,
+    sync_interfaces: bool,
 ) -> Result<String, u8> {
     package_name(dependency_manifest)
         .map(str::to_owned)
         .map_err(|error| {
             report_reference_manifest_issue(
+                sync_interfaces,
                 reference,
                 &owner_manifest.manifest_path,
                 reference_manifest_path,
@@ -2857,9 +2864,11 @@ fn reference_interface_path_for_interfaces(
     reference: &str,
     reference_manifest_path: &Path,
     dependency_manifest: &ql_project::ProjectManifest,
+    sync_interfaces: bool,
 ) -> Result<PathBuf, u8> {
     default_interface_path(dependency_manifest).map_err(|error| {
         report_reference_manifest_issue(
+            sync_interfaces,
             reference,
             &owner_manifest.manifest_path,
             reference_manifest_path,
@@ -2870,12 +2879,14 @@ fn reference_interface_path_for_interfaces(
 }
 
 fn report_reference_manifest_issue(
+    sync_interfaces: bool,
     reference: &str,
     owner_manifest_path: &Path,
     reference_manifest_path: &Path,
     error: &ql_project::ProjectError,
 ) {
-    eprintln!("error: failed to load referenced package `{reference}`");
+    let check_command_label = format_check_command_label(sync_interfaces);
+    eprintln!("error: {check_command_label} failed to load referenced package `{reference}`");
     eprintln!("detail: {error}");
     eprintln!(
         "note: failing reference manifest: {}",
