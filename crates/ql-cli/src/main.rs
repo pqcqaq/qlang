@@ -506,16 +506,33 @@ fn check_workspace_manifest(
         let member_manifest = match load_project_manifest(&member_path) {
             Ok(manifest) => manifest,
             Err(error) => {
-                eprintln!("error: {check_command_label} {error}");
                 let member_manifest_path = workspace_member_manifest_path(&member_path);
-                let rerun_command = format_workspace_member_check_rerun_command(
-                    &normalize_path(&member_manifest_path),
-                    sync_interfaces,
-                );
-                let rerun_hint = format!(
-                    "hint: rerun `{rerun_command}` after fixing the workspace member manifest"
-                );
-                report_workspace_member_failure(&member_manifest_path, Some(rerun_hint.as_str()));
+                if let Some(manifest_path) =
+                    package_missing_name_manifest_path_from_project_error(&error)
+                {
+                    eprintln!(
+                        "error: {} manifest `{}` does not declare `[package].name`",
+                        check_command_label,
+                        normalize_path(manifest_path)
+                    );
+                    report_workspace_member_package_check_manifest_failure(
+                        manifest_path,
+                        sync_interfaces,
+                    );
+                } else {
+                    eprintln!("error: {check_command_label} {error}");
+                    let rerun_command = format_workspace_member_check_rerun_command(
+                        &normalize_path(&member_manifest_path),
+                        sync_interfaces,
+                    );
+                    let rerun_hint = format!(
+                        "hint: rerun `{rerun_command}` after fixing the workspace member manifest"
+                    );
+                    report_workspace_member_failure(
+                        &member_manifest_path,
+                        Some(rerun_hint.as_str()),
+                    );
+                }
                 failing_members += 1;
                 record_reference_failure_manifest(
                     &mut first_failing_member_manifest,
@@ -527,15 +544,9 @@ fn check_workspace_manifest(
 
         if let Err(error) = package_name(&member_manifest) {
             eprintln!("error: {check_command_label} {error}");
-            let rerun_command = format_workspace_member_check_rerun_command(
-                &normalize_path(&member_manifest.manifest_path),
-                sync_interfaces,
-            );
-            let rerun_hint =
-                format!("hint: rerun `{rerun_command}` after fixing the workspace member manifest");
-            report_workspace_member_failure(
+            report_workspace_member_package_check_manifest_failure(
                 &member_manifest.manifest_path,
-                Some(rerun_hint.as_str()),
+                sync_interfaces,
             );
             failing_members += 1;
             record_reference_failure_manifest(
@@ -739,6 +750,18 @@ fn report_workspace_member_package_check_no_sources_failure(
         normalize_path(source_root)
     );
     eprintln!("hint: rerun `{rerun_command}` after adding package source files");
+}
+
+fn report_workspace_member_package_check_manifest_failure(
+    manifest_path: &Path,
+    sync_interfaces: bool,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_command =
+        format_workspace_member_check_rerun_command(&manifest_path, sync_interfaces);
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!("note: failing workspace member manifest: {manifest_path}");
+    eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
 }
 
 fn report_workspace_member_package_interface_check_manifest_failure(

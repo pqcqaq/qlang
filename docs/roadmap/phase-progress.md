@@ -1,6 +1,6 @@
 # P1-P8 阶段总览
 
-> 最后同步：2026-04-13
+> 最后同步：2026-04-15
 
 这页只保留阶段级结论。详细增量记录已移出主阅读路径。
 
@@ -48,7 +48,8 @@
 - direct package `ql check` / `ql check --sync-interfaces` 在 package 因 reference failure 失败时，现在也会在局部 reference diagnostics 之后补 `failing package manifest` 与针对该 manifest 的直接 rerun hint。
 - workspace 根 `ql check` / `ql check --sync-interfaces` 在 member package 的 `src/` 目录缺失时，现在也会保留真实命令标签，并立即补 `failing package manifest`、`failing workspace member manifest`、`failing package source root` 与针对该 member manifest 的直接 rerun hint。
 - workspace 根 `ql check` / `ql check --sync-interfaces` 在 member package 的 `src/` 目录存在但没有任何 `.ql` 源文件时，现在也会保留真实命令标签，并立即补 `failing package manifest`、`failing workspace member manifest`、`failing package source root` 与针对该 member manifest 的直接 rerun hint。
-- workspace 根 `ql check` / `ql check --sync-interfaces` 在 member manifest 自身加载或解析失败时，现在也会保留真实命令标签，并立即补 `failing workspace member manifest` 与针对该 member manifest 的直接 rerun hint。
+- workspace 根 `ql check` / `ql check --sync-interfaces` 在 member manifest 缺 `[package].name` 时，现在无论 manifest 已加载还是在加载阶段就失败，局部错误块都会统一补 `failing package manifest`、`failing workspace member manifest` 和“先修 package manifest 再重跑”，并保留真实命令标签。
+- workspace 根 `ql check` / `ql check --sync-interfaces` 在其他 member manifest 加载或解析失败时，现在也会保留真实命令标签，并立即补 `failing workspace member manifest` 与针对该 member manifest 的直接 rerun hint。
 - workspace 根 `ql check` / `ql check --sync-interfaces` 在 member package 源码本身报 diagnostics 时，现在也会补 `failing workspace member manifest` 与针对该 member manifest 的直接 rerun hint。
 - workspace 根 `ql check` / `ql check --sync-interfaces` 在 member package 因 reference failure 失败时，现在也会在局部 reference diagnostics 之后补 `failing workspace member manifest` 与针对该 member manifest 的直接 rerun hint。
 - dependency-backed cross-file tooling 已有首批可用合同：import path completion、dependency symbol hover/definition/declaration/references、enum variant completion/typeDefinition、显式 struct field-label completion、direct dependency struct literal value-root query/`typeDefinition`、同构 inline tuple / array destructured dependency locals 的 value-root query 与 named-local member `typeDefinition`、direct dependency iterable call tuple / array destructured locals 的 value-root query 与 member field / method query，以及语法局部可恢复 receiver、direct indexed iterable receiver（含 `config.maybe_children()?[0].value` / `get()`、`kids()?[0].value` / `get()`、对应的 value-root query/`typeDefinition`、`config.maybe_children()?[0].leaf` / `kids()?[0].leaf` 这类 member `typeDefinition`，以及 direct `if` / `match` structured question-indexed receiver与对应的 member `typeDefinition`）和 indexed bracket target 的最小 value-root/member/query/typeDefinition；这条 bracket-target value-root 现在也覆盖 direct structured question-indexed `(if ...)[0]` / `(match ...)[0]`。

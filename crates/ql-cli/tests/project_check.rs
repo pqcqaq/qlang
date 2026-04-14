@@ -2557,9 +2557,10 @@ pub fn main() -> Int {
         format!("error: `ql check` manifest `{broken_manifest}` does not declare `[package].name`");
     let old_error_line =
         format!("error: manifest `{broken_manifest}` does not declare `[package].name`");
+    let package_note = format!("note: failing package manifest: {broken_manifest}");
     let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
     let rerun_hint = format!(
-        "hint: rerun `ql check {broken_manifest}` after fixing the workspace member manifest"
+        "hint: rerun `ql check {broken_manifest}` after fixing the package manifest"
     );
     expect_stderr_contains(
         "project-check-workspace-non-package-member",
@@ -2580,6 +2581,9 @@ pub fn main() -> Int {
     let error_line_index = normalized_stderr
         .find(&error_line)
         .expect("workspace-root ql check should include the non-package member error");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("workspace-root ql check should include the package manifest note");
     let member_note_index = normalized_stderr
         .find(&member_note)
         .expect("workspace-root ql check should include the local member note");
@@ -2587,7 +2591,9 @@ pub fn main() -> Int {
         .find(&rerun_hint)
         .expect("workspace-root ql check should include the rerun hint");
     assert!(
-        error_line_index < member_note_index && member_note_index < rerun_hint_index,
+        error_line_index < package_note_index
+            && package_note_index < member_note_index
+            && member_note_index < rerun_hint_index,
         "expected non-package member context before rerun hint, got:\n{stderr}"
     );
     expect_stderr_contains(
@@ -2717,9 +2723,10 @@ pub fn main() -> Int {
     );
     let old_error_line =
         format!("error: manifest `{broken_manifest}` does not declare `[package].name`");
+    let package_note = format!("note: failing package manifest: {broken_manifest}");
     let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
     let rerun_hint = format!(
-        "hint: rerun `ql check --sync-interfaces {broken_manifest}` after fixing the workspace member manifest"
+        "hint: rerun `ql check --sync-interfaces {broken_manifest}` after fixing the package manifest"
     );
     expect_stderr_contains(
         "project-check-workspace-sync-non-package-member",
@@ -2740,6 +2747,9 @@ pub fn main() -> Int {
     let error_line_index = normalized_stderr
         .find(&error_line)
         .expect("workspace-root ql check sync should include the non-package member error");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("workspace-root ql check sync should include the package manifest note");
     let member_note_index = normalized_stderr
         .find(&member_note)
         .expect("workspace-root ql check sync should include the local member note");
@@ -2747,7 +2757,9 @@ pub fn main() -> Int {
         .find(&rerun_hint)
         .expect("workspace-root ql check sync should include the rerun hint");
     assert!(
-        error_line_index < member_note_index && member_note_index < rerun_hint_index,
+        error_line_index < package_note_index
+            && package_note_index < member_note_index
+            && member_note_index < rerun_hint_index,
         "expected sync non-package member context before rerun hint, got:\n{stderr}"
     );
     expect_stderr_contains(
@@ -2764,6 +2776,338 @@ pub fn main() -> Int {
         "note: first failing member manifest:",
     )
     .expect("single sync non-package workspace members should not repeat the manifest in the final summary");
+}
+
+#[test]
+fn check_workspace_root_preserves_missing_member_package_name_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-workspace-missing-member-package-name");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+    let broken_root = temp
+        .path()
+        .join("workspace")
+        .join("packages")
+        .join("broken");
+    let tool_root = temp.path().join("workspace").join("packages").join("tool");
+    let app_source = app_root.join("src").join("lib.ql");
+    let tool_source = tool_root.join("src").join("lib.ql");
+    let workspace_manifest = temp.path().join("workspace");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(&broken_root).expect("create broken member directory");
+    std::fs::create_dir_all(tool_root.join("src")).expect("create tool source directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/broken/qlang.toml",
+        r#"
+[package]
+version = "0.1.0"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn main() -> Int {
+    return 2
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check"]).arg(&workspace_manifest);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check` workspace root with missing member package name",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-workspace-missing-member-package-name",
+        "workspace-root ql check with missing member package name",
+        &output,
+        1,
+    )
+    .expect("workspace-root ql check with missing member package name should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-check-workspace-missing-member-package-name",
+        &normalized_stdout,
+        &[
+            &format!(
+                "ok: {}",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "ok: {}",
+                tool_source.display().to_string().replace('\\', "/")
+            ),
+        ],
+    )
+    .expect("workspace-root ql check should continue checking later valid members");
+    let broken_manifest = broken_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let error_line =
+        format!("error: `ql check` manifest `{broken_manifest}` does not declare `[package].name`");
+    let old_error_line =
+        format!("error: manifest `{broken_manifest}` does not declare `[package].name`");
+    let package_note = format!("note: failing package manifest: {broken_manifest}");
+    let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
+    let rerun_hint =
+        format!("hint: rerun `ql check {broken_manifest}` after fixing the package manifest");
+    expect_stderr_contains(
+        "project-check-workspace-missing-member-package-name",
+        "workspace-root ql check with missing member package name",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect(
+        "workspace-root ql check should preserve the direct command label for missing member package names",
+    );
+    expect_stderr_not_contains(
+        "project-check-workspace-missing-member-package-name",
+        "workspace-root ql check with missing member package name",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect(
+        "workspace-root ql check should not fall back to the generic missing member package-name error line",
+    );
+    let error_line_index = normalized_stderr
+        .find(&error_line)
+        .expect("workspace-root ql check should include the missing member package-name error");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("workspace-root ql check should include the package manifest note");
+    let member_note_index = normalized_stderr
+        .find(&member_note)
+        .expect("workspace-root ql check should include the local member note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("workspace-root ql check should include the rerun hint");
+    assert!(
+        error_line_index < package_note_index
+            && package_note_index < member_note_index
+            && member_note_index < rerun_hint_index,
+        "expected missing member package-name context before rerun hint, got:\n{stderr}"
+    );
+    expect_stderr_contains(
+        "project-check-workspace-missing-member-package-name",
+        "workspace-root ql check with missing member package name",
+        &stderr,
+        "workspace check found 1 failing member(s)",
+    )
+    .expect("workspace-root ql check should summarize the single missing member package name");
+    expect_stderr_not_contains(
+        "project-check-workspace-missing-member-package-name",
+        "workspace-root ql check with missing member package name",
+        &normalized_stderr,
+        "note: first failing member manifest:",
+    )
+    .expect(
+        "single missing member package-name failures should not repeat the manifest in the final summary",
+    );
+}
+
+#[test]
+fn check_workspace_root_sync_preserves_missing_member_package_name_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-workspace-sync-missing-member-package-name");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+    let broken_root = temp
+        .path()
+        .join("workspace")
+        .join("packages")
+        .join("broken");
+    let tool_root = temp.path().join("workspace").join("packages").join("tool");
+    let app_source = app_root.join("src").join("lib.ql");
+    let tool_source = tool_root.join("src").join("lib.ql");
+    let workspace_manifest = temp.path().join("workspace");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(&broken_root).expect("create broken member directory");
+    std::fs::create_dir_all(tool_root.join("src")).expect("create tool source directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/broken/qlang.toml",
+        r#"
+[package]
+version = "0.1.0"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn main() -> Int {
+    return 2
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["check", "--sync-interfaces"])
+        .arg(&workspace_manifest);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --sync-interfaces` workspace root with missing member package name",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-workspace-sync-missing-member-package-name",
+        "workspace-root ql check sync with missing member package name",
+        &output,
+        1,
+    )
+    .expect("workspace-root ql check sync with missing member package name should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-check-workspace-sync-missing-member-package-name",
+        &normalized_stdout,
+        &[
+            &format!(
+                "ok: {}",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "ok: {}",
+                tool_source.display().to_string().replace('\\', "/")
+            ),
+        ],
+    )
+    .expect("workspace-root ql check sync should continue checking later valid members");
+    let broken_manifest = broken_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let error_line = format!(
+        "error: `ql check --sync-interfaces` manifest `{broken_manifest}` does not declare `[package].name`"
+    );
+    let old_error_line =
+        format!("error: manifest `{broken_manifest}` does not declare `[package].name`");
+    let package_note = format!("note: failing package manifest: {broken_manifest}");
+    let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
+    let rerun_hint = format!(
+        "hint: rerun `ql check --sync-interfaces {broken_manifest}` after fixing the package manifest"
+    );
+    expect_stderr_contains(
+        "project-check-workspace-sync-missing-member-package-name",
+        "workspace-root ql check sync with missing member package name",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect(
+        "workspace-root ql check sync should preserve the direct command label for missing member package names",
+    );
+    expect_stderr_not_contains(
+        "project-check-workspace-sync-missing-member-package-name",
+        "workspace-root ql check sync with missing member package name",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect(
+        "workspace-root ql check sync should not fall back to the generic missing member package-name error line",
+    );
+    let error_line_index = normalized_stderr
+        .find(&error_line)
+        .expect("workspace-root ql check sync should include the missing member package-name error");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("workspace-root ql check sync should include the package manifest note");
+    let member_note_index = normalized_stderr
+        .find(&member_note)
+        .expect("workspace-root ql check sync should include the local member note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("workspace-root ql check sync should include the rerun hint");
+    assert!(
+        error_line_index < package_note_index
+            && package_note_index < member_note_index
+            && member_note_index < rerun_hint_index,
+        "expected sync missing member package-name context before rerun hint, got:\n{stderr}"
+    );
+    expect_stderr_contains(
+        "project-check-workspace-sync-missing-member-package-name",
+        "workspace-root ql check sync with missing member package name",
+        &stderr,
+        "workspace check found 1 failing member(s)",
+    )
+    .expect("workspace-root ql check sync should summarize the single missing member package name");
+    expect_stderr_not_contains(
+        "project-check-workspace-sync-missing-member-package-name",
+        "workspace-root ql check sync with missing member package name",
+        &normalized_stderr,
+        "note: first failing member manifest:",
+    )
+    .expect(
+        "single sync missing member package-name failures should not repeat the manifest in the final summary",
+    );
 }
 
 #[test]
