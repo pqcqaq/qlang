@@ -307,18 +307,44 @@ fn append_workspace_member_error(
     output.push_str("    package: <unresolved>\n");
     output.push_str(&format!(
         "    member_error: {}\n",
-        project_graph_error_display(error)
+        project_graph_error_display_relative(root, error)
     ));
 }
 
-fn project_graph_error_display(error: &ProjectError) -> String {
+fn project_graph_error_display_relative(root: &Path, error: &ProjectError) -> String {
+    project_graph_error_display_with(error, |path| relative_display_path(root, path))
+}
+
+fn project_graph_error_display_with<F>(error: &ProjectError, mut render_path: F) -> String
+where
+    F: FnMut(&Path) -> String,
+{
     if let Some(path) = project_error_missing_package_name_manifest_path(error) {
         return format!(
             "manifest `{}` does not declare `[package].name`",
-            display_path(path)
+            render_path(path)
         );
     }
-    error.to_string()
+    match error {
+        ProjectError::ManifestNotFound { start } => format!(
+            "could not find `qlang.toml` starting from `{}`",
+            render_path(start)
+        ),
+        ProjectError::PackageNotDefined { path } => format!(
+            "manifest `{}` does not declare `[package].name`",
+            render_path(path)
+        ),
+        ProjectError::PackageSourceRootNotFound { path } => format!(
+            "package source directory `{}` does not exist",
+            render_path(path)
+        ),
+        ProjectError::Read { path, error } => {
+            format!("failed to read manifest `{}`: {error}", render_path(path))
+        }
+        ProjectError::Parse { path, message } => {
+            format!("invalid manifest `{}`: {message}", render_path(path))
+        }
+    }
 }
 
 fn project_error_missing_package_name_manifest_path(error: &ProjectError) -> Option<&Path> {
@@ -464,7 +490,7 @@ fn append_reference_interface_summaries(
                     ));
                     output.push_str(&format!("{indent}    status: {}\n", status.label()));
                     let transitive_reference_failures =
-                        summarize_transitive_reference_failures(&reference_manifest);
+                        summarize_transitive_reference_failures(root, &reference_manifest);
                     if transitive_reference_failures.count > 0 {
                         output.push_str(&format!(
                             "{indent}    transitive_reference_failures: {}\n",
@@ -513,14 +539,20 @@ fn append_reference_interface_summaries(
                     output.push_str(&format!("{indent}    package: <unresolved>\n"));
                     output.push_str(&format!("{indent}    path: <unresolved>\n"));
                     output.push_str(&format!("{indent}    status: unresolved-package\n"));
-                    output.push_str(&format!("{indent}    detail: {error}\n"));
+                    output.push_str(&format!(
+                        "{indent}    detail: {}\n",
+                        project_graph_error_display_relative(root, &error)
+                    ));
                 }
             },
             Err(error) => {
                 output.push_str(&format!("{indent}    package: <unresolved>\n"));
                 output.push_str(&format!("{indent}    path: <unresolved>\n"));
                 output.push_str(&format!("{indent}    status: unresolved-manifest\n"));
-                output.push_str(&format!("{indent}    detail: {error}\n"));
+                output.push_str(&format!(
+                    "{indent}    detail: {}\n",
+                    project_graph_error_display_relative(root, &error)
+                ));
             }
         }
     }
@@ -541,13 +573,15 @@ struct TransitiveReferenceFailureSummary {
 }
 
 fn summarize_transitive_reference_failures(
+    root: &Path,
     manifest: &ProjectManifest,
 ) -> TransitiveReferenceFailureSummary {
     let mut visited = BTreeSet::new();
-    summarize_reference_failures_recursive(manifest, &mut visited)
+    summarize_reference_failures_recursive(root, manifest, &mut visited)
 }
 
 fn summarize_reference_failures_recursive(
+    root: &Path,
     manifest: &ProjectManifest,
     visited: &mut BTreeSet<PathBuf>,
 ) -> TransitiveReferenceFailureSummary {
@@ -597,13 +631,13 @@ fn summarize_reference_failures_recursive(
                             &mut summary,
                             reference_manifest.manifest_path.clone(),
                             "unresolved-package",
-                            Some(error.to_string()),
+                            Some(project_graph_error_display_relative(root, &error)),
                             Vec::new(),
                         );
                     }
                 }
                 let nested_summary =
-                    summarize_reference_failures_recursive(&reference_manifest, visited);
+                    summarize_reference_failures_recursive(root, &reference_manifest, visited);
                 summary.count += nested_summary.count;
                 if summary.first_failure.is_none() {
                     summary.first_failure = nested_summary.first_failure;
@@ -615,7 +649,7 @@ fn summarize_reference_failures_recursive(
                     &mut summary,
                     reference_manifest_path,
                     "unresolved-manifest",
-                    Some(project_graph_error_display(&error)),
+                    Some(project_graph_error_display_relative(root, &error)),
                     Vec::new(),
                 );
             }

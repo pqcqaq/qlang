@@ -503,7 +503,7 @@ package demo.app
 pub fn run() -> Int
 "#,
     );
-    let broken_manifest = temp.write(
+    temp.write(
         "workspace/packages/broken/qlang.toml",
         r#"
 [package]
@@ -534,7 +534,6 @@ version = "0.1.0"
 
     let normalized_stdout = stdout.replace('\\', "/");
     let normalized_manifest = manifest_path.to_string_lossy().replace('\\', "/");
-    let broken_manifest_display = broken_manifest.to_string_lossy().replace('\\', "/");
     expect_stdout_contains_all(
         "project-graph-workspace-missing-package-name-member",
         &normalized_stdout,
@@ -544,9 +543,7 @@ version = "0.1.0"
             "    package: app",
             "  - member: packages/broken",
             "    package: <unresolved>",
-            &format!(
-                "    member_error: manifest `{broken_manifest_display}` does not declare `[package].name`"
-            ),
+            "    member_error: manifest `packages/broken/qlang.toml` does not declare `[package].name`",
         ],
     )
     .expect(
@@ -645,12 +642,11 @@ name = "broken_ref"
             "reference: ../workspace_ref",
             "manifest: ../workspace_ref/qlang.toml",
             "status: unresolved-package",
-            "detail: manifest `",
-            "does not declare `[package].name`",
+            "detail: manifest `../workspace_ref/qlang.toml` does not declare `[package].name`",
             "reference: ../broken_ref",
             "manifest: ../broken_ref/qlang.toml",
             "status: unresolved-manifest",
-            "detail: invalid manifest `",
+            "detail: invalid manifest `../broken_ref/qlang.toml`:",
         ],
     )
     .expect("project graph should explain unresolved reference manifest and package failures");
@@ -737,7 +733,7 @@ name = "broken_ref"
             "transitive_reference_failures: 1",
             "first_transitive_failure_manifest: ../broken_ref/qlang.toml",
             "first_transitive_failure_status: unresolved-manifest",
-            "first_transitive_failure_detail: invalid manifest `",
+            "first_transitive_failure_detail: invalid manifest `../broken_ref/qlang.toml`:",
         ],
     )
     .expect("project graph should summarize transitive reference failures on direct dependencies");
