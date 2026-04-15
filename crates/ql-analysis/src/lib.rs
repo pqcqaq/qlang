@@ -2462,6 +2462,13 @@ pub fn analyze_package_dependencies(path: &Path) -> Result<PackageAnalysis, Pack
     })
 }
 
+pub fn analyze_available_package_dependencies(
+    path: &Path,
+) -> Result<Vec<DependencyInterface>, PackageAnalysisError> {
+    let manifest = load_project_manifest(path).map_err(PackageAnalysisError::Project)?;
+    Ok(load_available_package_dependencies(&manifest))
+}
+
 fn load_package_dependencies(
     manifest: &ProjectManifest,
 ) -> Result<Vec<DependencyInterface>, PackageAnalysisError> {
@@ -2497,6 +2504,41 @@ fn load_package_dependencies(
         });
     }
     Ok(dependencies)
+}
+
+fn load_available_package_dependencies(manifest: &ProjectManifest) -> Vec<DependencyInterface> {
+    let manifest_dir = manifest
+        .manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let mut dependencies = Vec::with_capacity(manifest.references.packages.len());
+
+    for package in &manifest.references.packages {
+        let dependency_manifest = match load_project_manifest(&manifest_dir.join(package)) {
+            Ok(manifest) => manifest,
+            Err(_) => continue,
+        };
+        let interface_path = match default_interface_path(&dependency_manifest) {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        if !interface_path.is_file() {
+            continue;
+        }
+        let artifact = match load_interface_artifact(&interface_path) {
+            Ok(artifact) => artifact,
+            Err(_) => continue,
+        };
+        let symbols = index_dependency_symbols(&artifact);
+        dependencies.push(DependencyInterface {
+            manifest: dependency_manifest,
+            interface_path,
+            artifact,
+            symbols,
+        });
+    }
+
+    dependencies
 }
 
 fn index_dependency_symbols(artifact: &InterfaceArtifact) -> Vec<DependencySymbol> {

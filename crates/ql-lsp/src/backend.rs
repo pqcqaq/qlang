@@ -3,8 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ql_analysis::{
-    Analysis, DependencyInterface, PackageAnalysisError, analyze_package,
-    analyze_package_dependencies, analyze_source,
+    Analysis, DependencyInterface, PackageAnalysisError, analyze_available_package_dependencies,
+    analyze_package, analyze_package_dependencies, analyze_source,
 };
 use ql_project::{collect_package_sources, load_project_manifest};
 use tower_lsp::jsonrpc::{Error, Result};
@@ -248,11 +248,8 @@ fn append_dependency_workspace_symbols(
     symbols: &mut Vec<SymbolInformation>,
     query: &str,
 ) {
-    if let Ok(package) = analyze_package_dependencies(package_path) {
-        symbols.extend(workspace_symbols_for_dependencies(
-            package.dependencies(),
-            query,
-        ));
+    if let Ok(dependencies) = analyze_available_package_dependencies(package_path) {
+        symbols.extend(workspace_symbols_for_dependencies(&dependencies, query));
     }
 }
 
@@ -408,12 +405,7 @@ fn workspace_symbols_for_documents(
                 let workspace_member_manifests =
                     workspace_member_manifest_paths_for_package(manifest.manifest_path.as_path());
 
-                if let Ok(package) = analyze_package_dependencies(&path) {
-                    symbols.extend(workspace_symbols_for_dependencies(
-                        package.dependencies(),
-                        &normalized_query,
-                    ));
-                }
+                append_dependency_workspace_symbols(&path, &mut symbols, &normalized_query);
 
                 for member_manifest_path in workspace_member_manifests {
                     if !searched_packages.insert(member_manifest_path.clone()) {
@@ -454,6 +446,7 @@ fn workspace_symbols_for_documents(
                     &mut symbols,
                     &normalized_query,
                 );
+                append_dependency_workspace_symbols(&path, &mut symbols, &normalized_query);
 
                 for member_manifest_path in
                     workspace_member_manifest_paths_for_package(manifest.manifest_path.as_path())
@@ -1185,8 +1178,8 @@ fn tool_helper() -> Int {
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_keeps_workspace_member_modules_for_open_packages_when_member_has_source_diagnostics(
-    ) {
+    fn workspace_symbol_search_keeps_workspace_member_modules_for_open_packages_when_member_has_source_diagnostics()
+     {
         let temp = TempDir::new("ql-lsp-workspace-symbol-open-broken-member");
 
         temp.write(
@@ -1336,8 +1329,8 @@ fn main() -> Int {
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_keeps_package_and_workspace_member_modules_when_dependency_interfaces_fail(
-    ) {
+    fn workspace_symbol_search_keeps_package_and_workspace_member_modules_when_dependency_interfaces_fail()
+     {
         let temp = TempDir::new("ql-lsp-workspace-symbol-open-missing-dependency");
 
         temp.write(
@@ -1454,7 +1447,7 @@ pub fn exported(value: Int) -> Int {
     #[allow(deprecated)]
     #[test]
     fn workspace_symbol_search_keeps_workspace_member_modules_when_member_dependency_interfaces_fail()
-    {
+     {
         let temp = TempDir::new("ql-lsp-workspace-symbol-member-missing-dependency");
 
         temp.write(
@@ -1607,8 +1600,8 @@ fn tool_helper() -> Int {
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_keeps_workspace_member_modules_for_broken_open_packages_when_dependency_interfaces_fail(
-    ) {
+    fn workspace_symbol_search_keeps_workspace_member_modules_for_broken_open_packages_when_dependency_interfaces_fail()
+     {
         let temp = TempDir::new("ql-lsp-workspace-symbol-broken-members-missing-dependency");
 
         temp.write(
@@ -1861,6 +1854,184 @@ pub fn exported(value: Int) -> Int
                     ),
                 ),
                 container_name: Some("dep".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_available_dependency_symbols_when_one_package_interface_is_missing()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-partial-dependency");
+
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package]
+name = "bad"
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "exported");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "exported".to_owned(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(7, 4),
+                        tower_lsp::lsp_types::Position::new(7, 34),
+                    ),
+                ),
+                container_name: Some("good".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_available_member_dependency_symbols_when_one_member_interface_is_missing()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-partial-member-dependency");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "good", "bad"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package]
+name = "bad"
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "exported");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "exported".to_owned(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(7, 4),
+                        tower_lsp::lsp_types::Position::new(7, 34),
+                    ),
+                ),
+                container_name: Some("good".to_owned()),
             }]
         );
     }
