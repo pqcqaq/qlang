@@ -526,6 +526,14 @@ fn check_workspace_manifest(
                         manifest_path,
                         sync_interfaces,
                     );
+                } else if let Some(manifest_path) =
+                    package_check_manifest_path_from_project_error(&error)
+                {
+                    eprintln!("error: {check_command_label} {error}");
+                    report_workspace_member_package_check_manifest_failure(
+                        manifest_path,
+                        sync_interfaces,
+                    );
                 } else {
                     eprintln!("error: {check_command_label} {error}");
                     let rerun_command = format_workspace_member_check_rerun_command(

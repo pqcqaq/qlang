@@ -2489,6 +2489,20 @@ name = "broken"
         "workspace-root ql check with single failing member",
         &normalized_stderr,
         &format!(
+            "note: failing package manifest: {}",
+            broken_root
+                .join("qlang.toml")
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        ),
+    )
+    .expect("workspace-root ql check should point the broken member at the package manifest");
+    expect_stderr_contains(
+        "project-check-workspace-single-failure",
+        "workspace-root ql check with single failing member",
+        &normalized_stderr,
+        &format!(
             "note: failing workspace member manifest: {}",
             broken_root
                 .join("qlang.toml")
@@ -2499,7 +2513,7 @@ name = "broken"
     )
     .expect("workspace-root ql check should point the broken member locally");
     let rerun_hint = format!(
-        "hint: rerun `ql check {}` after fixing the workspace member manifest",
+        "hint: rerun `ql check {}` after fixing the package manifest",
         broken_root
             .join("qlang.toml")
             .display()
@@ -2513,7 +2527,7 @@ name = "broken"
         &rerun_hint,
     )
     .expect(
-        "workspace-root ql check should suggest rerunning the broken member directly after repair",
+        "workspace-root ql check should suggest rerunning the broken member after fixing the package manifest",
     );
     expect_stderr_contains(
         "project-check-workspace-single-failure",
@@ -2613,9 +2627,10 @@ name = "broken"
         "error: `ql check --sync-interfaces` invalid manifest `{broken_manifest}`"
     );
     let old_error_line = format!("error: invalid manifest `{broken_manifest}`");
+    let package_note = format!("note: failing package manifest: {broken_manifest}");
     let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
     let rerun_hint = format!(
-        "hint: rerun `ql check --sync-interfaces {broken_manifest}` after fixing the workspace member manifest"
+        "hint: rerun `ql check --sync-interfaces {broken_manifest}` after fixing the package manifest"
     );
     expect_stderr_contains(
         "project-check-workspace-sync-single-failure",
@@ -2635,6 +2650,13 @@ name = "broken"
         "project-check-workspace-sync-single-failure",
         "workspace-root ql check sync with single failing member",
         &normalized_stderr,
+        &package_note,
+    )
+    .expect("workspace-root ql check sync should point the broken member at the package manifest");
+    expect_stderr_contains(
+        "project-check-workspace-sync-single-failure",
+        "workspace-root ql check sync with single failing member",
+        &normalized_stderr,
         &member_note,
     )
     .expect("workspace-root ql check sync should point the broken member locally");
@@ -2644,7 +2666,7 @@ name = "broken"
         &normalized_stderr,
         &rerun_hint,
     )
-    .expect("workspace-root ql check sync should suggest rerunning the broken member directly after repair");
+    .expect("workspace-root ql check sync should suggest rerunning the broken member after fixing the package manifest");
     expect_stderr_contains(
         "project-check-workspace-sync-single-failure",
         "workspace-root ql check sync with single failing member",
