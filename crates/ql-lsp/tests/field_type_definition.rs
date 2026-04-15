@@ -244,3 +244,85 @@ pub fn read(config: Cfg) -> Int {
         "pub struct Child {\n    value: Int,\n}",
     );
 }
+
+#[test]
+fn type_definition_bridge_follows_deeper_dependency_struct_field_types() {
+    let temp = TempDir::new("ql-lsp-deeper-field-type-definition");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    child: Child,
+    flag: Bool,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config
+use demo.dep.Child
+
+pub fn read(input: Child, built: Config) -> Int {
+    let current = Config.Scope.Config { child: input, flag: true }
+    return match built {
+        Config.Scope.Config { child: next, flag: false } => next.value,
+        _ => current.child.value,
+    }
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let definition = type_definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, nth_offset(source, "child", 1)),
+    )
+    .expect("deeper dependency field type definition should exist");
+    assert_targets_dependency_type(
+        definition,
+        &dep_qi,
+        "pub struct Child {\n    value: Int,\n}",
+    );
+}

@@ -3585,7 +3585,7 @@ fn dependency_struct_pattern_field_completion_site(
     fields: &[ql_ast::PatternField],
     offset: usize,
 ) -> Option<DependencyStructFieldCompletionSite> {
-    let [root_name] = path.segments.as_slice() else {
+    let Some(root_name) = path.segments.first() else {
         return None;
     };
     let current = fields.iter().find(|field| {
@@ -3610,7 +3610,7 @@ fn dependency_struct_literal_field_completion_site(
     fields: &[ql_ast::StructLiteralField],
     offset: usize,
 ) -> Option<DependencyStructFieldCompletionSite> {
-    let [root_name] = path.segments.as_slice() else {
+    let Some(root_name) = path.segments.first() else {
         return None;
     };
     let current = fields.iter().find(|field| {
@@ -7296,7 +7296,7 @@ fn push_dependency_struct_field_occurrence_for_path(
     field_span: Span,
     occurrences: &mut Vec<DependencyStructFieldOccurrence>,
 ) {
-    let [root_name] = path.segments.as_slice() else {
+    let Some(root_name) = path.segments.first() else {
         return;
     };
     let Some((dependency, symbol)) =

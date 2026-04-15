@@ -6,8 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
     completion_for_dependency_struct_fields, completion_for_dependency_variants,
-    completion_for_package_analysis, definition_for_dependency_struct_fields, span_to_range,
-    type_definition_for_dependency_variants,
+    completion_for_package_analysis, definition_for_dependency_struct_fields,
+    definition_for_package_analysis, span_to_range, type_definition_for_dependency_variants,
 };
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{
@@ -367,4 +367,144 @@ pub fn main(current: Int, built: Config) -> Int {
         range,
         span_to_range(&artifact, ql_span::Span::new(start, start + "value".len()))
     );
+}
+
+#[test]
+fn lsp_surfaces_dependency_struct_field_contracts_for_deeper_import_local_roots() {
+    let temp = TempDir::new("ql-lsp-dependency-deeper-import-local-struct-field");
+    let app_root = temp.path().join("workspace").join("app");
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+    flag: Bool,
+}
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+
+    let direct_source = r#"
+package demo.app
+
+use demo.dep.Config
+
+pub fn main(current: Int, built: Config) -> Int {
+    let next = Config.Scope.Config { value: current, fl: true }
+    let Config.Scope.Config { value: reused, flag: enabled } = built
+    if enabled {
+        return next.value + reused
+    }
+    return reused
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", direct_source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(direct_source).expect("source should analyze");
+    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+        direct_source,
+        &analysis,
+        &package,
+        offset_to_position(
+            direct_source,
+            nth_offset(direct_source, "fl", 1) + "fl".len(),
+        ),
+    ) else {
+        panic!("deeper import local root should expose dependency struct field completion")
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "flag");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field flag: Bool"));
+
+    let definition = definition_for_package_analysis(
+        &tower_lsp::lsp_types::Url::parse("file:///workspace/app/src/lib.ql")
+            .expect("URI should parse"),
+        direct_source,
+        &analysis,
+        &package,
+        offset_to_position(direct_source, nth_offset(direct_source, "value", 1)),
+    )
+    .expect("deeper import local root should expose dependency struct field definition");
+    let GotoDefinitionResponse::Scalar(Location {
+        uri: definition_uri,
+        range,
+    }) = definition
+    else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        definition_uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let start = artifact
+        .find("value")
+        .expect("field name should exist in dependency artifact");
+    assert_eq!(
+        range,
+        span_to_range(&artifact, ql_span::Span::new(start, start + "value".len()))
+    );
+
+    let grouped_source = r#"
+package demo.app
+
+use demo.dep.Config
+
+pub fn main(current: Int, built: Config) -> Int {
+    let next = Config.Scope.Config { value: current, fl: true }
+    let Config.Scope.Config { value: reused, flag: enabled } = built
+    return missing
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", grouped_source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let Some(CompletionResponse::Array(items)) = completion_for_dependency_struct_fields(
+        grouped_source,
+        &package,
+        offset_to_position(
+            grouped_source,
+            nth_offset(grouped_source, "fl", 1) + "fl".len(),
+        ),
+    ) else {
+        panic!("deeper import local root should expose dependency struct field completion")
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "flag");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
 }
