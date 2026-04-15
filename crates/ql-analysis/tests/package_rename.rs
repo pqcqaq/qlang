@@ -339,3 +339,100 @@ pub fn read(config: Cfg) -> Int {
         }))
     );
 }
+
+#[test]
+fn package_analysis_rewrites_dependency_destructured_local_rename_definitions() {
+    let temp = TempDir::new("ql-analysis-package-destructured-value-root-rename");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    child: Child,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let Cfg { child } = config
+    return child.value + child.value
+}
+
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let use_position = nth_offset(source, "child", 2);
+
+    assert_eq!(
+        package.dependency_prepare_rename_in_source_at(source, use_position),
+        Some(RenameTarget {
+            kind: SymbolKind::Local,
+            name: "child".to_owned(),
+            span: Span::new(use_position, use_position + "child".len()),
+        })
+    );
+    assert_eq!(
+        package.dependency_rename_in_source_at(source, use_position, "current"),
+        Ok(Some(RenameResult {
+            kind: SymbolKind::Local,
+            old_name: "child".to_owned(),
+            new_name: "current".to_owned(),
+            edits: vec![
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "child", 1),
+                        nth_offset(source, "child", 1) + "child".len(),
+                    ),
+                    replacement: "child: current".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "child", 2),
+                        nth_offset(source, "child", 2) + "child".len(),
+                    ),
+                    replacement: "current".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "child", 3),
+                        nth_offset(source, "child", 3) + "child".len(),
+                    ),
+                    replacement: "current".to_owned(),
+                },
+            ],
+        }))
+    );
+}

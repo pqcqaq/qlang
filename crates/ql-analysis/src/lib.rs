@@ -120,6 +120,7 @@ struct DependencyValueOccurrence {
     local_name: String,
     reference_span: Span,
     definition_span: Span,
+    definition_rename: DependencyValueDefinitionRename,
     package_name: String,
     source_path: String,
     struct_name: String,
@@ -1737,7 +1738,10 @@ impl PackageAnalysis {
             })
             .map(|occurrence| RenameEdit {
                 span: occurrence.reference_span,
-                replacement: replacement.clone(),
+                replacement: dependency_value_occurrence_rename_replacement(
+                    &occurrence,
+                    replacement.as_str(),
+                ),
             })
             .collect::<Vec<_>>();
         if edits.is_empty() {
@@ -2154,7 +2158,14 @@ struct DependencyValueBinding {
     kind: SymbolKind,
     local_name: String,
     definition_span: Span,
+    definition_rename: DependencyValueDefinitionRename,
     dependency: DependencyStructBinding,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DependencyValueDefinitionRename {
+    Direct,
+    StructShorthandField { field_name: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -8323,6 +8334,7 @@ fn push_dependency_value_occurrence(
         local_name: binding.local_name.clone(),
         reference_span,
         definition_span: binding.definition_span,
+        definition_rename: binding.definition_rename.clone(),
         package_name: binding.dependency.package_name.clone(),
         source_path: binding.dependency.source_path.clone(),
         struct_name: binding.dependency.struct_name.clone(),
@@ -8342,6 +8354,7 @@ fn push_dependency_value_root_occurrence(
         kind,
         local_name: local_name.to_owned(),
         definition_span: dependency.definition_span,
+        definition_rename: DependencyValueDefinitionRename::Direct,
         dependency: dependency.clone(),
     };
     push_dependency_value_occurrence(&binding, reference_span, false, occurrences);
@@ -8431,6 +8444,7 @@ fn bind_dependency_value_local(
     kind: SymbolKind,
     local_name: String,
     definition_span: Span,
+    definition_rename: DependencyValueDefinitionRename,
     dependency: DependencyStructBinding,
     binding_scopes: &mut [HashMap<String, DependencyStructBinding>],
     value_scopes: &mut [HashMap<String, DependencyValueBinding>],
@@ -8444,6 +8458,7 @@ fn bind_dependency_value_local(
         kind,
         local_name,
         definition_span,
+        definition_rename,
         dependency,
     };
     value_scopes
@@ -8475,6 +8490,7 @@ fn bind_dependency_value_param(
                 SymbolKind::Parameter,
                 name.clone(),
                 *name_span,
+                DependencyValueDefinitionRename::Direct,
                 binding,
                 binding_scopes,
                 value_scopes,
@@ -8489,6 +8505,7 @@ fn bind_dependency_value_param(
                 SymbolKind::SelfParameter,
                 String::from("self"),
                 *span,
+                DependencyValueDefinitionRename::Direct,
                 binding,
                 binding_scopes,
                 value_scopes,
@@ -8516,6 +8533,7 @@ fn bind_dependency_value_closure_param(
         SymbolKind::Parameter,
         param.name.clone(),
         param.span,
+        DependencyValueDefinitionRename::Direct,
         binding,
         binding_scopes,
         value_scopes,
@@ -8537,6 +8555,7 @@ fn bind_dependency_value_pattern(
                 SymbolKind::Local,
                 name.clone(),
                 pattern.span,
+                DependencyValueDefinitionRename::Direct,
                 binding.clone(),
                 binding_scopes,
                 value_scopes,
@@ -8578,6 +8597,9 @@ fn bind_dependency_value_pattern(
                         SymbolKind::Local,
                         field.name.clone(),
                         field.name_span,
+                        DependencyValueDefinitionRename::StructShorthandField {
+                            field_name: field.name.clone(),
+                        },
                         field_binding,
                         binding_scopes,
                         value_scopes,
@@ -8779,6 +8801,21 @@ fn dependency_value_occurrence_matches_rename_target(
         && occurrence.source_path == target.source_path
         && occurrence.struct_name == target.struct_name
         && occurrence.path == target.path
+}
+
+fn dependency_value_occurrence_rename_replacement(
+    occurrence: &DependencyValueOccurrence,
+    new_name: &str,
+) -> String {
+    if occurrence.is_definition {
+        if let DependencyValueDefinitionRename::StructShorthandField { field_name } =
+            &occurrence.definition_rename
+        {
+            return format!("{field_name}: {new_name}");
+        }
+    }
+
+    new_name.to_owned()
 }
 
 fn validate_dependency_rename_text(text: &str) -> Result<(), RenameError> {

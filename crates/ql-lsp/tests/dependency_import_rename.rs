@@ -374,3 +374,101 @@ pub fn read(config: Cfg) -> Int {
         ],
     );
 }
+
+#[test]
+fn dependency_destructured_value_root_rename_rewrites_shorthand_definitions() {
+    let temp = TempDir::new("ql-lsp-dependency-destructured-value-root-rename");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    child: Child,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let Cfg { child } = config
+    return child.value + child.value
+}
+"#;
+    let app_source = temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let use_offset = nth_offset(source, "child", 2);
+    let use_position = offset_to_position(source, use_offset);
+
+    assert_eq!(
+        prepare_rename_for_dependency_imports(source, &package, use_position),
+        Some(PrepareRenameResponse::RangeWithPlaceholder {
+            range: span_to_range(source, Span::new(use_offset, use_offset + "child".len())),
+            placeholder: "child".to_owned(),
+        })
+    );
+
+    let uri = Url::from_file_path(&app_source).expect("source path should convert to file uri");
+    let edit = rename_for_dependency_imports(&uri, source, &package, use_position, "current")
+        .expect("rename should validate")
+        .expect("dependency destructured value root rename should produce edits");
+    assert_workspace_edit(
+        edit,
+        &uri,
+        source,
+        &[
+            (
+                Span::new(
+                    nth_offset(source, "child", 1),
+                    nth_offset(source, "child", 1) + "child".len(),
+                ),
+                "child: current",
+            ),
+            (
+                Span::new(
+                    nth_offset(source, "child", 2),
+                    nth_offset(source, "child", 2) + "child".len(),
+                ),
+                "current",
+            ),
+            (
+                Span::new(
+                    nth_offset(source, "child", 3),
+                    nth_offset(source, "child", 3) + "child".len(),
+                ),
+                "current",
+            ),
+        ],
+    );
+}
