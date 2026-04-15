@@ -243,6 +243,20 @@ fn append_manifest_source_workspace_symbols(
 }
 
 #[allow(deprecated)]
+fn append_dependency_workspace_symbols(
+    package_path: &Path,
+    symbols: &mut Vec<SymbolInformation>,
+    query: &str,
+) {
+    if let Ok(package) = analyze_package_dependencies(package_path) {
+        symbols.extend(workspace_symbols_for_dependencies(
+            package.dependencies(),
+            query,
+        ));
+    }
+}
+
+#[allow(deprecated)]
 fn append_workspace_member_symbols(
     member_manifest_path: &Path,
     open_docs: &HashMap<PathBuf, (Url, String)>,
@@ -251,14 +265,17 @@ fn append_workspace_member_symbols(
     query: &str,
 ) {
     match analyze_package(member_manifest_path) {
-        Ok(member_package) => append_package_workspace_symbols(
-            &member_package,
-            open_docs,
-            covered_files,
-            symbols,
-            query,
-            false,
-        ),
+        Ok(member_package) => {
+            append_package_workspace_symbols(
+                &member_package,
+                open_docs,
+                covered_files,
+                symbols,
+                query,
+                false,
+            );
+            append_dependency_workspace_symbols(member_manifest_path, symbols, query);
+        }
         Err(PackageAnalysisError::SourceDiagnostics { .. }) => {
             let Ok(member_manifest) = load_project_manifest(member_manifest_path) else {
                 return;
@@ -270,6 +287,7 @@ fn append_workspace_member_symbols(
                 symbols,
                 query,
             );
+            append_dependency_workspace_symbols(member_manifest_path, symbols, query);
         }
         Err(error) if is_interface_artifact_failure(&error) => {
             let Ok(member_manifest) = load_project_manifest(member_manifest_path) else {
@@ -282,6 +300,7 @@ fn append_workspace_member_symbols(
                 symbols,
                 query,
             );
+            append_dependency_workspace_symbols(member_manifest_path, symbols, query);
         }
         Err(_) => {}
     }
@@ -1722,6 +1741,100 @@ use demo.dep.exported as run
 fn main() -> Int {
     return run(1)
 }
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "exported");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "exported".to_owned(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(7, 4),
+                        tower_lsp::lsp_types::Position::new(7, 34),
+                    ),
+                ),
+                container_name: Some("dep".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_includes_dependency_interface_symbols_for_workspace_members() {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-member-dependency");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "dep"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+use demo.dep.exported as run
+
+fn tool_helper() -> Int {
+    return run(1)
+}
+"#,
+        );
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported(value: Int) -> Int
 "#,
         );
         let open_source = fs::read_to_string(&open_path).expect("open file should read");
