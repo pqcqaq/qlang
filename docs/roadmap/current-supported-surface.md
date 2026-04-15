@@ -21,7 +21,7 @@
 - Phase 1 到 Phase 6 的编译器和 same-file tooling 已经进入稳定迭代阶段。
 - Phase 7 已有保守 async/runtime/build 子集：`async fn`、`await`、`spawn`、`for await`、最小 `ql-runtime`、program-mode async `main`、保守 async `staticlib` / `dylib` 子集，以及 task-handle-aware lowering。
 - Phase 8 已进入真实交付面：最小 `qlang.toml` package/workspace graph、`.qi` V1 emit/load、`ql project graph`、`ql project emit-interface`、`ql build --emit-interface`、`ql check --sync-interfaces`。
-- dependency-backed cross-file tooling 已开放首批合同：imported dependency symbol hover / definition / declaration / references、import path completion、dependency enum variant completion / `typeDefinition`、显式 struct field-label completion，以及语法局部可恢复 receiver 的最小 dependency member/query/typeDefinition；当同包里存在无关 dependency `.qi` 缺失、损坏或不可读时，这些 package-aware dependency import/completion/definition 基础能力现在也会继续保留其余健康依赖的结果，不再整包掉空。
+- dependency-backed cross-file tooling 已开放首批合同：imported dependency symbol hover / definition / declaration / references、import path completion、dependency enum variant completion / `typeDefinition`、显式 struct field-label completion，以及语法局部可恢复 receiver 的最小 dependency member/query/typeDefinition；当同包里存在无关 dependency `.qi` 缺失、损坏、不可读，或某个 referenced package manifest 自身损坏时，这些 package-aware dependency import/completion/definition 基础能力现在也会继续保留其余健康依赖的结果，不再整包掉空。
 - 保守 `workspace/symbol` 现在可以在有 manifest 上下文时搜索当前包源码、同一 workspace 的 sibling members、当前包依赖 `.qi` 的 public symbols，以及 sibling member 依赖 `.qi` 的 public symbols；如果当前包或 sibling member 因源码 diagnostics、单个 dependency `.qi` 缺失、损坏或不可读而无法整包分析，也会回退到 manifest/source + 可用依赖接口的粒度，继续保留仍可单独分析的模块符号和其余健康依赖符号，而不是因为一个坏依赖把整条搜索面一起丢掉。
 
 ## 当前已开放的构建表面

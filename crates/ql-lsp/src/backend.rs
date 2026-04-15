@@ -95,6 +95,9 @@ fn package_analysis_for_path(path: &Path) -> Option<ql_analysis::PackageAnalysis
         Err(PackageAnalysisError::SourceDiagnostics { .. }) => {
             analyze_package_with_available_dependencies(path).ok()
         }
+        Err(PackageAnalysisError::Project(_)) => {
+            analyze_package_with_available_dependencies(path).ok()
+        }
         Err(error) if is_interface_artifact_failure(&error) => {
             analyze_package_with_available_dependencies(path).ok()
         }
@@ -293,6 +296,19 @@ fn append_workspace_member_symbols(
             );
             append_dependency_workspace_symbols(member_manifest_path, symbols, query);
         }
+        Err(PackageAnalysisError::Project(_)) => {
+            let Ok(member_manifest) = load_project_manifest(member_manifest_path) else {
+                return;
+            };
+            append_manifest_source_workspace_symbols(
+                &member_manifest,
+                open_docs,
+                covered_files,
+                symbols,
+                query,
+            );
+            append_dependency_workspace_symbols(member_manifest_path, symbols, query);
+        }
         Err(error) if is_interface_artifact_failure(&error) => {
             let Ok(member_manifest) = load_project_manifest(member_manifest_path) else {
                 return;
@@ -383,6 +399,51 @@ fn workspace_symbols_for_documents(
                 }
             }
             Err(PackageAnalysisError::SourceDiagnostics { .. }) => {
+                let Ok(manifest) = load_project_manifest(&path) else {
+                    covered_files.insert(path.clone());
+                    if let Ok(analysis) = analyze_source(source) {
+                        symbols.extend(workspace_symbols_for_analysis(
+                            uri,
+                            source,
+                            &analysis,
+                            &normalized_query,
+                        ));
+                    }
+                    continue;
+                };
+
+                let manifest_path = manifest.manifest_path.clone();
+                if !searched_packages.insert(manifest_path) {
+                    continue;
+                }
+
+                append_manifest_source_workspace_symbols(
+                    &manifest,
+                    &open_docs,
+                    &mut covered_files,
+                    &mut symbols,
+                    &normalized_query,
+                );
+
+                let workspace_member_manifests =
+                    workspace_member_manifest_paths_for_package(manifest.manifest_path.as_path());
+
+                append_dependency_workspace_symbols(&path, &mut symbols, &normalized_query);
+
+                for member_manifest_path in workspace_member_manifests {
+                    if !searched_packages.insert(member_manifest_path.clone()) {
+                        continue;
+                    }
+                    append_workspace_member_symbols(
+                        &member_manifest_path,
+                        &open_docs,
+                        &mut covered_files,
+                        &mut symbols,
+                        &normalized_query,
+                    );
+                }
+            }
+            Err(PackageAnalysisError::Project(_)) => {
                 let Ok(manifest) = load_project_manifest(&path) else {
                     covered_files.insert(path.clone());
                     if let Ok(analysis) = analyze_source(source) {
@@ -2186,5 +2247,175 @@ packages = ["../good", "../bad"]
         assert_eq!(definition.kind, AnalysisSymbolKind::Function);
         assert_eq!(definition.name, "exported");
         assert!(definition.path.ends_with("good.qi"));
+    }
+
+    #[test]
+    fn package_analysis_path_keeps_available_dependency_completions_when_one_reference_manifest_is_invalid()
+     {
+        let temp = TempDir::new("ql-lsp-package-fallback-invalid-reference-manifest");
+
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub struct Buffer[T] {
+    value: T,
+}
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package
+name = "bad"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.good.Bu
+
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+
+        let package =
+            package_analysis_for_path(&open_path).expect("fallback package analysis should exist");
+        let completions = package
+            .dependency_completions_at(&open_source, nth_offset(&open_source, "Bu", 1) + 2)
+            .expect("dependency completions should exist");
+
+        assert!(completions.iter().any(|item| {
+            item.label == "Buffer"
+                && item.kind == AnalysisSymbolKind::Struct
+                && item.detail.starts_with("struct Buffer[T] {")
+        }));
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_available_member_dependency_symbols_when_member_reference_manifest_is_invalid()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-invalid-member-reference-manifest");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "good", "bad"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package
+name = "bad"
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "exported");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "exported".to_owned(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(7, 4),
+                        tower_lsp::lsp_types::Position::new(7, 34),
+                    ),
+                ),
+                container_name: Some("good".to_owned()),
+            }]
+        );
     }
 }
