@@ -271,6 +271,18 @@ fn append_workspace_member_symbols(
                 query,
             );
         }
+        Err(error) if is_interface_artifact_failure(&error) => {
+            let Ok(member_manifest) = load_project_manifest(member_manifest_path) else {
+                return;
+            };
+            append_manifest_source_workspace_symbols(
+                &member_manifest,
+                open_docs,
+                covered_files,
+                symbols,
+                query,
+            );
+        }
         Err(_) => {}
     }
 }
@@ -1417,6 +1429,93 @@ pub fn exported(value: Int) -> Int {
                     container_name: None,
                 },
             ]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_workspace_member_modules_when_member_dependency_interfaces_fail()
+    {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-member-missing-dependency");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "dep"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        let helper_path = temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        temp.write(
+            "workspace/dep/src/lib.ql",
+            r#"
+package demo.dep
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "helper");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "tool_helper".to_owned(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(&helper_path).expect("helper path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(1, 3),
+                        tower_lsp::lsp_types::Position::new(1, 14),
+                    ),
+                ),
+                container_name: None,
+            }]
         );
     }
 
