@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use ql_analysis::{
     Analysis, DependencyInterface, PackageAnalysisError, analyze_available_package_dependencies,
-    analyze_package, analyze_package_dependencies, analyze_source,
+    analyze_package, analyze_package_with_available_dependencies, analyze_source,
 };
 use ql_project::{collect_package_sources, load_project_manifest};
 use tower_lsp::jsonrpc::{Error, Result};
@@ -85,13 +85,20 @@ impl Backend {
 
     fn package_analysis_for_uri(&self, uri: &Url) -> Option<ql_analysis::PackageAnalysis> {
         let path = uri.to_file_path().ok()?;
-        match analyze_package(&path) {
-            Ok(package) => Some(package),
-            Err(PackageAnalysisError::SourceDiagnostics { .. }) => {
-                analyze_package_dependencies(&path).ok()
-            }
-            Err(_) => None,
+        package_analysis_for_path(&path)
+    }
+}
+
+fn package_analysis_for_path(path: &Path) -> Option<ql_analysis::PackageAnalysis> {
+    match analyze_package(path) {
+        Ok(package) => Some(package),
+        Err(PackageAnalysisError::SourceDiagnostics { .. }) => {
+            analyze_package_with_available_dependencies(path).ok()
         }
+        Err(error) if is_interface_artifact_failure(&error) => {
+            analyze_package_with_available_dependencies(path).ok()
+        }
+        Err(_) => None,
     }
 }
 
@@ -1013,7 +1020,8 @@ impl LanguageServer for Backend {
 
 #[cfg(test)]
 mod tests {
-    use super::workspace_symbols_for_documents;
+    use super::{package_analysis_for_path, workspace_symbols_for_documents};
+    use ql_analysis::SymbolKind as AnalysisSymbolKind;
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1053,6 +1061,14 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    fn nth_offset(source: &str, needle: &str, occurrence: usize) -> usize {
+        source
+            .match_indices(needle)
+            .nth(occurrence.saturating_sub(1))
+            .map(|(start, _)| start)
+            .expect("needle occurrence should exist")
     }
 
     #[allow(deprecated)]
@@ -2034,5 +2050,141 @@ name = "bad"
                 container_name: Some("good".to_owned()),
             }]
         );
+    }
+
+    #[test]
+    fn package_analysis_path_keeps_available_dependency_completions_when_one_interface_is_missing()
+    {
+        let temp = TempDir::new("ql-lsp-package-fallback-partial-dependency");
+
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub struct Buffer[T] {
+    value: T,
+}
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package]
+name = "bad"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.good.Bu
+
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+
+        let package =
+            package_analysis_for_path(&open_path).expect("fallback package analysis should exist");
+        let completions = package
+            .dependency_completions_at(&open_source, nth_offset(&open_source, "Bu", 1) + 2)
+            .expect("dependency completions should exist");
+
+        assert!(completions.iter().any(|item| {
+            item.label == "Buffer"
+                && item.kind == AnalysisSymbolKind::Struct
+                && item.detail.starts_with("struct Buffer[T] {")
+        }));
+    }
+
+    #[test]
+    fn package_analysis_path_keeps_available_dependency_definitions_for_source_diagnostics() {
+        let temp = TempDir::new("ql-lsp-package-fallback-source-diagnostics");
+
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package]
+name = "bad"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.good.exported as run
+
+fn main() -> Int {
+    let value: Missing = run(1)
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+
+        let package =
+            package_analysis_for_path(&open_path).expect("fallback package analysis should exist");
+        let definition = package
+            .dependency_definition_in_source_at(&open_source, nth_offset(&open_source, "run", 2))
+            .expect("dependency definition should exist");
+
+        assert_eq!(definition.kind, AnalysisSymbolKind::Function);
+        assert_eq!(definition.name, "exported");
+        assert!(definition.path.ends_with("good.qi"));
     }
 }

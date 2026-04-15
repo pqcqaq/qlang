@@ -2469,6 +2469,18 @@ pub fn analyze_available_package_dependencies(
     Ok(load_available_package_dependencies(&manifest))
 }
 
+pub fn analyze_package_with_available_dependencies(
+    path: &Path,
+) -> Result<PackageAnalysis, PackageAnalysisError> {
+    let manifest = load_project_manifest(path).map_err(PackageAnalysisError::Project)?;
+    let dependencies = load_available_package_dependencies(&manifest);
+    Ok(PackageAnalysis {
+        manifest,
+        modules: Vec::new(),
+        dependencies,
+    })
+}
+
 fn load_package_dependencies(
     manifest: &ProjectManifest,
 ) -> Result<Vec<DependencyInterface>, PackageAnalysisError> {
