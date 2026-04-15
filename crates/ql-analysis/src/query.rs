@@ -2000,20 +2000,21 @@ impl<'a> QueryIndexBuilder<'a> {
                                     self.struct_item_for_root_value_path(path, resolution)
                                 });
                         for field in fields {
+                            if field.is_shorthand
+                                && let PatternKind::Binding(local_id) =
+                                    &self.module.pattern(field.pattern).kind
+                            {
+                                self.record_binding_shorthand_occurrence(
+                                    SymbolKey::Local(*local_id),
+                                    field.name_span,
+                                );
+                            }
                             if let Some(item_id) = field_owner
                                 && let Some(target) =
                                     self.field_target_for_struct_item(item_id, &field.name)
                             {
                                 if field.is_shorthand {
                                     self.record_field_shorthand_occurrence(target, field.name_span);
-                                    if let PatternKind::Binding(local_id) =
-                                        &self.module.pattern(field.pattern).kind
-                                    {
-                                        self.record_binding_shorthand_occurrence(
-                                            SymbolKey::Local(*local_id),
-                                            field.name_span,
-                                        );
-                                    }
                                 } else if let Some(symbol) = self.field_defs.get(&target).cloned() {
                                     self.push_occurrence(field.name_span, &symbol);
                                 }
@@ -2123,23 +2124,21 @@ impl<'a> QueryIndexBuilder<'a> {
                     self.index_variant_type_path_use(path, resolution);
                 }
                 for field in fields {
+                    if field.is_shorthand
+                        && let Some(resolution) = self.resolution.expr_resolution(field.value)
+                        && let Some(symbol) = self.symbol_for_value_resolution(
+                            resolution,
+                            self.resolution.expr_scope(field.value),
+                        )
+                    {
+                        self.record_binding_shorthand_occurrence(symbol.key, field.name_span);
+                    }
                     if let Some(item_id) = field_owner
                         && let Some(target) =
                             self.field_target_for_struct_item(item_id, &field.name)
                     {
                         if field.is_shorthand {
                             self.record_field_shorthand_occurrence(target, field.name_span);
-                            if let Some(resolution) = self.resolution.expr_resolution(field.value)
-                                && let Some(symbol) = self.symbol_for_value_resolution(
-                                    resolution,
-                                    self.resolution.expr_scope(field.value),
-                                )
-                            {
-                                self.record_binding_shorthand_occurrence(
-                                    symbol.key,
-                                    field.name_span,
-                                );
-                            }
                         } else if let Some(symbol) = self.field_defs.get(&target).cloned() {
                             self.push_occurrence(field.name_span, &symbol);
                         }

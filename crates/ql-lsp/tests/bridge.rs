@@ -2899,7 +2899,7 @@ fn read() -> Int {
 }
 
 #[test]
-fn rename_bridge_keeps_deeper_struct_like_shorthand_binding_edits_raw() {
+fn rename_bridge_expands_deeper_struct_like_shorthand_binding_sites() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
 struct Point {
@@ -2945,7 +2945,7 @@ fn read(value: Int) -> Int {
             ),
             TextEdit::new(
                 span_to_range(source, Span::new(shorthand, shorthand + "x".len())),
-                "coord_x".to_owned(),
+                "x: coord_x".to_owned(),
             ),
             TextEdit::new(
                 span_to_range(source, nth_span(source, "x", 4)),
@@ -2958,7 +2958,7 @@ fn read(value: Int) -> Int {
 }
 
 #[test]
-fn rename_bridge_keeps_deeper_struct_like_pattern_shorthand_binding_edits_raw() {
+fn rename_bridge_expands_deeper_struct_like_pattern_shorthand_binding_sites() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
 struct Point {
@@ -3005,7 +3005,7 @@ fn read(point: Point) -> Int {
         vec![
             TextEdit::new(
                 span_to_range(source, Span::new(shorthand, shorthand + "x".len())),
-                "coord_x".to_owned(),
+                "x: coord_x".to_owned(),
             ),
             TextEdit::new(
                 span_to_range(source, Span::new(arm_use, arm_use + "x".len())),
@@ -3018,7 +3018,7 @@ fn read(point: Point) -> Int {
 }
 
 #[test]
-fn rename_bridge_keeps_deeper_struct_like_import_shorthand_binding_edits_raw() {
+fn rename_bridge_expands_deeper_struct_like_import_shorthand_binding_sites() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
 use source_value as source
@@ -3071,7 +3071,7 @@ fn read() -> Int {
             ),
             TextEdit::new(
                 span_to_range(source, Span::new(shorthand, shorthand + "source".len())),
-                "feed".to_owned(),
+                "source: feed".to_owned(),
             ),
             TextEdit::new(
                 span_to_range(

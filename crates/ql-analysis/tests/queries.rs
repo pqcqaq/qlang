@@ -4886,7 +4886,7 @@ fn read(value: Int) -> Int {
                 },
                 ql_analysis::RenameEdit {
                     span: Span::new(shorthand, shorthand + "x".len()),
-                    replacement: "coord_x".to_owned(),
+                    replacement: "x: coord_x".to_owned(),
                 },
                 ql_analysis::RenameEdit {
                     span: nth_span(source, "x", 4),
@@ -4982,7 +4982,7 @@ fn read() -> Int {
                 },
                 ql_analysis::RenameEdit {
                     span: Span::new(shorthand, shorthand + "source".len()),
-                    replacement: "feed".to_owned(),
+                    replacement: "source: feed".to_owned(),
                 },
                 ql_analysis::RenameEdit {
                     span: Span::new(return_source, return_source + "source".len()),
@@ -5069,7 +5069,7 @@ fn read(point: Point) -> Int {
             edits: vec![
                 ql_analysis::RenameEdit {
                     span: Span::new(shorthand, shorthand + "x".len()),
-                    replacement: "coord_x".to_owned(),
+                    replacement: "x: coord_x".to_owned(),
                 },
                 ql_analysis::RenameEdit {
                     span: Span::new(arm_use, arm_use + "x".len()),
