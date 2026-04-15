@@ -4727,7 +4727,7 @@ fn read(command: Command) -> Int {
 }
 
 #[test]
-fn deeper_struct_like_paths_do_not_reuse_root_field_queries() {
+fn deeper_struct_like_field_paths_follow_struct_field_surface() {
     let source = r#"
 use Point as P
 
@@ -4752,23 +4752,102 @@ fn read(point: Point) -> Int {
 "#;
 
     let analysis = analyzed(source);
+    let literal_field_x = nth_offset(source, "x", 2);
+    let pattern_field_x = nth_offset(source, "x", 4);
 
-    for offset in [
-        nth_offset(source, "x", 2),
-        nth_offset(source, "x", 3),
-        nth_offset(source, "x", 4),
-        nth_offset(source, "x", 5),
-    ] {
-        assert_eq!(analysis.hover_at(offset), None);
-        assert_eq!(analysis.definition_at(offset), None);
-        assert_eq!(analysis.references_at(offset), None);
-        assert_eq!(analysis.prepare_rename_at(offset), None);
-        assert_eq!(analysis.rename_at(offset, "coord_x"), Ok(None));
-    }
+    let hover = analysis
+        .hover_at(literal_field_x)
+        .expect("deeper struct-like field label should hover");
+    assert_eq!(hover.kind, SymbolKind::Field);
+    assert_eq!(hover.detail, "field x: Int");
+    assert_eq!(hover.ty.as_deref(), Some("Int"));
+    assert_eq!(hover.definition_span, Some(nth_span(source, "x", 1)));
+
+    assert_eq!(
+        analysis.definition_at(pattern_field_x),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Field,
+            name: "x".to_owned(),
+            span: nth_span(source, "x", 1),
+        })
+    );
+    assert_eq!(
+        analysis.references_at(literal_field_x),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: "x".to_owned(),
+                span: nth_span(source, "x", 1),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: "x".to_owned(),
+                span: nth_span(source, "x", 2),
+                is_definition: false,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: "x".to_owned(),
+                span: nth_span(source, "x", 3),
+                is_definition: false,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: "x".to_owned(),
+                span: nth_span(source, "x", 4),
+                is_definition: false,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Field,
+                name: "x".to_owned(),
+                span: nth_span(source, "x", 5),
+                is_definition: false,
+            },
+        ])
+    );
+    assert_eq!(
+        analysis.prepare_rename_at(literal_field_x),
+        Some(ql_analysis::RenameTarget {
+            kind: SymbolKind::Field,
+            name: "x".to_owned(),
+            span: nth_span(source, "x", 2),
+        })
+    );
+    assert_eq!(
+        analysis.rename_at(literal_field_x, "coord_x"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Field,
+            old_name: "x".to_owned(),
+            new_name: "coord_x".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 1),
+                    replacement: "coord_x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 2),
+                    replacement: "coord_x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 3),
+                    replacement: "coord_x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 4),
+                    replacement: "coord_x".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: nth_span(source, "x", 5),
+                    replacement: "coord_x".to_owned(),
+                },
+            ],
+        }))
+    );
 }
 
 #[test]
-fn semantic_tokens_keep_deeper_struct_like_field_paths_closed() {
+fn semantic_tokens_follow_deeper_struct_like_field_surface() {
     let source = r#"
 use Point as P
 
@@ -4795,17 +4874,26 @@ fn read(point: Point) -> Int {
     let analysis = analyzed(source);
     let tokens = analysis.semantic_tokens();
 
-    for span in [
-        nth_span(source, "x", 2),
-        nth_span(source, "x", 3),
-        nth_span(source, "x", 4),
-        nth_span(source, "x", 5),
-    ] {
-        assert!(!tokens.contains(&ql_analysis::SemanticTokenOccurrence {
-            span,
-            kind: SymbolKind::Field,
-        }));
-    }
+    assert!(tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: nth_span(source, "x", 1),
+        kind: SymbolKind::Field,
+    }));
+    assert!(tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: nth_span(source, "x", 2),
+        kind: SymbolKind::Field,
+    }));
+    assert!(tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: nth_span(source, "x", 3),
+        kind: SymbolKind::Field,
+    }));
+    assert!(tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: nth_span(source, "x", 4),
+        kind: SymbolKind::Field,
+    }));
+    assert!(tokens.contains(&ql_analysis::SemanticTokenOccurrence {
+        span: nth_span(source, "x", 5),
+        kind: SymbolKind::Field,
+    }));
 }
 
 #[test]

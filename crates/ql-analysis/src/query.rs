@@ -2579,7 +2579,7 @@ impl<'a> QueryIndexBuilder<'a> {
         path: &Path,
         resolution: &ValueResolution,
     ) -> Option<ItemId> {
-        if path.segments.len() != 1 {
+        if path.segments.is_empty() {
             return None;
         }
         self.struct_item_for_value_resolution(resolution)
@@ -2602,7 +2602,7 @@ impl<'a> QueryIndexBuilder<'a> {
         path: &Path,
         resolution: &TypeResolution,
     ) -> Option<ItemId> {
-        if path.segments.len() != 1 {
+        if path.segments.is_empty() {
             return None;
         }
         self.struct_item_for_type_resolution(resolution)

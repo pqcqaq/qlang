@@ -2560,7 +2560,7 @@ fn read(command: Command) -> Int {
 }
 
 #[test]
-fn definition_bridge_stays_empty_on_deeper_struct_like_field_paths() {
+fn definition_bridge_follows_deeper_struct_like_field_paths() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
 use Point as P
@@ -2586,21 +2586,25 @@ fn read(point: Point) -> Int {
 "#;
     let analysis = analyze_source(source).expect("source should analyze");
 
-    for position in [
-        span_to_range(source, nth_span(source, "x", 2)).start,
-        span_to_range(source, nth_span(source, "x", 3)).start,
+    let definition = definition_for_analysis(
+        &uri,
+        source,
+        &analysis,
         span_to_range(source, nth_span(source, "x", 4)).start,
-        span_to_range(source, nth_span(source, "x", 5)).start,
-    ] {
-        assert_eq!(
-            definition_for_analysis(&uri, source, &analysis, position),
-            None
-        );
-    }
+    )
+    .expect("deeper struct-like field definition should exist");
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("expected scalar definition location");
+    };
+    assert_eq!(location.uri, uri);
+    assert_eq!(
+        location.range,
+        span_to_range(source, nth_span(source, "x", 1))
+    );
 }
 
 #[test]
-fn hover_bridge_stays_empty_on_deeper_struct_like_field_paths() {
+fn hover_bridge_renders_markdown_for_deeper_struct_like_field_paths() {
     let source = r#"
 use Point as P
 
@@ -2624,19 +2628,22 @@ fn read(point: Point) -> Int {
 }
 "#;
     let analysis = analyze_source(source).expect("source should analyze");
-
-    for position in [
+    let hover = hover_for_analysis(
+        source,
+        &analysis,
         span_to_range(source, nth_span(source, "x", 2)).start,
-        span_to_range(source, nth_span(source, "x", 3)).start,
-        span_to_range(source, nth_span(source, "x", 4)).start,
-        span_to_range(source, nth_span(source, "x", 5)).start,
-    ] {
-        assert_eq!(hover_for_analysis(source, &analysis, position), None);
-    }
+    )
+    .expect("deeper struct-like field hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown content");
+    };
+    assert!(markup.value.contains("**field** `x`"));
+    assert!(markup.value.contains("field x: Int"));
+    assert!(markup.value.contains("Type: `Int`"));
 }
 
 #[test]
-fn references_bridge_stays_empty_on_deeper_struct_like_field_paths() {
+fn references_bridge_follow_deeper_struct_like_field_paths() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
 use Point as P
@@ -2661,26 +2668,37 @@ fn read(point: Point) -> Int {
 }
 "#;
     let analysis = analyze_source(source).expect("source should analyze");
+    let field_position = span_to_range(source, nth_span(source, "x", 2)).start;
 
-    for position in [
-        span_to_range(source, nth_span(source, "x", 2)).start,
-        span_to_range(source, nth_span(source, "x", 3)).start,
-        span_to_range(source, nth_span(source, "x", 4)).start,
-        span_to_range(source, nth_span(source, "x", 5)).start,
-    ] {
-        assert_eq!(
-            references_for_analysis(&uri, source, &analysis, position, true),
-            None
-        );
-        assert_eq!(
-            references_for_analysis(&uri, source, &analysis, position, false),
-            None
-        );
-    }
+    let with_declaration = references_for_analysis(&uri, source, &analysis, field_position, true)
+        .expect("deeper struct-like field references should exist");
+    let without_declaration =
+        references_for_analysis(&uri, source, &analysis, field_position, false)
+            .expect("deeper struct-like field references should exist");
+
+    assert_eq!(
+        with_declaration,
+        vec![
+            Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 1))),
+            Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 2))),
+            Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 3))),
+            Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 4))),
+            Location::new(uri, span_to_range(source, nth_span(source, "x", 5))),
+        ]
+    );
+    assert_eq!(
+        without_declaration,
+        vec![
+            Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 2))),
+            Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 3))),
+            Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 4))),
+            Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 5))),
+        ]
+    );
 }
 
 #[test]
-fn rename_bridge_keeps_deeper_struct_like_field_paths_closed() {
+fn rename_bridge_follows_deeper_struct_like_field_paths() {
     let uri = Url::parse("file:///sample.ql").expect("URI should parse");
     let source = r#"
 use Point as P
@@ -2705,22 +2723,48 @@ fn read(point: Point) -> Int {
 }
 "#;
     let analysis = analyze_source(source).expect("source should analyze");
+    let field_position = span_to_range(source, nth_span(source, "x", 2)).start;
 
-    for position in [
-        span_to_range(source, nth_span(source, "x", 2)).start,
-        span_to_range(source, nth_span(source, "x", 3)).start,
-        span_to_range(source, nth_span(source, "x", 4)).start,
-        span_to_range(source, nth_span(source, "x", 5)).start,
-    ] {
-        assert_eq!(
-            prepare_rename_for_analysis(source, &analysis, position),
-            None
-        );
-        assert_eq!(
-            rename_for_analysis(&uri, source, &analysis, position, "coord_x"),
-            Ok(None)
-        );
-    }
+    let prepare = prepare_rename_for_analysis(source, &analysis, field_position)
+        .expect("deeper struct-like field prepare rename should exist");
+    let PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } = prepare else {
+        panic!("expected range plus placeholder");
+    };
+    assert_eq!(range, span_to_range(source, nth_span(source, "x", 2)));
+    assert_eq!(placeholder, "x");
+
+    let edit = rename_for_analysis(&uri, source, &analysis, field_position, "coord_x")
+        .expect("rename should validate")
+        .expect("rename should produce edits");
+
+    let mut expected_changes = HashMap::new();
+    expected_changes.insert(
+        uri,
+        vec![
+            TextEdit::new(
+                span_to_range(source, nth_span(source, "x", 1)),
+                "coord_x".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(source, nth_span(source, "x", 2)),
+                "coord_x".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(source, nth_span(source, "x", 3)),
+                "coord_x".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(source, nth_span(source, "x", 4)),
+                "coord_x".to_owned(),
+            ),
+            TextEdit::new(
+                span_to_range(source, nth_span(source, "x", 5)),
+                "coord_x".to_owned(),
+            ),
+        ],
+    );
+
+    assert_eq!(edit, WorkspaceEdit::new(expected_changes));
 }
 
 #[test]
@@ -6415,7 +6459,7 @@ fn read(command: Command) -> Int {
 }
 
 #[test]
-fn semantic_tokens_bridge_keeps_deeper_struct_like_field_paths_closed() {
+fn semantic_tokens_bridge_maps_deeper_struct_like_field_surface() {
     let source = r#"
 use Point as P
 
@@ -6452,12 +6496,13 @@ fn read(point: Point) -> Int {
         .expect("property legend entry should exist") as u32;
 
     for range in [
+        span_to_range(source, nth_span(source, "x", 1)),
         span_to_range(source, nth_span(source, "x", 2)),
         span_to_range(source, nth_span(source, "x", 3)),
         span_to_range(source, nth_span(source, "x", 4)),
         span_to_range(source, nth_span(source, "x", 5)),
     ] {
-        assert!(!decoded.contains(&(
+        assert!(decoded.contains(&(
             range.start.line,
             range.start.character,
             range.end.character - range.start.character,

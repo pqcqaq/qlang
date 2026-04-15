@@ -30,7 +30,7 @@
 
 - lexer、parser、formatter、diagnostics、HIR、resolve、typeck、MIR、borrowck 已进入主路径。
 - same-file hover、definition、references、rename、completion、semantic tokens、document symbol 已接通到共享 analysis/query surface。
-- same-file rename 现在也会把更深层 struct-like 简写绑定（如 `Point.Scope.Config { x }`）改写成显式绑定（如 `Point.Scope.Config { x: coord_x }`），同时继续保持这类更深层字段路径本身不开放 field query。
+- same-file rename 现在也会把更深层 struct-like 简写绑定（如 `Point.Scope.Config { x }`）改写成显式绑定（如 `Point.Scope.Config { x: coord_x }`）；同一层上的显式字段标签（如 `Point.Scope.Config { x: value }`）也已进入 same-file field hover / definition / references / rename / semantic tokens。
 
 ### CLI 与 build
 
