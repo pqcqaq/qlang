@@ -807,6 +807,15 @@ fn report_project_graph_manifest_failure(manifest_path: &Path) {
     eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
 }
 
+fn report_project_graph_package_context_failure(path: &Path) {
+    let normalized_path = normalize_path(path);
+    let rerun_command = format!("ql project graph {normalized_path}");
+    eprintln!(
+        "note: `ql project graph` only renders package/workspace graphs for packages or workspace members discoverable from `qlang.toml`"
+    );
+    eprintln!("hint: rerun `{rerun_command}` after adding `qlang.toml` for this path");
+}
+
 fn report_package_interface_check_manifest_failure(manifest_path: &Path, changed_only: bool) {
     let manifest_path = normalize_path(manifest_path);
     let rerun_command =
@@ -1831,7 +1840,13 @@ fn emit_c_header_path(path: &Path, options: &CHeaderOptions) -> Result<(), u8> {
 
 fn project_graph_path(path: &Path) -> Result<(), u8> {
     let manifest = load_project_manifest(path).map_err(|error| {
-        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error) {
+        if let ql_project::ProjectError::ManifestNotFound { start } = &error {
+            eprintln!(
+                "error: `ql project graph` requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+                normalize_path(start)
+            );
+            report_project_graph_package_context_failure(path);
+        } else if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error) {
             eprintln!(
                 "error: `ql project graph` manifest `{}` does not declare `[package].name`",
                 normalize_path(manifest_path)
