@@ -2375,8 +2375,26 @@ fn emit_package_interface_path(
             EmitPackageInterfaceError::ManifestNotFound
         }
         error => {
-            eprintln!("error: {error}");
-            EmitPackageInterfaceError::Code(1)
+            if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error)
+            {
+                eprintln!(
+                    "error: {} manifest `{}` does not declare `[package].name`",
+                    command_label,
+                    normalize_path(manifest_path)
+                );
+                EmitPackageInterfaceError::ManifestFailure {
+                    manifest_path: manifest_path.to_path_buf(),
+                }
+            } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
+            {
+                eprintln!("error: {command_label} {error}");
+                EmitPackageInterfaceError::ManifestFailure {
+                    manifest_path: manifest_path.to_path_buf(),
+                }
+            } else {
+                eprintln!("error: {error}");
+                EmitPackageInterfaceError::Code(1)
+            }
         }
     })?;
     let package_name = package_name(&manifest).map_err(|error| {

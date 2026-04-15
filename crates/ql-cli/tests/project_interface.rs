@@ -6493,6 +6493,130 @@ members = []
 }
 
 #[test]
+fn build_with_emit_interface_points_to_build_side_invalid_manifest_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-invalid-manifest");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create project source directory for build-side invalid manifest test");
+    let source_path = temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    return exported(1)
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package
+name = "app"
+"#,
+    );
+    let output_path = project_root.join("build").join("app.ll");
+    let manifest_path = project_root.join("qlang.toml");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let source_display = source_path.to_string_lossy().replace('\\', "/");
+    let output_display = output_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with build-side invalid manifest",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-invalid-manifest",
+        "build with invalid package manifest",
+        &output,
+        1,
+    )
+    .expect("build should fail when build-side interface emission sees an invalid manifest");
+    expect_stdout_contains_all(
+        "build-emit-interface-invalid-manifest",
+        &stdout,
+        &[&format!("wrote llvm-ir: {}", output_path.display())],
+    )
+    .expect("build-side invalid manifest failure should still report the successful build artifact");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let error_line = format!("error: `ql build --emit-interface` invalid manifest `{manifest_display}`");
+    let old_error_line = format!("error: invalid manifest `{manifest_display}`");
+    let package_note = format!("note: failing package manifest: {manifest_display}");
+    let rerun_hint = format!(
+        "hint: rerun `ql build {source_display} --emit llvm-ir --output {output_display} --emit-interface` after fixing the package manifest"
+    );
+    let old_rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {manifest_display}` after fixing the package manifest"
+    );
+    expect_stderr_contains(
+        "build-emit-interface-invalid-manifest",
+        "build with invalid package manifest",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("build-side invalid manifest failure should preserve the build command label");
+    expect_stderr_not_contains(
+        "build-emit-interface-invalid-manifest",
+        "build with invalid package manifest",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("build-side invalid manifest failure should not fall back to the unlabeled manifest error");
+    expect_stderr_contains(
+        "build-emit-interface-invalid-manifest",
+        "build with invalid package manifest",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("build-side invalid manifest failure should point to the failing package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-invalid-manifest",
+        "build with invalid package manifest",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("build-side invalid manifest failure should preserve the original build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-invalid-manifest",
+        "build with invalid package manifest",
+        &normalized_stderr,
+        &old_rerun_hint,
+    )
+    .expect("build-side invalid manifest failure should not fall back to a project-only rerun hint");
+    expect_stderr_not_contains(
+        "build-emit-interface-invalid-manifest",
+        "build with invalid package manifest",
+        &normalized_stderr,
+        "after fixing the package interface error",
+    )
+    .expect("build-side invalid manifest failure should not fall back to a generic interface-error hint");
+    expect_stderr_contains(
+        "build-emit-interface-invalid-manifest",
+        "build with invalid package manifest",
+        &normalized_stderr,
+        &format!("note: build artifact remains at `{}`", output_display),
+    )
+    .expect("build-side invalid manifest failure should confirm that the build artifact was preserved");
+    expect_file_exists(
+        "build-emit-interface-invalid-manifest",
+        &output_path,
+        "generated llvm ir",
+        "build with invalid package manifest",
+    )
+    .expect("build-side invalid manifest failure should keep the successful build artifact");
+}
+
+#[test]
 fn build_with_emit_interface_points_to_build_side_package_source_root_failure() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-build-emit-interface-package-source-root");
