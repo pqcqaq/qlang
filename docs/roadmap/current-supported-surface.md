@@ -90,7 +90,7 @@
 - imported dependency symbol：hover、definition、declaration、references
 - `use ...` 导入路径、grouped import 位置：dependency package path / public symbol completion
 - dependency enum import roots：variant completion、variant hover/query、`textDocument/typeDefinition`
-- dependency struct import roots：显式 struct literal / pattern field-label completion / query / `typeDefinition`，并已覆盖 `Cfg.Scope.Config { child: value }` / `Cfg.Scope.Config { child: current }` 这类更深层 struct-like path；direct dependency struct literal value roots 现也支持 hover / definition / declaration / references / `typeDefinition`
+- dependency struct import roots：显式 struct literal / pattern field-label completion / query / `typeDefinition`，并已覆盖 `Cfg.Scope.Config { child: value }` / `Cfg.Scope.Config { child: current }` 这类更深层 struct-like path；dependency struct literal value roots 现也支持 hover / definition / declaration / references / `typeDefinition`，并已覆盖 `Cfg.Scope.Config` 这类更深层 struct-like root
 - package-aware dependency rename 现在也覆盖当前文件里的 dependency-backed local value roots；struct destructuring shorthand 定义如 `Cfg { child }` 在 rename 时也会自动重写成 `Cfg { child: current }`，这仍然只改当前文件，不开放 cross-file rename / workspace edits
 - 同构 inline tuple / array destructuring 产生的 dependency locals 现也支持 value-root hover / definition / declaration / references，并可继续进入 named-local member `typeDefinition`；同一条 destructuring slice 现在也覆盖 direct dependency iterable call，例如 `let (first, second) = config.children()` 与 `let [first, second] = config.children()`，这些 locals 也已进入 dependency member field / method query
 - 语法局部可恢复 receiver 的 dependency member-field / member-method 最小 completion、query 与 `typeDefinition`

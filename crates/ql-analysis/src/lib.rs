@@ -5422,7 +5422,7 @@ fn dependency_value_root_binding_for_path(
     path: &ql_ast::Path,
     offset: usize,
 ) -> Option<DependencyStructBinding> {
-    let [root_name] = path.segments.as_slice() else {
+    let Some(root_name) = path.segments.first() else {
         return None;
     };
     let span = path.first_segment_span()?;
@@ -5437,7 +5437,7 @@ fn push_dependency_value_root_occurrence_for_path(
     path: &ql_ast::Path,
     occurrences: &mut Vec<DependencyValueOccurrence>,
 ) {
-    let [root_name] = path.segments.as_slice() else {
+    let Some(root_name) = path.segments.first() else {
         return;
     };
     let Some(reference_span) = path.first_segment_span() else {

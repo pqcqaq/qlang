@@ -124,6 +124,34 @@ pub fn build() -> Int {
     }
 }
 
+fn build_deeper_source(broken: bool) -> &'static str {
+    if broken {
+        r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn build() -> Int {
+    let first = Cfg.Scope.Config { value: 1 }
+    let second = Cfg.Scope.Config { value: 2 }
+    return "oops"
+}
+"#
+    } else {
+        r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn build() -> Int {
+    let first = Cfg.Scope.Config { value: 1 }
+    let second = Cfg.Scope.Config { value: 2 }
+    return first.value + second.value
+}
+"#
+    }
+}
+
 fn run_type_definition_case(broken: bool) {
     let temp = TempDir::new(&format!(
         "ql-lsp-struct-literal-value-root-type-definition{}",
@@ -208,6 +236,90 @@ packages = ["../dep"]
     }
 }
 
+fn run_deeper_type_definition_case(broken: bool) {
+    let temp = TempDir::new(&format!(
+        "ql-lsp-deeper-struct-literal-value-root-type-definition{}",
+        if broken { "-broken" } else { "" }
+    ));
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = build_deeper_source(broken);
+    temp.write("workspace/app/src/lib.ql", source);
+    let second_literal_root = nth_offset(source, "Cfg", 3);
+
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let definition = type_definition_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, second_literal_root),
+        )
+        .expect("deeper dependency struct literal value root type definition should exist");
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Config {\n    value: Int,\n}",
+        );
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(source).expect("source should analyze");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+        let definition = type_definition_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, second_literal_root),
+        )
+        .expect("deeper dependency struct literal value root type definition should exist");
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Config {\n    value: Int,\n}",
+        );
+    }
+}
+
 #[test]
 fn type_definition_bridge_follows_dependency_struct_literal_value_roots() {
     run_type_definition_case(false);
@@ -216,4 +328,14 @@ fn type_definition_bridge_follows_dependency_struct_literal_value_roots() {
 #[test]
 fn type_definition_fallback_follows_dependency_struct_literal_value_roots() {
     run_type_definition_case(true);
+}
+
+#[test]
+fn type_definition_bridge_follows_deeper_dependency_struct_literal_value_roots() {
+    run_deeper_type_definition_case(false);
+}
+
+#[test]
+fn type_definition_fallback_follows_deeper_dependency_struct_literal_value_roots() {
+    run_deeper_type_definition_case(true);
 }

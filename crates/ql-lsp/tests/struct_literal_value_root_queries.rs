@@ -116,6 +116,34 @@ pub fn build() -> Int {
     }
 }
 
+fn build_deeper_source(broken: bool) -> &'static str {
+    if broken {
+        r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn build() -> Int {
+    let first = Cfg.Scope.Config { value: 1 }
+    let second = Cfg.Scope.Config { value: 2 }
+    return "oops"
+}
+"#
+    } else {
+        r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn build() -> Int {
+    let first = Cfg.Scope.Config { value: 1 }
+    let second = Cfg.Scope.Config { value: 2 }
+    return first.value + second.value
+}
+"#
+    }
+}
+
 fn run_root_query_case(broken: bool) {
     let temp = TempDir::new(&format!(
         "ql-lsp-struct-literal-value-root-query{}",
@@ -364,6 +392,246 @@ packages = ["../dep"]
     }
 }
 
+fn run_deeper_root_query_case(broken: bool) {
+    let temp = TempDir::new(&format!(
+        "ql-lsp-deeper-struct-literal-value-root-query{}",
+        if broken { "-broken" } else { "" }
+    ));
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = build_deeper_source(broken);
+    temp.write("workspace/app/src/lib.ql", source);
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let second_literal_root = nth_offset(source, "Cfg", 3);
+
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+
+        let hover = hover_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, second_literal_root),
+        )
+        .expect("deeper dependency struct literal value root hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**struct** `Config`"));
+        assert!(markup.value.contains("struct Config"));
+
+        let definition = definition_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, second_literal_root),
+        )
+        .expect("deeper dependency struct literal value root definition should exist");
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_dependency_location(
+            &location,
+            &dep_qi,
+            "pub struct Config {\n    value: Int,\n}",
+        );
+
+        let declaration = declaration_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, second_literal_root),
+        )
+        .expect("deeper dependency struct literal value root declaration should exist");
+        let GotoDeclarationResponse::Scalar(location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_dependency_location(
+            &location,
+            &dep_qi,
+            "pub struct Config {\n    value: Int,\n}",
+        );
+
+        let without_declaration = references_for_dependency_values(
+            &uri,
+            source,
+            &package,
+            offset_to_position(source, second_literal_root),
+            false,
+        )
+        .expect("deeper dependency struct literal value root references should exist");
+        assert_eq!(
+            without_declaration,
+            vec![
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(nth_offset(source, "Cfg", 2), nth_offset(source, "Cfg", 2) + 3),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(nth_offset(source, "Cfg", 3), nth_offset(source, "Cfg", 3) + 3),
+                    ),
+                ),
+            ]
+        );
+
+        let with_declaration = references_for_dependency_values(
+            &uri,
+            source,
+            &package,
+            offset_to_position(source, second_literal_root),
+            true,
+        )
+        .expect(
+            "deeper dependency struct literal value root references with declaration should exist",
+        );
+        assert_eq!(with_declaration.len(), 3);
+        assert_dependency_location(
+            &with_declaration[0],
+            &dep_qi,
+            "pub struct Config {\n    value: Int,\n}",
+        );
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(source).expect("source should analyze");
+
+        let hover = hover_for_package_analysis(
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, second_literal_root),
+        )
+        .expect("deeper dependency struct literal value root hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**struct** `Config`"));
+        assert!(markup.value.contains("struct Config"));
+
+        let definition = definition_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, second_literal_root),
+        )
+        .expect("deeper dependency struct literal value root definition should exist");
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_dependency_location(
+            &location,
+            &dep_qi,
+            "pub struct Config {\n    value: Int,\n}",
+        );
+
+        let declaration = declaration_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, second_literal_root),
+        )
+        .expect("deeper dependency struct literal value root declaration should exist");
+        let GotoDeclarationResponse::Scalar(location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_dependency_location(
+            &location,
+            &dep_qi,
+            "pub struct Config {\n    value: Int,\n}",
+        );
+
+        let without_declaration = references_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, second_literal_root),
+            false,
+        )
+        .expect("deeper dependency struct literal value root references should exist");
+        assert_eq!(
+            without_declaration,
+            vec![
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(nth_offset(source, "Cfg", 2), nth_offset(source, "Cfg", 2) + 3),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(nth_offset(source, "Cfg", 3), nth_offset(source, "Cfg", 3) + 3),
+                    ),
+                ),
+            ]
+        );
+
+        let with_declaration = references_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, second_literal_root),
+            true,
+        )
+        .expect(
+            "deeper dependency struct literal value root references with declaration should exist",
+        );
+        assert_eq!(with_declaration.len(), 3);
+        assert_dependency_location(
+            &with_declaration[0],
+            &dep_qi,
+            "pub struct Config {\n    value: Int,\n}",
+        );
+    }
+}
+
 #[test]
 fn root_queries_work_on_dependency_struct_literal_value_roots() {
     run_root_query_case(false);
@@ -372,4 +640,14 @@ fn root_queries_work_on_dependency_struct_literal_value_roots() {
 #[test]
 fn root_queries_fallback_on_dependency_struct_literal_value_roots() {
     run_root_query_case(true);
+}
+
+#[test]
+fn root_queries_work_on_deeper_dependency_struct_literal_value_roots() {
+    run_deeper_root_query_case(false);
+}
+
+#[test]
+fn root_queries_fallback_on_deeper_dependency_struct_literal_value_roots() {
+    run_deeper_root_query_case(true);
 }
