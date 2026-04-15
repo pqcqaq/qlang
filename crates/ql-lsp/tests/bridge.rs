@@ -2683,7 +2683,7 @@ fn read(point: Point) -> Int {
             Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 2))),
             Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 3))),
             Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 4))),
-            Location::new(uri, span_to_range(source, nth_span(source, "x", 5))),
+            Location::new(uri.clone(), span_to_range(source, nth_span(source, "x", 5))),
         ]
     );
     assert_eq!(
@@ -5602,15 +5602,65 @@ fn read(command: Command) -> Int {
     ] {
         let range = span_to_range(source, Span::new(offset, offset + width));
         let position = Position::new(range.start.line, range.start.character + 1);
+        match completion_for_analysis(source, &analysis, position) {
+            Some(CompletionResponse::Array(items)) => {
+                assert!(
+                    items
+                        .iter()
+                        .all(|item| item.kind != Some(CompletionItemKind::ENUM_MEMBER))
+                );
+            }
+            None => {}
+            Some(_) => panic!("expected array completion response"),
+        }
+    }
+}
+
+#[test]
+fn completion_bridge_maps_deeper_struct_like_field_candidates_by_prefix() {
+    let source = r#"
+use Point as P
+
+struct Point {
+    value: Int,
+    flag: Bool,
+}
+
+fn build(point: Point, current: Int) -> Int {
+    let direct = Point.Scope.Config { value: current, fl: true }
+    let alias = P.Scope.Config { value: current, fl: false }
+    return match point {
+        Point.Scope.Config { value: current, fl: enabled } => current,
+        P.Scope.Config { value: current, fl: enabled } => current,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    for span in [
+        nth_span(source, "fl", 2),
+        nth_span(source, "fl", 3),
+        nth_span(source, "fl", 4),
+        nth_span(source, "fl", 5),
+    ] {
+        let range = span_to_range(source, span);
+        let position = Position::new(range.start.line, range.start.character + 1);
         let Some(CompletionResponse::Array(items)) =
             completion_for_analysis(source, &analysis, position)
         else {
             panic!("expected array completion response");
         };
-        assert!(
-            items
-                .iter()
-                .all(|item| item.kind != Some(CompletionItemKind::ENUM_MEMBER))
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "flag");
+        assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+        assert_eq!(items[0].detail.as_deref(), Some("field flag: Bool"));
+        assert_eq!(
+            items[0].text_edit,
+            Some(tower_lsp::lsp_types::CompletionTextEdit::Edit(
+                TextEdit::new(range, "flag".to_owned(),)
+            ))
         );
     }
 }

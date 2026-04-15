@@ -5294,6 +5294,50 @@ fn read(command: Command) -> Int {
 }
 
 #[test]
+fn completion_queries_surface_deeper_struct_like_field_candidates() {
+    let source = r#"
+use Point as P
+
+struct Point {
+    value: Int,
+    flag: Bool,
+}
+
+fn build(point: Point, current: Int) -> Int {
+    let direct = Point.Scope.Config { value: current, fl: true }
+    let alias = P.Scope.Config { value: current, fl: false }
+    return match point {
+        Point.Scope.Config { value: current, fl: enabled } => current,
+        P.Scope.Config { value: current, fl: enabled } => current,
+        _ => 0,
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+
+    for offset in [
+        nth_offset(source, "fl", 2) + "fl".len(),
+        nth_offset(source, "fl", 3) + "fl".len(),
+        nth_offset(source, "fl", 4) + "fl".len(),
+        nth_offset(source, "fl", 5) + "fl".len(),
+    ] {
+        let items = analysis
+            .completions_at(offset)
+            .expect("deeper struct-like field completion should exist");
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["flag"]
+        );
+        assert!(items.iter().all(|item| item.kind == SymbolKind::Field));
+        assert_eq!(items[0].detail, "field flag: Bool");
+    }
+}
+
+#[test]
 fn completion_queries_surface_variant_candidates_in_import_alias_struct_literal_paths() {
     let source = r#"
 use Command as Cmd

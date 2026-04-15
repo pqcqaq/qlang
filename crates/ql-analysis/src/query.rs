@@ -214,6 +214,7 @@ pub(crate) struct QueryIndex {
     type_definitions: Vec<TypeDefinitionOccurrence>,
     field_shorthand_occurrences: HashMap<FieldTarget, Vec<FieldShorthandOccurrence>>,
     binding_shorthand_occurrences: HashMap<SymbolKey, Vec<BindingShorthandOccurrence>>,
+    struct_field_completion_items_by_root: HashMap<String, Vec<CompletionItem>>,
     async_contexts: Vec<AsyncContextInfo>,
     loop_control_contexts: Vec<LoopControlContextInfo>,
     completion_sites: Vec<CompletionSite>,
@@ -230,6 +231,7 @@ impl QueryIndex {
     ) -> Self {
         let mut builder = QueryIndexBuilder::new(source, module, resolution, typeck);
         builder.index_definitions();
+        builder.index_local_struct_field_completion_roots();
         builder.index_uses();
         builder.index_async_contexts();
         builder.index_loop_control_contexts();
@@ -403,11 +405,12 @@ impl QueryIndex {
         }))
     }
 
-    pub(crate) fn completions_at(&self, offset: usize) -> Option<Vec<CompletionItem>> {
-        if let Some(site) = self.semantic_completion_site_at(offset) {
-            return Some(site.items.clone());
-        }
+    pub(crate) fn semantic_completions_at(&self, offset: usize) -> Option<Vec<CompletionItem>> {
+        self.semantic_completion_site_at(offset)
+            .map(|site| site.items.clone())
+    }
 
+    pub(crate) fn lexical_completions_at(&self, offset: usize) -> Option<Vec<CompletionItem>> {
         let site = self.completion_site_at(offset)?;
         let mut items = Vec::new();
         let mut seen = HashSet::new();
@@ -435,6 +438,22 @@ impl QueryIndex {
                 .then_with(|| left.detail.cmp(&right.detail))
         });
         Some(items)
+    }
+
+    pub(crate) fn local_struct_field_completion_items_for_root_name(
+        &self,
+        root_name: &str,
+        excluded_field_names: &[String],
+    ) -> Option<Vec<CompletionItem>> {
+        let excluded = excluded_field_names.iter().collect::<HashSet<_>>();
+        let items = self
+            .struct_field_completion_items_by_root
+            .get(root_name)?
+            .iter()
+            .filter(|item| !excluded.contains(&item.label))
+            .cloned()
+            .collect::<Vec<_>>();
+        (!items.is_empty()).then_some(items)
     }
 
     pub(crate) fn semantic_tokens(&self) -> Vec<SemanticTokenOccurrence> {
@@ -593,6 +612,7 @@ struct QueryIndexBuilder<'a> {
     import_defs: HashMap<ImportBinding, SymbolData>,
     field_shorthand_occurrences: HashMap<FieldTarget, Vec<FieldShorthandOccurrence>>,
     binding_shorthand_occurrences: HashMap<SymbolKey, Vec<BindingShorthandOccurrence>>,
+    struct_field_completion_items_by_root: HashMap<String, Vec<CompletionItem>>,
     async_contexts: Vec<AsyncContextInfo>,
     loop_control_contexts: Vec<LoopControlContextInfo>,
     completion_sites: Vec<CompletionSite>,
@@ -633,6 +653,7 @@ impl<'a> QueryIndexBuilder<'a> {
             import_defs: HashMap::new(),
             field_shorthand_occurrences: HashMap::new(),
             binding_shorthand_occurrences: HashMap::new(),
+            struct_field_completion_items_by_root: HashMap::new(),
             async_contexts: Vec::new(),
             loop_control_contexts: Vec::new(),
             completion_sites: Vec::new(),
@@ -673,6 +694,16 @@ impl<'a> QueryIndexBuilder<'a> {
             occurrences.sort_by_key(|occurrence| (occurrence.span.start, occurrence.span.end));
             occurrences.dedup_by(|left, right| left.span == right.span);
         }
+        for items in self.struct_field_completion_items_by_root.values_mut() {
+            items.sort_by(|left, right| {
+                left.label
+                    .cmp(&right.label)
+                    .then_with(|| left.detail.cmp(&right.detail))
+            });
+            items.dedup_by(|left, right| {
+                left.label == right.label && left.detail == right.detail && left.kind == right.kind
+            });
+        }
         self.async_contexts
             .sort_by_key(|entry| (entry.span.len(), entry.span.start, entry.span.end));
         self.async_contexts
@@ -687,6 +718,7 @@ impl<'a> QueryIndexBuilder<'a> {
             type_definitions: self.type_definitions,
             field_shorthand_occurrences: self.field_shorthand_occurrences,
             binding_shorthand_occurrences: self.binding_shorthand_occurrences,
+            struct_field_completion_items_by_root: self.struct_field_completion_items_by_root,
             async_contexts: self.async_contexts,
             loop_control_contexts: self.loop_control_contexts,
             completion_sites: self.completion_sites,
@@ -699,6 +731,30 @@ impl<'a> QueryIndexBuilder<'a> {
         self.index_import_definitions();
         for &item_id in &self.module.items {
             self.index_item_definitions(item_id);
+        }
+    }
+
+    fn index_local_struct_field_completion_roots(&mut self) {
+        for &item_id in &self.module.items {
+            let ItemKind::Struct(struct_decl) = &self.module.item(item_id).kind else {
+                continue;
+            };
+            let items = self.struct_field_completion_items(item_id, &[]);
+            if !items.is_empty() {
+                self.struct_field_completion_items_by_root
+                    .insert(struct_decl.name.clone(), items);
+            }
+        }
+
+        for binding in self.import_defs.keys().cloned().collect::<Vec<_>>() {
+            let Some(item_id) = self.local_struct_item_for_import_binding(&binding) else {
+                continue;
+            };
+            let items = self.struct_field_completion_items(item_id, &[]);
+            if !items.is_empty() {
+                self.struct_field_completion_items_by_root
+                    .insert(binding.local_name.clone(), items);
+            }
         }
     }
 
@@ -1589,10 +1645,13 @@ impl<'a> QueryIndexBuilder<'a> {
                 }
             }
             PatternKind::Struct { path, fields, .. } => {
-                if let Some(resolution) = self.resolution.pattern_resolution(pattern_id)
-                    && let Some(item_id) = self.enum_item_for_value_resolution(resolution)
-                {
-                    self.record_variant_path_completion_site(path, item_id);
+                if let Some(resolution) = self.resolution.pattern_resolution(pattern_id) {
+                    if let Some(item_id) = self.enum_item_for_value_resolution(resolution) {
+                        self.record_variant_path_completion_site(path, item_id);
+                    }
+                    if let Some(item_id) = self.struct_item_for_root_value_path(path, resolution) {
+                        self.record_struct_pattern_field_completion_sites(item_id, fields);
+                    }
                 }
                 for field in fields {
                     self.index_pattern_completion_sites(field.pattern);
@@ -1669,10 +1728,13 @@ impl<'a> QueryIndexBuilder<'a> {
                 }
             }
             ExprKind::StructLiteral { path, fields } => {
-                if let Some(resolution) = self.resolution.struct_literal_resolution(expr_id)
-                    && let Some(item_id) = self.enum_item_for_type_resolution(resolution)
-                {
-                    self.record_variant_path_completion_site(path, item_id);
+                if let Some(resolution) = self.resolution.struct_literal_resolution(expr_id) {
+                    if let Some(item_id) = self.enum_item_for_type_resolution(resolution) {
+                        self.record_variant_path_completion_site(path, item_id);
+                    }
+                    if let Some(item_id) = self.struct_item_for_root_type_path(path, resolution) {
+                        self.record_struct_literal_field_completion_sites(item_id, fields);
+                    }
                 }
                 for field in fields {
                     self.index_expr_completion_sites(field.value);
@@ -2518,6 +2580,39 @@ impl<'a> QueryIndexBuilder<'a> {
         Vec::new()
     }
 
+    fn struct_field_completion_items(
+        &self,
+        item_id: ItemId,
+        excluded_field_names: &[String],
+    ) -> Vec<CompletionItem> {
+        let ItemKind::Struct(struct_decl) = &self.module.item(item_id).kind else {
+            return Vec::new();
+        };
+
+        let excluded = excluded_field_names.iter().collect::<HashSet<_>>();
+        let mut items = Vec::new();
+        for (field_index, field) in struct_decl.fields.iter().enumerate() {
+            if excluded.contains(&field.name) {
+                continue;
+            }
+
+            let target = FieldTarget {
+                item_id,
+                field_index,
+            };
+            if let Some(symbol) = self.field_defs.get(&target) {
+                items.push(completion_item_from_symbol(symbol));
+            }
+        }
+
+        items.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| left.detail.cmp(&right.detail))
+        });
+        items
+    }
+
     fn record_variant_path_completion_site(&mut self, path: &Path, item_id: ItemId) {
         if path.segments.len() != 2 {
             return;
@@ -2526,6 +2621,54 @@ impl<'a> QueryIndexBuilder<'a> {
             return;
         };
         let items = self.variant_completion_items(item_id);
+        self.record_semantic_completion_site(span, items);
+    }
+
+    fn record_struct_pattern_field_completion_sites(
+        &mut self,
+        item_id: ItemId,
+        fields: &[ql_hir::PatternField],
+    ) {
+        for current in fields.iter().filter(|field| !field.is_shorthand) {
+            let excluded_field_names = fields
+                .iter()
+                .filter(|field| field.name != current.name)
+                .map(|field| field.name.clone())
+                .collect::<Vec<_>>();
+            self.record_struct_field_completion_site(
+                current.name_span,
+                item_id,
+                &excluded_field_names,
+            );
+        }
+    }
+
+    fn record_struct_literal_field_completion_sites(
+        &mut self,
+        item_id: ItemId,
+        fields: &[ql_hir::StructLiteralField],
+    ) {
+        for current in fields.iter().filter(|field| !field.is_shorthand) {
+            let excluded_field_names = fields
+                .iter()
+                .filter(|field| field.name != current.name)
+                .map(|field| field.name.clone())
+                .collect::<Vec<_>>();
+            self.record_struct_field_completion_site(
+                current.name_span,
+                item_id,
+                &excluded_field_names,
+            );
+        }
+    }
+
+    fn record_struct_field_completion_site(
+        &mut self,
+        span: Span,
+        item_id: ItemId,
+        excluded_field_names: &[String],
+    ) {
+        let items = self.struct_field_completion_items(item_id, excluded_field_names);
         self.record_semantic_completion_site(span, items);
     }
 

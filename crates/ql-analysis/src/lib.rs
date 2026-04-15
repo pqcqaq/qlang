@@ -2398,10 +2398,15 @@ impl Analysis {
     /// - member completion currently covers already-parsed member tokens whose receiver type is
     ///   stable, plus same-file parsed enum variant paths, including local import aliases that
     ///   point at local enum items
+    /// - parse-tolerant same-file struct field-label completion covers direct and deeper
+    ///   struct-like literal/pattern paths when the root resolves to a local struct item
     /// - ambiguous member surfaces, parse-error tolerant completion, and cross-file project indexing
     ///   are still intentionally deferred
     pub fn completions_at(&self, offset: usize) -> Option<Vec<CompletionItem>> {
-        self.index.completions_at(offset)
+        self.index
+            .semantic_completions_at(offset)
+            .or_else(|| self.local_struct_field_completions_at(offset))
+            .or_else(|| self.index.lexical_completions_at(offset))
     }
 
     /// Return source-backed semantic-token occurrences for the current file.
@@ -2418,6 +2423,15 @@ impl Analysis {
     /// identity: top-level items plus member declarations already represented in the query index.
     pub fn document_symbols(&self) -> Vec<DocumentSymbolTarget> {
         self.index.document_symbols()
+    }
+
+    fn local_struct_field_completions_at(&self, offset: usize) -> Option<Vec<CompletionItem>> {
+        let site = local_struct_field_completion_site(&self.ast, offset)?;
+        self.index
+            .local_struct_field_completion_items_for_root_name(
+                &site.root_name,
+                &site.excluded_field_names,
+            )
     }
 
     pub fn render_diagnostics(&self, path: &Path, source: &str) -> String {
@@ -3080,6 +3094,274 @@ fn dependency_struct_field_detail(field: &ql_ast::FieldDecl) -> String {
         field.name,
         render_dependency_type_expr(&field.ty)
     )
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LocalStructFieldCompletionSite {
+    root_name: String,
+    excluded_field_names: Vec<String>,
+}
+
+fn local_struct_field_completion_site(
+    module: &ql_ast::Module,
+    offset: usize,
+) -> Option<LocalStructFieldCompletionSite> {
+    for item in &module.items {
+        if let Some(site) = local_struct_field_completion_site_in_item(item, offset) {
+            return Some(site);
+        }
+    }
+    None
+}
+
+fn local_struct_field_completion_site_in_item(
+    item: &ql_ast::Item,
+    offset: usize,
+) -> Option<LocalStructFieldCompletionSite> {
+    match &item.kind {
+        AstItemKind::Function(function) => function
+            .body
+            .as_ref()
+            .and_then(|body| local_struct_field_completion_site_in_block(body, offset)),
+        AstItemKind::Const(global) | AstItemKind::Static(global) => {
+            local_struct_field_completion_site_in_expr(&global.value, offset)
+        }
+        AstItemKind::Struct(struct_decl) => struct_decl.fields.iter().find_map(|field| {
+            field
+                .default
+                .as_ref()
+                .and_then(|default| local_struct_field_completion_site_in_expr(default, offset))
+        }),
+        AstItemKind::Trait(trait_decl) => trait_decl.methods.iter().find_map(|method| {
+            method
+                .body
+                .as_ref()
+                .and_then(|body| local_struct_field_completion_site_in_block(body, offset))
+        }),
+        AstItemKind::Impl(impl_block) => impl_block.methods.iter().find_map(|method| {
+            method
+                .body
+                .as_ref()
+                .and_then(|body| local_struct_field_completion_site_in_block(body, offset))
+        }),
+        AstItemKind::Extend(extend_block) => extend_block.methods.iter().find_map(|method| {
+            method
+                .body
+                .as_ref()
+                .and_then(|body| local_struct_field_completion_site_in_block(body, offset))
+        }),
+        AstItemKind::TypeAlias(_) | AstItemKind::Enum(_) | AstItemKind::ExternBlock(_) => None,
+    }
+}
+
+fn local_struct_field_completion_site_in_block(
+    block: &ql_ast::Block,
+    offset: usize,
+) -> Option<LocalStructFieldCompletionSite> {
+    for stmt in &block.statements {
+        if let Some(site) = local_struct_field_completion_site_in_stmt(stmt, offset) {
+            return Some(site);
+        }
+    }
+    block
+        .tail
+        .as_ref()
+        .and_then(|tail| local_struct_field_completion_site_in_expr(tail, offset))
+}
+
+fn local_struct_field_completion_site_in_stmt(
+    stmt: &ql_ast::Stmt,
+    offset: usize,
+) -> Option<LocalStructFieldCompletionSite> {
+    match &stmt.kind {
+        ql_ast::StmtKind::Let { pattern, value, .. } => {
+            local_struct_field_completion_site_in_pattern(pattern, offset)
+                .or_else(|| local_struct_field_completion_site_in_expr(value, offset))
+        }
+        ql_ast::StmtKind::Return(Some(expr))
+        | ql_ast::StmtKind::Defer(expr)
+        | ql_ast::StmtKind::Expr { expr, .. } => {
+            local_struct_field_completion_site_in_expr(expr, offset)
+        }
+        ql_ast::StmtKind::While { condition, body } => {
+            local_struct_field_completion_site_in_expr(condition, offset)
+                .or_else(|| local_struct_field_completion_site_in_block(body, offset))
+        }
+        ql_ast::StmtKind::Loop { body } => {
+            local_struct_field_completion_site_in_block(body, offset)
+        }
+        ql_ast::StmtKind::For {
+            pattern,
+            iterable,
+            body,
+            ..
+        } => local_struct_field_completion_site_in_pattern(pattern, offset)
+            .or_else(|| local_struct_field_completion_site_in_expr(iterable, offset))
+            .or_else(|| local_struct_field_completion_site_in_block(body, offset)),
+        ql_ast::StmtKind::Return(None) | ql_ast::StmtKind::Break | ql_ast::StmtKind::Continue => {
+            None
+        }
+    }
+}
+
+fn local_struct_field_completion_site_in_pattern(
+    pattern: &ql_ast::Pattern,
+    offset: usize,
+) -> Option<LocalStructFieldCompletionSite> {
+    match &pattern.kind {
+        ql_ast::PatternKind::Tuple(items)
+        | ql_ast::PatternKind::Array(items)
+        | ql_ast::PatternKind::TupleStruct { items, .. } => items
+            .iter()
+            .find_map(|item| local_struct_field_completion_site_in_pattern(item, offset)),
+        ql_ast::PatternKind::Struct { path, fields, .. } => {
+            local_struct_pattern_field_completion_site(path, fields, offset).or_else(|| {
+                fields.iter().find_map(|field| {
+                    field.pattern.as_ref().and_then(|pattern| {
+                        local_struct_field_completion_site_in_pattern(pattern, offset)
+                    })
+                })
+            })
+        }
+        ql_ast::PatternKind::Name(_)
+        | ql_ast::PatternKind::Path(_)
+        | ql_ast::PatternKind::Integer(_)
+        | ql_ast::PatternKind::String(_)
+        | ql_ast::PatternKind::Bool(_)
+        | ql_ast::PatternKind::NoneLiteral
+        | ql_ast::PatternKind::Wildcard => None,
+    }
+}
+
+fn local_struct_field_completion_site_in_expr(
+    expr: &ql_ast::Expr,
+    offset: usize,
+) -> Option<LocalStructFieldCompletionSite> {
+    match &expr.kind {
+        ql_ast::ExprKind::Tuple(items) | ql_ast::ExprKind::Array(items) => items
+            .iter()
+            .find_map(|item| local_struct_field_completion_site_in_expr(item, offset)),
+        ql_ast::ExprKind::Block(block) | ql_ast::ExprKind::Unsafe(block) => {
+            local_struct_field_completion_site_in_block(block, offset)
+        }
+        ql_ast::ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => local_struct_field_completion_site_in_expr(condition, offset)
+            .or_else(|| local_struct_field_completion_site_in_block(then_branch, offset))
+            .or_else(|| {
+                else_branch
+                    .as_ref()
+                    .and_then(|expr| local_struct_field_completion_site_in_expr(expr, offset))
+            }),
+        ql_ast::ExprKind::Match { value, arms } => {
+            local_struct_field_completion_site_in_expr(value, offset).or_else(|| {
+                arms.iter().find_map(|arm| {
+                    local_struct_field_completion_site_in_pattern(&arm.pattern, offset)
+                        .or_else(|| {
+                            arm.guard.as_ref().and_then(|guard| {
+                                local_struct_field_completion_site_in_expr(guard, offset)
+                            })
+                        })
+                        .or_else(|| local_struct_field_completion_site_in_expr(&arm.body, offset))
+                })
+            })
+        }
+        ql_ast::ExprKind::Closure { body, .. } => {
+            local_struct_field_completion_site_in_expr(body, offset)
+        }
+        ql_ast::ExprKind::Call { callee, args } => {
+            local_struct_field_completion_site_in_expr(callee, offset).or_else(|| {
+                args.iter().find_map(|arg| match arg {
+                    ql_ast::CallArg::Positional(expr) => {
+                        local_struct_field_completion_site_in_expr(expr, offset)
+                    }
+                    ql_ast::CallArg::Named { value, .. } => {
+                        local_struct_field_completion_site_in_expr(value, offset)
+                    }
+                })
+            })
+        }
+        ql_ast::ExprKind::Member { object, .. } | ql_ast::ExprKind::Question(object) => {
+            local_struct_field_completion_site_in_expr(object, offset)
+        }
+        ql_ast::ExprKind::Bracket { target, items } => {
+            local_struct_field_completion_site_in_expr(target, offset).or_else(|| {
+                items
+                    .iter()
+                    .find_map(|item| local_struct_field_completion_site_in_expr(item, offset))
+            })
+        }
+        ql_ast::ExprKind::StructLiteral { path, fields } => {
+            local_struct_literal_field_completion_site(path, fields, offset).or_else(|| {
+                fields.iter().find_map(|field| {
+                    field
+                        .value
+                        .as_ref()
+                        .and_then(|value| local_struct_field_completion_site_in_expr(value, offset))
+                })
+            })
+        }
+        ql_ast::ExprKind::Binary { left, right, .. } => {
+            local_struct_field_completion_site_in_expr(left, offset)
+                .or_else(|| local_struct_field_completion_site_in_expr(right, offset))
+        }
+        ql_ast::ExprKind::Unary { expr, .. } => {
+            local_struct_field_completion_site_in_expr(expr, offset)
+        }
+        ql_ast::ExprKind::Name(_)
+        | ql_ast::ExprKind::Integer(_)
+        | ql_ast::ExprKind::String { .. }
+        | ql_ast::ExprKind::Bool(_)
+        | ql_ast::ExprKind::NoneLiteral => None,
+    }
+}
+
+fn local_struct_pattern_field_completion_site(
+    path: &ql_ast::Path,
+    fields: &[ql_ast::PatternField],
+    offset: usize,
+) -> Option<LocalStructFieldCompletionSite> {
+    let root_name = path.segments.first()?.clone();
+    let current = fields.iter().find(|field| {
+        field.pattern.is_some()
+            && dependency_struct_field_completion_span_contains(field.name_span, offset)
+    })?;
+    let mut excluded_field_names = fields
+        .iter()
+        .filter(|field| field.name != current.name)
+        .map(|field| field.name.clone())
+        .collect::<Vec<_>>();
+    excluded_field_names.sort();
+    excluded_field_names.dedup();
+    Some(LocalStructFieldCompletionSite {
+        root_name,
+        excluded_field_names,
+    })
+}
+
+fn local_struct_literal_field_completion_site(
+    path: &ql_ast::Path,
+    fields: &[ql_ast::StructLiteralField],
+    offset: usize,
+) -> Option<LocalStructFieldCompletionSite> {
+    let root_name = path.segments.first()?.clone();
+    let current = fields.iter().find(|field| {
+        field.value.is_some()
+            && dependency_struct_field_completion_span_contains(field.name_span, offset)
+    })?;
+    let mut excluded_field_names = fields
+        .iter()
+        .filter(|field| field.name != current.name)
+        .map(|field| field.name.clone())
+        .collect::<Vec<_>>();
+    excluded_field_names.sort();
+    excluded_field_names.dedup();
+    Some(LocalStructFieldCompletionSite {
+        root_name,
+        excluded_field_names,
+    })
 }
 
 fn dependency_struct_field_completion_site(
