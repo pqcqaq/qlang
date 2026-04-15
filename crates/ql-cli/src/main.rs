@@ -2745,13 +2745,29 @@ fn sync_reference_interfaces_recursive(
                         dependency_manifest.manifest_path.clone(),
                     );
                 }
-                Err(EmitPackageInterfaceError::ManifestFailure { .. })
-                | Err(EmitPackageInterfaceError::SourceRootFailure { .. }) => {
+                Err(EmitPackageInterfaceError::ManifestFailure { manifest_path }) => {
                     let owner_note =
                         format_reference_interface_sync_note(&manifest.manifest_path, reference);
-                    report_package_interface_failure(
+                    report_package_interface_manifest_failure(
+                        &manifest_path,
+                        None,
+                        None,
+                        false,
+                        Some(owner_note.as_str()),
+                    );
+                    result.failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut result.first_failure_manifest,
+                        dependency_manifest.manifest_path.clone(),
+                    );
+                }
+                Err(EmitPackageInterfaceError::SourceRootFailure { source_root, .. }) => {
+                    let owner_note =
+                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
+                    report_package_interface_source_root_failure(
                         &dependency_manifest.manifest_path,
                         None,
+                        &source_root,
                         None,
                         false,
                         Some(owner_note.as_str()),

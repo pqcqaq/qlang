@@ -1554,6 +1554,144 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn check_package_dir_sync_interfaces_points_dependency_missing_source_root_at_source_root() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-sync-missing-dependency-source-root");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&dep_root)
+        .expect("create dependency directory for sync missing source root test");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app source directory for sync missing source root test");
+
+    let dep_manifest = temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let app_manifest = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let dep_manifest_display = dep_manifest.to_string_lossy().replace('\\', "/");
+    let dep_source_root_display = dep_root.join("src").to_string_lossy().replace('\\', "/");
+    let app_manifest_display = app_manifest.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check", "--sync-interfaces"]).arg(&app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --sync-interfaces` dependency missing source root",
+    );
+    let (_stdout, stderr) = expect_exit_code(
+        "project-check-sync-missing-dependency-source-root",
+        "package-aware ql check sync with dependency missing source root",
+        &output,
+        1,
+    )
+    .expect("dependency missing source root should fail package-aware sync");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let error_line = format!(
+        "error: `ql check --sync-interfaces` package source directory `{dep_source_root_display}` does not exist"
+    );
+    let package_note = format!("note: failing package manifest: {dep_manifest_display}");
+    let source_root_note = format!("note: failing package source root: {dep_source_root_display}");
+    let owner_note =
+        format!("note: while syncing referenced package `../dep` from `{app_manifest_display}`");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {dep_manifest_display}` after fixing the package source root"
+    );
+    let old_hint = format!(
+        "hint: rerun `ql project emit-interface {dep_manifest_display}` after fixing the package interface error"
+    );
+    expect_stderr_contains(
+        "project-check-sync-missing-dependency-source-root",
+        "package-aware ql check sync with dependency missing source root",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("sync path should preserve the command label for dependency source-root failures");
+    expect_stderr_contains(
+        "project-check-sync-missing-dependency-source-root",
+        "package-aware ql check sync with dependency missing source root",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("sync path should point to the dependency manifest");
+    expect_stderr_contains(
+        "project-check-sync-missing-dependency-source-root",
+        "package-aware ql check sync with dependency missing source root",
+        &normalized_stderr,
+        &source_root_note,
+    )
+    .expect("sync path should point to the dependency source root");
+    expect_stderr_contains(
+        "project-check-sync-missing-dependency-source-root",
+        "package-aware ql check sync with dependency missing source root",
+        &normalized_stderr,
+        &owner_note,
+    )
+    .expect("sync path should still point back to the owner reference");
+    expect_stderr_contains(
+        "project-check-sync-missing-dependency-source-root",
+        "package-aware ql check sync with dependency missing source root",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("sync path should suggest fixing the dependency source root");
+    expect_stderr_not_contains(
+        "project-check-sync-missing-dependency-source-root",
+        "package-aware ql check sync with dependency missing source root",
+        &normalized_stderr,
+        &old_hint,
+    )
+    .expect("sync path should not fall back to the generic dependency interface hint");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("sync missing source root should include the dependency manifest note");
+    let source_root_note_index = normalized_stderr
+        .find(&source_root_note)
+        .expect("sync missing source root should include the dependency source root note");
+    let owner_note_index = normalized_stderr
+        .find(&owner_note)
+        .expect("sync missing source root should include the owner reference note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("sync missing source root should include the rerun hint");
+    assert!(
+        package_note_index < source_root_note_index
+            && source_root_note_index < owner_note_index
+            && owner_note_index < rerun_hint_index,
+        "expected sync missing source-root context before rerun hint, got:\n{stderr}"
+    );
+    expect_stderr_contains(
+        "project-check-sync-missing-dependency-source-root",
+        "package-aware ql check sync with dependency missing source root",
+        &stderr,
+        "`ql check --sync-interfaces` found 1 failing referenced package(s)",
+    )
+    .expect("sync path should still summarize the failing referenced package");
+}
+#[test]
 fn check_package_dir_reports_stale_dependency_interface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-check-stale-interface");
