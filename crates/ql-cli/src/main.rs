@@ -792,6 +792,13 @@ fn report_workspace_member_package_interface_check_manifest_failure(
     eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
 }
 
+fn report_project_graph_manifest_failure(manifest_path: &Path) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_command = format!("ql project graph {manifest_path}");
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
+}
+
 fn report_package_interface_check_manifest_failure(manifest_path: &Path, changed_only: bool) {
     let manifest_path = normalize_path(manifest_path);
     let rerun_command =
@@ -1796,6 +1803,10 @@ fn project_graph_path(path: &Path) -> Result<(), u8> {
                 "error: `ql project graph` manifest `{}` does not declare `[package].name`",
                 normalize_path(manifest_path)
             );
+            report_project_graph_manifest_failure(manifest_path);
+        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
+            eprintln!("error: `ql project graph` {error}");
+            report_project_graph_manifest_failure(manifest_path);
         } else {
             eprintln!("error: {error}");
         }

@@ -122,6 +122,75 @@ packages = ["../core"]
 }
 
 #[test]
+fn project_graph_preserves_invalid_manifest_rerun_hint() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-invalid-manifest");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(&project_root)
+        .expect("create project directory for invalid manifest graph test");
+    let manifest_path = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "graph"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql project graph` invalid manifest");
+    let (stdout, stderr) = expect_exit_code(
+        "project-graph-invalid-manifest",
+        "project graph rendering with invalid manifest",
+        &output,
+        1,
+    )
+    .expect("project graph should fail when the manifest is syntactically invalid");
+    expect_empty_stdout(
+        "project-graph-invalid-manifest",
+        "project graph rendering with invalid manifest",
+        &stdout,
+    )
+    .expect("project graph should not print stdout for invalid manifests");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let error_line = format!("error: `ql project graph` invalid manifest `{manifest_display}`");
+    let old_error_line = format!("error: invalid manifest `{manifest_display}`");
+    let manifest_note = format!("note: failing package manifest: {manifest_display}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project graph {manifest_display}` after fixing the package manifest"
+    );
+    expect_stderr_contains(
+        "project-graph-invalid-manifest",
+        "project graph rendering with invalid manifest",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("project graph should preserve the command label for invalid manifests");
+    expect_stderr_not_contains(
+        "project-graph-invalid-manifest",
+        "project graph rendering with invalid manifest",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("project graph should not fall back to the unlabeled invalid-manifest error");
+    expect_stderr_contains(
+        "project-graph-invalid-manifest",
+        "project graph rendering with invalid manifest",
+        &normalized_stderr,
+        &manifest_note,
+    )
+    .expect("project graph should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-graph-invalid-manifest",
+        "project graph rendering with invalid manifest",
+        &normalized_stderr,
+        &rerun_hint,
+    )
+    .expect("project graph should preserve the direct rerun hint for invalid manifests");
+}
+
+#[test]
 fn project_graph_preserves_missing_package_name_error_surface() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-graph-missing-package-name");
@@ -173,6 +242,22 @@ version = "0.1.0"
         &format!("error: invalid manifest `{manifest_display}`: `[package].name` must be present"),
     )
     .expect("project graph should not fall back to the parse-error missing package-name message");
+    expect_stderr_contains(
+        "project-graph-missing-package-name",
+        "project graph rendering with missing package name",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {manifest_display}"),
+    )
+    .expect("project graph should point to the failing package manifest");
+    expect_stderr_contains(
+        "project-graph-missing-package-name",
+        "project graph rendering with missing package name",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project graph {manifest_display}` after fixing the package manifest"
+        ),
+    )
+    .expect("project graph should preserve the direct rerun hint for missing package names");
 }
 
 #[test]
