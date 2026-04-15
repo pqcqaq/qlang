@@ -671,9 +671,7 @@ fn check_workspace_manifest(
     }
 
     if failing_members > 0 {
-        eprintln!(
-            "error: {check_command_label} found {failing_members} failing member(s)"
-        );
+        eprintln!("error: {check_command_label} found {failing_members} failing member(s)");
         if failing_members > 1 {
             if let Some(path) = &first_failing_member_manifest {
                 eprintln!(
@@ -983,6 +981,15 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                 match emit_package_interface_path(path, None, "`ql build --emit-interface`", false)
                 {
                     Ok(result) => report_emit_interface_result(result),
+                    Err(EmitPackageInterfaceError::ManifestNotFound) => {
+                        report_build_interface_package_context_failure(
+                            path,
+                            options,
+                            emit_interface,
+                            &artifact_path,
+                        );
+                        return Err(1);
+                    }
                     Err(EmitPackageInterfaceError::SourceFailure(code)) => {
                         report_build_interface_source_failure(
                             path,
@@ -1451,6 +1458,23 @@ fn report_build_interface_failure(
     );
 }
 
+fn report_build_interface_package_context_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+    artifact_path: &Path,
+) {
+    eprintln!(
+        "note: `ql build --emit-interface` only emits package interfaces for sources inside a package"
+    );
+    let rerun_command = format_build_command(path, options, emit_interface);
+    eprintln!("hint: rerun `{rerun_command}` after adding `qlang.toml` for this source");
+    eprintln!(
+        "note: build artifact remains at `{}`",
+        normalize_path(artifact_path)
+    );
+}
+
 fn report_build_interface_source_failure(
     path: &Path,
     options: &BuildOptions,
@@ -1793,7 +1817,8 @@ fn project_emit_interface_path(
     let check_command_label = format_project_emit_interface_command_label(None, changed_only, true);
     let manifest = load_project_manifest(path).map_err(|error| {
         if !check_only {
-            if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error)
+            if let Some(manifest_path) =
+                package_missing_name_manifest_path_from_project_error(&error)
             {
                 eprintln!(
                     "error: {} manifest `{}` does not declare `[package].name`",
@@ -1842,6 +1867,16 @@ fn project_emit_interface_path(
         }
         match emit_package_interface_path(path, output, emit_command_label.as_str(), changed_only) {
             Ok(result) => report_emit_interface_result(result),
+            Err(EmitPackageInterfaceError::ManifestNotFound) => {
+                report_package_interface_failure(
+                    &manifest.manifest_path,
+                    None,
+                    output,
+                    changed_only,
+                    None,
+                );
+                return Err(1);
+            }
             Err(EmitPackageInterfaceError::SourceFailure(code)) => {
                 report_package_interface_source_failure(
                     &manifest.manifest_path,
@@ -2067,6 +2102,20 @@ fn project_emit_interface_path(
                 changed_only,
             ) {
                 Ok(result) => report_emit_interface_result(result),
+                Err(EmitPackageInterfaceError::ManifestNotFound) => {
+                    report_package_interface_failure(
+                        &member_manifest.manifest_path,
+                        Some(&member_manifest.manifest_path),
+                        None,
+                        changed_only,
+                        None,
+                    );
+                    emission_failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest.manifest_path.clone(),
+                    );
+                }
                 Err(EmitPackageInterfaceError::SourceFailure(_)) => {
                     report_package_interface_source_failure(
                         &member_manifest.manifest_path,
@@ -2159,9 +2208,7 @@ fn project_emit_interface_path(
     }
 
     if check_only && failing_member_count > 0 {
-        eprintln!(
-            "error: {check_command_label} found {failing_member_count} failing member(s)"
-        );
+        eprintln!("error: {check_command_label} found {failing_member_count} failing member(s)");
         if failing_member_count > 1 {
             if let Some(path) = &first_failing_member_manifest {
                 eprintln!(
@@ -2174,9 +2221,7 @@ fn project_emit_interface_path(
     }
 
     if !check_only && emission_failure_count > 0 {
-        eprintln!(
-            "error: {emit_command_label} found {emission_failure_count} failing member(s)"
-        );
+        eprintln!("error: {emit_command_label} found {emission_failure_count} failing member(s)");
         if emission_failure_count > 1 {
             if let Some(path) = &first_failing_member_manifest {
                 eprintln!(
@@ -2211,6 +2256,7 @@ enum CheckPackageInterfaceResult {
 enum EmitPackageInterfaceError {
     Code(u8),
     SourceFailure(u8),
+    ManifestNotFound,
     ManifestFailure {
         manifest_path: PathBuf,
     },
@@ -2246,9 +2292,18 @@ fn emit_package_interface_path(
     command_label: &str,
     changed_only: bool,
 ) -> Result<EmitPackageInterfaceResult, EmitPackageInterfaceError> {
-    let manifest = load_project_manifest(path).map_err(|error| {
-        eprintln!("error: {error}");
-        EmitPackageInterfaceError::Code(1)
+    let manifest = load_project_manifest(path).map_err(|error| match error {
+        ql_project::ProjectError::ManifestNotFound { start } => {
+            eprintln!(
+                "error: {command_label} requires a package manifest; could not find `qlang.toml` starting from `{}`",
+                normalize_path(&start)
+            );
+            EmitPackageInterfaceError::ManifestNotFound
+        }
+        error => {
+            eprintln!("error: {error}");
+            EmitPackageInterfaceError::Code(1)
+        }
     })?;
     let package_name = package_name(&manifest).map_err(|error| {
         eprintln!("error: {command_label} {error}");
@@ -2603,16 +2658,14 @@ fn sync_reference_interfaces(
 ) -> Result<Vec<PathBuf>, u8> {
     let check_command_label = format_check_command_label(true);
     let manifest = load_project_manifest(path).map_err(|error| {
-        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error)
-        {
+        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error) {
             eprintln!(
                 "error: {} manifest `{}` does not declare `[package].name`",
                 check_command_label,
                 normalize_path(manifest_path)
             );
             report_package_check_manifest_failure(manifest_path, true);
-        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
-        {
+        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
             eprintln!("error: {check_command_label} {error}");
             report_package_check_manifest_failure(manifest_path, true);
         } else {
@@ -2696,6 +2749,22 @@ fn sync_reference_interfaces_recursive(
             match emit_result {
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
+                Err(EmitPackageInterfaceError::ManifestNotFound) => {
+                    let owner_note =
+                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
+                    report_package_interface_failure(
+                        &dependency_manifest.manifest_path,
+                        None,
+                        None,
+                        false,
+                        Some(owner_note.as_str()),
+                    );
+                    result.failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut result.first_failure_manifest,
+                        dependency_manifest.manifest_path.clone(),
+                    );
+                }
                 Err(EmitPackageInterfaceError::SourceFailure(_)) => {
                     let owner_note =
                         format_reference_interface_sync_note(&manifest.manifest_path, reference);

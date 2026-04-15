@@ -1621,7 +1621,9 @@ name = "broken"
             normalized_broken_source_root
         ),
     )
-    .expect("workspace member source-root failure should preserve the emit-interface command label");
+    .expect(
+        "workspace member source-root failure should preserve the emit-interface command label",
+    );
     expect_stderr_contains(
         "project-interface-workspace-missing-member-source-root",
         "workspace interface emission with missing member source root",
@@ -1635,7 +1637,9 @@ name = "broken"
         &normalized_stderr,
         &format!("note: failing workspace member manifest: {normalized_broken_manifest}"),
     )
-    .expect("workspace member source-root failure should keep the workspace member boundary visible");
+    .expect(
+        "workspace member source-root failure should keep the workspace member boundary visible",
+    );
     expect_stderr_contains(
         "project-interface-workspace-missing-member-source-root",
         "workspace interface emission with missing member source root",
@@ -2299,7 +2303,9 @@ version = "0.1.0"
         &normalized_stderr,
         "after fixing the workspace member manifest",
     )
-    .expect("workspace interface emission should not fall back to the workspace-member-manifest hint");
+    .expect(
+        "workspace interface emission should not fall back to the workspace-member-manifest hint",
+    );
     let error_line_index = normalized_stderr
         .find(&error_line)
         .expect("workspace interface emission should include the error line");
@@ -5937,6 +5943,101 @@ version = "0.1.0"
         "colliding build header output path should not create `{}`",
         interface_path.display()
     );
+}
+
+#[test]
+fn build_with_emit_interface_points_to_missing_package_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-build-emit-interface-missing-package-context");
+    let source_path = temp.write(
+        "standalone/app.ql",
+        r#"
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+fn main() -> Int {
+    return exported(1)
+}
+"#,
+    );
+    let output_path = temp.path().join("build").join("app.ll");
+    let source_display = source_path.to_string_lossy().replace('\\', "/");
+    let output_display = output_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .arg("build")
+        .arg(&source_path)
+        .args(["--emit", "llvm-ir", "--output"])
+        .arg(&output_path)
+        .arg("--emit-interface");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface` with missing package context",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "build-emit-interface-missing-package-context",
+        "build with missing package context",
+        &output,
+        1,
+    )
+    .expect("build should fail when build-side interface emission has no package context");
+    expect_stdout_contains_all(
+        "build-emit-interface-missing-package-context",
+        &stdout,
+        &[&format!("wrote llvm-ir: {}", output_path.display())],
+    )
+    .expect("missing package context should still report the successful build artifact");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "build-emit-interface-missing-package-context",
+        "build with missing package context",
+        &normalized_stderr,
+        &format!(
+            "error: `ql build --emit-interface` requires a package manifest; could not find `qlang.toml` starting from `{}`",
+            source_display
+        ),
+    )
+    .expect("missing package context should explain that build-side interface emission needs a package manifest");
+    expect_stderr_contains(
+        "build-emit-interface-missing-package-context",
+        "build with missing package context",
+        &normalized_stderr,
+        "note: `ql build --emit-interface` only emits package interfaces for sources inside a package",
+    )
+    .expect("missing package context should explain the package-only interface emission contract");
+    expect_stderr_contains(
+        "build-emit-interface-missing-package-context",
+        "build with missing package context",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql build {} --emit llvm-ir --output {} --emit-interface` after adding `qlang.toml` for this source",
+            source_display, output_display
+        ),
+    )
+    .expect("missing package context should preserve the original build rerun options");
+    expect_stderr_not_contains(
+        "build-emit-interface-missing-package-context",
+        "build with missing package context",
+        &normalized_stderr,
+        "after fixing the package interface error",
+    )
+    .expect("missing package context should not fall back to a generic interface-error hint");
+    expect_stderr_contains(
+        "build-emit-interface-missing-package-context",
+        "build with missing package context",
+        &normalized_stderr,
+        &format!("note: build artifact remains at `{}`", output_display),
+    )
+    .expect("missing package context should confirm that the build artifact was preserved");
+    expect_file_exists(
+        "build-emit-interface-missing-package-context",
+        &output_path,
+        "generated llvm ir",
+        "build with missing package context",
+    )
+    .expect("missing package context should keep the successful build artifact");
 }
 
 #[test]
