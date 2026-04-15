@@ -2023,6 +2023,14 @@ fn project_emit_interface_path(
                             manifest_path,
                             changed_only,
                         );
+                    } else if let Some(manifest_path) =
+                        package_check_manifest_path_from_project_error(&error)
+                    {
+                        eprintln!("error: {check_command_label} {error}");
+                        report_workspace_member_package_interface_check_manifest_failure(
+                            manifest_path,
+                            changed_only,
+                        );
                     } else {
                         eprintln!("error: {error}");
                         let rerun_command = format_workspace_member_emit_rerun_command(
@@ -2112,6 +2120,17 @@ fn project_emit_interface_path(
                             emit_command_label,
                             normalize_path(manifest_path)
                         );
+                        report_package_interface_manifest_failure(
+                            manifest_path,
+                            Some(manifest_path),
+                            None,
+                            changed_only,
+                            None,
+                        );
+                    } else if let Some(manifest_path) =
+                        package_check_manifest_path_from_project_error(&error)
+                    {
+                        eprintln!("error: {emit_command_label} {error}");
                         report_package_interface_manifest_failure(
                             manifest_path,
                             Some(manifest_path),

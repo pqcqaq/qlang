@@ -2280,48 +2280,62 @@ name = "broken"
     let normalized_stdout = stdout.replace('\\', "/");
     let normalized_stderr = stderr.replace('\\', "/");
     let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
+    let broken_manifest = broken_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
     expect_stdout_contains_all(
         "project-interface-workspace-partial-failure",
         &normalized_stdout,
         &[&format!("wrote interface: {normalized_app_interface}")],
     )
     .expect("workspace interface emission should still write healthy members before failing");
-    expect_stderr_contains(
-        "project-interface-workspace-partial-failure",
-        "workspace interface emission with failing member",
-        &stderr,
-        "invalid manifest",
-    )
-    .expect("workspace interface emission should surface the failing member manifest error");
+    let error_line =
+        format!("error: `ql project emit-interface` invalid manifest `{broken_manifest}`");
+    let old_error_line = format!("error: invalid manifest `{broken_manifest}`");
+    let package_note = format!("note: failing package manifest: {broken_manifest}");
+    let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {broken_manifest}` after fixing the package manifest"
+    );
     expect_stderr_contains(
         "project-interface-workspace-partial-failure",
         "workspace interface emission with failing member",
         &normalized_stderr,
-        &format!(
-            "note: failing workspace member manifest: {}",
-            broken_root
-                .join("qlang.toml")
-                .display()
-                .to_string()
-                .replace('\\', "/")
-        ),
+        &error_line,
+    )
+    .expect("workspace interface emission should preserve the emit command label for invalid member manifests");
+    expect_stderr_not_contains(
+        "project-interface-workspace-partial-failure",
+        "workspace interface emission with failing member",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect(
+        "workspace interface emission should not fall back to the unlabeled invalid manifest error",
+    );
+    expect_stderr_contains(
+        "project-interface-workspace-partial-failure",
+        "workspace interface emission with failing member",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect("workspace interface emission should point invalid member manifests at the package manifest");
+    expect_stderr_contains(
+        "project-interface-workspace-partial-failure",
+        "workspace interface emission with failing member",
+        &normalized_stderr,
+        &member_note,
     )
     .expect("workspace interface emission should point invalid member manifests locally");
-    let rerun_hint = format!(
-        "hint: rerun `ql project emit-interface {}` after fixing the workspace member manifest",
-        broken_root
-            .join("qlang.toml")
-            .display()
-            .to_string()
-            .replace('\\', "/")
-    );
     expect_stderr_contains(
         "project-interface-workspace-partial-failure",
         "workspace interface emission with failing member",
         &normalized_stderr,
         &rerun_hint,
     )
-    .expect("workspace interface emission should suggest rerunning the broken member directly after repair");
+    .expect("workspace interface emission should suggest rerunning the broken member after fixing the package manifest");
     expect_stderr_contains(
         "project-interface-workspace-partial-failure",
         "workspace interface emission with failing member",
@@ -3485,48 +3499,64 @@ name = "broken"
         .display()
         .to_string()
         .replace('\\', "/");
+    let broken_manifest = broken_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
     expect_stdout_contains_all(
         "project-interface-check-workspace-invalid-member",
         &normalized_stdout,
         &[&format!("ok interface: {normalized_app_interface}")],
     )
     .expect("workspace interface check should still report healthy members before failing");
-    expect_stderr_contains(
-        "project-interface-check-workspace-invalid-member",
-        "workspace interface check with invalid member manifest",
-        &stderr,
-        "invalid manifest",
-    )
-    .expect("workspace interface check should surface the invalid member manifest");
+    let error_line =
+        format!("error: `ql project emit-interface --check` invalid manifest `{broken_manifest}`");
+    let old_error_line = format!("error: invalid manifest `{broken_manifest}`");
+    let package_note = format!("note: failing package manifest: {broken_manifest}");
+    let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {broken_manifest} --check` after fixing the package manifest"
+    );
     expect_stderr_contains(
         "project-interface-check-workspace-invalid-member",
         "workspace interface check with invalid member manifest",
         &normalized_stderr,
-        &format!(
-            "note: failing workspace member manifest: {}",
-            broken_root
-                .join("qlang.toml")
-                .display()
-                .to_string()
-                .replace('\\', "/")
-        ),
+        &error_line,
+    )
+    .expect("workspace interface check should preserve the check command label for invalid member manifests");
+    expect_stderr_not_contains(
+        "project-interface-check-workspace-invalid-member",
+        "workspace interface check with invalid member manifest",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect(
+        "workspace interface check should not fall back to the unlabeled invalid manifest error",
+    );
+    expect_stderr_contains(
+        "project-interface-check-workspace-invalid-member",
+        "workspace interface check with invalid member manifest",
+        &normalized_stderr,
+        &package_note,
+    )
+    .expect(
+        "workspace interface check should point invalid member manifests at the package manifest",
+    );
+    expect_stderr_contains(
+        "project-interface-check-workspace-invalid-member",
+        "workspace interface check with invalid member manifest",
+        &normalized_stderr,
+        &member_note,
     )
     .expect("workspace interface check should point invalid member manifests locally");
-    let rerun_hint = format!(
-        "hint: rerun `ql project emit-interface {} --check` after fixing the workspace member manifest",
-        broken_root
-            .join("qlang.toml")
-            .display()
-            .to_string()
-            .replace('\\', "/")
-    );
     expect_stderr_contains(
         "project-interface-check-workspace-invalid-member",
         "workspace interface check with invalid member manifest",
         &normalized_stderr,
         &rerun_hint,
     )
-    .expect("workspace interface check should suggest rerunning the broken member directly after repair");
+    .expect("workspace interface check should suggest rerunning the broken member after fixing the package manifest");
     expect_stderr_contains(
         "project-interface-check-workspace-invalid-member",
         "workspace interface check with invalid member manifest",
@@ -3729,6 +3759,156 @@ pub fn exported() -> Int
         "note: first failing member manifest:",
     )
     .expect("single changed-only workspace semantic-invalid member failures should not repeat the manifest in the final summary");
+}
+
+#[test]
+fn project_emit_interface_check_changed_only_preserves_workspace_invalid_member_manifest_hints() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-changed-only-workspace-invalid-member");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let broken_root = project_root.join("packages").join("broken");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for changed-only invalid-member test");
+    std::fs::create_dir_all(&broken_root)
+        .expect("create broken package directory for changed-only invalid-member test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/app.qi",
+        "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+",
+    );
+    temp.write(
+        "workspace-only/packages/broken/qlang.toml",
+        r#"
+[package
+name = "broken"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--changed-only", "--check"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --changed-only --check` workspace manifest with invalid member",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-check-changed-only-workspace-invalid-member",
+        "changed-only workspace interface check with invalid member manifest",
+        &output,
+        1,
+    )
+    .expect("changed-only workspace interface check with invalid member manifest should fail");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let normalized_app_interface = app_root
+        .join("app.qi")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let broken_manifest = broken_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-check-changed-only-workspace-invalid-member",
+        &normalized_stdout,
+        &[&format!("up-to-date interface: {normalized_app_interface}")],
+    )
+    .expect(
+        "changed-only workspace interface check should still report healthy members before failing",
+    );
+    let error_line = format!(
+        "error: `ql project emit-interface --changed-only --check` invalid manifest `{broken_manifest}`"
+    );
+    let old_error_line =
+        format!("error: `ql project emit-interface --check` invalid manifest `{broken_manifest}`");
+    let package_note = format!("note: failing package manifest: {broken_manifest}");
+    let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
+    let rerun_hint = format!(
+        "hint: rerun `ql project emit-interface {broken_manifest} --changed-only --check` after fixing the package manifest"
+    );
+    expect_stderr_contains(
+        "project-interface-check-changed-only-workspace-invalid-member",
+        "changed-only workspace interface check with invalid member manifest",
+        &normalized_stderr,
+        &error_line,
+    )
+    .expect("changed-only workspace interface check should preserve the full command label for invalid member manifests");
+    expect_stderr_not_contains(
+        "project-interface-check-changed-only-workspace-invalid-member",
+        "changed-only workspace interface check with invalid member manifest",
+        &normalized_stderr,
+        &old_error_line,
+    )
+    .expect("changed-only workspace interface check should not fall back to the default check command label");
+    let error_line_index = normalized_stderr
+        .find(&error_line)
+        .expect("changed-only workspace interface check should include the full command label");
+    let package_note_index = normalized_stderr
+        .find(&package_note)
+        .expect("changed-only workspace interface check should include the package manifest note");
+    let member_note_index = normalized_stderr
+        .find(&member_note)
+        .expect("changed-only workspace interface check should include the workspace member note");
+    let rerun_hint_index = normalized_stderr
+        .find(&rerun_hint)
+        .expect("changed-only workspace interface check should include the rerun hint");
+    assert!(
+        error_line_index < package_note_index
+            && package_note_index < member_note_index
+            && member_note_index < rerun_hint_index,
+        "expected changed-only workspace invalid-member context before rerun hint, got:\n{stderr}"
+    );
+    expect_stderr_contains(
+        "project-interface-check-changed-only-workspace-invalid-member",
+        "changed-only workspace interface check with invalid member manifest",
+        &stderr,
+        "found 1 failing member(s)",
+    )
+    .expect(
+        "changed-only workspace invalid-member failures should still summarize failing members",
+    );
+    expect_stderr_not_contains(
+        "project-interface-check-changed-only-workspace-invalid-member",
+        "changed-only workspace interface check with invalid member manifest",
+        &normalized_stderr,
+        "note: first failing member manifest:",
+    )
+    .expect("single changed-only workspace invalid-member failures should not repeat the manifest in the final summary");
 }
 
 #[test]
