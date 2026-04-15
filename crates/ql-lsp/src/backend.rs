@@ -363,26 +363,27 @@ fn workspace_symbols_for_documents(
                     &normalized_query,
                 );
 
+                let workspace_member_manifests =
+                    workspace_member_manifest_paths_for_package(manifest.manifest_path.as_path());
+
                 if let Ok(package) = analyze_package_dependencies(&path) {
                     symbols.extend(workspace_symbols_for_dependencies(
                         package.dependencies(),
                         &normalized_query,
                     ));
+                }
 
-                    for member_manifest_path in workspace_member_manifest_paths_for_package(
-                        package.manifest().manifest_path.as_path(),
-                    ) {
-                        if !searched_packages.insert(member_manifest_path.clone()) {
-                            continue;
-                        }
-                        append_workspace_member_symbols(
-                            &member_manifest_path,
-                            &open_docs,
-                            &mut covered_files,
-                            &mut symbols,
-                            &normalized_query,
-                        );
+                for member_manifest_path in workspace_member_manifests {
+                    if !searched_packages.insert(member_manifest_path.clone()) {
+                        continue;
                     }
+                    append_workspace_member_symbols(
+                        &member_manifest_path,
+                        &open_docs,
+                        &mut covered_files,
+                        &mut symbols,
+                        &normalized_query,
+                    );
                 }
             }
             Err(_) => {
@@ -1289,6 +1290,98 @@ name = "tool"
             r#"
 fn tool_helper() -> Int {
     return 1
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "helper");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "tool_helper".to_owned(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(&helper_path).expect("helper path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(1, 3),
+                        tower_lsp::lsp_types::Position::new(1, 14),
+                    ),
+                ),
+                container_name: None,
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_workspace_member_modules_for_broken_open_packages_when_dependency_interfaces_fail(
+    ) {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-broken-members-missing-dependency");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "dep"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.dep.exported as run
+
+fn main() -> Int {
+    let broken: Int = "oops"
+    return run(0)
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+"#,
+        );
+        let helper_path = temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        temp.write(
+            "workspace/dep/src/lib.ql",
+            r#"
+package demo.dep
+
+pub fn exported(value: Int) -> Int {
+    return value
 }
 "#,
         );
