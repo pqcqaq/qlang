@@ -1583,6 +1583,31 @@ fn report_build_interface_no_sources_failure(
     );
 }
 
+fn report_project_emit_interface_package_context_failure(
+    path: &Path,
+    requested_output_path: Option<&Path>,
+    changed_only: bool,
+    check_only: bool,
+) {
+    let command = if check_only {
+        "ql project emit-interface --check"
+    } else {
+        "ql project emit-interface"
+    };
+    let action = if check_only { "checks" } else { "emits" };
+    eprintln!(
+        "note: `{command}` only {action} package interfaces for packages or workspace members discoverable from `qlang.toml`"
+    );
+    let normalized_path = normalize_path(path);
+    let rerun_command = format_project_emit_interface_command(
+        Some(normalized_path.as_str()),
+        requested_output_path,
+        changed_only,
+        check_only,
+    );
+    eprintln!("hint: rerun `{rerun_command}` after adding `qlang.toml` for this path");
+}
+
 fn report_package_interface_failure(
     manifest_path: &Path,
     workspace_member_manifest_path: Option<&Path>,
@@ -1843,6 +1868,25 @@ fn project_emit_interface_path(
         format_project_emit_interface_command_label(output, changed_only, false);
     let check_command_label = format_project_emit_interface_command_label(None, changed_only, true);
     let manifest = load_project_manifest(path).map_err(|error| {
+        if let ql_project::ProjectError::ManifestNotFound { start } = &error {
+            let command_label = if check_only {
+                check_command_label.as_str()
+            } else {
+                emit_command_label.as_str()
+            };
+            eprintln!(
+                "error: {} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+                command_label,
+                normalize_path(start)
+            );
+            report_project_emit_interface_package_context_failure(
+                path,
+                output,
+                changed_only,
+                check_only,
+            );
+            return 1;
+        }
         if check_only {
             if let Some(manifest_path) =
                 package_missing_name_manifest_path_from_project_error(&error)

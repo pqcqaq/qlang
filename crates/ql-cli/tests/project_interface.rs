@@ -639,6 +639,80 @@ pub fn broken(value: MissingType) -> Int {
 }
 
 #[test]
+fn project_emit_interface_points_to_missing_package_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-missing-package-context");
+    let source_path = temp.write(
+        "workspace/loose.ql",
+        r#"
+fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    let source_display = source_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&source_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` with missing package context",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-missing-package-context",
+        "package interface emission with missing package context",
+        &output,
+        1,
+    )
+    .expect(
+        "package interface emission should fail when the path is outside any package/workspace",
+    );
+    expect_empty_stdout(
+        "project-interface-missing-package-context",
+        "package interface emission with missing package context",
+        &stdout,
+    )
+    .expect("missing package context should not report a written interface");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-missing-package-context",
+        "package interface emission with missing package context",
+        &normalized_stderr,
+        &format!(
+            "error: `ql project emit-interface` requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+            source_display
+        ),
+    )
+    .expect("missing package context should preserve the emit-interface command label");
+    expect_stderr_contains(
+        "project-interface-missing-package-context",
+        "package interface emission with missing package context",
+        &normalized_stderr,
+        "note: `ql project emit-interface` only emits package interfaces for packages or workspace members discoverable from `qlang.toml`",
+    )
+    .expect("missing package context should explain the package/workspace discovery contract");
+    expect_stderr_contains(
+        "project-interface-missing-package-context",
+        "package interface emission with missing package context",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {}` after adding `qlang.toml` for this path",
+            source_display
+        ),
+    )
+    .expect("missing package context should preserve the original emit-interface rerun target");
+    expect_stderr_not_contains(
+        "project-interface-missing-package-context",
+        "package interface emission with missing package context",
+        &normalized_stderr,
+        "after fixing the package interface error",
+    )
+    .expect("missing package context should not fall back to a generic interface-error hint");
+}
+
+#[test]
 fn project_emit_interface_points_to_invalid_package_manifest() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-invalid-package-manifest");
@@ -1757,6 +1831,77 @@ name = "broken"
         "note: first failing member manifest:",
     )
     .expect("single workspace member source-root failures should not repeat the manifest in the final summary");
+}
+
+#[test]
+fn project_emit_interface_check_points_to_missing_package_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-missing-package-context");
+    let source_path = temp.write(
+        "workspace/loose.ql",
+        r#"
+fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    let source_display = source_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--check"])
+        .arg(&source_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --check` with missing package context",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-check-missing-package-context",
+        "package interface check with missing package context",
+        &output,
+        1,
+    )
+    .expect("package interface check should fail when the path is outside any package/workspace");
+    expect_empty_stdout(
+        "project-interface-check-missing-package-context",
+        "package interface check with missing package context",
+        &stdout,
+    )
+    .expect("missing package context should not report an interface status");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-check-missing-package-context",
+        "package interface check with missing package context",
+        &normalized_stderr,
+        &format!(
+            "error: `ql project emit-interface --check` requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+            source_display
+        ),
+    )
+    .expect("missing package context should preserve the emit-interface --check command label");
+    expect_stderr_contains(
+        "project-interface-check-missing-package-context",
+        "package interface check with missing package context",
+        &normalized_stderr,
+        "note: `ql project emit-interface --check` only checks package interfaces for packages or workspace members discoverable from `qlang.toml`",
+    )
+    .expect("missing package context should explain the package/workspace discovery contract for checks");
+    expect_stderr_contains(
+        "project-interface-check-missing-package-context",
+        "package interface check with missing package context",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {source_display} --check` after adding `qlang.toml` for this path"
+        ),
+    )
+    .expect("missing package context should preserve the original emit-interface --check rerun target");
+    expect_stderr_not_contains(
+        "project-interface-check-missing-package-context",
+        "package interface check with missing package context",
+        &normalized_stderr,
+        "after fixing the package interface error",
+    )
+    .expect("missing package context should not fall back to a generic interface-error hint");
 }
 
 #[test]
@@ -6547,9 +6692,12 @@ name = "app"
         &stdout,
         &[&format!("wrote llvm-ir: {}", output_path.display())],
     )
-    .expect("build-side invalid manifest failure should still report the successful build artifact");
+    .expect(
+        "build-side invalid manifest failure should still report the successful build artifact",
+    );
     let normalized_stderr = stderr.replace('\\', "/");
-    let error_line = format!("error: `ql build --emit-interface` invalid manifest `{manifest_display}`");
+    let error_line =
+        format!("error: `ql build --emit-interface` invalid manifest `{manifest_display}`");
     let old_error_line = format!("error: invalid manifest `{manifest_display}`");
     let package_note = format!("note: failing package manifest: {manifest_display}");
     let rerun_hint = format!(
@@ -6571,7 +6719,9 @@ name = "app"
         &normalized_stderr,
         &old_error_line,
     )
-    .expect("build-side invalid manifest failure should not fall back to the unlabeled manifest error");
+    .expect(
+        "build-side invalid manifest failure should not fall back to the unlabeled manifest error",
+    );
     expect_stderr_contains(
         "build-emit-interface-invalid-manifest",
         "build with invalid package manifest",
@@ -6592,7 +6742,9 @@ name = "app"
         &normalized_stderr,
         &old_rerun_hint,
     )
-    .expect("build-side invalid manifest failure should not fall back to a project-only rerun hint");
+    .expect(
+        "build-side invalid manifest failure should not fall back to a project-only rerun hint",
+    );
     expect_stderr_not_contains(
         "build-emit-interface-invalid-manifest",
         "build with invalid package manifest",
@@ -6606,7 +6758,9 @@ name = "app"
         &normalized_stderr,
         &format!("note: build artifact remains at `{}`", output_display),
     )
-    .expect("build-side invalid manifest failure should confirm that the build artifact was preserved");
+    .expect(
+        "build-side invalid manifest failure should confirm that the build artifact was preserved",
+    );
     expect_file_exists(
         "build-emit-interface-invalid-manifest",
         &output_path,
