@@ -983,6 +983,15 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
                 match emit_package_interface_path(path, None, "`ql build --emit-interface`", false)
                 {
                     Ok(result) => report_emit_interface_result(result),
+                    Err(EmitPackageInterfaceError::SourceFailure(code)) => {
+                        report_build_interface_source_failure(
+                            path,
+                            options,
+                            emit_interface,
+                            &artifact_path,
+                        );
+                        return Err(code);
+                    }
                     Err(EmitPackageInterfaceError::Code(code)) => {
                         report_build_interface_failure(
                             path,
@@ -1442,6 +1451,24 @@ fn report_build_interface_failure(
     );
 }
 
+fn report_build_interface_source_failure(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+    artifact_path: &Path,
+) {
+    report_build_package_rerun_hint(
+        path,
+        options,
+        emit_interface,
+        "after fixing the package sources",
+    );
+    eprintln!(
+        "note: build artifact remains at `{}`",
+        normalize_path(artifact_path)
+    );
+}
+
 fn report_build_interface_manifest_failure(
     path: &Path,
     options: &BuildOptions,
@@ -1531,6 +1558,32 @@ fn report_package_interface_failure(
         format_emit_interface_rerun_command(&manifest_path, requested_output_path, changed_only);
     eprintln!(
         "hint: rerun `{}` after fixing the package interface error",
+        rerun_command
+    );
+}
+
+fn report_package_interface_source_failure(
+    manifest_path: &Path,
+    workspace_member_manifest_path: Option<&Path>,
+    requested_output_path: Option<&Path>,
+    changed_only: bool,
+    additional_context_note: Option<&str>,
+) {
+    let manifest_path = normalize_path(manifest_path);
+    eprintln!("note: failing package manifest: {manifest_path}");
+    if let Some(workspace_member_manifest_path) = workspace_member_manifest_path {
+        eprintln!(
+            "note: failing workspace member manifest: {}",
+            normalize_path(workspace_member_manifest_path)
+        );
+    }
+    if let Some(additional_context_note) = additional_context_note {
+        eprintln!("{additional_context_note}");
+    }
+    let rerun_command =
+        format_emit_interface_rerun_command(&manifest_path, requested_output_path, changed_only);
+    eprintln!(
+        "hint: rerun `{}` after fixing the package sources",
         rerun_command
     );
 }
@@ -1789,6 +1842,16 @@ fn project_emit_interface_path(
         }
         match emit_package_interface_path(path, output, emit_command_label.as_str(), changed_only) {
             Ok(result) => report_emit_interface_result(result),
+            Err(EmitPackageInterfaceError::SourceFailure(code)) => {
+                report_package_interface_source_failure(
+                    &manifest.manifest_path,
+                    None,
+                    output,
+                    changed_only,
+                    None,
+                );
+                return Err(code);
+            }
             Err(EmitPackageInterfaceError::Code(code)) => {
                 report_package_interface_failure(
                     &manifest.manifest_path,
@@ -2004,6 +2067,20 @@ fn project_emit_interface_path(
                 changed_only,
             ) {
                 Ok(result) => report_emit_interface_result(result),
+                Err(EmitPackageInterfaceError::SourceFailure(_)) => {
+                    report_package_interface_source_failure(
+                        &member_manifest.manifest_path,
+                        Some(&member_manifest.manifest_path),
+                        None,
+                        changed_only,
+                        None,
+                    );
+                    emission_failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut first_failing_member_manifest,
+                        member_manifest.manifest_path.clone(),
+                    );
+                }
                 Err(EmitPackageInterfaceError::Code(_)) => {
                     report_package_interface_failure(
                         &member_manifest.manifest_path,
@@ -2133,6 +2210,7 @@ enum CheckPackageInterfaceResult {
 
 enum EmitPackageInterfaceError {
     Code(u8),
+    SourceFailure(u8),
     ManifestFailure {
         manifest_path: PathBuf,
     },
@@ -2203,7 +2281,7 @@ fn emit_package_interface_path(
         }
         error => {
             eprintln!("error: {error}");
-            EmitPackageInterfaceError::Code(1)
+            EmitPackageInterfaceError::SourceFailure(1)
         }
     })?;
     if files.is_empty() {
@@ -2261,7 +2339,7 @@ fn emit_package_interface_path(
                 eprintln!("note: first failing source file: {}", normalize_path(path));
             }
         }
-        return Err(EmitPackageInterfaceError::Code(1));
+        return Err(EmitPackageInterfaceError::SourceFailure(1));
     }
 
     if let Some(parent) = output_path.parent()
@@ -2618,6 +2696,22 @@ fn sync_reference_interfaces_recursive(
             match emit_result {
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
+                Err(EmitPackageInterfaceError::SourceFailure(_)) => {
+                    let owner_note =
+                        format_reference_interface_sync_note(&manifest.manifest_path, reference);
+                    report_package_interface_source_failure(
+                        &dependency_manifest.manifest_path,
+                        None,
+                        None,
+                        false,
+                        Some(owner_note.as_str()),
+                    );
+                    result.failure_count += 1;
+                    record_reference_failure_manifest(
+                        &mut result.first_failure_manifest,
+                        dependency_manifest.manifest_path.clone(),
+                    );
+                }
                 Err(EmitPackageInterfaceError::Code(_)) => {
                     let owner_note =
                         format_reference_interface_sync_note(&manifest.manifest_path, reference);

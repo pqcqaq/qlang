@@ -511,7 +511,7 @@ pub fn broken_second(value: MissingSecond) -> Int {
         "package interface emission with multiple failing sources",
         &normalized_stderr,
         &format!(
-            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            "hint: rerun `ql project emit-interface {}` after fixing the package sources",
             manifest_display
         ),
     )
@@ -619,7 +619,7 @@ pub fn broken(value: MissingType) -> Int {
         "package interface emission with single failing source",
         &normalized_stderr,
         &format!(
-            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            "hint: rerun `ql project emit-interface {}` after fixing the package sources",
             manifest_display
         ),
     )
@@ -1081,11 +1081,11 @@ pub fn broken(value: MissingType) -> Int {
     .expect("source failures should not report a written custom output artifact");
     let normalized_stderr = stderr.replace('\\', "/");
     let rerun_hint = format!(
-        "hint: rerun `ql project emit-interface {} --output {}` after fixing the package interface error",
+        "hint: rerun `ql project emit-interface {} --output {}` after fixing the package sources",
         manifest_display, output_display
     );
     let old_hint = format!(
-        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        "hint: rerun `ql project emit-interface {}` after fixing the package sources",
         manifest_display
     );
     expect_stderr_contains(
@@ -1320,11 +1320,11 @@ pub fn broken(value: MissingType) -> Int {
     let normalized_stderr = stderr.replace('\\', "/");
     let package_note = format!("note: failing package manifest: {manifest_display}");
     let rerun_hint = format!(
-        "hint: rerun `ql project emit-interface {} --changed-only` after fixing the package interface error",
+        "hint: rerun `ql project emit-interface {} --changed-only` after fixing the package sources",
         manifest_display
     );
     let default_rerun_hint = format!(
-        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        "hint: rerun `ql project emit-interface {}` after fixing the package sources",
         manifest_display
     );
     expect_stderr_contains(
@@ -2486,7 +2486,7 @@ pub fn broken_second(value: MissingSecond) -> Int {
         "workspace interface emission with member source failure",
         &normalized_stderr,
         &format!(
-            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            "hint: rerun `ql project emit-interface {}` after fixing the package sources",
             normalized_broken_manifest
         ),
     )
@@ -2495,7 +2495,7 @@ pub fn broken_second(value: MissingSecond) -> Int {
     let member_note =
         format!("note: failing workspace member manifest: {normalized_broken_manifest}");
     let rerun_hint = format!(
-        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        "hint: rerun `ql project emit-interface {}` after fixing the package sources",
         normalized_broken_manifest
     );
     let package_note_index = normalized_stderr
@@ -6423,7 +6423,7 @@ name = "app"
         "build with failing interface emission",
         &normalized_stderr,
         &format!(
-            "hint: rerun `ql build {} --emit llvm-ir --output {} --emit-interface` after fixing the package interface error",
+            "hint: rerun `ql build {} --emit llvm-ir --output {} --emit-interface` after fixing the package sources",
             source_display, output_display
         ),
     )
@@ -6433,7 +6433,7 @@ name = "app"
         "build with failing interface emission",
         &normalized_stderr,
         &format!(
-            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            "hint: rerun `ql project emit-interface {}` after fixing the package sources",
             manifest_display
         ),
     )
@@ -6571,7 +6571,7 @@ name = "app"
         "build with single failing interface source",
         &normalized_stderr,
         &format!(
-            "hint: rerun `ql build {} --emit llvm-ir --output {} --emit-interface` after fixing the package interface error",
+            "hint: rerun `ql build {} --emit llvm-ir --output {} --emit-interface` after fixing the package sources",
             source_display, output_display
         ),
     )
@@ -6581,7 +6581,7 @@ name = "app"
         "build with single failing interface source",
         &normalized_stderr,
         &format!(
-            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            "hint: rerun `ql project emit-interface {}` after fixing the package sources",
             manifest_display
         ),
     )

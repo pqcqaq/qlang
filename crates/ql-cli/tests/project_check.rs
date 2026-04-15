@@ -1326,7 +1326,7 @@ pub fn main() -> Int {
         "package-aware ql check sync with dependency source failures",
         &normalized_stderr,
         &format!(
-            "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+            "hint: rerun `ql project emit-interface {}` after fixing the package sources",
             dep_root
                 .join("qlang.toml")
                 .display()
@@ -1367,7 +1367,7 @@ pub fn main() -> Int {
         app_manifest.display().to_string().replace('\\', "/")
     );
     let rerun_hint = format!(
-        "hint: rerun `ql project emit-interface {}` after fixing the package interface error",
+        "hint: rerun `ql project emit-interface {}` after fixing the package sources",
         dep_root
             .join("qlang.toml")
             .display()
