@@ -1623,14 +1623,24 @@ impl PackageAnalysis {
         offset: usize,
     ) -> Option<RenameTarget> {
         let module = parse_source(source).ok()?;
-        let occurrence = dependency_import_occurrence_in_module(&module, offset)?;
-        let binding =
-            dependency_unique_import_binding_for_local_name(&module, &occurrence.local_name)?;
-        self.resolve_dependency_import_binding(&binding)?;
-        Some(RenameTarget {
-            kind: SymbolKind::Import,
+        if let Some(occurrence) = dependency_import_occurrence_in_module(&module, offset) {
+            if let Some(binding) =
+                dependency_unique_import_binding_for_local_name(&module, &occurrence.local_name)
+                && self.resolve_dependency_import_binding(&binding).is_some()
+            {
+                return Some(RenameTarget {
+                    kind: SymbolKind::Import,
+                    name: occurrence.local_name,
+                    span: occurrence.span,
+                });
+            }
+        }
+
+        let occurrence = self.dependency_value_occurrence_in_module(&module, offset)?;
+        dependency_value_occurrence_supports_same_file_rename(&occurrence).then(|| RenameTarget {
+            kind: occurrence.kind,
             name: occurrence.local_name,
-            span: occurrence.span,
+            span: occurrence.reference_span,
         })
     }
 
@@ -1646,61 +1656,88 @@ impl PackageAnalysis {
             Ok(module) => module,
             Err(_) => return Ok(None),
         };
-        let Some(target_occurrence) = dependency_import_occurrence_in_module(&module, offset)
-        else {
-            return Ok(None);
-        };
-        let Some(target_binding) =
-            dependency_unique_import_binding_for_local_name(&module, &target_occurrence.local_name)
-        else {
-            return Ok(None);
-        };
-        let Some((dependency, symbol)) = self.resolve_dependency_import_binding(&target_binding)
-        else {
-            return Ok(None);
-        };
+        if let Some(target_occurrence) = dependency_import_occurrence_in_module(&module, offset) {
+            if let Some(target_binding) = dependency_unique_import_binding_for_local_name(
+                &module,
+                &target_occurrence.local_name,
+            ) && let Some((dependency, symbol)) =
+                self.resolve_dependency_import_binding(&target_binding)
+            {
+                let mut edits = source
+                    .match_indices(&target_occurrence.local_name)
+                    .filter_map(|(start, _)| {
+                        let occurrence = dependency_import_occurrence_in_module(&module, start)?;
+                        if occurrence.span.start != start
+                            || occurrence.local_name != target_occurrence.local_name
+                        {
+                            return None;
+                        }
 
-        let mut edits = source
-            .match_indices(&target_occurrence.local_name)
-            .filter_map(|(start, _)| {
-                let occurrence = dependency_import_occurrence_in_module(&module, start)?;
-                if occurrence.span.start != start
-                    || occurrence.local_name != target_occurrence.local_name
-                {
-                    return None;
+                        let occurrence_binding = dependency_unique_import_binding_for_local_name(
+                            &module,
+                            &occurrence.local_name,
+                        )?;
+                        let (occurrence_dependency, occurrence_symbol) =
+                            self.resolve_dependency_import_binding(&occurrence_binding)?;
+                        if occurrence_dependency.interface_path != dependency.interface_path
+                            || occurrence_dependency.artifact.package_name
+                                != dependency.artifact.package_name
+                            || occurrence_symbol.source_path != symbol.source_path
+                            || occurrence_symbol.kind != symbol.kind
+                            || occurrence_symbol.name != symbol.name
+                        {
+                            return None;
+                        }
+
+                        let replacement = if occurrence.is_definition
+                            && dependency_import_binding_uses_direct_local_name(&occurrence_binding)
+                        {
+                            format!(
+                                "{} as {}",
+                                dependency_import_binding_imported_name(&occurrence_binding)?,
+                                new_name
+                            )
+                        } else {
+                            new_name.to_owned()
+                        };
+                        Some(RenameEdit {
+                            span: occurrence.span,
+                            replacement,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if edits.is_empty() {
+                    return Ok(None);
                 }
+                edits.sort_by_key(|edit| (edit.span.start, edit.span.end));
 
-                let occurrence_binding = dependency_unique_import_binding_for_local_name(
-                    &module,
-                    &occurrence.local_name,
-                )?;
-                let (occurrence_dependency, occurrence_symbol) =
-                    self.resolve_dependency_import_binding(&occurrence_binding)?;
-                if occurrence_dependency.interface_path != dependency.interface_path
-                    || occurrence_dependency.artifact.package_name
-                        != dependency.artifact.package_name
-                    || occurrence_symbol.source_path != symbol.source_path
-                    || occurrence_symbol.kind != symbol.kind
-                    || occurrence_symbol.name != symbol.name
-                {
-                    return None;
-                }
+                return Ok(Some(RenameResult {
+                    kind: SymbolKind::Import,
+                    old_name: target_occurrence.local_name,
+                    new_name: new_name.to_owned(),
+                    edits,
+                }));
+            }
+        }
 
-                let replacement = if occurrence.is_definition
-                    && dependency_import_binding_uses_direct_local_name(&occurrence_binding)
-                {
-                    format!(
-                        "{} as {}",
-                        dependency_import_binding_imported_name(&occurrence_binding)?,
-                        new_name
-                    )
-                } else {
-                    new_name.to_owned()
-                };
-                Some(RenameEdit {
-                    span: occurrence.span,
-                    replacement,
-                })
+        let Some(target_occurrence) = self.dependency_value_occurrence_in_module(&module, offset)
+        else {
+            return Ok(None);
+        };
+        if !dependency_value_occurrence_supports_same_file_rename(&target_occurrence) {
+            return Ok(None);
+        }
+
+        let replacement = new_name.to_owned();
+        let mut edits = self
+            .dependency_value_occurrences(&module)
+            .into_iter()
+            .filter(|occurrence| {
+                dependency_value_occurrence_matches_rename_target(occurrence, &target_occurrence)
+            })
+            .map(|occurrence| RenameEdit {
+                span: occurrence.reference_span,
+                replacement: replacement.clone(),
             })
             .collect::<Vec<_>>();
         if edits.is_empty() {
@@ -1709,7 +1746,7 @@ impl PackageAnalysis {
         edits.sort_by_key(|edit| (edit.span.start, edit.span.end));
 
         Ok(Some(RenameResult {
-            kind: SymbolKind::Import,
+            kind: target_occurrence.kind,
             old_name: target_occurrence.local_name,
             new_name: new_name.to_owned(),
             edits,
@@ -8723,6 +8760,25 @@ fn dependency_import_binding_imported_name(binding: &ImportBinding) -> Option<&s
 fn dependency_import_binding_uses_direct_local_name(binding: &ImportBinding) -> bool {
     dependency_import_binding_imported_name(binding)
         .is_some_and(|imported_name| binding.local_name == imported_name)
+}
+
+fn dependency_value_occurrence_supports_same_file_rename(
+    occurrence: &DependencyValueOccurrence,
+) -> bool {
+    matches!(occurrence.kind, SymbolKind::Local | SymbolKind::Parameter)
+}
+
+fn dependency_value_occurrence_matches_rename_target(
+    occurrence: &DependencyValueOccurrence,
+    target: &DependencyValueOccurrence,
+) -> bool {
+    occurrence.kind == target.kind
+        && occurrence.local_name == target.local_name
+        && occurrence.definition_span == target.definition_span
+        && occurrence.package_name == target.package_name
+        && occurrence.source_path == target.source_path
+        && occurrence.struct_name == target.struct_name
+        && occurrence.path == target.path
 }
 
 fn validate_dependency_rename_text(text: &str) -> Result<(), RenameError> {
