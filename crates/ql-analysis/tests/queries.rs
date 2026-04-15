@@ -4847,6 +4847,41 @@ fn read(point: Point) -> Int {
 }
 
 #[test]
+fn deeper_struct_like_field_paths_follow_field_type_definitions() {
+    let source = r#"
+type Coord = Int
+
+struct Point {
+    x: Coord,
+    y: Int,
+}
+
+fn build(value: Coord) -> Int {
+    let direct = Point.Scope.Config { x: value, y: 1 }
+    return match direct {
+        Point.Scope.Config { x: current, y: 2 } => 0,
+        _ => 0,
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+    let literal_field_x = nth_offset(source, "x", 2);
+    let pattern_field_x = nth_offset(source, "x", 3);
+
+    for offset in [literal_field_x, pattern_field_x] {
+        assert_eq!(
+            analysis.type_definition_at(offset),
+            Some(ql_analysis::DefinitionTarget {
+                kind: SymbolKind::TypeAlias,
+                name: "Coord".to_owned(),
+                span: nth_span(source, "Coord", 1),
+            })
+        );
+    }
+}
+
+#[test]
 fn semantic_tokens_follow_deeper_struct_like_field_surface() {
     let source = r#"
 use Point as P

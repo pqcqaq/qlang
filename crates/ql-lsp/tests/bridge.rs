@@ -7,9 +7,11 @@ use ql_lsp::bridge::{
     diagnostics_to_lsp, document_symbols_for_analysis, hover_for_analysis,
     loop_control_context_for_analysis, position_to_offset, prepare_rename_for_analysis,
     references_for_analysis, rename_for_analysis, semantic_tokens_for_analysis,
-    semantic_tokens_legend, span_to_range, workspace_symbols_for_analysis,
+    semantic_tokens_legend, span_to_range, type_definition_for_analysis,
+    workspace_symbols_for_analysis,
 };
 use ql_span::Span;
+use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{
     CompletionItemKind, CompletionResponse, DiagnosticSeverity, DocumentSymbolResponse,
     GotoDefinitionResponse, HoverContents, Location, Position, PrepareRenameResponse,
@@ -2640,6 +2642,44 @@ fn read(point: Point) -> Int {
     assert!(markup.value.contains("**field** `x`"));
     assert!(markup.value.contains("field x: Int"));
     assert!(markup.value.contains("Type: `Int`"));
+}
+
+#[test]
+fn type_definition_bridge_follows_deeper_struct_like_field_paths() {
+    let uri = Url::parse("file:///sample.ql").expect("URI should parse");
+    let source = r#"
+type Coord = Int
+
+struct Point {
+    x: Coord,
+    y: Int,
+}
+
+fn build(value: Coord) -> Int {
+    let direct = Point.Scope.Config { x: value, y: 1 }
+    return match direct {
+        Point.Scope.Config { x: current, y: 2 } => 0,
+        _ => 0,
+    }
+}
+"#;
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let type_definition = type_definition_for_analysis(
+        &uri,
+        source,
+        &analysis,
+        span_to_range(source, nth_span(source, "x", 3)).start,
+    )
+    .expect("deeper struct-like field type definition should exist");
+    let GotoTypeDefinitionResponse::Scalar(location) = type_definition else {
+        panic!("expected scalar type definition location");
+    };
+    assert_eq!(location.uri, uri);
+    assert_eq!(
+        location.range,
+        span_to_range(source, nth_span(source, "Coord", 1))
+    );
 }
 
 #[test]

@@ -56,7 +56,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - import alias variant / struct-variant follow-through
 - deeper variant-like member chains stay deliberately closed
 - deeper struct-literal / pattern variant-like paths stay deliberately closed
-- deeper struct-like field-label paths stay deliberately closed
+- deeper struct-like explicit field-label completion / `typeDefinition` now reuse field surface
 - deeper struct-like shorthand tokens keep lexical fallback
 - escaped identifier completion 保真
 - candidate-list parity
@@ -74,7 +74,7 @@ Phase 6 的任务不是一次做完 project-wide IDE，而是在已有 same-file
 - lexical semantic-symbol parity
 - deeper variant-like member chains stay deliberately closed for semantic tokens
 - deeper struct-literal / pattern variant-like paths stay deliberately closed for rename / semantic tokens
-- deeper struct-like field-label paths stay deliberately closed for query / rename / semantic tokens
+- deeper struct-like explicit field-label paths now reuse field query / rename / semantic-token surface
 - deeper struct-like shorthand tokens still project lexical local / binding / import identity across references / semantic tokens as well
 
 ### 5. Aggregate hardening

@@ -2079,6 +2079,10 @@ impl<'a> QueryIndexBuilder<'a> {
                                     self.record_field_shorthand_occurrence(target, field.name_span);
                                 } else if let Some(symbol) = self.field_defs.get(&target).cloned() {
                                     self.push_occurrence(field.name_span, &symbol);
+                                    self.record_field_type_definition_occurrence(
+                                        target,
+                                        field.name_span,
+                                    );
                                 }
                             }
                             self.index_pattern_use(field.pattern);
@@ -2161,6 +2165,9 @@ impl<'a> QueryIndexBuilder<'a> {
                     && let Some(symbol) = self.symbol_for_member_target(target)
                 {
                     self.push_occurrence(*field_span, &symbol);
+                    if let MemberTarget::Field(target) = target {
+                        self.record_field_type_definition_occurrence(target, *field_span);
+                    }
                 } else if matches!(self.module.expr(*object).kind, ExprKind::Name(_))
                     && let Some(resolution) = self.resolution.expr_resolution(expr_id)
                     && let Some(item_id) = self.enum_item_for_value_resolution(resolution)
@@ -2203,6 +2210,7 @@ impl<'a> QueryIndexBuilder<'a> {
                             self.record_field_shorthand_occurrence(target, field.name_span);
                         } else if let Some(symbol) = self.field_defs.get(&target).cloned() {
                             self.push_occurrence(field.name_span, &symbol);
+                            self.record_field_type_definition_occurrence(target, field.name_span);
                         }
                     }
                     self.index_expr_use(field.value);
@@ -2314,6 +2322,7 @@ impl<'a> QueryIndexBuilder<'a> {
             definition_span: Some(field.name_span),
         };
         self.push_occurrence(field.name_span, &symbol);
+        self.record_field_type_definition_occurrence(target, field.name_span);
         self.field_defs.insert(target, symbol);
     }
 
@@ -2937,6 +2946,25 @@ impl<'a> QueryIndexBuilder<'a> {
                 span,
                 label_text: label_text.to_owned(),
             });
+    }
+
+    fn record_field_type_definition_occurrence(&mut self, target: FieldTarget, span: Span) {
+        if let Some(type_definition) = self.field_type_definition_occurrence(target, span) {
+            self.type_definitions.push(type_definition);
+        }
+    }
+
+    fn field_type_definition_occurrence(
+        &self,
+        target: FieldTarget,
+        span: Span,
+    ) -> Option<TypeDefinitionOccurrence> {
+        let ItemKind::Struct(struct_decl) = &self.module.item(target.item_id).kind else {
+            return None;
+        };
+        let field = struct_decl.fields.get(target.field_index)?;
+        let resolution = self.resolution.type_resolution(field.ty)?;
+        self.type_definition_occurrence(span, resolution)
     }
 
     fn symbol_for_member_target(&self, target: MemberTarget) -> Option<SymbolData> {
