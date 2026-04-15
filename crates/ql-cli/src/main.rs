@@ -792,6 +792,14 @@ fn report_workspace_member_package_interface_check_manifest_failure(
     eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
 }
 
+fn report_package_interface_check_manifest_failure(manifest_path: &Path, changed_only: bool) {
+    let manifest_path = normalize_path(manifest_path);
+    let rerun_command =
+        format_workspace_member_emit_rerun_command(&manifest_path, changed_only, true);
+    eprintln!("note: failing package manifest: {manifest_path}");
+    eprintln!("hint: rerun `{rerun_command}` after fixing the package manifest");
+}
+
 fn package_check_manifest_path_from_project_error(
     error: &ql_project::ProjectError,
 ) -> Option<&Path> {
@@ -1816,7 +1824,24 @@ fn project_emit_interface_path(
         format_project_emit_interface_command_label(output, changed_only, false);
     let check_command_label = format_project_emit_interface_command_label(None, changed_only, true);
     let manifest = load_project_manifest(path).map_err(|error| {
-        if !check_only {
+        if check_only {
+            if let Some(manifest_path) =
+                package_missing_name_manifest_path_from_project_error(&error)
+            {
+                eprintln!(
+                    "error: {} manifest `{}` does not declare `[package].name`",
+                    check_command_label,
+                    normalize_path(manifest_path)
+                );
+                report_package_interface_check_manifest_failure(manifest_path, changed_only);
+                return 1;
+            }
+            if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
+                eprintln!("error: {check_command_label} {error}");
+                report_package_interface_check_manifest_failure(manifest_path, changed_only);
+                return 1;
+            }
+        } else {
             if let Some(manifest_path) =
                 package_missing_name_manifest_path_from_project_error(&error)
             {
@@ -1825,6 +1850,17 @@ fn project_emit_interface_path(
                     emit_command_label,
                     normalize_path(manifest_path)
                 );
+                report_package_interface_manifest_failure(
+                    manifest_path,
+                    None,
+                    output,
+                    changed_only,
+                    None,
+                );
+                return 1;
+            }
+            if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
+                eprintln!("error: {emit_command_label} {error}");
                 report_package_interface_manifest_failure(
                     manifest_path,
                     None,
