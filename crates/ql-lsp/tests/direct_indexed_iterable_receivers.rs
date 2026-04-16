@@ -439,6 +439,129 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
+fn dependency_field_queries_work_on_direct_indexed_iterable_field_receivers_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-direct-indexed-field-queries-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    children: [Child; 2],
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let first = config.children[0].value
+    let second = config.children[1].value
+    return "oops"
+}
+"#;
+    let app_file = temp.write("workspace/app/src/lib.ql", source);
+    let uri = Url::from_file_path(&app_file).expect("test file path should convert to URL");
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let first_offset = nth_offset(source, "value", 1);
+    let second_offset = nth_offset(source, "value", 2);
+
+    let hover = hover_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, first_offset),
+    )
+    .expect("direct indexed iterable field hover should exist without semantic analysis");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**field** `value`"));
+    assert!(markup.value.contains("field value: Int"));
+
+    let definition = definition_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, first_offset),
+    )
+    .expect("direct indexed iterable field definition should exist without semantic analysis");
+    let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_location_targets_dependency_name(&definition_location, &dep_qi, "value: Int", "value");
+
+    let declaration = declaration_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, second_offset),
+    )
+    .expect("direct indexed iterable field declaration should exist without semantic analysis");
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_location_targets_dependency_name(&declaration_location, &dep_qi, "value: Int", "value");
+
+    let with_declaration = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, first_offset),
+        true,
+    )
+    .expect("direct indexed iterable field references should exist without semantic analysis");
+    assert_eq!(with_declaration.len(), 3);
+    assert_location_targets_dependency_name(&with_declaration[0], &dep_qi, "value: Int", "value");
+
+    let without_declaration = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, first_offset),
+        false,
+    )
+    .expect("direct indexed iterable field references should exist without declaration in fallback");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+}
+
+#[test]
 fn dependency_method_queries_work_on_direct_indexed_iterable_method_receivers_without_semantic_analysis()
  {
     let temp = TempDir::new("ql-lsp-direct-indexed-method-queries-broken");
