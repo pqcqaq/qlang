@@ -1435,11 +1435,15 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
-        if let Some(binding) = self.dependency_value_root_binding_in_source_at(source, offset) {
-            return Some(dependency_definition_target_for_struct_binding(&binding));
-        }
-        let module = parse_source(source).ok()?;
-        dependency_value_type_definition_root_in_module(self, &module, offset)
+        let target = self.dependency_value_target_in_source_at(source, offset)?;
+        Some(DependencyDefinitionTarget {
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Struct,
+            name: target.struct_name,
+            path: target.path,
+            span: target.definition_span,
+        })
     }
 
     pub fn dependency_value_definition_in_source_at(
@@ -1455,14 +1459,14 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyHoverInfo> {
-        let binding = self.dependency_value_root_binding_in_source_at(source, offset)?;
+        let target = self.dependency_value_target_in_source_at(source, offset)?;
         Some(DependencyHoverInfo {
-            span: Span::new(offset, offset),
-            package_name: binding.package_name,
-            source_path: binding.source_path,
+            span: target.reference_span,
+            package_name: target.package_name,
+            source_path: target.source_path,
             kind: SymbolKind::Struct,
-            name: binding.struct_name,
-            detail: binding.detail,
+            name: target.struct_name,
+            detail: target.detail,
         })
     }
 
@@ -2088,6 +2092,28 @@ impl PackageAnalysis {
             })
     }
 
+    fn dependency_value_target_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyValueTarget> {
+        let module = parse_source(source).ok()?;
+        if let Some(occurrence) = self.dependency_value_occurrence_in_module(&module, offset) {
+            return dependency_value_target_for_occurrence(self, &occurrence);
+        }
+
+        let binding = self.dependency_value_root_binding_in_source_at(source, offset)?;
+        Some(DependencyValueTarget {
+            reference_span: Span::new(offset, offset),
+            package_name: binding.package_name,
+            source_path: binding.source_path,
+            struct_name: binding.struct_name,
+            detail: binding.detail,
+            path: binding.path,
+            definition_span: binding.definition_span,
+        })
+    }
+
     fn dependency_struct_field_occurrences(
         &self,
         module: &ql_ast::Module,
@@ -2211,6 +2237,17 @@ struct DependencyMethodTarget {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencyValueTarget {
+    reference_span: Span,
+    package_name: String,
+    source_path: String,
+    struct_name: String,
+    detail: String,
+    path: PathBuf,
+    definition_span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct DependencyStructBinding {
     package_name: String,
     source_path: String,
@@ -2249,17 +2286,30 @@ struct DependencyStructResolvedMethod {
 
 type DependencyIterableScopes = Vec<HashMap<String, Option<DependencyStructBinding>>>;
 
-fn dependency_definition_target_for_struct_binding(
-    binding: &DependencyStructBinding,
-) -> DependencyDefinitionTarget {
-    DependencyDefinitionTarget {
-        package_name: binding.package_name.clone(),
-        source_path: binding.source_path.clone(),
-        kind: SymbolKind::Struct,
-        name: binding.struct_name.clone(),
-        path: binding.path.clone(),
-        span: binding.definition_span,
-    }
+fn dependency_value_target_for_occurrence(
+    package: &PackageAnalysis,
+    occurrence: &DependencyValueOccurrence,
+) -> Option<DependencyValueTarget> {
+    let binding = dependency_struct_binding_for_definition_target(
+        package,
+        &DependencyDefinitionTarget {
+            package_name: occurrence.package_name.clone(),
+            source_path: occurrence.source_path.clone(),
+            kind: SymbolKind::Struct,
+            name: occurrence.struct_name.clone(),
+            path: occurrence.path.clone(),
+            span: occurrence.definition_span,
+        },
+    )?;
+    Some(DependencyValueTarget {
+        reference_span: occurrence.reference_span,
+        package_name: occurrence.package_name.clone(),
+        source_path: occurrence.source_path.clone(),
+        struct_name: occurrence.struct_name.clone(),
+        detail: binding.detail,
+        path: occurrence.path.clone(),
+        definition_span: binding.definition_span,
+    })
 }
 
 fn dependency_struct_bindings_match(
@@ -5862,14 +5912,42 @@ fn collect_dependency_method_occurrences_in_expr(
             scopes.pop();
         }
         ql_ast::ExprKind::Call { callee, args } => {
-            collect_dependency_method_occurrences_in_expr(
-                package,
-                module,
-                callee,
-                scopes,
-                iterable_scopes,
-                occurrences,
-            );
+            match &callee.kind {
+                ql_ast::ExprKind::Member {
+                    object,
+                    field,
+                    field_span,
+                } => {
+                    collect_dependency_method_occurrences_in_expr(
+                        package,
+                        module,
+                        object,
+                        scopes,
+                        iterable_scopes,
+                        occurrences,
+                    );
+                    if let Some(binding) =
+                        dependency_struct_binding_for_expr(package, module, object, scopes)
+                    {
+                        push_dependency_method_occurrence_for_binding(
+                            &binding,
+                            field,
+                            *field_span,
+                            occurrences,
+                        );
+                    }
+                }
+                _ => {
+                    collect_dependency_method_occurrences_in_expr(
+                        package,
+                        module,
+                        callee,
+                        scopes,
+                        iterable_scopes,
+                        occurrences,
+                    );
+                }
+            }
             for arg in args {
                 match arg {
                     ql_ast::CallArg::Positional(expr) => {
@@ -5897,8 +5975,7 @@ fn collect_dependency_method_occurrences_in_expr(
         }
         ql_ast::ExprKind::Member {
             object,
-            field,
-            field_span,
+            ..
         } => {
             collect_dependency_method_occurrences_in_expr(
                 package,
@@ -5908,16 +5985,6 @@ fn collect_dependency_method_occurrences_in_expr(
                 iterable_scopes,
                 occurrences,
             );
-            if let Some(binding) =
-                dependency_struct_binding_for_expr(package, module, object, scopes)
-            {
-                push_dependency_method_occurrence_for_binding(
-                    &binding,
-                    field,
-                    *field_span,
-                    occurrences,
-                );
-            }
         }
         ql_ast::ExprKind::Bracket { target, items } => {
             collect_dependency_method_occurrences_in_expr(
@@ -6455,6 +6522,20 @@ fn collect_dependency_value_occurrences_in_expr(
             binding_scopes.pop();
         }
         ql_ast::ExprKind::Call { callee, args } => {
+            if let ql_ast::ExprKind::Member {
+                field, field_span, ..
+            } = &callee.kind
+                && let Some(binding) =
+                    dependency_struct_binding_for_call_expr(package, module, callee, binding_scopes)
+            {
+                push_dependency_value_root_occurrence(
+                    SymbolKind::Method,
+                    field,
+                    *field_span,
+                    &binding,
+                    occurrences,
+                );
+            }
             collect_dependency_value_occurrences_in_expr(
                 package,
                 module,
@@ -9118,15 +9199,6 @@ fn validate_dependency_rename_text(text: &str) -> Result<(), RenameError> {
     }
 
     Ok(())
-}
-
-fn dependency_value_type_definition_root_in_module(
-    package: &PackageAnalysis,
-    module: &ql_ast::Module,
-    offset: usize,
-) -> Option<DependencyDefinitionTarget> {
-    dependency_value_root_binding_in_module(package, module, offset)
-        .map(|binding| dependency_definition_target_for_struct_binding(&binding))
 }
 
 fn dependency_value_root_binding_in_module(
