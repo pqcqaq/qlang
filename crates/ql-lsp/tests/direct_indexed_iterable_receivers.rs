@@ -5,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    completion_for_dependency_methods, completion_for_package_analysis,
+    completion_for_dependency_member_fields, completion_for_dependency_methods,
+    completion_for_package_analysis,
     declaration_for_dependency_methods, declaration_for_dependency_struct_fields,
     definition_for_dependency_methods, definition_for_dependency_struct_fields,
     hover_for_dependency_methods, hover_for_dependency_struct_fields,
@@ -247,6 +248,75 @@ pub fn read(config: Cfg) -> Int {
     assert_eq!(items[0].label, "get");
     assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
     assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+}
+
+#[test]
+fn dependency_field_completion_works_on_direct_indexed_iterable_field_receivers_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-direct-indexed-field-completion-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    children: [Child; 2],
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    return config.children[0].va + "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let position = offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len());
+
+    let Some(CompletionResponse::Array(items)) =
+        completion_for_dependency_member_fields(source, &package, position)
+    else {
+        panic!("direct indexed iterable field completion should exist without semantic analysis");
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "value");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
 }
 
 #[test]
