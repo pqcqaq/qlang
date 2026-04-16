@@ -14,8 +14,8 @@ use ql_lsp::bridge::{
     hover_for_dependency_struct_fields, hover_for_dependency_values, hover_for_package_analysis,
     references_for_dependency_methods, references_for_dependency_struct_fields,
     references_for_dependency_values, references_for_package_analysis, span_to_range,
-    type_definition_for_dependency_method_types, type_definition_for_dependency_values,
-    type_definition_for_package_analysis,
+    type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
+    type_definition_for_dependency_values, type_definition_for_package_analysis,
 };
 use tower_lsp::lsp_types::request::GotoDeclarationResponse;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
@@ -741,10 +741,11 @@ pub fn read(flag: Bool) -> Int {{
     assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
 }
 
-fn run_bracket_target_field_completion_case(structured: StructuredKind) {
+fn run_bracket_target_field_completion_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-field-completion",
-        structured.label()
+        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-field-completion{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
 
@@ -794,23 +795,29 @@ use demo.dep.maybe_children
 
 pub fn read(flag: Bool) -> Leaf {{
     let value = ({receiver})[0].lea
-    return value
+    return {tail}
 }}
 "#,
         receiver = structured.receiver_expr(),
+        tail = if broken { "\"oops\"" } else { "value" },
     );
     temp.write("workspace/app/src/lib.ql", &source);
 
-    let package = analyze_package_dependencies(&app_root)
-        .expect("dependency-only package analysis should succeed");
-    let analysis = analyze_source(&source).expect("analysis should succeed for completion query");
+    let position = offset_to_position(&source, nth_offset(&source, ".lea", 1) + ".lea".len());
+    let completion = if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        completion_for_dependency_member_fields(&source, &package, position)
+    } else {
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let analysis =
+            analyze_source(&source).expect("analysis should succeed for completion query");
+        completion_for_package_analysis(&source, &analysis, &package, position)
+    };
 
-    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, nth_offset(&source, ".lea", 1) + ".lea".len()),
-    ) else {
+    let Some(CompletionResponse::Array(items)) = completion else {
         panic!(
             "structured question indexed bracket target field completion should exist through package bridge"
         );
@@ -1756,10 +1763,11 @@ pub fn read(flag: Bool) -> Int {{
     }
 }
 
-fn run_bracket_target_field_type_definition_case(structured: StructuredKind) {
+fn run_bracket_target_field_type_definition_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-field-type-definition",
-        structured.label()
+        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-field-type-definition{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let dep_qi = temp.path().join("workspace").join("dep").join("dep.qi");
@@ -1773,33 +1781,56 @@ use demo.dep.maybe_children
 
 pub fn read(flag: Bool) -> Int {{
     let value = ({receiver})[0].leaf.value
-    return value
+    return {tail}
 }}
 "#,
         receiver = structured.receiver_expr(),
+        tail = if broken { "\"oops\"" } else { "value" },
     );
     let app_file = temp.write("workspace/app/src/lib.ql", &source);
-    let uri = Url::from_file_path(&app_file).expect("app path should convert to file URL");
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(&source).expect("source should analyze");
+    let position = offset_to_position(&source, nth_offset(&source, "leaf", 1));
 
-    let definition = type_definition_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, nth_offset(&source, "leaf", 1)),
-    )
-    .expect(
-        "structured question indexed bracket target field type definition should exist through package bridge",
-    );
-    assert_targets_dependency_type(definition, &dep_qi, "pub struct Leaf {\n    value: Int,\n}");
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let definition = type_definition_for_dependency_struct_field_types(&source, &package, position)
+            .expect(
+                "structured question indexed bracket target field type definition should exist through package bridge without semantic analysis",
+            );
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Leaf {\n    value: Int,\n}",
+        );
+    } else {
+        let uri = Url::from_file_path(&app_file).expect("app path should convert to file URL");
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(&source).expect("source should analyze");
+
+        let definition = type_definition_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            position,
+        )
+        .expect(
+            "structured question indexed bracket target field type definition should exist through package bridge",
+        );
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Leaf {\n    value: Int,\n}",
+        );
+    }
 }
 
-fn run_bracket_target_field_query_case(structured: StructuredKind) {
+fn run_bracket_target_field_query_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-field-query",
-        structured.label()
+        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-field-query{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let dep_qi = temp.path().join("workspace").join("dep").join("dep.qi");
@@ -1814,94 +1845,202 @@ use demo.dep.maybe_children
 pub fn read(flag: Bool) -> Int {{
     let first = ({receiver})[0].leaf.value
     let second = ({receiver})[1].leaf.value
-    return first + second
+    return {tail}
 }}
 "#,
         receiver = structured.receiver_expr(),
+        tail = if broken { "\"oops\"" } else { "first + second" },
     );
     let app_file = temp.write("workspace/app/src/lib.ql", &source);
     let uri = Url::from_file_path(&app_file).expect("app path should convert to file URL");
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(&source).expect("source should analyze");
-
     let first_offset = nth_offset(&source, "leaf", 1);
     let second_offset = nth_offset(&source, "leaf", 2);
 
-    let hover = hover_for_package_analysis(
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-    )
-    .expect("structured question indexed bracket target field hover should exist through package bridge");
-    let HoverContents::Markup(markup) = hover.contents else {
-        panic!("hover should use markdown")
-    };
-    assert!(markup.value.contains("**field** `leaf`"));
-    assert!(markup.value.contains("field leaf: Leaf"));
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
 
-    let definition = definition_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, second_offset),
-    )
-    .expect(
-        "structured question indexed bracket target field definition should exist through package bridge",
-    );
-    let GotoDefinitionResponse::Scalar(definition_location) = definition else {
-        panic!("definition should be one location")
-    };
-    assert_location_targets_dependency_name(&definition_location, &dep_qi, "leaf: Leaf", "leaf");
+        let hover = hover_for_dependency_struct_fields(
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect(
+            "structured question indexed bracket target field hover should exist through package bridge without semantic analysis",
+        );
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**field** `leaf`"));
+        assert!(markup.value.contains("field leaf: Leaf"));
 
-    let declaration = declaration_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, second_offset),
-    )
-    .expect(
-        "structured question indexed bracket target field declaration should exist through package bridge",
-    );
-    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
-        panic!("declaration should be one location")
-    };
-    assert_location_targets_dependency_name(&declaration_location, &dep_qi, "leaf: Leaf", "leaf");
+        let definition = definition_for_dependency_struct_fields(
+            &source,
+            &package,
+            offset_to_position(&source, second_offset),
+        )
+        .expect(
+            "structured question indexed bracket target field definition should exist through package bridge without semantic analysis",
+        );
+        let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_location_targets_dependency_name(
+            &definition_location,
+            &dep_qi,
+            "leaf: Leaf",
+            "leaf",
+        );
 
-    let with_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-        true,
-    )
-    .expect(
-        "structured question indexed bracket target field references should exist through package bridge",
-    );
-    assert_eq!(with_declaration.len(), 3);
-    assert_location_targets_dependency_name(&with_declaration[0], &dep_qi, "leaf: Leaf", "leaf");
-    assert!(with_declaration[1..]
-        .iter()
-        .all(|location| location.uri == uri));
+        let declaration = declaration_for_dependency_struct_fields(
+            &source,
+            &package,
+            offset_to_position(&source, second_offset),
+        )
+        .expect(
+            "structured question indexed bracket target field declaration should exist through package bridge without semantic analysis",
+        );
+        let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_location_targets_dependency_name(
+            &declaration_location,
+            &dep_qi,
+            "leaf: Leaf",
+            "leaf",
+        );
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-        false,
-    )
-    .expect(
-        "structured question indexed bracket target field references without declaration should exist through package bridge",
-    );
-    assert_eq!(without_declaration.len(), 2);
-    assert!(without_declaration
-        .iter()
-        .all(|location| location.uri == uri));
+        let with_declaration = references_for_dependency_struct_fields(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+            true,
+        )
+        .expect(
+            "structured question indexed bracket target field references should exist through package bridge without semantic analysis",
+        );
+        assert_eq!(with_declaration.len(), 3);
+        assert_location_targets_dependency_name(
+            &with_declaration[0],
+            &dep_qi,
+            "leaf: Leaf",
+            "leaf",
+        );
+        assert!(with_declaration[1..]
+            .iter()
+            .all(|location| location.uri == uri));
+
+        let without_declaration = references_for_dependency_struct_fields(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+            false,
+        )
+        .expect(
+            "structured question indexed bracket target field references without declaration should exist through package bridge without semantic analysis",
+        );
+        assert_eq!(without_declaration.len(), 2);
+        assert!(without_declaration
+            .iter()
+            .all(|location| location.uri == uri));
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(&source).expect("source should analyze");
+
+        let hover = hover_for_package_analysis(
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect("structured question indexed bracket target field hover should exist through package bridge");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**field** `leaf`"));
+        assert!(markup.value.contains("field leaf: Leaf"));
+
+        let definition = definition_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, second_offset),
+        )
+        .expect(
+            "structured question indexed bracket target field definition should exist through package bridge",
+        );
+        let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_location_targets_dependency_name(
+            &definition_location,
+            &dep_qi,
+            "leaf: Leaf",
+            "leaf",
+        );
+
+        let declaration = declaration_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, second_offset),
+        )
+        .expect(
+            "structured question indexed bracket target field declaration should exist through package bridge",
+        );
+        let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_location_targets_dependency_name(
+            &declaration_location,
+            &dep_qi,
+            "leaf: Leaf",
+            "leaf",
+        );
+
+        let with_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+            true,
+        )
+        .expect(
+            "structured question indexed bracket target field references should exist through package bridge",
+        );
+        assert_eq!(with_declaration.len(), 3);
+        assert_location_targets_dependency_name(
+            &with_declaration[0],
+            &dep_qi,
+            "leaf: Leaf",
+            "leaf",
+        );
+        assert!(with_declaration[1..]
+            .iter()
+            .all(|location| location.uri == uri));
+
+        let without_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+            false,
+        )
+        .expect(
+            "structured question indexed bracket target field references without declaration should exist through package bridge",
+        );
+        assert_eq!(without_declaration.len(), 2);
+        assert!(without_declaration
+            .iter()
+            .all(|location| location.uri == uri));
+    }
 }
 
 fn run_bracket_target_method_query_case(structured: StructuredKind, broken: bool) {
@@ -2671,34 +2810,70 @@ fn package_bridge_follows_match_direct_structured_question_indexed_bracket_targe
 
 #[test]
 fn package_bridge_completes_if_direct_structured_question_indexed_bracket_target_fields() {
-    run_bracket_target_field_completion_case(StructuredKind::If);
+    run_bracket_target_field_completion_case(StructuredKind::If, false);
 }
 
 #[test]
 fn package_bridge_completes_match_direct_structured_question_indexed_bracket_target_fields() {
-    run_bracket_target_field_completion_case(StructuredKind::Match);
+    run_bracket_target_field_completion_case(StructuredKind::Match, false);
 }
 
 #[test]
 fn package_bridge_follows_if_direct_structured_question_indexed_bracket_target_field_type_definitions(
 ) {
-    run_bracket_target_field_type_definition_case(StructuredKind::If);
+    run_bracket_target_field_type_definition_case(StructuredKind::If, false);
 }
 
 #[test]
 fn package_bridge_follows_match_direct_structured_question_indexed_bracket_target_field_type_definitions(
 ) {
-    run_bracket_target_field_type_definition_case(StructuredKind::Match);
+    run_bracket_target_field_type_definition_case(StructuredKind::Match, false);
 }
 
 #[test]
 fn package_bridge_surfaces_if_direct_structured_question_indexed_bracket_target_field_queries() {
-    run_bracket_target_field_query_case(StructuredKind::If);
+    run_bracket_target_field_query_case(StructuredKind::If, false);
 }
 
 #[test]
 fn package_bridge_surfaces_match_direct_structured_question_indexed_bracket_target_field_queries() {
-    run_bracket_target_field_query_case(StructuredKind::Match);
+    run_bracket_target_field_query_case(StructuredKind::Match, false);
+}
+
+#[test]
+fn package_bridge_completes_if_direct_structured_question_indexed_bracket_target_fields_without_semantic_analysis(
+) {
+    run_bracket_target_field_completion_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_completes_match_direct_structured_question_indexed_bracket_target_fields_without_semantic_analysis(
+) {
+    run_bracket_target_field_completion_case(StructuredKind::Match, true);
+}
+
+#[test]
+fn package_bridge_follows_if_direct_structured_question_indexed_bracket_target_field_type_definitions_without_semantic_analysis(
+) {
+    run_bracket_target_field_type_definition_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_follows_match_direct_structured_question_indexed_bracket_target_field_type_definitions_without_semantic_analysis(
+) {
+    run_bracket_target_field_type_definition_case(StructuredKind::Match, true);
+}
+
+#[test]
+fn package_bridge_surfaces_if_direct_structured_question_indexed_bracket_target_field_queries_without_semantic_analysis(
+) {
+    run_bracket_target_field_query_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_surfaces_match_direct_structured_question_indexed_bracket_target_field_queries_without_semantic_analysis(
+) {
+    run_bracket_target_field_query_case(StructuredKind::Match, true);
 }
 
 #[test]
