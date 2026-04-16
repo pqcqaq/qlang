@@ -6,10 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
     completion_for_dependency_methods, completion_for_package_analysis,
+    declaration_for_package_analysis, definition_for_package_analysis,
     declaration_for_dependency_methods, declaration_for_dependency_struct_fields,
     definition_for_dependency_methods, definition_for_dependency_struct_fields,
     hover_for_dependency_methods, hover_for_dependency_struct_fields,
-    references_for_dependency_methods, references_for_dependency_struct_fields, span_to_range,
+    hover_for_package_analysis, references_for_dependency_methods,
+    references_for_dependency_struct_fields, references_for_package_analysis, span_to_range,
 };
 use tower_lsp::lsp_types::request::GotoDeclarationResponse;
 use tower_lsp::lsp_types::{
@@ -176,8 +178,8 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
-fn dependency_method_completion_works_on_direct_indexed_question_iterable_method_receivers_without_semantic_analysis(
-) {
+fn dependency_method_completion_works_on_direct_indexed_question_iterable_method_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-direct-indexed-question-method-completion-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -247,6 +249,82 @@ pub fn read(config: Cfg) -> Int {
         panic!(
             "direct indexed question iterable method completion should exist without semantic analysis"
         );
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "get");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+}
+
+#[test]
+fn dependency_method_completion_works_on_direct_indexed_question_iterable_method_receivers() {
+    let temp = TempDir::new("ql-lsp-direct-indexed-question-method-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn maybe_children(self) -> Option[[Child; 2]]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let value = config.maybe_children()?[0].ge
+    return value
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("analysis should succeed for completion query");
+    let position = offset_to_position(source, nth_offset(source, ".ge", 1) + ".ge".len());
+
+    let Some(CompletionResponse::Array(items)) =
+        completion_for_package_analysis(source, &analysis, &package, position)
+    else {
+        panic!("direct indexed question iterable method completion should exist");
     };
 
     assert_eq!(items.len(), 1);
@@ -371,14 +449,171 @@ pub fn read(config: Cfg) -> Int {
     )
     .expect("direct indexed question iterable field references should exist without declaration");
     assert_eq!(without_declaration.len(), 2);
-    assert!(without_declaration
-        .iter()
-        .all(|location| location.uri == uri));
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
 }
 
 #[test]
-fn dependency_method_queries_work_on_direct_indexed_question_iterable_method_receivers_without_semantic_analysis(
-) {
+fn dependency_method_queries_work_on_direct_indexed_question_iterable_method_receivers() {
+    let temp = TempDir::new("ql-lsp-direct-indexed-question-method-queries");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn maybe_children(self) -> Option[[Child; 2]]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let first = config.maybe_children()?[0].get()
+    let second = config.maybe_children()?[1].get()
+    return first + second
+}
+"#;
+    let app_file = temp.write("workspace/app/src/lib.ql", source);
+    let uri = Url::from_file_path(&app_file).expect("test file path should convert to URL");
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let first_offset = nth_offset(source, "get", 1);
+    let second_offset = nth_offset(source, "get", 2);
+
+    let hover = hover_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, first_offset),
+    )
+    .expect("direct indexed question iterable method hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**method** `get`"));
+    assert!(markup.value.contains("fn get(self) -> Int"));
+
+    let definition = definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, second_offset),
+    )
+    .expect("direct indexed question iterable method definition should exist");
+    let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_location_targets_dependency_name(
+        &definition_location,
+        &dep_qi,
+        "pub fn get(self) -> Int",
+        "get",
+    );
+
+    let declaration = declaration_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, first_offset),
+    )
+    .expect("direct indexed question iterable method declaration should exist");
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_location_targets_dependency_name(
+        &declaration_location,
+        &dep_qi,
+        "pub fn get(self) -> Int",
+        "get",
+    );
+
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, first_offset),
+        true,
+    )
+    .expect("direct indexed question iterable method references should exist");
+    assert_eq!(with_declaration.len(), 3);
+    assert_location_targets_dependency_name(
+        &with_declaration[0],
+        &dep_qi,
+        "pub fn get(self) -> Int",
+        "get",
+    );
+    assert!(
+        with_declaration[1..]
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+
+    let without_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, second_offset),
+        false,
+    )
+    .expect("direct indexed question iterable method references should exist without declaration");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+}
+
+#[test]
+fn dependency_method_queries_work_on_direct_indexed_question_iterable_method_receivers_without_semantic_analysis()
+ {
     let temp = TempDir::new("ql-lsp-direct-indexed-question-method-queries-broken");
     let app_root = temp.path().join("workspace").join("app");
 
@@ -446,11 +681,12 @@ pub fn read(config: Cfg) -> Int {
     let first_offset = nth_offset(source, "get", 1);
     let second_offset = nth_offset(source, "get", 2);
 
-    let hover =
-        hover_for_dependency_methods(source, &package, offset_to_position(source, first_offset))
-            .expect(
-            "direct indexed question iterable method hover should exist without semantic analysis",
-        );
+    let hover = hover_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, first_offset),
+    )
+    .expect("direct indexed question iterable method hover should exist without semantic analysis");
     let HoverContents::Markup(markup) = hover.contents else {
         panic!("hover should use markdown")
     };
@@ -522,7 +758,9 @@ pub fn read(config: Cfg) -> Int {
         "direct indexed question iterable method references should exist without declaration in fallback",
     );
     assert_eq!(without_declaration.len(), 2);
-    assert!(without_declaration
-        .iter()
-        .all(|location| location.uri == uri));
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
 }
