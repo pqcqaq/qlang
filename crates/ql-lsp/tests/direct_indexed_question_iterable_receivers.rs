@@ -5,11 +5,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    completion_for_dependency_methods, completion_for_package_analysis,
-    declaration_for_dependency_methods, declaration_for_dependency_struct_fields,
-    declaration_for_package_analysis, definition_for_dependency_methods,
-    definition_for_dependency_struct_fields, definition_for_package_analysis,
-    hover_for_dependency_methods, hover_for_dependency_struct_fields, hover_for_package_analysis,
+    completion_for_dependency_member_fields, completion_for_dependency_methods,
+    completion_for_package_analysis, declaration_for_dependency_methods,
+    declaration_for_dependency_struct_fields, declaration_for_package_analysis,
+    definition_for_dependency_methods, definition_for_dependency_struct_fields,
+    definition_for_package_analysis, hover_for_dependency_methods,
+    hover_for_dependency_struct_fields, hover_for_package_analysis,
     references_for_dependency_methods, references_for_dependency_struct_fields,
     references_for_package_analysis, span_to_range,
 };
@@ -331,6 +332,86 @@ pub fn read(config: Cfg) -> Int {
     assert_eq!(items[0].label, "get");
     assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
     assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+}
+
+#[test]
+fn dependency_field_member_completion_works_on_direct_indexed_question_iterable_receivers_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-direct-indexed-question-field-member-completion-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    leaf: Leaf,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn maybe_children(self) -> Option[[Child; 2]]
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let value = config.maybe_children()?[0].lea
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let position = offset_to_position(source, nth_offset(source, ".lea", 1) + ".lea".len());
+
+    let Some(CompletionResponse::Array(items)) =
+        completion_for_dependency_member_fields(source, &package, position)
+    else {
+        panic!(
+            "direct indexed question iterable field member completion should exist without semantic analysis"
+        );
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "leaf");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field leaf: Leaf"));
 }
 
 #[test]
@@ -1124,6 +1205,150 @@ pub fn read(config: Cfg) -> Int {
     assert!(without_declaration
         .iter()
         .all(|location| location.uri == uri));
+}
+
+#[test]
+fn dependency_field_member_queries_work_on_direct_indexed_question_iterable_receivers_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-direct-indexed-question-field-member-queries-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    leaf: Leaf,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn maybe_children(self) -> Option[[Child; 2]]
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let first = config.maybe_children()?[0].leaf.value
+    let second = config.maybe_children()?[1].leaf.value
+    return "oops"
+}
+"#;
+    let app_file = temp.write("workspace/app/src/lib.ql", source);
+    let uri = Url::from_file_path(&app_file).expect("test file path should convert to URL");
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let first_offset = nth_offset(source, "leaf", 1);
+    let second_offset = nth_offset(source, "leaf", 2);
+
+    let hover = hover_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, first_offset),
+    )
+    .expect("direct indexed question iterable field member hover should exist without semantic analysis");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**field** `leaf`"));
+    assert!(markup.value.contains("field leaf: Leaf"));
+
+    let definition = definition_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, first_offset),
+    )
+    .expect(
+        "direct indexed question iterable field member definition should exist without semantic analysis",
+    );
+    let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_location_targets_dependency_name(&definition_location, &dep_qi, "leaf: Leaf", "leaf");
+
+    let declaration = declaration_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, second_offset),
+    )
+    .expect(
+        "direct indexed question iterable field member declaration should exist without semantic analysis",
+    );
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_location_targets_dependency_name(
+        &declaration_location,
+        &dep_qi,
+        "leaf: Leaf",
+        "leaf",
+    );
+
+    let with_declaration = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, first_offset),
+        true,
+    )
+    .expect(
+        "direct indexed question iterable field member references should exist without semantic analysis",
+    );
+    assert_eq!(with_declaration.len(), 3);
+    assert_location_targets_dependency_name(&with_declaration[0], &dep_qi, "leaf: Leaf", "leaf");
+
+    let without_declaration = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, second_offset),
+        false,
+    )
+    .expect(
+        "direct indexed question iterable field member references should exist without declaration in fallback",
+    );
+    assert_eq!(without_declaration.len(), 2);
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
 }
 
 #[test]
