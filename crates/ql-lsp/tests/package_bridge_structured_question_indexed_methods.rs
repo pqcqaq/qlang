@@ -692,10 +692,11 @@ pub fn read(flag: Bool) -> Int {{
     assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
 }
 
-fn run_bracket_target_value_root_completion_case(structured: StructuredKind) {
+fn run_bracket_target_value_root_completion_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-value-root-completion",
-        structured.label()
+        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-value-root-completion{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     write_dependency_files(&temp);
@@ -708,13 +709,17 @@ use demo.dep.maybe_children
 
 pub fn read(flag: Bool) -> Int {{
     let value = ({receiver})[0].va
-    return value
+    return {tail}
 }}
 "#,
         receiver = structured.receiver_expr(),
+        tail = if broken { "\"oops\"" } else { "value" },
     );
     temp.write("workspace/app/src/lib.ql", &source);
 
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+    }
     let package = analyze_package_dependencies(&app_root)
         .expect("dependency-only package analysis should succeed");
     let analysis = analyze_source(&source).expect("analysis should succeed for completion query");
@@ -1290,10 +1295,11 @@ pub fn read(flag: Bool) -> Int {{
     }
 }
 
-fn run_bracket_target_value_root_query_case(structured: StructuredKind) {
+fn run_bracket_target_value_root_query_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-value-root-query",
-        structured.label()
+        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-value-root-query{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let dep_qi = temp.path().join("workspace").join("dep").join("dep.qi");
@@ -1308,205 +1314,390 @@ use demo.dep.maybe_children
 pub fn read(flag: Bool) -> Int {{
     let first = ({receiver})[0].value
     let second = ({receiver})[1].value
-    return first + second
+    return {tail}
 }}
 "#,
         receiver = structured.receiver_expr(),
+        tail = if broken { "\"oops\"" } else { "first + second" },
     );
     let app_file = temp.write("workspace/app/src/lib.ql", &source);
     let uri = Url::from_file_path(&app_file).expect("app path should convert to file URL");
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(&source).expect("source should analyze");
     let first_offset = nth_offset(&source, "maybe_children", 2);
 
-    let hover = hover_for_package_analysis(
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-    )
-    .expect(
-        "structured question indexed bracket target value root hover should exist through package bridge",
-    );
-    let HoverContents::Markup(markup) = hover.contents else {
-        panic!("hover should use markdown")
-    };
-    assert!(markup.value.contains("**struct** `Child`"));
-    assert!(markup.value.contains("struct Child"));
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
 
-    let definition = definition_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-    )
-    .expect(
-        "structured question indexed bracket target value root definition should exist through package bridge",
-    );
-    let GotoDefinitionResponse::Scalar(definition_location) = definition else {
-        panic!("definition should be one location")
-    };
-    assert_targets_dependency_type(
-        GotoTypeDefinitionResponse::Scalar(definition_location),
-        &dep_qi,
-        "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
-    );
+        let hover = hover_for_dependency_values(
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect(
+            "structured question indexed bracket target value root hover should exist through package bridge without semantic analysis",
+        );
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**struct** `Child`"));
+        assert!(markup.value.contains("struct Child"));
 
-    let declaration = declaration_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-    )
-    .expect(
-        "structured question indexed bracket target value root declaration should exist through package bridge",
-    );
-    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
-        panic!("declaration should be one location")
-    };
-    assert_targets_dependency_type(
-        GotoTypeDefinitionResponse::Scalar(declaration_location),
-        &dep_qi,
-        "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
-    );
+        let definition = definition_for_dependency_values(
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect(
+            "structured question indexed bracket target value root definition should exist through package bridge without semantic analysis",
+        );
+        let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_targets_dependency_type(
+            GotoTypeDefinitionResponse::Scalar(definition_location),
+            &dep_qi,
+            "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
+        );
 
-    let with_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-        true,
-    )
-    .expect(
-        "structured question indexed bracket target value root references should exist through package bridge",
-    );
-    assert_eq!(with_declaration.len(), 6);
-    assert_targets_dependency_type(
-        GotoTypeDefinitionResponse::Scalar(with_declaration[0].clone()),
-        &dep_qi,
-        "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
-    );
-    assert_eq!(
-        &with_declaration[1..],
-        &[
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    ql_span::Span::new(
-                        nth_offset(&source, "maybe_children", 1),
-                        nth_offset(&source, "maybe_children", 1) + "maybe_children".len(),
-                    ),
-                ),
-            ),
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    ql_span::Span::new(
-                        nth_offset(&source, "maybe_children", 2),
-                        nth_offset(&source, "maybe_children", 2) + "maybe_children".len(),
-                    ),
-                ),
-            ),
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    ql_span::Span::new(
-                        nth_offset(&source, "maybe_children", 3),
-                        nth_offset(&source, "maybe_children", 3) + "maybe_children".len(),
-                    ),
-                ),
-            ),
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    ql_span::Span::new(
-                        nth_offset(&source, "maybe_children", 4),
-                        nth_offset(&source, "maybe_children", 4) + "maybe_children".len(),
-                    ),
-                ),
-            ),
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    ql_span::Span::new(
-                        nth_offset(&source, "maybe_children", 5),
-                        nth_offset(&source, "maybe_children", 5) + "maybe_children".len(),
-                    ),
-                ),
-            ),
-        ]
-    );
+        let declaration = declaration_for_dependency_values(
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect(
+            "structured question indexed bracket target value root declaration should exist through package bridge without semantic analysis",
+        );
+        let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_targets_dependency_type(
+            GotoTypeDefinitionResponse::Scalar(declaration_location),
+            &dep_qi,
+            "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
+        );
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-        false,
-    )
-    .expect(
-        "structured question indexed bracket target value root references without declaration should exist through package bridge",
-    );
-    assert_eq!(
-        without_declaration,
-        vec![
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    ql_span::Span::new(
-                        nth_offset(&source, "maybe_children", 2),
-                        nth_offset(&source, "maybe_children", 2) + "maybe_children".len(),
+        let with_declaration = references_for_dependency_values(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+            true,
+        )
+        .expect(
+            "structured question indexed bracket target value root references should exist through package bridge without semantic analysis",
+        );
+        assert_eq!(with_declaration.len(), 6);
+        assert_targets_dependency_type(
+            GotoTypeDefinitionResponse::Scalar(with_declaration[0].clone()),
+            &dep_qi,
+            "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
+        );
+        assert_eq!(
+            &with_declaration[1..],
+            &[
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 1),
+                            nth_offset(&source, "maybe_children", 1) + "maybe_children".len(),
+                        ),
                     ),
                 ),
-            ),
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    ql_span::Span::new(
-                        nth_offset(&source, "maybe_children", 3),
-                        nth_offset(&source, "maybe_children", 3) + "maybe_children".len(),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 2),
+                            nth_offset(&source, "maybe_children", 2) + "maybe_children".len(),
+                        ),
                     ),
                 ),
-            ),
-            Location::new(
-                uri.clone(),
-                span_to_range(
-                    &source,
-                    ql_span::Span::new(
-                        nth_offset(&source, "maybe_children", 4),
-                        nth_offset(&source, "maybe_children", 4) + "maybe_children".len(),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 3),
+                            nth_offset(&source, "maybe_children", 3) + "maybe_children".len(),
+                        ),
                     ),
                 ),
-            ),
-            Location::new(
-                uri,
-                span_to_range(
-                    &source,
-                    ql_span::Span::new(
-                        nth_offset(&source, "maybe_children", 5),
-                        nth_offset(&source, "maybe_children", 5) + "maybe_children".len(),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 4),
+                            nth_offset(&source, "maybe_children", 4) + "maybe_children".len(),
+                        ),
                     ),
                 ),
-            ),
-        ]
-    );
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 5),
+                            nth_offset(&source, "maybe_children", 5) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+
+        let without_declaration = references_for_dependency_values(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+            false,
+        )
+        .expect(
+            "structured question indexed bracket target value root references without declaration should exist through package bridge without semantic analysis",
+        );
+        assert_eq!(
+            without_declaration,
+            vec![
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 2),
+                            nth_offset(&source, "maybe_children", 2) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 3),
+                            nth_offset(&source, "maybe_children", 3) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 4),
+                            nth_offset(&source, "maybe_children", 4) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri,
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 5),
+                            nth_offset(&source, "maybe_children", 5) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(&source).expect("source should analyze");
+
+        let hover = hover_for_package_analysis(
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect(
+            "structured question indexed bracket target value root hover should exist through package bridge",
+        );
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**struct** `Child`"));
+        assert!(markup.value.contains("struct Child"));
+
+        let definition = definition_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect(
+            "structured question indexed bracket target value root definition should exist through package bridge",
+        );
+        let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_targets_dependency_type(
+            GotoTypeDefinitionResponse::Scalar(definition_location),
+            &dep_qi,
+            "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
+        );
+
+        let declaration = declaration_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect(
+            "structured question indexed bracket target value root declaration should exist through package bridge",
+        );
+        let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_targets_dependency_type(
+            GotoTypeDefinitionResponse::Scalar(declaration_location),
+            &dep_qi,
+            "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
+        );
+
+        let with_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+            true,
+        )
+        .expect(
+            "structured question indexed bracket target value root references should exist through package bridge",
+        );
+        assert_eq!(with_declaration.len(), 6);
+        assert_targets_dependency_type(
+            GotoTypeDefinitionResponse::Scalar(with_declaration[0].clone()),
+            &dep_qi,
+            "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
+        );
+        assert_eq!(
+            &with_declaration[1..],
+            &[
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 1),
+                            nth_offset(&source, "maybe_children", 1) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 2),
+                            nth_offset(&source, "maybe_children", 2) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 3),
+                            nth_offset(&source, "maybe_children", 3) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 4),
+                            nth_offset(&source, "maybe_children", 4) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 5),
+                            nth_offset(&source, "maybe_children", 5) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+
+        let without_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+            false,
+        )
+        .expect(
+            "structured question indexed bracket target value root references without declaration should exist through package bridge",
+        );
+        assert_eq!(
+            without_declaration,
+            vec![
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 2),
+                            nth_offset(&source, "maybe_children", 2) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 3),
+                            nth_offset(&source, "maybe_children", 3) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 4),
+                            nth_offset(&source, "maybe_children", 4) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri,
+                    span_to_range(
+                        &source,
+                        ql_span::Span::new(
+                            nth_offset(&source, "maybe_children", 5),
+                            nth_offset(&source, "maybe_children", 5) + "maybe_children".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+    }
 }
 
-fn run_bracket_target_value_root_type_definition_case(structured: StructuredKind) {
+fn run_bracket_target_value_root_type_definition_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-value-root-type-definition",
-        structured.label()
+        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-value-root-type-definition{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let dep_qi = temp.path().join("workspace").join("dep").join("dep.qi");
@@ -1520,31 +1711,49 @@ use demo.dep.maybe_children
 
 pub fn read(flag: Bool) -> Int {{
     let value = ({receiver})[0].value
-    return value
+    return {tail}
 }}
 "#,
         receiver = structured.receiver_expr(),
+        tail = if broken { "\"oops\"" } else { "value" },
     );
     let app_file = temp.write("workspace/app/src/lib.ql", &source);
-    let uri = Url::from_file_path(&app_file).expect("app path should convert to file URL");
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(&source).expect("source should analyze");
+    let position = offset_to_position(&source, nth_offset(&source, "maybe_children", 2));
 
-    let definition = type_definition_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, nth_offset(&source, "maybe_children", 2)),
-    )
-    .expect(
-        "structured question indexed bracket target value root type definition should exist through package bridge",
-    );
-    assert_targets_dependency_type(
-        definition,
-        &dep_qi,
-        "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
-    );
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let definition = type_definition_for_dependency_values(&source, &package, position)
+            .expect(
+                "structured question indexed bracket target value root type definition should exist through package bridge without semantic analysis",
+            );
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
+        );
+    } else {
+        let uri = Url::from_file_path(&app_file).expect("app path should convert to file URL");
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(&source).expect("source should analyze");
+
+        let definition = type_definition_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            position,
+        )
+        .expect(
+            "structured question indexed bracket target value root type definition should exist through package bridge",
+        );
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Child {\n    value: Int,\n    leaf: Leaf,\n}",
+        );
+    }
 }
 
 fn run_bracket_target_field_type_definition_case(structured: StructuredKind) {
@@ -2392,36 +2601,72 @@ fn package_bridge_follows_match_direct_structured_question_indexed_method_type_d
 
 #[test]
 fn package_bridge_completes_if_direct_structured_question_indexed_bracket_target_value_roots() {
-    run_bracket_target_value_root_completion_case(StructuredKind::If);
+    run_bracket_target_value_root_completion_case(StructuredKind::If, false);
 }
 
 #[test]
 fn package_bridge_surfaces_if_direct_structured_question_indexed_bracket_target_value_root_queries()
 {
-    run_bracket_target_value_root_query_case(StructuredKind::If);
+    run_bracket_target_value_root_query_case(StructuredKind::If, false);
 }
 
 #[test]
 fn package_bridge_completes_match_direct_structured_question_indexed_bracket_target_value_roots() {
-    run_bracket_target_value_root_completion_case(StructuredKind::Match);
+    run_bracket_target_value_root_completion_case(StructuredKind::Match, false);
 }
 
 #[test]
 fn package_bridge_surfaces_match_direct_structured_question_indexed_bracket_target_value_root_queries(
 ) {
-    run_bracket_target_value_root_query_case(StructuredKind::Match);
+    run_bracket_target_value_root_query_case(StructuredKind::Match, false);
 }
 
 #[test]
 fn package_bridge_follows_if_direct_structured_question_indexed_bracket_target_value_root_type_definitions(
 ) {
-    run_bracket_target_value_root_type_definition_case(StructuredKind::If);
+    run_bracket_target_value_root_type_definition_case(StructuredKind::If, false);
 }
 
 #[test]
 fn package_bridge_follows_match_direct_structured_question_indexed_bracket_target_value_root_type_definitions(
 ) {
-    run_bracket_target_value_root_type_definition_case(StructuredKind::Match);
+    run_bracket_target_value_root_type_definition_case(StructuredKind::Match, false);
+}
+
+#[test]
+fn package_bridge_completes_if_direct_structured_question_indexed_bracket_target_value_roots_without_semantic_analysis(
+) {
+    run_bracket_target_value_root_completion_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_surfaces_if_direct_structured_question_indexed_bracket_target_value_root_queries_without_semantic_analysis(
+) {
+    run_bracket_target_value_root_query_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_completes_match_direct_structured_question_indexed_bracket_target_value_roots_without_semantic_analysis(
+) {
+    run_bracket_target_value_root_completion_case(StructuredKind::Match, true);
+}
+
+#[test]
+fn package_bridge_surfaces_match_direct_structured_question_indexed_bracket_target_value_root_queries_without_semantic_analysis(
+) {
+    run_bracket_target_value_root_query_case(StructuredKind::Match, true);
+}
+
+#[test]
+fn package_bridge_follows_if_direct_structured_question_indexed_bracket_target_value_root_type_definitions_without_semantic_analysis(
+) {
+    run_bracket_target_value_root_type_definition_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_follows_match_direct_structured_question_indexed_bracket_target_value_root_type_definitions_without_semantic_analysis(
+) {
+    run_bracket_target_value_root_type_definition_case(StructuredKind::Match, true);
 }
 
 #[test]
