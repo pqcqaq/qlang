@@ -405,6 +405,84 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
+fn dependency_field_member_completion_works_on_direct_indexed_iterable_receivers_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-direct-indexed-field-member-completion-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    leaf: Leaf,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn children(self) -> [Child; 2]
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let value = config.children()[0].lea
+    return "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let position = offset_to_position(source, nth_offset(source, ".lea", 1) + ".lea".len());
+
+    let Some(CompletionResponse::Array(items)) =
+        completion_for_dependency_member_fields(source, &package, position)
+    else {
+        panic!("direct indexed iterable field member completion should exist without semantic analysis");
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "leaf");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field leaf: Leaf"));
+}
+
+#[test]
 fn dependency_field_completion_works_on_direct_indexed_iterable_field_receivers_without_semantic_analysis(
 ) {
     let temp = TempDir::new("ql-lsp-direct-indexed-field-completion-broken");
