@@ -68,6 +68,7 @@
 - grouped question-indexed iterable receiver-field queries 现在也已有独立回归文件，显式覆盖 `kids()?[0].value` 的 hover / definition / declaration / references 在 bridge 与 fallback 下的同轴合同。
 - grouped question-indexed iterable receiver-method completion 现在也已有独立回归文件，显式覆盖 `kids()?[0].ge` 在 bridge 与 fallback 下的同轴补全合同。
 - grouped question-indexed iterable receiver-method queries 现在也已有独立回归文件，显式覆盖 `kids()?[0].get()` 的 hover / definition / declaration / references 在 bridge 与 fallback 下的同轴合同。
+- grouped question-indexed iterable field-member `typeDefinition` 现在也已有独立回归文件，显式覆盖 `kids()?[0].leaf.value` 在 bridge 与 fallback 下的 type target 合同。
 - grouped question-indexed iterable field-member completion 现在也已有独立回归文件，显式覆盖 `kids()?[0].lea` 在 bridge 与 fallback 下的 member-field 补全合同。
 - grouped question-indexed iterable field-member queries 现在也已有独立回归文件，显式覆盖 `kids()?[0].leaf.value` 的 hover / definition / declaration / references 在 bridge 与 fallback 下的 member-field 合同。
 - grouped question-indexed iterable method-member completion 现在也已有独立回归文件，显式覆盖 `kids()?[0].lea` 在 bridge 与 fallback 下的 member-method 补全合同。

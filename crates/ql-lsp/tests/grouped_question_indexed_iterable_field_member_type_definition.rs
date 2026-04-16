@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    span_to_range, type_definition_for_dependency_method_types,
+    span_to_range, type_definition_for_dependency_struct_field_types,
     type_definition_for_package_analysis,
 };
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
@@ -69,13 +69,13 @@ fn dependency_qi() -> &'static str {
 // source: src/lib.ql
 package demo.dep
 
-pub struct Leaf {{
+pub struct Leaf {
     value: Int,
-}}
+}
 
-pub struct Child {{
+pub struct Child {
     leaf: Leaf,
-}}
+}
 
 pub fn maybe_children() -> Option[[Child; 2]]
 "#
@@ -94,7 +94,7 @@ package demo.app
 use demo.dep.{{maybe_children as kids}}
 
 pub fn read() -> Int {{
-{broken_line}    let first = kids()?[0].leaf().value
+{broken_line}    let first = kids()?[0].leaf.value
     return first
 }}
 "#
@@ -141,7 +141,7 @@ fn assert_targets_dependency_type(
 
 fn run_type_definition_case(broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-grouped-question-indexed-iterable-method-member-type-definition{}",
+        "ql-lsp-grouped-question-indexed-iterable-field-member-type-definition{}",
         if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
@@ -178,8 +178,10 @@ packages = ["../dep"]
         assert!(analyze_package(&app_root).is_err());
         let package = analyze_package_dependencies(&app_root)
             .expect("dependency-only package analysis should succeed");
-        let definition = type_definition_for_dependency_method_types(&source, &package, position)
-            .expect("grouped question indexed iterable method member type definition should exist");
+        let definition = type_definition_for_dependency_struct_field_types(
+            &source, &package, position,
+        )
+        .expect("grouped question indexed iterable field member type definition should exist");
         assert_targets_dependency_type(
             definition,
             &dep_qi,
@@ -192,7 +194,7 @@ packages = ["../dep"]
         let definition =
             type_definition_for_package_analysis(&uri, &source, &analysis, &package, position)
                 .expect(
-                    "grouped question indexed iterable method member type definition should exist",
+                    "grouped question indexed iterable field member type definition should exist",
                 );
         assert_targets_dependency_type(
             definition,
@@ -203,11 +205,11 @@ packages = ["../dep"]
 }
 
 #[test]
-fn type_definition_bridge_follows_grouped_question_indexed_iterable_method_member_types() {
+fn type_definition_bridge_follows_grouped_question_indexed_iterable_field_member_types() {
     run_type_definition_case(false);
 }
 
 #[test]
-fn type_definition_fallback_follows_grouped_question_indexed_iterable_method_member_types() {
+fn type_definition_fallback_follows_grouped_question_indexed_iterable_field_member_types() {
     run_type_definition_case(true);
 }
