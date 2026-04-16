@@ -479,10 +479,11 @@ pub fn read(flag: Bool) -> Int {{
     }
 }
 
-fn run_bracket_target_method_completion_case(structured: StructuredKind) {
+fn run_bracket_target_method_completion_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-method-completion",
-        structured.label()
+        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-method-completion{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
 
@@ -536,32 +537,59 @@ use demo.dep.maybe_children
 
 pub fn read(flag: Bool) -> Leaf {{
     let value = ({receiver})[0].lea
+{broken_line}
     return value
 }}
 "#,
         receiver = structured.receiver_expr(),
+        broken_line = if broken {
+            "    let broken: Int = \"oops\"\n"
+        } else {
+            ""
+        },
     );
     temp.write("workspace/app/src/lib.ql", &source);
-
-    let package = analyze_package_dependencies(&app_root)
-        .expect("dependency-only package analysis should succeed");
     let analysis = analyze_source(&source).expect("analysis should succeed for completion query");
 
-    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, nth_offset(&source, ".lea", 1) + ".lea".len()),
-    ) else {
-        panic!(
-            "structured question indexed bracket target method completion should exist through package bridge"
-        );
-    };
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
 
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].label, "leaf");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
-    assert_eq!(items[0].detail.as_deref(), Some("fn leaf(self) -> Leaf"));
+        let Some(CompletionResponse::Array(items)) = completion_for_dependency_methods(
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, ".lea", 1) + ".lea".len()),
+        ) else {
+            panic!(
+                "structured question indexed bracket target method completion should exist through package bridge without semantic analysis"
+            );
+        };
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "leaf");
+        assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+        assert_eq!(items[0].detail.as_deref(), Some("fn leaf(self) -> Leaf"));
+    } else {
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+
+        let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, ".lea", 1) + ".lea".len()),
+        ) else {
+            panic!(
+                "structured question indexed bracket target method completion should exist through package bridge"
+            );
+        };
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "leaf");
+        assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+        assert_eq!(items[0].detail.as_deref(), Some("fn leaf(self) -> Leaf"));
+    }
 }
 
 fn run_value_root_completion_case(structured: StructuredKind) {
@@ -1514,10 +1542,11 @@ pub fn read(flag: Bool) -> Int {{
         .all(|location| location.uri == uri));
 }
 
-fn run_bracket_target_method_query_case(structured: StructuredKind) {
+fn run_bracket_target_method_query_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-method-query",
-        structured.label()
+        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-method-query{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let dep_qi = temp.path().join("workspace").join("dep").join("dep.qi");
@@ -1532,109 +1561,204 @@ use demo.dep.maybe_children
 pub fn read(flag: Bool) -> Int {{
     let first = ({receiver})[0].leaf().value
     let second = ({receiver})[1].leaf().value
-    return first + second
+    return {tail}
 }}
 "#,
         receiver = structured.receiver_expr(),
+        tail = if broken { "\"oops\"" } else { "first + second" },
     );
     let app_file = temp.write("workspace/app/src/lib.ql", &source);
     let uri = Url::from_file_path(&app_file).expect("app path should convert to file URL");
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(&source).expect("source should analyze");
-
     let first_offset = nth_offset(&source, "leaf", 1);
     let second_offset = nth_offset(&source, "leaf", 2);
 
-    let hover = hover_for_package_analysis(
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-    )
-    .expect("structured question indexed bracket target method hover should exist through package bridge");
-    let HoverContents::Markup(markup) = hover.contents else {
-        panic!("hover should use markdown")
-    };
-    assert!(markup.value.contains("**method** `leaf`"));
-    assert!(markup.value.contains("fn leaf(self) -> Leaf"));
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
 
-    let definition = definition_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, second_offset),
-    )
-    .expect(
-        "structured question indexed bracket target method definition should exist through package bridge",
-    );
-    let GotoDefinitionResponse::Scalar(definition_location) = definition else {
-        panic!("definition should be one location")
-    };
-    assert_location_targets_dependency_name(
-        &definition_location,
-        &dep_qi,
-        "pub fn leaf(self) -> Leaf",
-        "leaf",
-    );
+        let hover = hover_for_dependency_methods(
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect(
+            "structured question indexed bracket target method hover should exist through package bridge without semantic analysis",
+        );
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**method** `leaf`"));
+        assert!(markup.value.contains("fn leaf(self) -> Leaf"));
 
-    let declaration = declaration_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, second_offset),
-    )
-    .expect(
-        "structured question indexed bracket target method declaration should exist through package bridge",
-    );
-    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
-        panic!("declaration should be one location")
-    };
-    assert_location_targets_dependency_name(
-        &declaration_location,
-        &dep_qi,
-        "pub fn leaf(self) -> Leaf",
-        "leaf",
-    );
+        let definition = definition_for_dependency_methods(
+            &source,
+            &package,
+            offset_to_position(&source, second_offset),
+        )
+        .expect(
+            "structured question indexed bracket target method definition should exist through package bridge without semantic analysis",
+        );
+        let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_location_targets_dependency_name(
+            &definition_location,
+            &dep_qi,
+            "pub fn leaf(self) -> Leaf",
+            "leaf",
+        );
 
-    let with_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-        true,
-    )
-    .expect(
-        "structured question indexed bracket target method references should exist through package bridge",
-    );
-    assert_eq!(with_declaration.len(), 3);
-    assert_location_targets_dependency_name(
-        &with_declaration[0],
-        &dep_qi,
-        "pub fn leaf(self) -> Leaf",
-        "leaf",
-    );
-    assert!(with_declaration[1..]
-        .iter()
-        .all(|location| location.uri == uri));
+        let declaration = declaration_for_dependency_methods(
+            &source,
+            &package,
+            offset_to_position(&source, second_offset),
+        )
+        .expect(
+            "structured question indexed bracket target method declaration should exist through package bridge without semantic analysis",
+        );
+        let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_location_targets_dependency_name(
+            &declaration_location,
+            &dep_qi,
+            "pub fn leaf(self) -> Leaf",
+            "leaf",
+        );
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-        false,
-    )
-    .expect(
-        "structured question indexed bracket target method references without declaration should exist through package bridge",
-    );
-    assert_eq!(without_declaration.len(), 2);
-    assert!(without_declaration
-        .iter()
-        .all(|location| location.uri == uri));
+        let with_declaration = references_for_dependency_methods(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+            true,
+        )
+        .expect(
+            "structured question indexed bracket target method references should exist through package bridge without semantic analysis",
+        );
+        assert_eq!(with_declaration.len(), 3);
+        assert_location_targets_dependency_name(
+            &with_declaration[0],
+            &dep_qi,
+            "pub fn leaf(self) -> Leaf",
+            "leaf",
+        );
+        assert!(with_declaration[1..]
+            .iter()
+            .all(|location| location.uri == uri));
+
+        let without_declaration = references_for_dependency_methods(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+            false,
+        )
+        .expect(
+            "structured question indexed bracket target method references without declaration should exist through package bridge without semantic analysis",
+        );
+        assert_eq!(without_declaration.len(), 2);
+        assert!(without_declaration
+            .iter()
+            .all(|location| location.uri == uri));
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(&source).expect("source should analyze");
+
+        let hover = hover_for_package_analysis(
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect(
+            "structured question indexed bracket target method hover should exist through package bridge",
+        );
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**method** `leaf`"));
+        assert!(markup.value.contains("fn leaf(self) -> Leaf"));
+
+        let definition = definition_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, second_offset),
+        )
+        .expect(
+            "structured question indexed bracket target method definition should exist through package bridge",
+        );
+        let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_location_targets_dependency_name(
+            &definition_location,
+            &dep_qi,
+            "pub fn leaf(self) -> Leaf",
+            "leaf",
+        );
+
+        let declaration = declaration_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, second_offset),
+        )
+        .expect(
+            "structured question indexed bracket target method declaration should exist through package bridge",
+        );
+        let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_location_targets_dependency_name(
+            &declaration_location,
+            &dep_qi,
+            "pub fn leaf(self) -> Leaf",
+            "leaf",
+        );
+
+        let with_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+            true,
+        )
+        .expect(
+            "structured question indexed bracket target method references should exist through package bridge",
+        );
+        assert_eq!(with_declaration.len(), 3);
+        assert_location_targets_dependency_name(
+            &with_declaration[0],
+            &dep_qi,
+            "pub fn leaf(self) -> Leaf",
+            "leaf",
+        );
+        assert!(with_declaration[1..]
+            .iter()
+            .all(|location| location.uri == uri));
+
+        let without_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+            false,
+        )
+        .expect(
+            "structured question indexed bracket target method references without declaration should exist through package bridge",
+        );
+        assert_eq!(without_declaration.len(), 2);
+        assert!(without_declaration
+            .iter()
+            .all(|location| location.uri == uri));
+    }
 }
 
 fn run_value_root_query_case(structured: StructuredKind) {
@@ -1889,12 +2013,24 @@ fn package_bridge_completes_match_direct_structured_question_indexed_methods_wit
 
 #[test]
 fn package_bridge_completes_if_direct_structured_question_indexed_bracket_target_methods() {
-    run_bracket_target_method_completion_case(StructuredKind::If);
+    run_bracket_target_method_completion_case(StructuredKind::If, false);
 }
 
 #[test]
 fn package_bridge_completes_match_direct_structured_question_indexed_bracket_target_methods() {
-    run_bracket_target_method_completion_case(StructuredKind::Match);
+    run_bracket_target_method_completion_case(StructuredKind::Match, false);
+}
+
+#[test]
+fn package_bridge_completes_if_direct_structured_question_indexed_bracket_target_methods_without_semantic_analysis(
+) {
+    run_bracket_target_method_completion_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_completes_match_direct_structured_question_indexed_bracket_target_methods_without_semantic_analysis(
+) {
+    run_bracket_target_method_completion_case(StructuredKind::Match, true);
 }
 
 #[test]
@@ -1987,13 +2123,25 @@ fn package_bridge_surfaces_match_direct_structured_question_indexed_bracket_targ
 
 #[test]
 fn package_bridge_surfaces_if_direct_structured_question_indexed_bracket_target_method_queries() {
-    run_bracket_target_method_query_case(StructuredKind::If);
+    run_bracket_target_method_query_case(StructuredKind::If, false);
 }
 
 #[test]
 fn package_bridge_surfaces_match_direct_structured_question_indexed_bracket_target_method_queries()
 {
-    run_bracket_target_method_query_case(StructuredKind::Match);
+    run_bracket_target_method_query_case(StructuredKind::Match, false);
+}
+
+#[test]
+fn package_bridge_surfaces_if_direct_structured_question_indexed_bracket_target_method_queries_without_semantic_analysis(
+) {
+    run_bracket_target_method_query_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_surfaces_match_direct_structured_question_indexed_bracket_target_method_queries_without_semantic_analysis(
+) {
+    run_bracket_target_method_query_case(StructuredKind::Match, true);
 }
 
 #[test]
