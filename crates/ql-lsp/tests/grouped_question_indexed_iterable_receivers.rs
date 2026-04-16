@@ -173,6 +173,75 @@ pub fn read() -> Int {
 }
 
 #[test]
+fn dependency_field_completion_works_on_grouped_question_indexed_iterable_receivers_without_semantic_analysis(
+) {
+    let temp = TempDir::new("ql-lsp-grouped-question-indexed-field-completion-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{maybe_children as kids}
+
+pub fn read() -> Int {
+    return kids()?[0].va + "oops"
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let position = offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len());
+
+    let Some(CompletionResponse::Array(items)) =
+        completion_for_dependency_member_fields(source, &package, position)
+    else {
+        panic!(
+            "grouped question indexed iterable field completion should exist without semantic analysis"
+        );
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "value");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field value: Int"));
+}
+
+#[test]
 fn dependency_field_member_completion_works_on_grouped_question_indexed_iterable_receivers() {
     let temp = TempDir::new("ql-lsp-grouped-question-indexed-field-member-completion");
     let app_root = temp.path().join("workspace").join("app");
