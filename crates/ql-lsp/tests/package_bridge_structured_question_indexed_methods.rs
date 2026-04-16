@@ -2043,6 +2043,69 @@ pub fn read(flag: Bool) -> Int {{
     }
 }
 
+fn run_bracket_target_method_type_definition_case(structured: StructuredKind, broken: bool) {
+    let temp = TempDir::new(&format!(
+        "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-method-type-definition{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
+    ));
+    let app_root = temp.path().join("workspace").join("app");
+    let dep_qi = temp.path().join("workspace").join("dep").join("dep.qi");
+    write_dependency_files(&temp);
+
+    let source = format!(
+        r#"
+package demo.app
+
+use demo.dep.maybe_children
+
+pub fn read(flag: Bool) -> Int {{
+    let value = ({receiver})[0].leaf().value
+    return {tail}
+}}
+"#,
+        receiver = structured.receiver_expr(),
+        tail = if broken { "\"oops\"" } else { "value" },
+    );
+    let app_file = temp.write("workspace/app/src/lib.ql", &source);
+    let position = offset_to_position(&source, nth_offset(&source, "leaf", 1));
+
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let definition = type_definition_for_dependency_method_types(&source, &package, position)
+            .expect(
+                "structured question indexed bracket target method type definition should exist through package bridge without semantic analysis",
+            );
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Leaf {\n    value: Int,\n}",
+        );
+    } else {
+        let uri = Url::from_file_path(&app_file).expect("app path should convert to file URL");
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(&source).expect("source should analyze");
+
+        let definition = type_definition_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            position,
+        )
+        .expect(
+            "structured question indexed bracket target method type definition should exist through package bridge",
+        );
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Leaf {\n    value: Int,\n}",
+        );
+    }
+}
+
 fn run_bracket_target_method_query_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
         "ql-lsp-package-bridge-structured-question-indexed-{}-bracket-target-method-query{}",
@@ -2714,6 +2777,30 @@ fn package_bridge_completes_if_direct_structured_question_indexed_bracket_target
 fn package_bridge_completes_match_direct_structured_question_indexed_bracket_target_methods_without_semantic_analysis(
 ) {
     run_bracket_target_method_completion_case(StructuredKind::Match, true);
+}
+
+#[test]
+fn package_bridge_follows_if_direct_structured_question_indexed_bracket_target_method_type_definitions(
+) {
+    run_bracket_target_method_type_definition_case(StructuredKind::If, false);
+}
+
+#[test]
+fn package_bridge_follows_match_direct_structured_question_indexed_bracket_target_method_type_definitions(
+) {
+    run_bracket_target_method_type_definition_case(StructuredKind::Match, false);
+}
+
+#[test]
+fn package_bridge_follows_if_direct_structured_question_indexed_bracket_target_method_type_definitions_without_semantic_analysis(
+) {
+    run_bracket_target_method_type_definition_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_follows_match_direct_structured_question_indexed_bracket_target_method_type_definitions_without_semantic_analysis(
+) {
+    run_bracket_target_method_type_definition_case(StructuredKind::Match, true);
 }
 
 #[test]
