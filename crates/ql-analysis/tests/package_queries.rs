@@ -417,6 +417,7 @@ pub fn read(config: Cfg) -> Int {
     let analysis = analyze_source(source).expect("source should analyze");
     let literal_field = nth_offset(source, "value", 1);
     let pattern_field = nth_offset(source, "value", 2);
+    let member_field = nth_offset(source, "value", 3);
 
     let hover = package
         .dependency_struct_field_hover_at(&analysis, literal_field)
@@ -449,7 +450,7 @@ pub fn read(config: Cfg) -> Int {
     let references = package
         .dependency_struct_field_references_at(&analysis, literal_field)
         .expect("dependency struct field references should exist");
-    assert_eq!(references.len(), 2);
+    assert_eq!(references.len(), 3);
     assert!(
         references
             .iter()
@@ -464,5 +465,9 @@ pub fn read(config: Cfg) -> Int {
     assert_eq!(
         references[1].span,
         Span::new(pattern_field, pattern_field + "value".len())
+    );
+    assert_eq!(
+        references[2].span,
+        Span::new(member_field, member_field + "value".len())
     );
 }
