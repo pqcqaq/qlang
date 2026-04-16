@@ -405,6 +405,351 @@ packages = ["../dep"]
     }
 }
 
+fn run_method_result_root_query_case(broken: bool) {
+    let temp = TempDir::new(&format!(
+        "ql-lsp-direct-indexed-iterable-method-result-value-root-query{}",
+        if broken { "-broken" } else { "" }
+    ));
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn children(self) -> [Child; 2]
+}
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = if broken {
+        r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config.children()[0].leaf()
+    let first = current.value
+    let second = current.value
+    return "oops"
+}
+"#
+    } else {
+        r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config.children()[0].leaf()
+    let first = current.value
+    let second = current.value
+    return first + second
+}
+"#
+    };
+    temp.write("workspace/app/src/lib.ql", source);
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+    let current_usage = nth_offset(source, "current", 2);
+
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+
+        let hover =
+            hover_for_dependency_values(source, &package, offset_to_position(source, current_usage))
+                .expect("direct indexed iterable method-result value root hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**struct** `Leaf`"));
+        assert!(markup.value.contains("struct Leaf"));
+
+        let definition = definition_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("direct indexed iterable method-result value root definition should exist");
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, "pub struct Leaf {\n    value: Int,\n}");
+
+        let declaration = declaration_for_dependency_values(
+            source,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("direct indexed iterable method-result value root declaration should exist");
+        let GotoDeclarationResponse::Scalar(location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, "pub struct Leaf {\n    value: Int,\n}");
+
+        let without_declaration = references_for_dependency_values(
+            &uri,
+            source,
+            &package,
+            offset_to_position(source, current_usage),
+            false,
+        )
+        .expect("direct indexed iterable method-result value root references should exist");
+        assert_eq!(
+            without_declaration,
+            vec![
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(
+                            nth_offset(source, "current", 2),
+                            nth_offset(source, "current", 2) + "current".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(
+                            nth_offset(source, "current", 3),
+                            nth_offset(source, "current", 3) + "current".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+
+        let with_declaration = references_for_dependency_values(
+            &uri,
+            source,
+            &package,
+            offset_to_position(source, current_usage),
+            true,
+        )
+        .expect(
+            "direct indexed iterable method-result value root references with declaration should exist",
+        );
+        assert_eq!(with_declaration.len(), 4);
+        assert_dependency_location(
+            &with_declaration[0],
+            &dep_qi,
+            "pub struct Leaf {\n    value: Int,\n}",
+        );
+        assert_eq!(
+            with_declaration[1..],
+            [
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(
+                            nth_offset(source, "current", 1),
+                            nth_offset(source, "current", 1) + "current".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(
+                            nth_offset(source, "current", 2),
+                            nth_offset(source, "current", 2) + "current".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri,
+                    span_to_range(
+                        source,
+                        Span::new(
+                            nth_offset(source, "current", 3),
+                            nth_offset(source, "current", 3) + "current".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(source).expect("source should analyze");
+
+        let hover = hover_for_package_analysis(
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("direct indexed iterable method-result value root hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**struct** `Leaf`"));
+        assert!(markup.value.contains("struct Leaf"));
+
+        let definition = definition_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("direct indexed iterable method-result value root definition should exist");
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, "pub struct Leaf {\n    value: Int,\n}");
+
+        let declaration = declaration_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, current_usage),
+        )
+        .expect("direct indexed iterable method-result value root declaration should exist");
+        let GotoDeclarationResponse::Scalar(location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_dependency_location(&location, &dep_qi, "pub struct Leaf {\n    value: Int,\n}");
+
+        let without_declaration = references_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, current_usage),
+            false,
+        )
+        .expect("direct indexed iterable method-result value root references should exist");
+        assert_eq!(
+            without_declaration,
+            vec![
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(
+                            nth_offset(source, "current", 2),
+                            nth_offset(source, "current", 2) + "current".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(
+                            nth_offset(source, "current", 3),
+                            nth_offset(source, "current", 3) + "current".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+
+        let with_declaration = references_for_package_analysis(
+            &uri,
+            source,
+            &analysis,
+            &package,
+            offset_to_position(source, current_usage),
+            true,
+        )
+        .expect(
+            "direct indexed iterable method-result value root references with declaration should exist",
+        );
+        assert_eq!(with_declaration.len(), 4);
+        assert_dependency_location(
+            &with_declaration[0],
+            &dep_qi,
+            "pub struct Leaf {\n    value: Int,\n}",
+        );
+        assert_eq!(
+            with_declaration[1..],
+            [
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(
+                            nth_offset(source, "current", 1),
+                            nth_offset(source, "current", 1) + "current".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri.clone(),
+                    span_to_range(
+                        source,
+                        Span::new(
+                            nth_offset(source, "current", 2),
+                            nth_offset(source, "current", 2) + "current".len(),
+                        ),
+                    ),
+                ),
+                Location::new(
+                    uri,
+                    span_to_range(
+                        source,
+                        Span::new(
+                            nth_offset(source, "current", 3),
+                            nth_offset(source, "current", 3) + "current".len(),
+                        ),
+                    ),
+                ),
+            ]
+        );
+    }
+}
+
 #[test]
 fn root_query_bridge_surfaces_dependency_direct_indexed_field_value_roots() {
     run_root_query_case(RootKind::Field, false);
@@ -413,4 +758,14 @@ fn root_query_bridge_surfaces_dependency_direct_indexed_field_value_roots() {
 #[test]
 fn root_query_fallback_surfaces_dependency_direct_indexed_method_value_roots() {
     run_root_query_case(RootKind::Method, true);
+}
+
+#[test]
+fn root_query_bridge_surfaces_direct_indexed_iterable_method_result_value_roots() {
+    run_method_result_root_query_case(false);
+}
+
+#[test]
+fn root_query_fallback_surfaces_direct_indexed_iterable_method_result_value_roots() {
+    run_method_result_root_query_case(true);
 }
