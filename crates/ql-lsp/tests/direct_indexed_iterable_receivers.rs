@@ -175,6 +175,82 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
+fn dependency_field_member_completion_works_on_direct_indexed_iterable_receivers() {
+    let temp = TempDir::new("ql-lsp-direct-indexed-field-member-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    leaf: Leaf,
+}
+
+pub struct Config {
+    id: Int,
+}
+
+impl Config {
+    pub fn children(self) -> [Child; 2]
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let value = config.children()[0].lea
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("analysis should succeed for completion query");
+    let position = offset_to_position(source, nth_offset(source, ".lea", 1) + ".lea".len());
+
+    let Some(CompletionResponse::Array(items)) =
+        completion_for_package_analysis(source, &analysis, &package, position)
+    else {
+        panic!("direct indexed iterable field member completion should exist");
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "leaf");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(items[0].detail.as_deref(), Some("field leaf: Leaf"));
+}
+
+#[test]
 fn dependency_method_completion_works_on_direct_indexed_iterable_method_receivers() {
     let temp = TempDir::new("ql-lsp-direct-indexed-method-completion");
     let app_root = temp.path().join("workspace").join("app");
