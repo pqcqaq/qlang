@@ -5,9 +5,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
-    completion_for_package_analysis, declaration_for_package_analysis,
-    definition_for_package_analysis, hover_for_package_analysis, references_for_package_analysis,
-    span_to_range, type_definition_for_package_analysis,
+    completion_for_dependency_methods, completion_for_package_analysis,
+    declaration_for_dependency_methods, declaration_for_package_analysis,
+    definition_for_dependency_methods, definition_for_package_analysis,
+    hover_for_dependency_methods, hover_for_package_analysis, references_for_dependency_methods,
+    references_for_package_analysis, span_to_range, type_definition_for_dependency_method_types,
+    type_definition_for_package_analysis,
 };
 use tower_lsp::lsp_types::request::GotoDeclarationResponse;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
@@ -208,10 +211,11 @@ packages = ["../dep"]
     );
 }
 
-fn run_query_case(structured: StructuredKind) {
+fn run_query_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-package-bridge-structured-question-indexed-{}-method-query",
-        structured.label()
+        "ql-lsp-package-bridge-structured-question-indexed-{}-method-query{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let dep_qi = temp.path().join("workspace").join("dep").join("dep.qi");
@@ -226,95 +230,189 @@ use demo.dep.maybe_children
 pub fn read(flag: Bool) -> Int {{
     let first = ({receiver})[0].get()
     let second = ({receiver})[1].get()
-    return first + second
+    return {tail}
 }}
 "#,
         receiver = structured.receiver_expr(),
+        tail = if broken { "\"oops\"" } else { "first + second" },
     );
     let app_file = temp.write("workspace/app/src/lib.ql", &source);
     let uri = Url::from_file_path(&app_file).expect("app path should convert to file URL");
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(&source).expect("source should analyze");
-
     let first_offset = nth_offset(&source, "get", 1);
     let second_offset = nth_offset(&source, "get", 2);
 
-    let hover = hover_for_package_analysis(
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-    )
-    .expect("structured question indexed method hover should exist through package bridge");
-    let HoverContents::Markup(markup) = hover.contents else {
-        panic!("hover should use markdown")
-    };
-    assert!(markup.value.contains("**method** `get`"));
-    assert!(markup.value.contains("fn get(self) -> Int"));
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
 
-    let definition = definition_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, second_offset),
-    )
-    .expect("structured question indexed method definition should exist through package bridge");
-    let GotoDefinitionResponse::Scalar(definition_location) = definition else {
-        panic!("definition should be one location")
-    };
-    assert_location_targets_dependency_name(
-        &definition_location,
-        &dep_qi,
-        "pub fn get(self) -> Int",
-        "get",
-    );
+        let hover = hover_for_dependency_methods(
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect(
+            "structured question indexed method hover should exist through package bridge without semantic analysis",
+        );
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**method** `get`"));
+        assert!(markup.value.contains("fn get(self) -> Int"));
 
-    let with_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-        true,
-    )
-    .expect("structured question indexed method references should exist through package bridge");
-    assert_eq!(with_declaration.len(), 3);
-    assert_location_targets_dependency_name(
-        &with_declaration[0],
-        &dep_qi,
-        "pub fn get(self) -> Int",
-        "get",
-    );
-    assert!(
-        with_declaration[1..]
+        let definition = definition_for_dependency_methods(
+            &source,
+            &package,
+            offset_to_position(&source, second_offset),
+        )
+        .expect(
+            "structured question indexed method definition should exist through package bridge without semantic analysis",
+        );
+        let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_location_targets_dependency_name(
+            &definition_location,
+            &dep_qi,
+            "pub fn get(self) -> Int",
+            "get",
+        );
+
+        let declaration = declaration_for_dependency_methods(
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect(
+            "structured question indexed method declaration should exist through package bridge without semantic analysis",
+        );
+        let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+            panic!("declaration should be one location")
+        };
+        assert_location_targets_dependency_name(
+            &declaration_location,
+            &dep_qi,
+            "pub fn get(self) -> Int",
+            "get",
+        );
+
+        let with_declaration = references_for_dependency_methods(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+            true,
+        )
+        .expect(
+            "structured question indexed method references should exist through package bridge without semantic analysis",
+        );
+        assert_eq!(with_declaration.len(), 3);
+        assert_location_targets_dependency_name(
+            &with_declaration[0],
+            &dep_qi,
+            "pub fn get(self) -> Int",
+            "get",
+        );
+        assert!(with_declaration[1..]
             .iter()
-            .all(|location| location.uri == uri)
-    );
+            .all(|location| location.uri == uri));
 
-    let without_declaration = references_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, first_offset),
-        false,
-    )
-    .expect(
-        "structured question indexed method references without declaration should exist through package bridge",
-    );
-    assert_eq!(without_declaration.len(), 2);
-    assert!(
-        without_declaration
+        let without_declaration = references_for_dependency_methods(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, first_offset),
+            false,
+        )
+        .expect(
+            "structured question indexed method references without declaration should exist through package bridge without semantic analysis",
+        );
+        assert_eq!(without_declaration.len(), 2);
+        assert!(without_declaration
             .iter()
-            .all(|location| location.uri == uri)
-    );
+            .all(|location| location.uri == uri));
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(&source).expect("source should analyze");
+
+        let hover = hover_for_package_analysis(
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+        )
+        .expect("structured question indexed method hover should exist through package bridge");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("**method** `get`"));
+        assert!(markup.value.contains("fn get(self) -> Int"));
+
+        let definition = definition_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, second_offset),
+        )
+        .expect(
+            "structured question indexed method definition should exist through package bridge",
+        );
+        let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+            panic!("definition should be one location")
+        };
+        assert_location_targets_dependency_name(
+            &definition_location,
+            &dep_qi,
+            "pub fn get(self) -> Int",
+            "get",
+        );
+
+        let with_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+            true,
+        )
+        .expect(
+            "structured question indexed method references should exist through package bridge",
+        );
+        assert_eq!(with_declaration.len(), 3);
+        assert_location_targets_dependency_name(
+            &with_declaration[0],
+            &dep_qi,
+            "pub fn get(self) -> Int",
+            "get",
+        );
+        assert!(with_declaration[1..]
+            .iter()
+            .all(|location| location.uri == uri));
+
+        let without_declaration = references_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, first_offset),
+            false,
+        )
+        .expect(
+            "structured question indexed method references without declaration should exist through package bridge",
+        );
+        assert_eq!(without_declaration.len(), 2);
+        assert!(without_declaration
+            .iter()
+            .all(|location| location.uri == uri));
+    }
 }
 
-fn run_completion_case(structured: StructuredKind) {
+fn run_completion_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-package-bridge-structured-question-indexed-{}-method-completion",
-        structured.label()
+        "ql-lsp-package-bridge-structured-question-indexed-{}-method-completion{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     write_dependency_files(&temp);
@@ -327,30 +425,58 @@ use demo.dep.maybe_children
 
 pub fn read(flag: Bool) -> Int {{
     let value = ({receiver})[0].ge
-    return value
+{broken_line}    return value
 }}
 "#,
         receiver = structured.receiver_expr(),
+        broken_line = if broken {
+            "    let broken: Int = \"oops\"\n"
+        } else {
+            ""
+        },
     );
     temp.write("workspace/app/src/lib.ql", &source);
-
-    let package = analyze_package_dependencies(&app_root)
-        .expect("dependency-only package analysis should succeed");
     let analysis = analyze_source(&source).expect("analysis should succeed for completion query");
 
-    let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, nth_offset(&source, ".ge", 1) + ".ge".len()),
-    ) else {
-        panic!("structured question indexed method completion should exist through package bridge");
-    };
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
 
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].label, "get");
-    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
-    assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+        let Some(CompletionResponse::Array(items)) = completion_for_dependency_methods(
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, ".ge", 1) + ".ge".len()),
+        ) else {
+            panic!(
+                "structured question indexed method completion should exist through package bridge without semantic analysis"
+            );
+        };
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "get");
+        assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+        assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+    } else {
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+
+        let Some(CompletionResponse::Array(items)) = completion_for_package_analysis(
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, ".ge", 1) + ".ge".len()),
+        ) else {
+            panic!(
+                "structured question indexed method completion should exist through package bridge"
+            );
+        };
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "get");
+        assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+        assert_eq!(items[0].detail.as_deref(), Some("fn get(self) -> Int"));
+    }
 }
 
 fn run_bracket_target_method_completion_case(structured: StructuredKind) {
@@ -820,11 +946,9 @@ pub fn read(flag: Bool) -> Int {{
     );
     assert_eq!(with_declaration.len(), 3);
     assert_location_targets_dependency_name(&with_declaration[0], &dep_qi, "value: Int", "value");
-    assert!(
-        with_declaration[1..]
-            .iter()
-            .all(|location| location.uri == uri)
-    );
+    assert!(with_declaration[1..]
+        .iter()
+        .all(|location| location.uri == uri));
 
     let without_declaration = references_for_package_analysis(
         &uri,
@@ -838,11 +962,9 @@ pub fn read(flag: Bool) -> Int {{
         "structured question indexed method-result member references without declaration should exist through package bridge",
     );
     assert_eq!(without_declaration.len(), 2);
-    assert!(
-        without_declaration
-            .iter()
-            .all(|location| location.uri == uri)
-    );
+    assert!(without_declaration
+        .iter()
+        .all(|location| location.uri == uri));
 }
 
 fn run_method_result_member_type_definition_case(structured: StructuredKind) {
@@ -923,17 +1045,14 @@ pub fn read(flag: Bool) -> Int {{
     .expect(
         "structured question indexed method-result member type definition should exist through package bridge",
     );
-    assert_targets_dependency_type(
-        definition,
-        &dep_qi,
-        "pub struct Leaf {\n    value: Int,\n}",
-    );
+    assert_targets_dependency_type(definition, &dep_qi, "pub struct Leaf {\n    value: Int,\n}");
 }
 
-fn run_type_definition_case(structured: StructuredKind) {
+fn run_type_definition_case(structured: StructuredKind, broken: bool) {
     let temp = TempDir::new(&format!(
-        "ql-lsp-package-bridge-structured-question-indexed-{}-method-type-definition",
-        structured.label()
+        "ql-lsp-package-bridge-structured-question-indexed-{}-method-type-definition{}",
+        structured.label(),
+        if broken { "-broken" } else { "" }
     ));
     let app_root = temp.path().join("workspace").join("app");
     let dep_qi = temp.path().join("workspace").join("dep").join("dep.qi");
@@ -947,29 +1066,47 @@ use demo.dep.maybe_children
 
 pub fn read(flag: Bool) -> Int {{
     let value = ({receiver})[0].leaf().value
-    return value
+    return {tail}
 }}
 "#,
         receiver = structured.receiver_expr(),
+        tail = if broken { "\"oops\"" } else { "value" },
     );
     let app_file = temp.write("workspace/app/src/lib.ql", &source);
-    let uri = Url::from_file_path(&app_file).expect("app path should convert to file URL");
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(&source).expect("source should analyze");
+    let position = offset_to_position(&source, nth_offset(&source, "leaf", 1));
 
-    let definition = type_definition_for_package_analysis(
-        &uri,
-        &source,
-        &analysis,
-        &package,
-        offset_to_position(&source, nth_offset(&source, "leaf", 1)),
-    )
-    .expect("structured question indexed method type definition should exist through package bridge");
-    assert_targets_dependency_type(
-        definition,
-        &dep_qi,
-        "pub struct Leaf {\n    value: Int,\n}",
-    );
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let definition = type_definition_for_dependency_method_types(&source, &package, position)
+            .expect(
+                "structured question indexed method type definition should exist through package bridge without semantic analysis",
+            );
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Leaf {\n    value: Int,\n}",
+        );
+    } else {
+        let uri = Url::from_file_path(&app_file).expect("app path should convert to file URL");
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(&source).expect("source should analyze");
+
+        let definition = type_definition_for_package_analysis(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            position,
+        )
+        .expect("structured question indexed method type definition should exist through package bridge");
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Leaf {\n    value: Int,\n}",
+        );
+    }
 }
 
 fn run_bracket_target_value_root_query_case(structured: StructuredKind) {
@@ -1266,11 +1403,7 @@ pub fn read(flag: Bool) -> Int {{
     .expect(
         "structured question indexed bracket target field type definition should exist through package bridge",
     );
-    assert_targets_dependency_type(
-        definition,
-        &dep_qi,
-        "pub struct Leaf {\n    value: Int,\n}",
-    );
+    assert_targets_dependency_type(definition, &dep_qi, "pub struct Leaf {\n    value: Int,\n}");
 }
 
 fn run_bracket_target_field_query_case(structured: StructuredKind) {
@@ -1330,12 +1463,7 @@ pub fn read(flag: Bool) -> Int {{
     let GotoDefinitionResponse::Scalar(definition_location) = definition else {
         panic!("definition should be one location")
     };
-    assert_location_targets_dependency_name(
-        &definition_location,
-        &dep_qi,
-        "leaf: Leaf",
-        "leaf",
-    );
+    assert_location_targets_dependency_name(&definition_location, &dep_qi, "leaf: Leaf", "leaf");
 
     let declaration = declaration_for_package_analysis(
         &uri,
@@ -1350,12 +1478,7 @@ pub fn read(flag: Bool) -> Int {{
     let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
         panic!("declaration should be one location")
     };
-    assert_location_targets_dependency_name(
-        &declaration_location,
-        &dep_qi,
-        "leaf: Leaf",
-        "leaf",
-    );
+    assert_location_targets_dependency_name(&declaration_location, &dep_qi, "leaf: Leaf", "leaf");
 
     let with_declaration = references_for_package_analysis(
         &uri,
@@ -1369,17 +1492,10 @@ pub fn read(flag: Bool) -> Int {{
         "structured question indexed bracket target field references should exist through package bridge",
     );
     assert_eq!(with_declaration.len(), 3);
-    assert_location_targets_dependency_name(
-        &with_declaration[0],
-        &dep_qi,
-        "leaf: Leaf",
-        "leaf",
-    );
-    assert!(
-        with_declaration[1..]
-            .iter()
-            .all(|location| location.uri == uri)
-    );
+    assert_location_targets_dependency_name(&with_declaration[0], &dep_qi, "leaf: Leaf", "leaf");
+    assert!(with_declaration[1..]
+        .iter()
+        .all(|location| location.uri == uri));
 
     let without_declaration = references_for_package_analysis(
         &uri,
@@ -1393,11 +1509,9 @@ pub fn read(flag: Bool) -> Int {{
         "structured question indexed bracket target field references without declaration should exist through package bridge",
     );
     assert_eq!(without_declaration.len(), 2);
-    assert!(
-        without_declaration
-            .iter()
-            .all(|location| location.uri == uri)
-    );
+    assert!(without_declaration
+        .iter()
+        .all(|location| location.uri == uri));
 }
 
 fn run_bracket_target_method_query_case(structured: StructuredKind) {
@@ -1502,11 +1616,9 @@ pub fn read(flag: Bool) -> Int {{
         "pub fn leaf(self) -> Leaf",
         "leaf",
     );
-    assert!(
-        with_declaration[1..]
-            .iter()
-            .all(|location| location.uri == uri)
-    );
+    assert!(with_declaration[1..]
+        .iter()
+        .all(|location| location.uri == uri));
 
     let without_declaration = references_for_package_analysis(
         &uri,
@@ -1520,11 +1632,9 @@ pub fn read(flag: Bool) -> Int {{
         "structured question indexed bracket target method references without declaration should exist through package bridge",
     );
     assert_eq!(without_declaration.len(), 2);
-    assert!(
-        without_declaration
-            .iter()
-            .all(|location| location.uri == uri)
-    );
+    assert!(without_declaration
+        .iter()
+        .all(|location| location.uri == uri));
 }
 
 fn run_value_root_query_case(structured: StructuredKind) {
@@ -1730,31 +1840,51 @@ pub fn read(flag: Bool) -> Int {{
     .expect(
         "structured question indexed method-result value root type definition should exist through package bridge",
     );
-    assert_targets_dependency_type(
-        definition,
-        &dep_qi,
-        "pub struct Leaf {\n    value: Int,\n}",
-    );
+    assert_targets_dependency_type(definition, &dep_qi, "pub struct Leaf {\n    value: Int,\n}");
 }
 
 #[test]
 fn package_bridge_surfaces_if_direct_structured_question_indexed_method_queries() {
-    run_query_case(StructuredKind::If);
+    run_query_case(StructuredKind::If, false);
 }
 
 #[test]
 fn package_bridge_surfaces_match_direct_structured_question_indexed_method_queries() {
-    run_query_case(StructuredKind::Match);
+    run_query_case(StructuredKind::Match, false);
+}
+
+#[test]
+fn package_bridge_surfaces_if_direct_structured_question_indexed_method_queries_without_semantic_analysis(
+) {
+    run_query_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_surfaces_match_direct_structured_question_indexed_method_queries_without_semantic_analysis(
+) {
+    run_query_case(StructuredKind::Match, true);
 }
 
 #[test]
 fn package_bridge_completes_if_direct_structured_question_indexed_methods() {
-    run_completion_case(StructuredKind::If);
+    run_completion_case(StructuredKind::If, false);
 }
 
 #[test]
 fn package_bridge_completes_match_direct_structured_question_indexed_methods() {
-    run_completion_case(StructuredKind::Match);
+    run_completion_case(StructuredKind::Match, false);
+}
+
+#[test]
+fn package_bridge_completes_if_direct_structured_question_indexed_methods_without_semantic_analysis(
+) {
+    run_completion_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_completes_match_direct_structured_question_indexed_methods_without_semantic_analysis(
+) {
+    run_completion_case(StructuredKind::Match, true);
 }
 
 #[test]
@@ -1769,12 +1899,24 @@ fn package_bridge_completes_match_direct_structured_question_indexed_bracket_tar
 
 #[test]
 fn package_bridge_follows_if_direct_structured_question_indexed_method_type_definitions() {
-    run_type_definition_case(StructuredKind::If);
+    run_type_definition_case(StructuredKind::If, false);
 }
 
 #[test]
 fn package_bridge_follows_match_direct_structured_question_indexed_method_type_definitions() {
-    run_type_definition_case(StructuredKind::Match);
+    run_type_definition_case(StructuredKind::Match, false);
+}
+
+#[test]
+fn package_bridge_follows_if_direct_structured_question_indexed_method_type_definitions_without_semantic_analysis(
+) {
+    run_type_definition_case(StructuredKind::If, true);
+}
+
+#[test]
+fn package_bridge_follows_match_direct_structured_question_indexed_method_type_definitions_without_semantic_analysis(
+) {
+    run_type_definition_case(StructuredKind::Match, true);
 }
 
 #[test]
@@ -1849,7 +1991,8 @@ fn package_bridge_surfaces_if_direct_structured_question_indexed_bracket_target_
 }
 
 #[test]
-fn package_bridge_surfaces_match_direct_structured_question_indexed_bracket_target_method_queries() {
+fn package_bridge_surfaces_match_direct_structured_question_indexed_bracket_target_method_queries()
+{
     run_bracket_target_method_query_case(StructuredKind::Match);
 }
 
@@ -1906,8 +2049,8 @@ fn package_bridge_follows_match_direct_structured_question_indexed_method_result
 }
 
 #[test]
-fn package_bridge_follows_if_direct_structured_question_indexed_method_value_root_type_definitions(
-) {
+fn package_bridge_follows_if_direct_structured_question_indexed_method_value_root_type_definitions()
+{
     run_value_root_type_definition_case(StructuredKind::If);
 }
 
