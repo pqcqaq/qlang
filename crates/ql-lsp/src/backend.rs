@@ -1132,6 +1132,38 @@ mod tests {
             .expect("needle occurrence should exist")
     }
 
+    fn assert_single_dependency_method_symbol(
+        symbols: Vec<SymbolInformation>,
+        name: &str,
+        interface_path: &Path,
+        line: u32,
+        start: u32,
+        end: u32,
+        package_name: &str,
+    ) {
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: name.to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(line, start),
+                        tower_lsp::lsp_types::Position::new(line, end),
+                    ),
+                ),
+                container_name: Some(package_name.to_owned()),
+            }]
+        );
+    }
+
     #[allow(deprecated)]
     #[test]
     fn workspace_symbol_search_includes_package_modules_for_open_documents() {
@@ -1331,6 +1363,116 @@ fn broken() -> Int {
 
     #[allow(deprecated)]
     #[test]
+    fn workspace_symbol_search_keeps_member_dependency_methods_for_open_packages_when_member_has_source_diagnostics(
+    ) {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-open-broken-member-method");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "dep"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+use demo.dep.Config as Cfg
+
+fn tool_helper(config: Cfg) -> Int {
+    return config.get()
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/broken.ql",
+            r#"
+fn broken() -> Int {
+    let value: Int = "oops"
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "get");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "get".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(12, 8),
+                        tower_lsp::lsp_types::Position::new(12, 27),
+                    ),
+                ),
+                container_name: Some("dep".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
     fn workspace_symbol_search_keeps_dependency_symbols_for_broken_open_packages() {
         let temp = TempDir::new("ql-lsp-workspace-symbol-broken-dependency");
 
@@ -1397,6 +1539,87 @@ fn main() -> Int {
                     tower_lsp::lsp_types::Range::new(
                         tower_lsp::lsp_types::Position::new(7, 4),
                         tower_lsp::lsp_types::Position::new(7, 34),
+                    ),
+                ),
+                container_name: Some("dep".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_dependency_methods_for_broken_open_packages() {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-broken-dependency-method");
+
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+fn main(config: Cfg) -> Int {
+    let broken: Int = "oops"
+    return config.get()
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "get");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "get".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(12, 8),
+                        tower_lsp::lsp_types::Position::new(12, 27),
                     ),
                 ),
                 container_name: Some("dep".to_owned()),
@@ -1843,6 +2066,189 @@ fn main() -> Int {
 
     #[allow(deprecated)]
     #[test]
+    fn workspace_symbol_search_includes_dependency_interface_methods_for_open_packages() {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-dependency-method");
+
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+fn main(config: Cfg) -> Int {
+    return config.get()
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "get");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "get".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(12, 8),
+                        tower_lsp::lsp_types::Position::new(12, 27),
+                    ),
+                ),
+                container_name: Some("dep".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_includes_dependency_interface_trait_and_extend_methods_for_open_packages(
+    ) {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-dependency-trait-extend-methods");
+
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let trait_symbols = workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
+        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+
+        assert_eq!(
+            trait_symbols,
+            vec![SymbolInformation {
+                name: "poll".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(8, 4),
+                        tower_lsp::lsp_types::Position::new(8, 24),
+                    ),
+                ),
+                container_name: Some("dep".to_owned()),
+            }]
+        );
+        assert_eq!(
+            extend_symbols,
+            vec![SymbolInformation {
+                name: "twice".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(16, 8),
+                        tower_lsp::lsp_types::Position::new(16, 29),
+                    ),
+                ),
+                container_name: Some("dep".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
     fn workspace_symbol_search_includes_dependency_interface_symbols_for_workspace_members() {
         let temp = TempDir::new("ql-lsp-workspace-symbol-member-dependency");
 
@@ -1937,8 +2343,108 @@ pub fn exported(value: Int) -> Int
 
     #[allow(deprecated)]
     #[test]
+    fn workspace_symbol_search_includes_dependency_interface_methods_for_workspace_members() {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-member-dependency-method");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "dep"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+use demo.dep.Config as Cfg
+
+fn tool_helper(config: Cfg) -> Int {
+    return config.get()
+}
+"#,
+        );
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "get");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "get".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(12, 8),
+                        tower_lsp::lsp_types::Position::new(12, 27),
+                    ),
+                ),
+                container_name: Some("dep".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
     fn workspace_symbol_search_keeps_available_dependency_symbols_when_one_package_interface_is_missing()
-     {
+    {
         let temp = TempDir::new("ql-lsp-workspace-symbol-partial-dependency");
 
         temp.write(
@@ -2006,6 +2512,300 @@ fn main() -> Int {
                     tower_lsp::lsp_types::Range::new(
                         tower_lsp::lsp_types::Position::new(7, 4),
                         tower_lsp::lsp_types::Position::new(7, 34),
+                    ),
+                ),
+                container_name: Some("good".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_includes_dependency_interface_trait_and_extend_methods_for_workspace_members(
+    ) {
+        let temp =
+            TempDir::new("ql-lsp-workspace-symbol-member-dependency-trait-extend-methods");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "dep"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let trait_symbols = workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
+        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+
+        assert_eq!(
+            trait_symbols,
+            vec![SymbolInformation {
+                name: "poll".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(8, 4),
+                        tower_lsp::lsp_types::Position::new(8, 24),
+                    ),
+                ),
+                container_name: Some("dep".to_owned()),
+            }]
+        );
+        assert_eq!(
+            extend_symbols,
+            vec![SymbolInformation {
+                name: "twice".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(16, 8),
+                        tower_lsp::lsp_types::Position::new(16, 29),
+                    ),
+                ),
+                container_name: Some("dep".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_available_dependency_methods_when_one_package_interface_is_missing(
+    ) {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-partial-dependency-method");
+
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package]
+name = "bad"
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "get");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "get".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(12, 8),
+                        tower_lsp::lsp_types::Position::new(12, 27),
+                    ),
+                ),
+                container_name: Some("good".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_available_dependency_methods_when_reference_manifest_is_invalid(
+    ) {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-invalid-reference-manifest-method");
+
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package
+name = "bad"
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "get");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "get".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(12, 8),
+                        tower_lsp::lsp_types::Position::new(12, 27),
                     ),
                 ),
                 container_name: Some("good".to_owned()),
@@ -2106,6 +2906,112 @@ name = "bad"
                     tower_lsp::lsp_types::Range::new(
                         tower_lsp::lsp_types::Position::new(7, 4),
                         tower_lsp::lsp_types::Position::new(7, 34),
+                    ),
+                ),
+                container_name: Some("good".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_available_member_dependency_methods_when_one_member_interface_is_missing()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-partial-member-dependency-method");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "good", "bad"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package]
+name = "bad"
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "get");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "get".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(12, 8),
+                        tower_lsp::lsp_types::Position::new(12, 27),
                     ),
                 ),
                 container_name: Some("good".to_owned()),
@@ -2416,6 +3322,721 @@ name = "bad"
                 ),
                 container_name: Some("good".to_owned()),
             }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_available_member_dependency_methods_when_member_reference_manifest_is_invalid()
+     {
+        let temp =
+            TempDir::new("ql-lsp-workspace-symbol-invalid-member-reference-manifest-method");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "good", "bad"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package
+name = "bad"
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "get");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "get".to_owned(),
+                kind: SymbolKind::METHOD,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(
+                        fs::canonicalize(&dependency_interface_path)
+                            .expect("dependency interface path should canonicalize"),
+                    )
+                    .expect("dependency interface path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        tower_lsp::lsp_types::Position::new(12, 8),
+                        tower_lsp::lsp_types::Position::new(12, 27),
+                    ),
+                ),
+                container_name: Some("good".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_member_dependency_trait_and_extend_methods_for_open_packages_when_member_has_source_diagnostics(
+    ) {
+        let temp =
+            TempDir::new("ql-lsp-workspace-symbol-open-broken-member-trait-and-extend-methods");
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "dep"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/broken.ql",
+            r#"
+fn broken() -> Int {
+    let value: Int = "oops"
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let trait_symbols = workspace_symbols_for_documents(
+            vec![(open_uri.clone(), open_source.clone())],
+            "poll",
+        );
+        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+
+        assert_single_dependency_method_symbol(
+            trait_symbols,
+            "poll",
+            &dependency_interface_path,
+            8,
+            4,
+            24,
+            "dep",
+        );
+        assert_single_dependency_method_symbol(
+            extend_symbols,
+            "twice",
+            &dependency_interface_path,
+            16,
+            8,
+            29,
+            "dep",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_dependency_trait_and_extend_methods_for_broken_open_packages()
+    {
+        let temp =
+            TempDir::new("ql-lsp-workspace-symbol-broken-dependency-trait-and-extend-methods");
+
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+package demo.app
+
+fn main() -> Int {
+    let broken: Int = "oops"
+    return 0
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let trait_symbols = workspace_symbols_for_documents(
+            vec![(open_uri.clone(), open_source.clone())],
+            "poll",
+        );
+        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+
+        assert_single_dependency_method_symbol(
+            trait_symbols,
+            "poll",
+            &dependency_interface_path,
+            8,
+            4,
+            24,
+            "dep",
+        );
+        assert_single_dependency_method_symbol(
+            extend_symbols,
+            "twice",
+            &dependency_interface_path,
+            16,
+            8,
+            29,
+            "dep",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_available_dependency_trait_and_extend_methods_when_one_package_interface_is_missing(
+    ) {
+        let temp = TempDir::new(
+            "ql-lsp-workspace-symbol-partial-dependency-trait-and-extend-methods",
+        );
+
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package]
+name = "bad"
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let trait_symbols = workspace_symbols_for_documents(
+            vec![(open_uri.clone(), open_source.clone())],
+            "poll",
+        );
+        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+
+        assert_single_dependency_method_symbol(
+            trait_symbols,
+            "poll",
+            &dependency_interface_path,
+            8,
+            4,
+            24,
+            "good",
+        );
+        assert_single_dependency_method_symbol(
+            extend_symbols,
+            "twice",
+            &dependency_interface_path,
+            16,
+            8,
+            29,
+            "good",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_available_dependency_trait_and_extend_methods_when_reference_manifest_is_invalid(
+    ) {
+        let temp = TempDir::new(
+            "ql-lsp-workspace-symbol-invalid-reference-manifest-trait-and-extend-methods",
+        );
+
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package
+name = "bad"
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let trait_symbols = workspace_symbols_for_documents(
+            vec![(open_uri.clone(), open_source.clone())],
+            "poll",
+        );
+        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+
+        assert_single_dependency_method_symbol(
+            trait_symbols,
+            "poll",
+            &dependency_interface_path,
+            8,
+            4,
+            24,
+            "good",
+        );
+        assert_single_dependency_method_symbol(
+            extend_symbols,
+            "twice",
+            &dependency_interface_path,
+            16,
+            8,
+            29,
+            "good",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_available_member_dependency_trait_and_extend_methods_when_one_member_interface_is_missing(
+    ) {
+        let temp = TempDir::new(
+            "ql-lsp-workspace-symbol-partial-member-dependency-trait-and-extend-methods",
+        );
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "good", "bad"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package]
+name = "bad"
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let trait_symbols = workspace_symbols_for_documents(
+            vec![(open_uri.clone(), open_source.clone())],
+            "poll",
+        );
+        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+
+        assert_single_dependency_method_symbol(
+            trait_symbols,
+            "poll",
+            &dependency_interface_path,
+            8,
+            4,
+            24,
+            "good",
+        );
+        assert_single_dependency_method_symbol(
+            extend_symbols,
+            "twice",
+            &dependency_interface_path,
+            16,
+            8,
+            29,
+            "good",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_available_member_dependency_trait_and_extend_methods_when_member_reference_manifest_is_invalid(
+    ) {
+        let temp = TempDir::new(
+            "ql-lsp-workspace-symbol-invalid-member-reference-manifest-trait-and-extend-methods",
+        );
+
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["app", "tool", "good", "bad"]
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+
+[references]
+packages = ["../good", "../bad"]
+"#,
+        );
+        temp.write(
+            "workspace/tool/src/helper.ql",
+            r#"
+fn tool_helper() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/good/qlang.toml",
+            r#"
+[package]
+name = "good"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/good/good.qi",
+            r#"
+// qlang interface v1
+// package: good
+
+// source: src/lib.ql
+package demo.good
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/bad/qlang.toml",
+            r#"
+[package
+name = "bad"
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+
+        let trait_symbols = workspace_symbols_for_documents(
+            vec![(open_uri.clone(), open_source.clone())],
+            "poll",
+        );
+        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+
+        assert_single_dependency_method_symbol(
+            trait_symbols,
+            "poll",
+            &dependency_interface_path,
+            8,
+            4,
+            24,
+            "good",
+        );
+        assert_single_dependency_method_symbol(
+            extend_symbols,
+            "twice",
+            &dependency_interface_path,
+            16,
+            8,
+            29,
+            "good",
         );
     }
 }
