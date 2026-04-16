@@ -96,10 +96,6 @@ pub fn hover_for_package_analysis(
     position: Position,
 ) -> Option<Hover> {
     let offset = position_to_offset(source, position)?;
-    if let Some(hover) = hover_for_dependency_values(source, package, position) {
-        return Some(hover);
-    }
-
     if let Some(info) = package.dependency_method_hover_at(analysis, offset) {
         let hover = HoverInfo {
             span: info.span,
@@ -134,6 +130,14 @@ pub fn hover_for_package_analysis(
             }),
             range: Some(span_to_range(source, hover.span)),
         });
+    }
+
+    if let Some(hover) = hover_for_dependency_struct_fields(source, package, position) {
+        return Some(hover);
+    }
+
+    if let Some(hover) = hover_for_dependency_values(source, package, position) {
+        return Some(hover);
     }
 
     if let Some(info) = package.dependency_variant_hover_at(analysis, source, offset) {
@@ -368,10 +372,6 @@ pub fn definition_for_package_analysis(
     position: Position,
 ) -> Option<GotoDefinitionResponse> {
     let offset = position_to_offset(source, position)?;
-    if let Some(definition) = definition_for_dependency_values(source, package, position) {
-        return Some(definition);
-    }
-
     if let Some(target) = package.dependency_method_definition_at(analysis, offset) {
         let target_source = fs::read_to_string(&target.path).ok()?.replace("\r\n", "\n");
         let target_uri = Url::from_file_path(&target.path).ok()?;
@@ -388,6 +388,14 @@ pub fn definition_for_package_analysis(
             target_uri,
             span_to_range(&target_source, target.span),
         )));
+    }
+
+    if let Some(definition) = definition_for_dependency_struct_fields(source, package, position) {
+        return Some(definition);
+    }
+
+    if let Some(definition) = definition_for_dependency_values(source, package, position) {
+        return Some(definition);
     }
 
     if let Some(target) = package.dependency_variant_definition_at(analysis, source, offset) {
@@ -667,12 +675,6 @@ pub fn references_for_package_analysis(
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
     let offset = position_to_offset(source, position)?;
-    if let Some(references) =
-        references_for_dependency_values(uri, source, package, position, include_declaration)
-    {
-        return Some(references);
-    }
-
     if let Some(local_references) = package.dependency_method_references_at(analysis, offset) {
         let mut locations = Vec::new();
         if include_declaration {
@@ -712,6 +714,18 @@ pub fn references_for_package_analysis(
                 .map(|reference| Location::new(uri.clone(), span_to_range(source, reference.span))),
         );
         return Some(locations);
+    }
+
+    if let Some(references) =
+        references_for_dependency_struct_fields(uri, source, package, position, include_declaration)
+    {
+        return Some(references);
+    }
+
+    if let Some(references) =
+        references_for_dependency_values(uri, source, package, position, include_declaration)
+    {
+        return Some(references);
     }
 
     if let Some(local_references) =
