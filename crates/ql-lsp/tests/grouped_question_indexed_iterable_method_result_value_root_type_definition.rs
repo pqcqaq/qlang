@@ -96,9 +96,63 @@ fn assert_targets_dependency_type(
     );
 }
 
-#[test]
-fn type_definition_bridge_follows_grouped_question_indexed_iterable_value_roots() {
-    let temp = TempDir::new("ql-lsp-grouped-question-indexed-value-root-type-definition");
+fn dependency_qi() -> &'static str {
+    r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
+"#
+}
+
+fn build_source(broken: bool) -> &'static str {
+    if broken {
+        r#"
+package demo.app
+
+use demo.dep.{maybe_children as kids}
+
+pub fn read() -> Int {
+    let current = kids()?[0].leaf()
+    let value = current.value
+    return "oops"
+}
+"#
+    } else {
+        r#"
+package demo.app
+
+use demo.dep.{maybe_children as kids}
+
+pub fn read() -> Int {
+    let current = kids()?[0].leaf()
+    let value = current.value
+    return value
+}
+"#
+    }
+}
+
+fn run_type_definition_case(broken: bool) {
+    let temp = TempDir::new(&format!(
+        "ql-lsp-grouped-question-indexed-iterable-method-result-value-root-type-definition{}",
+        if broken { "-broken" } else { "" }
+    ));
     let app_root = temp.path().join("workspace").join("app");
     let app_path = temp
         .path()
@@ -114,22 +168,7 @@ fn type_definition_bridge_follows_grouped_question_indexed_iterable_value_roots(
 name = "dep"
 "#,
     );
-    let dep_qi = temp.write(
-        "workspace/dep/dep.qi",
-        r#"
-// qlang interface v1
-// package: dep
-
-// source: src/lib.ql
-package demo.dep
-
-pub struct Child {
-    value: Int,
-}
-
-pub fn maybe_children() -> Option[[Child; 2]]
-"#,
-    );
+    let dep_qi = temp.write("workspace/dep/dep.qi", dependency_qi());
     temp.write(
         "workspace/app/qlang.toml",
         r#"
@@ -140,100 +179,46 @@ name = "app"
 packages = ["../dep"]
 "#,
     );
-    let source = r#"
-package demo.app
-
-use demo.dep.{maybe_children as kids}
-
-pub fn read() -> Int {
-    let value = kids()?[0].value
-    return value
-}
-"#;
+    let source = build_source(broken);
     temp.write("workspace/app/src/lib.ql", source);
+    let position = offset_to_position(source, nth_offset(source, "current", 2));
 
-    let package = analyze_package(&app_root).expect("package analysis should succeed");
-    let analysis = analyze_source(source).expect("source should analyze");
-    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
-
-    let definition = type_definition_for_package_analysis(
-        &uri,
-        source,
-        &analysis,
-        &package,
-        offset_to_position(source, nth_offset(source, "kids", 2)),
-    )
-    .expect("grouped question indexed iterable value root type definition should exist");
-    assert_targets_dependency_type(
-        definition,
-        &dep_qi,
-        "pub struct Child {\n    value: Int,\n}",
-    );
+    if broken {
+        assert!(analyze_package(&app_root).is_err());
+        let package = analyze_package_dependencies(&app_root)
+            .expect("dependency-only package analysis should succeed");
+        let definition = type_definition_for_dependency_values(source, &package, position)
+            .expect(
+                "grouped question indexed iterable method-result value root type definition should exist",
+            );
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Leaf {\n    value: Int,\n}",
+        );
+    } else {
+        let package = analyze_package(&app_root).expect("package analysis should succeed");
+        let analysis = analyze_source(source).expect("source should analyze");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+        let definition =
+            type_definition_for_package_analysis(&uri, source, &analysis, &package, position)
+                .expect(
+                    "grouped question indexed iterable method-result value root type definition should exist",
+                );
+        assert_targets_dependency_type(
+            definition,
+            &dep_qi,
+            "pub struct Leaf {\n    value: Int,\n}",
+        );
+    }
 }
 
 #[test]
-fn type_definition_fallback_follows_grouped_question_indexed_iterable_value_roots() {
-    let temp = TempDir::new("ql-lsp-grouped-question-indexed-value-root-type-definition-broken");
-    let app_root = temp.path().join("workspace").join("app");
-
-    temp.write(
-        "workspace/dep/qlang.toml",
-        r#"
-[package]
-name = "dep"
-"#,
-    );
-    let dep_qi = temp.write(
-        "workspace/dep/dep.qi",
-        r#"
-// qlang interface v1
-// package: dep
-
-// source: src/lib.ql
-package demo.dep
-
-pub struct Child {
-    value: Int,
+fn type_definition_bridge_follows_grouped_question_indexed_iterable_method_result_value_roots() {
+    run_type_definition_case(false);
 }
 
-pub fn maybe_children() -> Option[[Child; 2]]
-"#,
-    );
-    temp.write(
-        "workspace/app/qlang.toml",
-        r#"
-[package]
-name = "app"
-
-[references]
-packages = ["../dep"]
-"#,
-    );
-    let source = r#"
-package demo.app
-
-use demo.dep.{maybe_children as kids}
-
-pub fn read() -> Int {
-    let value = kids()?[0].value
-    return "oops"
-}
-"#;
-    temp.write("workspace/app/src/lib.ql", source);
-
-    assert!(analyze_package(&app_root).is_err());
-    let package = analyze_package_dependencies(&app_root)
-        .expect("dependency-only package analysis should succeed");
-
-    let definition = type_definition_for_dependency_values(
-        source,
-        &package,
-        offset_to_position(source, nth_offset(source, "kids", 2)),
-    )
-    .expect("grouped question indexed iterable value root type definition should exist");
-    assert_targets_dependency_type(
-        definition,
-        &dep_qi,
-        "pub struct Child {\n    value: Int,\n}",
-    );
+#[test]
+fn type_definition_fallback_follows_grouped_question_indexed_iterable_method_result_value_roots() {
+    run_type_definition_case(true);
 }
