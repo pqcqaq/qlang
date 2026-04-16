@@ -316,6 +316,80 @@ pub fn read() -> Int {
 }
 
 #[test]
+fn dependency_method_member_completion_works_on_grouped_question_indexed_iterable_receivers() {
+    let temp = TempDir::new("ql-lsp-grouped-question-indexed-method-member-completion");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{maybe_children as kids}
+
+pub fn read() -> Int {
+    let value = kids()?[0].lea
+    return 0
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("analysis should succeed for completion query");
+    let position = offset_to_position(source, nth_offset(source, ".lea", 1) + ".lea".len());
+
+    let Some(CompletionResponse::Array(items)) =
+        completion_for_package_analysis(source, &analysis, &package, position)
+    else {
+        panic!("grouped question indexed iterable method member completion should exist");
+    };
+
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].label, "leaf");
+    assert_eq!(items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(items[0].detail.as_deref(), Some("fn leaf(self) -> Leaf"));
+}
+
+#[test]
 fn dependency_method_result_member_completion_works_on_grouped_question_indexed_iterable_receivers(
 ) {
     let temp = TempDir::new("ql-lsp-grouped-question-indexed-method-result-member-completion");
@@ -499,6 +573,159 @@ pub fn read() -> Int {
         false,
     )
     .expect("grouped question indexed iterable field references should exist without declaration");
+    assert_eq!(without_declaration.len(), 2);
+    assert!(
+        without_declaration
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+}
+
+#[test]
+fn dependency_method_member_queries_work_on_grouped_question_indexed_iterable_receivers() {
+    let temp = TempDir::new("ql-lsp-grouped-question-indexed-method-member-queries");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.{maybe_children as kids}
+
+pub fn read() -> Int {
+    let first = kids()?[0].leaf().value
+    let second = kids()?[1].leaf().value
+    return first + second
+}
+"#;
+    let app_file = temp.write("workspace/app/src/lib.ql", source);
+    let uri = Url::from_file_path(&app_file).expect("test file path should convert to URL");
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+
+    let first_offset = nth_offset(source, "leaf", 1);
+    let second_offset = nth_offset(source, "leaf", 2);
+
+    let hover = hover_for_package_analysis(
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, first_offset),
+    )
+    .expect("grouped question indexed iterable method member hover should exist");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**method** `leaf`"));
+    assert!(markup.value.contains("fn leaf(self) -> Leaf"));
+
+    let definition = definition_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, second_offset),
+    )
+    .expect("grouped question indexed iterable method member definition should exist");
+    let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_location_targets_dependency_name(
+        &definition_location,
+        &dep_qi,
+        "pub fn leaf(self) -> Leaf",
+        "leaf",
+    );
+
+    let declaration = declaration_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, first_offset),
+    )
+    .expect("grouped question indexed iterable method member declaration should exist");
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_location_targets_dependency_name(
+        &declaration_location,
+        &dep_qi,
+        "pub fn leaf(self) -> Leaf",
+        "leaf",
+    );
+
+    let with_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, first_offset),
+        true,
+    )
+    .expect("grouped question indexed iterable method member references should exist");
+    assert_eq!(with_declaration.len(), 3);
+    assert_location_targets_dependency_name(
+        &with_declaration[0],
+        &dep_qi,
+        "pub fn leaf(self) -> Leaf",
+        "leaf",
+    );
+    assert!(
+        with_declaration[1..]
+            .iter()
+            .all(|location| location.uri == uri)
+    );
+
+    let without_declaration = references_for_package_analysis(
+        &uri,
+        source,
+        &analysis,
+        &package,
+        offset_to_position(source, second_offset),
+        false,
+    )
+    .expect("grouped question indexed iterable method member references should exist without declaration");
     assert_eq!(without_declaration.len(), 2);
     assert!(
         without_declaration
