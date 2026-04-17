@@ -1728,15 +1728,9 @@ fn workspace_source_references_for_import(
 
     let mut locations =
         references_for_package_analysis(uri, source, analysis, package, position, true)?;
-    if let Some(existing_index) = locations
-        .iter()
-        .position(|location| *location == source_definition)
-    {
-        locations.swap(0, existing_index);
-    } else if let Some(first_location) = locations.first_mut() {
-        *first_location = source_definition;
-    } else {
-        locations.push(source_definition);
+    normalize_reference_locations_with_definition(&mut locations, &source_definition);
+    if let Some(source_locations) = same_file_references_for_source_location(&source_definition) {
+        merge_unique_reference_locations(&mut locations, source_locations);
     }
 
     Some(locations)
@@ -1768,8 +1762,8 @@ fn workspace_source_references_for_import_in_broken_source(
 
     let mut locations = Vec::new();
     if include_declaration {
-        if let Some(source_definition) = source_definition {
-            locations.push(source_definition);
+        if let Some(source_definition) = source_definition.as_ref() {
+            locations.push(source_definition.clone());
         } else {
             locations.push(Location::new(
                 uri.clone(),
@@ -1789,6 +1783,13 @@ fn workspace_source_references_for_import_in_broken_source(
             })
             .map(|(_, token)| Location::new(uri.clone(), span_to_range(source, token.span))),
     );
+
+    if include_declaration
+        && let Some(source_definition) = source_definition.as_ref()
+        && let Some(source_locations) = same_file_references_for_source_location(source_definition)
+    {
+        merge_unique_reference_locations(&mut locations, source_locations);
+    }
 
     (!locations.is_empty()).then_some(locations)
 }
@@ -1936,6 +1937,98 @@ fn rename_for_workspace_import_in_broken_source(
     Ok(Some(WorkspaceEdit::new(changes)))
 }
 
+fn normalize_reference_locations_with_definition(
+    locations: &mut Vec<Location>,
+    source_definition: &Location,
+) {
+    if let Some(existing_index) = locations
+        .iter()
+        .position(|location| same_location_anchor(location, source_definition))
+    {
+        locations.swap(0, existing_index);
+        locations[0] = source_definition.clone();
+    } else if let Some(first_location) = locations.first_mut() {
+        *first_location = source_definition.clone();
+    } else {
+        locations.push(source_definition.clone());
+    }
+}
+
+fn same_file_references_for_source_location(source_location: &Location) -> Option<Vec<Location>> {
+    let source_path = source_location.uri.to_file_path().ok()?;
+    let source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
+    let analysis = analyze_source(&source).ok()?;
+    let symbol_name = identifier_text_in_range(&source, source_location.range)?;
+    let (tokens, _) = lex(&source);
+    let mut best_locations = None;
+
+    for token in tokens
+        .iter()
+        .filter(|token| token.kind == TokenKind::Ident && token.text == symbol_name)
+    {
+        let Some(locations) = references_for_analysis(
+            &source_location.uri,
+            &source,
+            &analysis,
+            span_to_range(&source, token.span).start,
+            true,
+        ) else {
+            continue;
+        };
+        if !locations
+            .iter()
+            .any(|location| same_location_anchor(location, source_location))
+        {
+            continue;
+        }
+        if best_locations
+            .as_ref()
+            .is_none_or(|best: &Vec<Location>| locations.len() > best.len())
+        {
+            best_locations = Some(locations);
+        }
+    }
+
+    best_locations
+}
+
+fn merge_unique_reference_locations(locations: &mut Vec<Location>, additional: Vec<Location>) {
+    for location in additional {
+        if !locations
+            .iter()
+            .any(|existing| same_location_anchor(existing, &location))
+        {
+            locations.push(location);
+        }
+    }
+}
+
+fn same_location_anchor(lhs: &Location, rhs: &Location) -> bool {
+    lhs.uri == rhs.uri && ranges_overlap(lhs.range, rhs.range)
+}
+
+fn ranges_overlap(lhs: tower_lsp::lsp_types::Range, rhs: tower_lsp::lsp_types::Range) -> bool {
+    position_leq(lhs.start, rhs.end) && position_leq(rhs.start, lhs.end)
+}
+
+fn position_leq(lhs: tower_lsp::lsp_types::Position, rhs: tower_lsp::lsp_types::Position) -> bool {
+    (lhs.line, lhs.character) <= (rhs.line, rhs.character)
+}
+
+fn identifier_text_in_range(source: &str, range: tower_lsp::lsp_types::Range) -> Option<String> {
+    let start_offset = position_to_offset(source, range.start)?;
+    let end_offset = position_to_offset(source, range.end)?;
+    let (tokens, _) = lex(source);
+    tokens
+        .iter()
+        .find(|token| {
+            token.kind == TokenKind::Ident
+                && token.span.start >= start_offset
+                && token.span.end <= end_offset
+        })
+        .map(|token| token.text.clone())
+}
+
 fn dependency_references_for_position(
     uri: &Url,
     source: &str,
@@ -1996,15 +2089,9 @@ fn workspace_source_references_for_dependency(
 
     let mut locations =
         dependency_references_for_position(uri, source, analysis, package, position, true)?;
-    if let Some(existing_index) = locations
-        .iter()
-        .position(|location| *location == source_definition)
-    {
-        locations.swap(0, existing_index);
-    } else if let Some(first_location) = locations.first_mut() {
-        *first_location = source_definition;
-    } else {
-        locations.push(source_definition);
+    normalize_reference_locations_with_definition(&mut locations, &source_definition);
+    if let Some(source_locations) = same_file_references_for_source_location(&source_definition) {
+        merge_unique_reference_locations(&mut locations, source_locations);
     }
 
     Some(locations)
@@ -7258,10 +7345,18 @@ impl Config {
     pub fn ping(self) -> Int {
         return self.value + self.limit
     }
+
+    pub fn use_ping(self) -> Int {
+        return self.ping()
+    }
 }
 
 pub fn exported(value: Int) -> Int {
     return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
 }
 "#,
         );
@@ -7648,7 +7743,27 @@ pub fn exported(value: Int) -> Int
             expected_occurrence,
             expected_count,
             local_occurrences,
+            source_occurrence,
         ) in [
+            (
+                "Retry",
+                1usize,
+                "Retry",
+                1usize,
+                3usize,
+                vec![1usize],
+                Some(2usize),
+            ),
+            ("ping", 1usize, "ping", 1usize, 2usize, vec![1usize], None),
+            (
+                "value",
+                2usize,
+                "value",
+                3usize,
+                4usize,
+                vec![1usize, 2usize],
+                Some(4usize),
+            ),
             (
                 "run",
                 2usize,
@@ -7656,16 +7771,7 @@ pub fn exported(value: Int) -> Int
                 1usize,
                 3usize,
                 vec![1usize, 2usize],
-            ),
-            ("Retry", 1usize, "Retry", 1usize, 2usize, vec![1usize]),
-            ("ping", 1usize, "ping", 1usize, 2usize, vec![1usize]),
-            (
-                "value",
-                2usize,
-                "value",
-                3usize,
-                3usize,
-                vec![1usize, 2usize],
+                None,
             ),
         ] {
             let references = workspace_source_references_for_dependency(
@@ -7705,6 +7811,30 @@ pub fn exported(value: Int) -> Int
                 assert_eq!(
                     reference.range.start,
                     offset_to_position(&source, nth_offset(&source, needle, local_occurrence)),
+                );
+            }
+
+            if let Some(source_occurrence) = source_occurrence {
+                let source_reference = references
+                    .last()
+                    .expect("source-preferred references should include source occurrence");
+                assert_eq!(
+                    source_reference
+                        .uri
+                        .to_file_path()
+                        .expect("source reference URI should convert to a file path")
+                        .canonicalize()
+                        .expect("source reference path should canonicalize"),
+                    core_source_path
+                        .canonicalize()
+                        .expect("core source path should canonicalize"),
+                );
+                assert_eq!(
+                    source_reference.range.start,
+                    offset_to_position(
+                        &core_source,
+                        nth_offset(&core_source, expected_symbol, source_occurrence)
+                    ),
                 );
             }
         }
