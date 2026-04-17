@@ -1049,6 +1049,80 @@ fn workspace_source_references_for_import(
     Some(locations)
 }
 
+fn dependency_references_for_position(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    if let Some(analysis) = analysis {
+        return references_for_package_analysis(
+            uri,
+            source,
+            analysis,
+            package,
+            position,
+            include_declaration,
+        );
+    }
+
+    references_for_dependency_imports(uri, source, package, position, include_declaration)
+        .or_else(|| {
+            references_for_dependency_values(uri, source, package, position, include_declaration)
+        })
+        .or_else(|| {
+            references_for_dependency_methods(uri, source, package, position, include_declaration)
+        })
+        .or_else(|| {
+            references_for_dependency_variants(uri, source, package, position, include_declaration)
+        })
+        .or_else(|| {
+            references_for_dependency_struct_fields(
+                uri,
+                source,
+                package,
+                position,
+                include_declaration,
+            )
+        })
+}
+
+fn workspace_source_references_for_dependency(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    if !include_declaration {
+        return None;
+    }
+
+    let GotoDefinitionResponse::Scalar(source_definition) =
+        workspace_source_definition_for_dependency(uri, source, analysis, package, position)?
+    else {
+        return None;
+    };
+
+    let mut locations =
+        dependency_references_for_position(uri, source, analysis, package, position, true)?;
+    if let Some(existing_index) = locations
+        .iter()
+        .position(|location| *location == source_definition)
+    {
+        locations.swap(0, existing_index);
+    } else if let Some(first_location) = locations.first_mut() {
+        *first_location = source_definition;
+    } else {
+        locations.push(source_definition);
+    }
+
+    Some(locations)
+}
+
 fn document_highlights_from_locations(
     uri: &Url,
     locations: Vec<Location>,
@@ -1393,65 +1467,35 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let Ok(analysis) = analyze_source(&source) else {
-                if let Some(references) = references_for_dependency_imports(
+            let analysis = analyze_source(&source).ok();
+            if let Some(analysis) = analysis.as_ref() {
+                if let Some(references) = workspace_source_references_for_import(
                     &uri,
                     &source,
+                    analysis,
                     &package,
                     position,
                     params.context.include_declaration,
                 ) {
                     return Ok(Some(references));
                 }
-                if let Some(references) = references_for_dependency_values(
-                    &uri,
-                    &source,
-                    &package,
-                    position,
-                    params.context.include_declaration,
-                ) {
-                    return Ok(Some(references));
-                }
-                if let Some(references) = references_for_dependency_methods(
-                    &uri,
-                    &source,
-                    &package,
-                    position,
-                    params.context.include_declaration,
-                ) {
-                    return Ok(Some(references));
-                }
-                if let Some(references) = references_for_dependency_variants(
-                    &uri,
-                    &source,
-                    &package,
-                    position,
-                    params.context.include_declaration,
-                ) {
-                    return Ok(Some(references));
-                }
-                return Ok(references_for_dependency_struct_fields(
-                    &uri,
-                    &source,
-                    &package,
-                    position,
-                    params.context.include_declaration,
-                ));
-            };
-            if let Some(references) = workspace_source_references_for_import(
+            }
+
+            if let Some(references) = workspace_source_references_for_dependency(
                 &uri,
                 &source,
-                &analysis,
+                analysis.as_ref(),
                 &package,
                 position,
                 params.context.include_declaration,
             ) {
                 return Ok(Some(references));
             }
-            return Ok(references_for_package_analysis(
+
+            return Ok(dependency_references_for_position(
                 &uri,
                 &source,
-                &analysis,
+                analysis.as_ref(),
                 &package,
                 position,
                 params.context.include_declaration,
@@ -1650,8 +1694,9 @@ mod tests {
     use super::{
         document_highlights_for_analysis_at, document_highlights_for_package_analysis_at,
         package_analysis_for_path, workspace_source_definition_for_dependency,
-        workspace_source_definition_for_import, workspace_source_references_for_import,
-        workspace_symbols_for_documents, workspace_symbols_for_documents_and_roots,
+        workspace_source_definition_for_import, workspace_source_references_for_dependency,
+        workspace_source_references_for_import, workspace_symbols_for_documents,
+        workspace_symbols_for_documents_and_roots,
     };
     use ql_analysis::{SymbolKind as AnalysisSymbolKind, analyze_source};
     use std::env;
@@ -5033,6 +5078,190 @@ pub fn exported(value: Int) -> Int
                     nth_offset(&core_source, expected_symbol, expected_occurrence)
                 ),
             );
+        }
+    }
+
+    #[test]
+    fn workspace_dependency_references_prefer_workspace_member_source_over_interface_artifact() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-source-references");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Command as Cmd
+use demo.core.Config as Cfg
+use demo.core.exported as run
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    let command = Cmd.Retry(1)
+    let result = config.ping()
+    return run(result) + built.value + command.unwrap_or(0)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+impl Command {
+    pub fn unwrap_or(self, fallback: Int) -> Int {
+        match self {
+            Command.Retry(value) => value,
+        }
+    }
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value + self.limit
+    }
+}
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+impl Command {
+    pub fn unwrap_or(self, fallback: Int) -> Int
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+
+        for (
+            needle,
+            occurrence,
+            expected_symbol,
+            expected_occurrence,
+            expected_count,
+            local_occurrences,
+        ) in [
+            (
+                "run",
+                2usize,
+                "exported",
+                1usize,
+                3usize,
+                vec![1usize, 2usize],
+            ),
+            ("Retry", 1usize, "Retry", 1usize, 2usize, vec![1usize]),
+            ("ping", 1usize, "ping", 1usize, 2usize, vec![1usize]),
+            (
+                "value",
+                2usize,
+                "value",
+                3usize,
+                3usize,
+                vec![1usize, 2usize],
+            ),
+        ] {
+            let references = workspace_source_references_for_dependency(
+                &uri,
+                &source,
+                Some(&analysis),
+                &package,
+                offset_to_position(&source, nth_offset(&source, needle, occurrence)),
+                true,
+            )
+            .unwrap_or_else(|| panic!("workspace dependency references should exist for {needle}"));
+
+            assert_eq!(references.len(), expected_count);
+            assert_eq!(
+                references[0]
+                    .uri
+                    .to_file_path()
+                    .expect("definition URI should convert to a file path")
+                    .canonicalize()
+                    .expect("definition path should canonicalize"),
+                core_source_path
+                    .canonicalize()
+                    .expect("core source path should canonicalize"),
+            );
+            assert_eq!(
+                references[0].range.start,
+                offset_to_position(
+                    &core_source,
+                    nth_offset(&core_source, expected_symbol, expected_occurrence)
+                ),
+            );
+
+            for (reference, local_occurrence) in
+                references[1..].iter().zip(local_occurrences.into_iter())
+            {
+                assert_eq!(reference.uri, uri);
+                assert_eq!(
+                    reference.range.start,
+                    offset_to_position(&source, nth_offset(&source, needle, local_occurrence)),
+                );
+            }
         }
     }
 
