@@ -111,6 +111,7 @@
 - direct indexed question-iterable field-member completion 现在也有独立 regression 文件，显式覆盖 `config.maybe_children()?[0].lea` 在正常 dependency 路径与 broken-source fallback 下的 member-field 补全合同。
 - direct indexed question-iterable field-member queries 现在也有独立 regression 文件，显式覆盖 `config.maybe_children()?[0].leaf.value` 的 hover / definition / declaration / references 在正常 dependency 路径与 broken-source fallback 下的 member-field 合同。
 - direct indexed question-iterable method-member completion 现在也有独立 regression 文件，显式覆盖 `config.maybe_children()?[0].lea` 在正常 dependency 路径与 broken-source fallback 下的 member-method 补全合同。
+- direct indexed question-iterable method-member queries 现在也有独立 regression 文件，显式覆盖 `config.maybe_children()?[0].leaf()` 的 hover / definition / declaration / references 在正常 dependency 路径与 broken-source fallback 下的 member-method 合同。
 - direct indexed question-iterable method-result member completion 现在也有独立 regression 文件，显式覆盖 `config.maybe_children()?[0].leaf().va` 在正常 dependency 路径与 broken-source fallback 下的 method-result member 补全合同。
 - grouped question-indexed iterable receiver-field completion 现在也有独立 regression 文件，显式覆盖 `kids()?[0].va` 在 package-aware bridge 与 broken-source fallback 下的同轴补全合同。
 - grouped question-indexed iterable receiver-field queries 现在也有独立 regression 文件，显式覆盖 `kids()?[0].value` 的 hover / definition / declaration / references 在 package-aware bridge 与 broken-source fallback 下的同轴合同。
