@@ -412,6 +412,21 @@ pub fn main(config: Cfg) -> Int {
         .iter()
         .position(|token_type| *token_type == SemanticTokenType::FUNCTION)
         .expect("function legend entry should exist") as u32;
+    let namespace_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::NAMESPACE)
+        .expect("namespace legend entry should exist") as u32;
+    let class_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::CLASS)
+        .expect("class legend entry should exist") as u32;
+    let enum_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::ENUM)
+        .expect("enum legend entry should exist") as u32;
     let enum_member_type = legend
         .token_types
         .iter()
@@ -427,6 +442,33 @@ pub fn main(config: Cfg) -> Int {
         .iter()
         .position(|token_type| *token_type == SemanticTokenType::METHOD)
         .expect("method legend entry should exist") as u32;
+    let cfg_import_range = span_to_range(source, nth_span(source, "Cfg", 1));
+    let cmd_import_range = span_to_range(source, nth_span(source, "Cmd", 1));
+
+    assert!(decoded.contains(&(
+        cfg_import_range.start.line,
+        cfg_import_range.start.character,
+        cfg_import_range.end.character - cfg_import_range.start.character,
+        class_type,
+    )));
+    assert!(decoded.contains(&(
+        cmd_import_range.start.line,
+        cmd_import_range.start.character,
+        cmd_import_range.end.character - cmd_import_range.start.character,
+        enum_type,
+    )));
+    assert!(!decoded.contains(&(
+        cfg_import_range.start.line,
+        cfg_import_range.start.character,
+        cfg_import_range.end.character - cfg_import_range.start.character,
+        namespace_type,
+    )));
+    assert!(!decoded.contains(&(
+        cmd_import_range.start.line,
+        cmd_import_range.start.character,
+        cmd_import_range.end.character - cmd_import_range.start.character,
+        namespace_type,
+    )));
 
     for (span, token_type) in [
         (nth_span(source, "main", 1), function_type),

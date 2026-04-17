@@ -1350,6 +1350,21 @@ impl PackageAnalysis {
         tokens
     }
 
+    pub fn dependency_import_root_semantic_tokens_in_source(
+        &self,
+        source: &str,
+    ) -> Vec<SemanticTokenOccurrence> {
+        let module = match parse_source(source) {
+            Ok(module) => module,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut tokens =
+            collect_dependency_import_root_semantic_tokens_in_module(self, &module, source);
+        sort_and_dedup_semantic_tokens(&mut tokens);
+        tokens
+    }
+
     /// Return dependency-backed semantic-token occurrences that remain available even when
     /// same-file semantic analysis failed but parsing still succeeded.
     pub fn dependency_fallback_semantic_tokens_in_source(

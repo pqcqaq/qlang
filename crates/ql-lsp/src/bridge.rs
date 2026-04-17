@@ -1,4 +1,7 @@
-use std::{collections::HashMap, fs};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+};
 
 use ql_analysis::{
     Analysis, AsyncOperatorKind, DocumentSymbolTarget, HoverInfo, LoopControlKind, PackageAnalysis,
@@ -1089,7 +1092,18 @@ pub fn semantic_tokens_for_package_analysis(
     package: &PackageAnalysis,
 ) -> SemanticTokensResult {
     let mut tokens = analysis.semantic_tokens();
+    let dependency_import_root_tokens =
+        package.dependency_import_root_semantic_tokens_in_source(source);
+    let dependency_import_root_spans = dependency_import_root_tokens
+        .iter()
+        .map(|token| (token.span.start, token.span.end))
+        .collect::<HashSet<_>>();
+    tokens.retain(|token| {
+        token.kind != SymbolKind::Import
+            || !dependency_import_root_spans.contains(&(token.span.start, token.span.end))
+    });
     tokens.extend(package.dependency_semantic_tokens_in_source(source));
+    tokens.extend(dependency_import_root_tokens);
     tokens.sort_by_key(|token| {
         (
             token.span.start,
