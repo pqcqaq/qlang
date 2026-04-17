@@ -3,8 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ql_analysis::{
-    Analysis, DependencyInterface, PackageAnalysisError, analyze_available_package_dependencies,
-    analyze_package, analyze_package_with_available_dependencies, analyze_source,
+    Analysis, DependencyDefinitionTarget, DependencyInterface, PackageAnalysisError,
+    analyze_available_package_dependencies, analyze_package,
+    analyze_package_with_available_dependencies, analyze_source,
 };
 use ql_project::{collect_package_sources, load_project_manifest};
 use tokio::sync::RwLock;
@@ -746,6 +747,45 @@ fn supports_workspace_import_definition(kind: ql_analysis::SymbolKind) -> bool {
     )
 }
 
+fn supports_workspace_dependency_definition(kind: ql_analysis::SymbolKind) -> bool {
+    matches!(
+        kind,
+        ql_analysis::SymbolKind::Function
+            | ql_analysis::SymbolKind::Const
+            | ql_analysis::SymbolKind::Static
+            | ql_analysis::SymbolKind::Struct
+            | ql_analysis::SymbolKind::Enum
+            | ql_analysis::SymbolKind::Variant
+            | ql_analysis::SymbolKind::Trait
+            | ql_analysis::SymbolKind::TypeAlias
+            | ql_analysis::SymbolKind::Field
+            | ql_analysis::SymbolKind::Method
+    )
+}
+
+fn normalized_relative_source_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn normalized_dependency_source_path(path: &str) -> String {
+    path.replace('\\', "/").trim_start_matches("./").to_owned()
+}
+
+fn package_module_matches_dependency_source_path(
+    package: &ql_analysis::PackageAnalysis,
+    module_path: &Path,
+    dependency_source_path: &str,
+) -> bool {
+    let Some(package_root) = package.manifest().manifest_path.parent() else {
+        return false;
+    };
+    let Ok(relative_path) = module_path.strip_prefix(package_root) else {
+        return false;
+    };
+    normalized_relative_source_path(relative_path)
+        == normalized_dependency_source_path(dependency_source_path)
+}
+
 fn extend_workspace_import_definition_matches(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
@@ -838,6 +878,128 @@ fn workspace_source_definition_for_import(
             None,
             import_prefix,
             imported_name,
+            &mut matches,
+        );
+    }
+
+    matches.sort_by_key(|location| {
+        (
+            location.uri.to_string(),
+            location.range.start.line,
+            location.range.start.character,
+        )
+    });
+    matches.dedup();
+    (matches.len() == 1).then(|| GotoDefinitionResponse::Scalar(matches[0].clone()))
+}
+
+fn extend_workspace_dependency_definition_matches(
+    package: &ql_analysis::PackageAnalysis,
+    current_path: Option<&Path>,
+    current_source: Option<&str>,
+    current_analysis: Option<&Analysis>,
+    target: &DependencyDefinitionTarget,
+    matches: &mut Vec<Location>,
+) {
+    if !supports_workspace_dependency_definition(target.kind) {
+        return;
+    }
+
+    for module in package.modules() {
+        let module_path = module.path();
+        if !package_module_matches_dependency_source_path(package, module_path, &target.source_path)
+        {
+            continue;
+        }
+
+        let owned_source = if current_path
+            .is_some_and(|path| canonicalize_or_clone(path) == canonicalize_or_clone(module_path))
+        {
+            None
+        } else {
+            let Ok(source) = fs::read_to_string(module_path) else {
+                continue;
+            };
+            Some(source.replace("\r\n", "\n"))
+        };
+        let module_source = owned_source
+            .as_deref()
+            .unwrap_or_else(|| current_source.unwrap_or_default());
+        let module_analysis = if owned_source.is_some() {
+            module.analysis()
+        } else {
+            current_analysis.unwrap_or(module.analysis())
+        };
+
+        let Ok(module_uri) = Url::from_file_path(module_path) else {
+            continue;
+        };
+        for symbol in module_analysis.document_symbols() {
+            if symbol.name != target.name || symbol.kind != target.kind {
+                continue;
+            }
+            matches.push(Location::new(
+                module_uri.clone(),
+                span_to_range(module_source, symbol.span),
+            ));
+        }
+    }
+}
+
+fn dependency_definition_target_at(
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<DependencyDefinitionTarget> {
+    let offset = position_to_offset(source, position)?;
+    if let Some(analysis) = analysis {
+        return package
+            .dependency_method_definition_at(analysis, offset)
+            .or_else(|| package.dependency_struct_field_definition_at(analysis, offset))
+            .or_else(|| package.dependency_variant_definition_at(analysis, source, offset))
+            .or_else(|| package.dependency_definition_at(analysis, offset));
+    }
+
+    package
+        .dependency_method_definition_in_source_at(source, offset)
+        .or_else(|| package.dependency_struct_field_definition_in_source_at(source, offset))
+        .or_else(|| package.dependency_variant_definition_in_source_at(source, offset))
+        .or_else(|| package.dependency_definition_in_source_at(source, offset))
+}
+
+fn workspace_source_definition_for_dependency(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoDefinitionResponse> {
+    let target = dependency_definition_target_at(source, analysis, package, position)?;
+    let current_path = uri.to_file_path().ok();
+    let mut matches = Vec::new();
+
+    extend_workspace_dependency_definition_matches(
+        package,
+        current_path.as_deref(),
+        Some(source),
+        analysis,
+        &target,
+        &mut matches,
+    );
+
+    for member_manifest_path in
+        workspace_member_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(member_package) = package_analysis_for_path(&member_manifest_path) else {
+            continue;
+        };
+        extend_workspace_dependency_definition_matches(
+            &member_package,
+            None,
+            None,
+            None,
+            &target,
             &mut matches,
         );
     }
@@ -1079,37 +1241,37 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
-            if let Some(definition) = definition_for_dependency_imports(&source, &package, position)
+            let analysis = analyze_source(&source).ok();
+            if let Some(analysis) = analysis.as_ref()
+                && let Some(definition) = workspace_source_definition_for_import(
+                    &uri, &source, analysis, &package, position,
+                )
             {
                 return Ok(Some(definition));
             }
-            if let Some(definition) = definition_for_dependency_methods(&source, &package, position)
-            {
+            if let Some(definition) = workspace_source_definition_for_dependency(
+                &uri,
+                &source,
+                analysis.as_ref(),
+                &package,
+                position,
+            ) {
                 return Ok(Some(definition));
             }
-            if let Some(definition) =
-                definition_for_dependency_struct_fields(&source, &package, position)
-            {
-                return Ok(Some(definition));
-            }
-            if let Some(definition) =
-                definition_for_dependency_variants(&source, &package, position)
-            {
-                return Ok(Some(definition));
-            }
-            let Ok(analysis) = analyze_source(&source) else {
-                return Ok(definition_for_dependency_values(
-                    &source, &package, position,
+            if let Some(analysis) = analysis {
+                return Ok(definition_for_package_analysis(
+                    &uri, &source, &analysis, &package, position,
                 ));
-            };
-            if let Some(definition) =
-                workspace_source_definition_for_import(&uri, &source, &analysis, &package, position)
-            {
-                return Ok(Some(definition));
             }
-            return Ok(definition_for_package_analysis(
-                &uri, &source, &analysis, &package, position,
-            ));
+            return Ok(
+                definition_for_dependency_imports(&source, &package, position)
+                    .or_else(|| definition_for_dependency_methods(&source, &package, position))
+                    .or_else(|| {
+                        definition_for_dependency_struct_fields(&source, &package, position)
+                    })
+                    .or_else(|| definition_for_dependency_variants(&source, &package, position))
+                    .or_else(|| definition_for_dependency_values(&source, &package, position)),
+            );
         }
 
         let Ok(analysis) = analyze_source(&source) else {
@@ -1131,39 +1293,40 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
-            if let Some(declaration) =
-                declaration_for_dependency_imports(&source, &package, position)
-            {
-                return Ok(Some(declaration));
-            }
-            if let Some(declaration) =
-                declaration_for_dependency_methods(&source, &package, position)
-            {
-                return Ok(Some(declaration));
-            }
-            if let Some(declaration) =
-                declaration_for_dependency_struct_fields(&source, &package, position)
-            {
-                return Ok(Some(declaration));
-            }
-            if let Some(declaration) =
-                declaration_for_dependency_variants(&source, &package, position)
-            {
-                return Ok(Some(declaration));
-            }
-            let Ok(analysis) = analyze_source(&source) else {
-                return Ok(declaration_for_dependency_values(
-                    &source, &package, position,
-                ));
-            };
-            if let Some(GotoDefinitionResponse::Scalar(location)) =
-                workspace_source_definition_for_import(&uri, &source, &analysis, &package, position)
+            let analysis = analyze_source(&source).ok();
+            if let Some(analysis) = analysis.as_ref()
+                && let Some(GotoDefinitionResponse::Scalar(location)) =
+                    workspace_source_definition_for_import(
+                        &uri, &source, analysis, &package, position,
+                    )
             {
                 return Ok(Some(GotoDeclarationResponse::Scalar(location)));
             }
-            return Ok(declaration_for_package_analysis(
-                &uri, &source, &analysis, &package, position,
-            ));
+            if let Some(GotoDefinitionResponse::Scalar(location)) =
+                workspace_source_definition_for_dependency(
+                    &uri,
+                    &source,
+                    analysis.as_ref(),
+                    &package,
+                    position,
+                )
+            {
+                return Ok(Some(GotoDeclarationResponse::Scalar(location)));
+            }
+            if let Some(analysis) = analysis {
+                return Ok(declaration_for_package_analysis(
+                    &uri, &source, &analysis, &package, position,
+                ));
+            }
+            return Ok(
+                declaration_for_dependency_imports(&source, &package, position)
+                    .or_else(|| declaration_for_dependency_methods(&source, &package, position))
+                    .or_else(|| {
+                        declaration_for_dependency_struct_fields(&source, &package, position)
+                    })
+                    .or_else(|| declaration_for_dependency_variants(&source, &package, position))
+                    .or_else(|| declaration_for_dependency_values(&source, &package, position)),
+            );
         }
 
         let Ok(analysis) = analyze_source(&source) else {
@@ -1486,9 +1649,9 @@ impl LanguageServer for Backend {
 mod tests {
     use super::{
         document_highlights_for_analysis_at, document_highlights_for_package_analysis_at,
-        package_analysis_for_path, workspace_source_definition_for_import,
-        workspace_source_references_for_import, workspace_symbols_for_documents,
-        workspace_symbols_for_documents_and_roots,
+        package_analysis_for_path, workspace_source_definition_for_dependency,
+        workspace_source_definition_for_import, workspace_source_references_for_import,
+        workspace_symbols_for_documents, workspace_symbols_for_documents_and_roots,
     };
     use ql_analysis::{SymbolKind as AnalysisSymbolKind, analyze_source};
     use std::env;
@@ -4717,6 +4880,160 @@ pub fn exported(value: Int) -> Int
             references[2].range.start,
             offset_to_position(&source, nth_offset(&source, "run", 2)),
         );
+    }
+
+    #[test]
+    fn workspace_dependency_definitions_prefer_workspace_member_source_over_interface_artifact() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-source-definitions");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Command as Cmd
+use demo.core.Config as Cfg
+use demo.core.exported as run
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    let command = Cmd.Retry(1)
+    let result = config.ping()
+    return run(result) + built.value + command.unwrap_or(0)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+impl Command {
+    pub fn unwrap_or(self, fallback: Int) -> Int {
+        match self {
+            Command.Retry(value) => value,
+        }
+    }
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value + self.limit
+    }
+}
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+impl Command {
+    pub fn unwrap_or(self, fallback: Int) -> Int
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+
+        for (needle, occurrence, expected_symbol, expected_occurrence) in [
+            ("run", 2usize, "exported", 1usize),
+            ("Retry", 1usize, "Retry", 1usize),
+            ("ping", 1usize, "ping", 1usize),
+            ("value", 2usize, "value", 3usize),
+        ] {
+            let definition = workspace_source_definition_for_dependency(
+                &uri,
+                &source,
+                Some(&analysis),
+                &package,
+                offset_to_position(&source, nth_offset(&source, needle, occurrence)),
+            )
+            .unwrap_or_else(|| panic!("workspace dependency definition should exist for {needle}"));
+
+            let GotoDefinitionResponse::Scalar(location) = definition else {
+                panic!("workspace dependency definition should resolve to one location")
+            };
+            assert_eq!(
+                location
+                    .uri
+                    .to_file_path()
+                    .expect("definition URI should convert to a file path")
+                    .canonicalize()
+                    .expect("definition path should canonicalize"),
+                core_source_path
+                    .canonicalize()
+                    .expect("core source path should canonicalize"),
+            );
+            assert_eq!(
+                location.range.start,
+                offset_to_position(
+                    &core_source,
+                    nth_offset(&core_source, expected_symbol, expected_occurrence)
+                ),
+            );
+        }
     }
 
     #[test]
