@@ -942,6 +942,44 @@ fn workspace_source_definition_for_import(
     .map(GotoDefinitionResponse::Scalar)
 }
 
+fn hover_from_workspace_source_location(
+    current_source: &str,
+    current_span: Span,
+    source_location: Location,
+) -> Option<Hover> {
+    let source_path = source_location.uri.to_file_path().ok()?;
+    let source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
+    let analysis = analyze_source(&source).ok()?;
+    let hover = crate::bridge::hover_for_analysis(&source, &analysis, source_location.range.start)?;
+
+    Some(Hover {
+        contents: hover.contents,
+        range: Some(span_to_range(current_source, current_span)),
+    })
+}
+
+fn workspace_source_hover_for_import(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Hover> {
+    let offset = position_to_offset(source, position)?;
+    let (binding, occurrence_span) = analysis.import_binding_at(offset)?;
+    let (imported_name, import_prefix) = binding.path.segments.split_last()?;
+    let source_location = workspace_source_location_for_import_binding(
+        uri,
+        source,
+        Some(analysis),
+        package,
+        import_prefix,
+        imported_name,
+    )?;
+
+    hover_from_workspace_source_location(source, occurrence_span, source_location)
+}
+
 fn workspace_source_definition_for_import_in_broken_source(
     uri: &Url,
     source: &str,
@@ -958,6 +996,44 @@ fn workspace_source_definition_for_import_in_broken_source(
         binding.imported_name.as_str(),
     )
     .map(GotoDefinitionResponse::Scalar)
+}
+
+fn broken_source_import_occurrence_span_at(
+    source: &str,
+    position: tower_lsp::lsp_types::Position,
+    local_name: &str,
+) -> Option<Span> {
+    let offset = position_to_offset(source, position)?;
+    let (tokens, _) = lex(source);
+    tokens
+        .iter()
+        .find(|token| {
+            token.kind == TokenKind::Ident
+                && token.text == local_name
+                && token.span.contains(offset)
+        })
+        .map(|token| token.span)
+}
+
+fn workspace_source_hover_for_import_in_broken_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Hover> {
+    let binding = broken_source_import_binding_at(source, position)?;
+    let occurrence_span =
+        broken_source_import_occurrence_span_at(source, position, binding.local_name.as_str())?;
+    let source_location = workspace_source_location_for_import_binding(
+        uri,
+        source,
+        None,
+        package,
+        &binding.import_prefix,
+        binding.imported_name.as_str(),
+    )?;
+
+    hover_from_workspace_source_location(source, occurrence_span, source_location)
 }
 
 fn broken_source_import_binding_at(
@@ -1754,6 +1830,18 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let analysis = analyze_source(&source).ok();
+            if let Some(analysis) = analysis.as_ref() {
+                if let Some(hover) =
+                    workspace_source_hover_for_import(&uri, &source, analysis, &package, position)
+                {
+                    return Ok(Some(hover));
+                }
+            } else if let Some(hover) = workspace_source_hover_for_import_in_broken_source(
+                &uri, &source, &package, position,
+            ) {
+                return Ok(Some(hover));
+            }
             if let Some(hover) = hover_for_dependency_imports(&source, &package, position) {
                 return Ok(Some(hover));
             }
@@ -1766,7 +1854,7 @@ impl LanguageServer for Backend {
             if let Some(hover) = hover_for_dependency_variants(&source, &package, position) {
                 return Ok(Some(hover));
             }
-            let Ok(analysis) = analyze_source(&source) else {
+            let Some(analysis) = analysis else {
                 return Ok(hover_for_dependency_values(&source, &package, position));
             };
             return Ok(hover_for_package_analysis(
@@ -2255,7 +2343,8 @@ mod tests {
         package_analysis_for_path, prepare_rename_for_workspace_import_in_broken_source,
         rename_for_workspace_import_in_broken_source, workspace_source_definition_for_dependency,
         workspace_source_definition_for_import,
-        workspace_source_definition_for_import_in_broken_source,
+        workspace_source_definition_for_import_in_broken_source, workspace_source_hover_for_import,
+        workspace_source_hover_for_import_in_broken_source,
         workspace_source_references_for_dependency, workspace_source_references_for_import,
         workspace_source_references_for_import_in_broken_source,
         workspace_source_type_definition_for_dependency, workspace_symbols_for_documents,
@@ -2269,8 +2358,8 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower_lsp::lsp_types::{
-        GotoDefinitionResponse, Location, Position, PrepareRenameResponse, SymbolInformation,
-        SymbolKind, TextEdit, Url, WorkspaceEdit,
+        GotoDefinitionResponse, HoverContents, Location, Position, PrepareRenameResponse,
+        SymbolInformation, SymbolKind, TextEdit, Url, WorkspaceEdit,
     };
 
     struct TempDir {
@@ -5396,6 +5485,93 @@ pub fn exported(value: Int) -> Int
     }
 
     #[test]
+    fn workspace_import_hover_prefers_workspace_member_source_over_interface_artifact() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-hover");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int, extra: Int) -> Int {
+    return value + extra
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let hover = workspace_source_hover_for_import(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 1)),
+        )
+        .expect("workspace import hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(
+            markup
+                .value
+                .contains("fn exported(value: Int, extra: Int) -> Int")
+        );
+        assert!(!markup.value.contains("fn exported(value: Int) -> Int"));
+    }
+
+    #[test]
     fn workspace_import_definition_survives_parse_errors_and_prefers_workspace_member_source() {
         let temp = TempDir::new("ql-lsp-workspace-import-source-definition-parse-errors");
         let app_path = temp.write(
@@ -5579,6 +5755,92 @@ pub struct Config {
                 .canonicalize()
                 .expect("core source path should canonicalize"),
         );
+    }
+
+    #[test]
+    fn workspace_import_hover_survives_parse_errors_and_prefers_workspace_member_source() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-hover-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    let next = run(1)
+    return next
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int, extra: Int) -> Int {
+    return value + extra
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let hover = workspace_source_hover_for_import_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        )
+        .expect("broken-source workspace import hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(
+            markup
+                .value
+                .contains("fn exported(value: Int, extra: Int) -> Int")
+        );
+        assert!(!markup.value.contains("fn exported(value: Int) -> Int"));
     }
 
     #[test]
