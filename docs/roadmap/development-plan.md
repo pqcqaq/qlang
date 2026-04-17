@@ -142,6 +142,7 @@
 **当前关注点**
 
 - definition / declaration / references / workspace symbol / semantic tokens 在“健康 workspace + 健康依赖”下形成稳定 contract。
+- 当前已先补一条更接近真实项目编辑器体验的高亮入口：healthy package/workspace 下 imported dependency enum variant、显式 struct field label 与唯一 method member 已开始进入 package-aware `semantic tokens`，因此 Checkpoint C 后续重点转向把导航与剩余高亮面继续做完整，而不是再回头补协议声明本身。
 - 当前已接通的 `documentHighlight` 与 TextMate grammar fallback 继续作为底线，但它们不替代 project-scale 语义本身。
 - 优先补“能用”的导航和高亮，不先追求更花的 IDE 功能。
 
