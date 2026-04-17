@@ -1180,7 +1180,8 @@ fn summarize_reference_failures_recursive(
     visited: &mut BTreeSet<PathBuf>,
 ) -> TransitiveReferenceFailureSummary {
     let manifest_path = manifest.manifest_path.clone();
-    if !visited.insert(manifest_path) {
+    let manifest_key = normalize_path(&manifest_path);
+    if !visited.insert(manifest_key) {
         return TransitiveReferenceFailureSummary {
             count: 0,
             first_failure: None,

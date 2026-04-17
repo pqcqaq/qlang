@@ -2194,6 +2194,42 @@ fn build_json_dependency_interface_prep_failure(
     })
 }
 
+fn build_json_build_plan_failure(
+    request_path: &Path,
+    failure: &BuildPlanResolveError,
+) -> JsonValue {
+    match &failure.failure_kind {
+        BuildPlanResolveFailureKind::Dependency { message } => json!({
+            "manifest_path": failure.manifest_path.as_ref().map(|path| normalize_path(path)),
+            "package_name": JsonValue::Null,
+            "selected": JsonValue::Null,
+            "dependency_only": JsonValue::Null,
+            "kind": JsonValue::Null,
+            "path": normalize_path(request_path),
+            "error_kind": "dependency",
+            "stage": "build-plan",
+            "message": message,
+            "owner_manifest_path": failure.owner_manifest_path.as_ref().map(|path| normalize_path(path)),
+            "dependency_manifest_path": failure.dependency_manifest_path.as_ref().map(|path| normalize_path(path)),
+            "cycle_manifests": JsonValue::Null,
+        }),
+        BuildPlanResolveFailureKind::Cycle { cycle_manifests } => json!({
+            "manifest_path": failure.manifest_path.as_ref().map(|path| normalize_path(path)),
+            "package_name": JsonValue::Null,
+            "selected": JsonValue::Null,
+            "dependency_only": JsonValue::Null,
+            "kind": JsonValue::Null,
+            "path": normalize_path(request_path),
+            "error_kind": "cycle",
+            "stage": "build-plan",
+            "message": "local package build dependencies contain a cycle",
+            "owner_manifest_path": JsonValue::Null,
+            "dependency_manifest_path": failure.dependency_manifest_path.as_ref().map(|path| normalize_path(path)),
+            "cycle_manifests": cycle_manifests,
+        }),
+    }
+}
+
 fn emit_build_json_failure(
     json_report: &mut Option<BuildJsonReport>,
     failure: JsonValue,
@@ -3849,7 +3885,19 @@ fn build_project_path(
         prepare_reference_interfaces_for_manifests(&member_manifest_paths, "`ql build`", true)?;
     }
 
-    let build_plan = resolve_project_build_plan_members(&members, &selected_members, "`ql build`")?;
+    let build_plan = if json {
+        match resolve_project_build_plan_members_quiet(&members, &selected_members) {
+            Ok(build_plan) => build_plan,
+            Err(failure) => {
+                return emit_build_json_failure(
+                    &mut json_report,
+                    build_json_build_plan_failure(path, &failure),
+                );
+            }
+        }
+    } else {
+        resolve_project_build_plan_members(&members, &selected_members, "`ql build`")?
+    };
 
     for plan_member in &build_plan {
         if plan_member.require_targets && plan_member.member.targets.is_empty() {
@@ -4083,6 +4131,18 @@ enum BuildTargetJsonError {
     Build(BuildError),
 }
 
+struct BuildPlanResolveError {
+    manifest_path: Option<PathBuf>,
+    owner_manifest_path: Option<PathBuf>,
+    dependency_manifest_path: Option<PathBuf>,
+    failure_kind: BuildPlanResolveFailureKind,
+}
+
+enum BuildPlanResolveFailureKind {
+    Dependency { message: String },
+    Cycle { cycle_manifests: Vec<String> },
+}
+
 fn resolve_project_build_plan_members(
     workspace_members: &[WorkspaceBuildTargets],
     selected_members: &[WorkspaceBuildTargets],
@@ -4118,6 +4178,46 @@ fn resolve_project_build_plan_members(
             &mut visited,
             &mut ordered,
             command_label,
+        )?;
+    }
+
+    Ok(ordered)
+}
+
+fn resolve_project_build_plan_members_quiet(
+    workspace_members: &[WorkspaceBuildTargets],
+    selected_members: &[WorkspaceBuildTargets],
+) -> Result<Vec<ProjectBuildPlanMember>, BuildPlanResolveError> {
+    let workspace_members_by_manifest = workspace_members
+        .iter()
+        .map(|member| (normalize_path(&member.member_manifest_path), member.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let selected_members_by_manifest = selected_members
+        .iter()
+        .map(|member| (normalize_path(&member.member_manifest_path), member.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let selected_manifest_paths = selected_members_by_manifest
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    let mut ordered = Vec::new();
+    let mut visiting = Vec::new();
+    let mut in_progress = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+
+    for member in selected_members {
+        collect_project_build_plan_member_quiet(
+            &member.member_manifest_path,
+            Some(&member.member_manifest_path),
+            None,
+            &workspace_members_by_manifest,
+            &selected_members_by_manifest,
+            &selected_manifest_paths,
+            &mut visiting,
+            &mut in_progress,
+            &mut visited,
+            &mut ordered,
         )?;
     }
 
@@ -4246,6 +4346,78 @@ fn collect_project_build_plan_member(
     Ok(())
 }
 
+fn collect_project_build_plan_member_quiet(
+    start_path: &Path,
+    dependency_manifest_path: Option<&Path>,
+    owner_manifest_path: Option<&Path>,
+    workspace_members_by_manifest: &BTreeMap<String, WorkspaceBuildTargets>,
+    selected_members_by_manifest: &BTreeMap<String, WorkspaceBuildTargets>,
+    selected_manifest_paths: &BTreeSet<String>,
+    visiting: &mut Vec<String>,
+    in_progress: &mut BTreeSet<String>,
+    visited: &mut BTreeSet<String>,
+    ordered: &mut Vec<ProjectBuildPlanMember>,
+) -> Result<(), BuildPlanResolveError> {
+    let manifest = load_project_manifest(start_path).map_err(|error| {
+        build_plan_dependency_failure(
+            owner_manifest_path,
+            dependency_manifest_path.or(Some(start_path)),
+            &error,
+        )
+    })?;
+    let manifest_key = normalize_path(&manifest.manifest_path);
+    if visited.contains(&manifest_key) {
+        return Ok(());
+    }
+    if in_progress.contains(&manifest_key) {
+        return Err(build_plan_cycle_failure(visiting, &manifest_key));
+    }
+
+    in_progress.insert(manifest_key.clone());
+    visiting.push(manifest_key.clone());
+
+    let manifest_dir = manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    for reference in &manifest.references.packages {
+        let reference_manifest_path = reference_manifest_path(&manifest, reference);
+        collect_project_build_plan_member_quiet(
+            &manifest_dir.join(reference),
+            Some(&reference_manifest_path),
+            Some(&manifest.manifest_path),
+            workspace_members_by_manifest,
+            selected_members_by_manifest,
+            selected_manifest_paths,
+            visiting,
+            in_progress,
+            visited,
+            ordered,
+        )?;
+    }
+
+    visiting.pop();
+    in_progress.remove(&manifest_key);
+    visited.insert(manifest_key.clone());
+
+    let member = project_build_plan_member_targets_quiet(
+        &manifest,
+        &manifest_key,
+        owner_manifest_path,
+        workspace_members_by_manifest,
+        selected_members_by_manifest,
+    )?;
+    let selected = selected_manifest_paths.contains(&manifest_key);
+    ordered.push(ProjectBuildPlanMember {
+        member,
+        emit_interface: selected,
+        require_targets: selected,
+    });
+
+    Ok(())
+}
+
 fn project_build_plan_member_targets(
     manifest: &ql_project::ProjectManifest,
     manifest_key: &str,
@@ -4274,6 +4446,79 @@ fn project_build_plan_member_targets(
         default_profile: manifest.profile.as_ref().map(|profile| profile.default),
         targets,
     })
+}
+
+fn project_build_plan_member_targets_quiet(
+    manifest: &ql_project::ProjectManifest,
+    manifest_key: &str,
+    owner_manifest_path: Option<&Path>,
+    workspace_members_by_manifest: &BTreeMap<String, WorkspaceBuildTargets>,
+    selected_members_by_manifest: &BTreeMap<String, WorkspaceBuildTargets>,
+) -> Result<WorkspaceBuildTargets, BuildPlanResolveError> {
+    if let Some(member) = selected_members_by_manifest.get(manifest_key) {
+        return Ok(member.clone());
+    }
+    if let Some(member) = workspace_members_by_manifest.get(manifest_key) {
+        return Ok(member.clone());
+    }
+
+    let package_name = package_name(manifest).map_err(|error| {
+        build_plan_dependency_failure(owner_manifest_path, Some(&manifest.manifest_path), &error)
+    })?;
+    let targets = discover_package_build_targets(manifest).map_err(|error| {
+        build_plan_dependency_failure(owner_manifest_path, Some(&manifest.manifest_path), &error)
+    })?;
+    Ok(WorkspaceBuildTargets {
+        member_manifest_path: manifest.manifest_path.clone(),
+        package_name: package_name.to_owned(),
+        default_profile: manifest.profile.as_ref().map(|profile| profile.default),
+        targets,
+    })
+}
+
+fn build_plan_dependency_failure(
+    owner_manifest_path: Option<&Path>,
+    dependency_manifest_path: Option<&Path>,
+    error: &ql_project::ProjectError,
+) -> BuildPlanResolveError {
+    let manifest_path =
+        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error) {
+            Some(manifest_path.to_path_buf())
+        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(error) {
+            Some(manifest_path.to_path_buf())
+        } else if let ql_project::ProjectError::ManifestNotFound { .. } = error {
+            dependency_manifest_path.map(Path::to_path_buf)
+        } else if let ql_project::ProjectError::PackageSourceRootNotFound { .. } = error {
+            dependency_manifest_path.map(Path::to_path_buf)
+        } else {
+            dependency_manifest_path.map(Path::to_path_buf)
+        };
+    BuildPlanResolveError {
+        manifest_path,
+        owner_manifest_path: owner_manifest_path.map(Path::to_path_buf),
+        dependency_manifest_path: dependency_manifest_path.map(Path::to_path_buf),
+        failure_kind: BuildPlanResolveFailureKind::Dependency {
+            message: error.to_string(),
+        },
+    }
+}
+
+fn build_plan_cycle_failure(
+    visiting: &[String],
+    repeated_manifest_path: &str,
+) -> BuildPlanResolveError {
+    let cycle_start = visiting
+        .iter()
+        .position(|manifest_path| manifest_path == repeated_manifest_path)
+        .unwrap_or(0);
+    let mut cycle_manifests = visiting[cycle_start..].to_vec();
+    cycle_manifests.push(repeated_manifest_path.to_owned());
+    BuildPlanResolveError {
+        manifest_path: Some(PathBuf::from(repeated_manifest_path)),
+        owner_manifest_path: None,
+        dependency_manifest_path: Some(PathBuf::from(repeated_manifest_path)),
+        failure_kind: BuildPlanResolveFailureKind::Cycle { cycle_manifests },
+    }
 }
 
 fn report_project_build_dependency_error(
@@ -7338,7 +7583,7 @@ fn report_interface_stale_reasons(stale_reasons: &[InterfaceArtifactStaleReason]
 
 fn sync_reference_interfaces(
     path: &Path,
-    visited: &mut BTreeSet<PathBuf>,
+    visited: &mut BTreeSet<String>,
 ) -> Result<Vec<PathBuf>, u8> {
     let check_command_label = format_check_command_label(true);
     let manifest = load_project_manifest(path).map_err(|error| {
@@ -7382,12 +7627,13 @@ fn sync_reference_interfaces(
 
 fn sync_reference_interfaces_recursive(
     manifest: &ql_project::ProjectManifest,
-    visited: &mut BTreeSet<PathBuf>,
+    visited: &mut BTreeSet<String>,
     result: &mut ReferenceInterfaceSyncResult,
     command_label: &str,
 ) {
     let manifest_path = manifest.manifest_path.clone();
-    if !visited.insert(manifest_path) {
+    let manifest_key = normalize_path(&manifest_path);
+    if !visited.insert(manifest_key) {
         return;
     }
 
@@ -7592,11 +7838,12 @@ fn prepare_reference_interfaces_for_manifests_quiet(
 
 fn sync_reference_interfaces_recursive_quiet(
     manifest: &ql_project::ProjectManifest,
-    visited: &mut BTreeSet<PathBuf>,
+    visited: &mut BTreeSet<String>,
     result: &mut ReferenceInterfaceSyncQuietResult,
 ) {
     let manifest_path = manifest.manifest_path.clone();
-    if !visited.insert(manifest_path) {
+    let manifest_key = normalize_path(&manifest_path);
+    if !visited.insert(manifest_key) {
         return;
     }
 
@@ -7861,10 +8108,11 @@ fn ensure_reference_interfaces_current(manifest: &ql_project::ProjectManifest) -
 
 fn ensure_reference_interfaces_current_recursive(
     manifest: &ql_project::ProjectManifest,
-    visited: &mut BTreeSet<PathBuf>,
+    visited: &mut BTreeSet<String>,
 ) -> ReferenceInterfaceCheckResult {
     let manifest_path = manifest.manifest_path.clone();
-    if !visited.insert(manifest_path.clone()) {
+    let manifest_key = normalize_path(&manifest_path);
+    if !visited.insert(manifest_key) {
         return ReferenceInterfaceCheckResult::default();
     }
 
