@@ -507,7 +507,7 @@ LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
 - explicit struct literal / struct pattern field label 现在也能直接复用同一套 field 查询面
 - enum variant declaration / pattern use / constructor use 现在也能直接复用同一套查询面
 - `ql-analysis` 现在也能基于同一份 occurrence 索引导出 same-file semantic tokens
-- `ql-analysis` 现在也已把 dependency-backed enum variant、显式 struct field label 与唯一 method member 收进 package-aware semantic-token truth surface；`qlsp` 会在健康 package/workspace 上把这层高亮叠到同一份 editor token stream，而不是另起一套 LSP heuristics；如果当前文件本身有 source diagnostics、但 package/dependency 上下文仍可恢复，这条 dependency-backed semantic-token 保留面也会继续留住
+- `ql-analysis` 现在也已把 dependency-backed value roots、enum variant、显式 struct field label 与唯一 method member 收进 package-aware semantic-token truth surface；`qlsp` 会在健康 package/workspace 上把这层高亮叠到同一份 editor token stream，而不是另起一套 LSP heuristics；如果当前文件本身有 source diagnostics、但 package/dependency 上下文仍可恢复，这条 dependency-backed semantic-token 保留面也会继续留住
 - `qlsp` 的第一版已经落地在 `crates/ql-lsp`
 - 当前通过 stdio 运行，复用 `ql-analysis`
 - 当前已实现：
