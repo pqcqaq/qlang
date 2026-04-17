@@ -968,14 +968,39 @@ fn dependency_definition_target_at(
         .or_else(|| package.dependency_definition_in_source_at(source, offset))
 }
 
-fn workspace_source_definition_for_dependency(
-    uri: &Url,
+fn dependency_type_definition_target_at(
     source: &str,
     analysis: Option<&Analysis>,
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
-) -> Option<GotoDefinitionResponse> {
-    let target = dependency_definition_target_at(source, analysis, package, position)?;
+) -> Option<DependencyDefinitionTarget> {
+    let offset = position_to_offset(source, position)?;
+    if let Some(analysis) = analysis {
+        return package
+            .dependency_type_definition_at(analysis, offset)
+            .or_else(|| package.dependency_value_type_definition_in_source_at(source, offset))
+            .or_else(|| package.dependency_variant_type_definition_at(analysis, source, offset))
+            .or_else(|| {
+                package.dependency_struct_field_type_definition_in_source_at(source, offset)
+            })
+            .or_else(|| package.dependency_method_type_definition_in_source_at(source, offset));
+    }
+
+    package
+        .dependency_type_definition_in_source_at(source, offset)
+        .or_else(|| package.dependency_value_type_definition_in_source_at(source, offset))
+        .or_else(|| package.dependency_variant_type_definition_in_source_at(source, offset))
+        .or_else(|| package.dependency_struct_field_type_definition_in_source_at(source, offset))
+        .or_else(|| package.dependency_method_type_definition_in_source_at(source, offset))
+}
+
+fn workspace_source_location_for_dependency_target(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    target: &DependencyDefinitionTarget,
+) -> Option<Location> {
     let current_path = uri.to_file_path().ok();
     let mut matches = Vec::new();
 
@@ -984,7 +1009,7 @@ fn workspace_source_definition_for_dependency(
         current_path.as_deref(),
         Some(source),
         analysis,
-        &target,
+        target,
         &mut matches,
     );
 
@@ -999,7 +1024,7 @@ fn workspace_source_definition_for_dependency(
             None,
             None,
             None,
-            &target,
+            target,
             &mut matches,
         );
     }
@@ -1012,7 +1037,31 @@ fn workspace_source_definition_for_dependency(
         )
     });
     matches.dedup();
-    (matches.len() == 1).then(|| GotoDefinitionResponse::Scalar(matches[0].clone()))
+    (matches.len() == 1).then(|| matches[0].clone())
+}
+
+fn workspace_source_definition_for_dependency(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoDefinitionResponse> {
+    let target = dependency_definition_target_at(source, analysis, package, position)?;
+    workspace_source_location_for_dependency_target(uri, source, analysis, package, &target)
+        .map(GotoDefinitionResponse::Scalar)
+}
+
+fn workspace_source_type_definition_for_dependency(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoTypeDefinitionResponse> {
+    let target = dependency_type_definition_target_at(source, analysis, package, position)?;
+    workspace_source_location_for_dependency_target(uri, source, analysis, package, &target)
+        .map(GotoTypeDefinitionResponse::Scalar)
 }
 
 fn workspace_source_references_for_import(
@@ -1422,33 +1471,40 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
-            let Ok(analysis) = analyze_source(&source) else {
-                return Ok(
-                    type_definition_for_dependency_imports(&source, &package, position).or_else(
+            let analysis = analyze_source(&source).ok();
+            if let Some(definition) = workspace_source_type_definition_for_dependency(
+                &uri,
+                &source,
+                analysis.as_ref(),
+                &package,
+                position,
+            ) {
+                return Ok(Some(definition));
+            }
+            if let Some(analysis) = analysis {
+                return Ok(type_definition_for_package_analysis(
+                    &uri, &source, &analysis, &package, position,
+                ));
+            }
+            return Ok(
+                type_definition_for_dependency_imports(&source, &package, position).or_else(|| {
+                    type_definition_for_dependency_values(&source, &package, position).or_else(
                         || {
-                            type_definition_for_dependency_values(&source, &package, position)
+                            type_definition_for_dependency_variants(&source, &package, position)
                                 .or_else(|| {
-                                    type_definition_for_dependency_variants(
+                                    type_definition_for_dependency_struct_field_types(
                                         &source, &package, position,
                                     )
                                     .or_else(|| {
-                                        type_definition_for_dependency_struct_field_types(
+                                        type_definition_for_dependency_method_types(
                                             &source, &package, position,
                                         )
-                                        .or_else(|| {
-                                            type_definition_for_dependency_method_types(
-                                                &source, &package, position,
-                                            )
-                                        })
                                     })
                                 })
                         },
-                    ),
-                );
-            };
-            return Ok(type_definition_for_package_analysis(
-                &uri, &source, &analysis, &package, position,
-            ));
+                    )
+                }),
+            );
         }
 
         let Ok(analysis) = analyze_source(&source) else {
@@ -1692,10 +1748,11 @@ impl LanguageServer for Backend {
 #[cfg(test)]
 mod tests {
     use super::{
-        document_highlights_for_analysis_at, document_highlights_for_package_analysis_at,
-        package_analysis_for_path, workspace_source_definition_for_dependency,
-        workspace_source_definition_for_import, workspace_source_references_for_dependency,
-        workspace_source_references_for_import, workspace_symbols_for_documents,
+        GotoTypeDefinitionResponse, document_highlights_for_analysis_at,
+        document_highlights_for_package_analysis_at, package_analysis_for_path,
+        workspace_source_definition_for_dependency, workspace_source_definition_for_import,
+        workspace_source_references_for_dependency, workspace_source_references_for_import,
+        workspace_source_type_definition_for_dependency, workspace_symbols_for_documents,
         workspace_symbols_for_documents_and_roots,
     };
     use ql_analysis::{SymbolKind as AnalysisSymbolKind, analyze_source};
@@ -5059,6 +5116,166 @@ pub fn exported(value: Int) -> Int
 
             let GotoDefinitionResponse::Scalar(location) = definition else {
                 panic!("workspace dependency definition should resolve to one location")
+            };
+            assert_eq!(
+                location
+                    .uri
+                    .to_file_path()
+                    .expect("definition URI should convert to a file path")
+                    .canonicalize()
+                    .expect("definition path should canonicalize"),
+                core_source_path
+                    .canonicalize()
+                    .expect("core source path should canonicalize"),
+            );
+            assert_eq!(
+                location.range.start,
+                offset_to_position(
+                    &core_source,
+                    nth_offset(&core_source, expected_symbol, expected_occurrence)
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_dependency_type_definitions_prefer_workspace_member_source_over_interface_artifact()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-source-type-definitions");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Command as Cmd
+use demo.core.Config as Cfg
+use demo.core.Holder as Hold
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    let holder = Hold { child: config.clone_self() }
+    let command = Cmd.Retry(1)
+    return holder.child.value + built.value + command.unwrap_or(0)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+pub struct Holder {
+    child: Config,
+}
+
+impl Command {
+    pub fn unwrap_or(self, fallback: Int) -> Int {
+        match self {
+            Command.Retry(value) => value,
+        }
+    }
+}
+
+impl Config {
+    pub fn clone_self(self) -> Config {
+        return self
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+pub struct Holder {
+    child: Config,
+}
+
+impl Command {
+    pub fn unwrap_or(self, fallback: Int) -> Int
+}
+
+impl Config {
+    pub fn clone_self(self) -> Config
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+
+        for (needle, occurrence, expected_symbol, expected_occurrence) in [
+            ("Cfg", 2usize, "Config", 1usize),
+            ("built", 2usize, "Config", 1usize),
+            ("clone_self", 1usize, "Config", 1usize),
+            ("Retry", 1usize, "Command", 1usize),
+            ("child", 2usize, "Config", 1usize),
+        ] {
+            let definition = workspace_source_type_definition_for_dependency(
+                &uri,
+                &source,
+                Some(&analysis),
+                &package,
+                offset_to_position(&source, nth_offset(&source, needle, occurrence)),
+            )
+            .unwrap_or_else(|| {
+                panic!("workspace dependency type definition should exist for {needle}")
+            });
+
+            let GotoTypeDefinitionResponse::Scalar(location) = definition else {
+                panic!("workspace dependency type definition should resolve to one location")
             };
             assert_eq!(
                 location
