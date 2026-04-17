@@ -1312,6 +1312,51 @@ fn workspace_source_references_for_import(
     Some(locations)
 }
 
+fn workspace_source_references_for_import_in_broken_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    let binding = broken_source_import_binding_at(source, position)?;
+    let (tokens, _) = lex(source);
+    let source_definition = workspace_source_location_for_import_binding(
+        uri,
+        source,
+        None,
+        package,
+        &binding.import_prefix,
+        binding.imported_name.as_str(),
+    );
+
+    let mut locations = Vec::new();
+    if include_declaration {
+        if let Some(source_definition) = source_definition {
+            locations.push(source_definition);
+        } else {
+            locations.push(Location::new(
+                uri.clone(),
+                span_to_range(source, binding.definition_span),
+            ));
+        }
+    }
+
+    locations.extend(
+        tokens
+            .iter()
+            .enumerate()
+            .filter(|(_, token)| token.kind == TokenKind::Ident && token.text == binding.local_name)
+            .filter(|(index, token)| {
+                token.span != binding.definition_span
+                    && broken_source_import_token_matches_reference_context(&tokens, *index)
+            })
+            .map(|(_, token)| Location::new(uri.clone(), span_to_range(source, token.span))),
+    );
+
+    (!locations.is_empty()).then_some(locations)
+}
+
 fn dependency_references_for_position(
     uri: &Url,
     source: &str,
@@ -1765,6 +1810,17 @@ impl LanguageServer for Backend {
                     return Ok(Some(references));
                 }
             }
+            if analysis.is_none()
+                && let Some(references) = workspace_source_references_for_import_in_broken_source(
+                    &uri,
+                    &source,
+                    &package,
+                    position,
+                    params.context.include_declaration,
+                )
+            {
+                return Ok(Some(references));
+            }
 
             if let Some(references) = workspace_source_references_for_dependency(
                 &uri,
@@ -1990,6 +2046,7 @@ mod tests {
         workspace_source_definition_for_dependency, workspace_source_definition_for_import,
         workspace_source_definition_for_import_in_broken_source,
         workspace_source_references_for_dependency, workspace_source_references_for_import,
+        workspace_source_references_for_import_in_broken_source,
         workspace_source_type_definition_for_dependency, workspace_symbols_for_documents,
         workspace_symbols_for_documents_and_roots,
     };
@@ -5405,6 +5462,213 @@ pub fn exported(value: Int) -> Int
         assert_eq!(
             references[2].range.start,
             offset_to_position(&source, nth_offset(&source, "run", 2)),
+        );
+    }
+
+    #[test]
+    fn workspace_import_references_survive_parse_errors_and_prefer_workspace_member_source() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-references-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    let first = run(1)
+    let second = run(first)
+    return second
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let references = workspace_source_references_for_import_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            true,
+        )
+        .expect("broken-source workspace import references should exist");
+
+        assert_eq!(references.len(), 3);
+        assert_eq!(
+            references[0]
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 1)),
+        );
+        assert_eq!(references[1].uri, uri);
+        assert_eq!(
+            references[1].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        );
+        assert_eq!(references[2].uri, uri);
+        assert_eq!(
+            references[2].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 3)),
+        );
+    }
+
+    #[test]
+    fn workspace_import_references_without_declaration_survive_parse_errors() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-references-parse-errors-no-decl");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(value: Config) -> Config {
+    let current: Config = Config { value: 1
+    return current
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let references = workspace_source_references_for_import_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "Config", 2)),
+            false,
+        )
+        .expect("broken-source workspace import references without declaration should exist");
+
+        assert_eq!(references.len(), 4);
+        assert!(references.iter().all(|location| location.uri == uri));
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&source, nth_offset(&source, "Config", 2)),
+        );
+        assert_eq!(
+            references[1].range.start,
+            offset_to_position(&source, nth_offset(&source, "Config", 3)),
+        );
+        assert_eq!(
+            references[2].range.start,
+            offset_to_position(&source, nth_offset(&source, "Config", 4)),
+        );
+        assert_eq!(
+            references[3].range.start,
+            offset_to_position(&source, nth_offset(&source, "Config", 5)),
         );
     }
 
