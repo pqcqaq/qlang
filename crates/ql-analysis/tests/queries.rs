@@ -500,6 +500,118 @@ fn compute() -> Int {
 }
 
 #[test]
+fn package_decl_public_function_queries_follow_same_file_identity() {
+    let source = r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
+"#;
+
+    let analysis = analyzed(source);
+    let exported_use = nth_offset(source, "exported", 2);
+
+    let hover = analysis
+        .hover_at(exported_use)
+        .expect("public free function use should hover");
+    assert_eq!(hover.kind, SymbolKind::Function);
+    assert_eq!(hover.detail, "fn exported(value: Int) -> Int");
+    assert_eq!(hover.definition_span, Some(nth_span(source, "exported", 1)));
+
+    assert_eq!(
+        analysis.definition_at(exported_use),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Function,
+            name: "exported".to_owned(),
+            span: nth_span(source, "exported", 1),
+        })
+    );
+    assert_eq!(
+        analysis.references_at(exported_use),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Function,
+                name: "exported".to_owned(),
+                span: nth_span(source, "exported", 1),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Function,
+                name: "exported".to_owned(),
+                span: nth_span(source, "exported", 2),
+                is_definition: false,
+            },
+        ])
+    );
+}
+
+#[test]
+fn package_decl_public_method_queries_follow_same_file_identity() {
+    let source = r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value + self.limit
+    }
+
+    pub fn use_ping(self) -> Int {
+        return self.ping()
+    }
+}
+"#;
+
+    let analysis = analyzed(source);
+    let ping_use = source
+        .rfind(".ping")
+        .map(|offset| offset + 1)
+        .expect("public method use should exist");
+
+    let hover = analysis
+        .hover_at(ping_use)
+        .expect("public method use should hover");
+    assert_eq!(hover.kind, SymbolKind::Method);
+    assert_eq!(hover.detail, "fn ping(self) -> Int");
+    assert_eq!(hover.definition_span, Some(nth_span(source, "ping", 1)));
+
+    assert_eq!(
+        analysis.definition_at(ping_use),
+        Some(ql_analysis::DefinitionTarget {
+            kind: SymbolKind::Method,
+            name: "ping".to_owned(),
+            span: nth_span(source, "ping", 1),
+        })
+    );
+    assert_eq!(
+        analysis.references_at(ping_use),
+        Some(vec![
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Method,
+                name: "ping".to_owned(),
+                span: nth_span(source, "ping", 1),
+                is_definition: true,
+            },
+            ql_analysis::ReferenceTarget {
+                kind: SymbolKind::Method,
+                name: "ping".to_owned(),
+                span: Span::new(ping_use, ping_use + "ping".len()),
+                is_definition: false,
+            },
+        ])
+    );
+}
+
+#[test]
 fn opaque_type_queries_follow_type_namespace_item_symbols() {
     let source = r#"
 opaque type UserId = Int

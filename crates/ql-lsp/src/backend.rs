@@ -1958,38 +1958,35 @@ fn same_file_references_for_source_location(source_location: &Location) -> Optio
     let source_path = source_location.uri.to_file_path().ok()?;
     let source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
     let analysis = analyze_source(&source).ok()?;
-    let symbol_name = identifier_text_in_range(&source, source_location.range)?;
+    let definition_target =
+        definition_target_for_source_location(&analysis, &source, source_location.range)?;
     let (tokens, _) = lex(&source);
-    let mut best_locations = None;
-
-    for token in tokens
+    let mut locations = tokens
         .iter()
-        .filter(|token| token.kind == TokenKind::Ident && token.text == symbol_name)
-    {
-        let Some(locations) = references_for_analysis(
-            &source_location.uri,
-            &source,
-            &analysis,
-            span_to_range(&source, token.span).start,
-            true,
-        ) else {
-            continue;
-        };
-        if !locations
-            .iter()
-            .any(|location| same_location_anchor(location, source_location))
-        {
-            continue;
-        }
-        if best_locations
-            .as_ref()
-            .is_none_or(|best: &Vec<Location>| locations.len() > best.len())
-        {
-            best_locations = Some(locations);
-        }
+        .filter(|token| token.kind == TokenKind::Ident && token.text == definition_target.name)
+        .filter(|token| {
+            occurrence_matches_definition_target(&analysis, token.span.start, &definition_target)
+        })
+        .map(|token| {
+            Location::new(
+                source_location.uri.clone(),
+                span_to_range(&source, token.span),
+            )
+        })
+        .collect::<Vec<_>>();
+    if locations.is_empty() {
+        return None;
     }
-
-    best_locations
+    locations.sort_by_key(|location| {
+        (
+            location.range.start.line,
+            location.range.start.character,
+            location.range.end.line,
+            location.range.end.character,
+        )
+    });
+    locations.dedup_by(|left, right| same_location_anchor(left, right));
+    Some(locations)
 }
 
 fn merge_unique_reference_locations(locations: &mut Vec<Location>, additional: Vec<Location>) {
@@ -2007,26 +2004,65 @@ fn same_location_anchor(lhs: &Location, rhs: &Location) -> bool {
     lhs.uri == rhs.uri && ranges_overlap(lhs.range, rhs.range)
 }
 
+fn same_definition_target(
+    lhs: &ql_analysis::DefinitionTarget,
+    rhs: &ql_analysis::DefinitionTarget,
+) -> bool {
+    lhs.kind == rhs.kind && lhs.name == rhs.name && lhs.span == rhs.span
+}
+
+fn definition_target_for_source_location(
+    analysis: &Analysis,
+    source: &str,
+    range: tower_lsp::lsp_types::Range,
+) -> Option<ql_analysis::DefinitionTarget> {
+    let start_offset = position_to_offset(source, range.start)?;
+    let end_offset = position_to_offset(source, range.end)?;
+    let (tokens, _) = lex(source);
+    for token in tokens.iter().filter(|token| {
+        token.kind == TokenKind::Ident
+            && token.span.start >= start_offset
+            && token.span.end <= end_offset
+    }) {
+        if let Some(target) = analysis.definition_at(token.span.start) {
+            return Some(target);
+        }
+        if let Some(hover) = analysis.hover_at(token.span.start)
+            && let Some(definition_span) = hover.definition_span
+        {
+            return Some(ql_analysis::DefinitionTarget {
+                kind: hover.kind,
+                name: hover.name,
+                span: definition_span,
+            });
+        }
+    }
+    None
+}
+
+fn occurrence_matches_definition_target(
+    analysis: &Analysis,
+    offset: usize,
+    target: &ql_analysis::DefinitionTarget,
+) -> bool {
+    if let Some(definition) = analysis.definition_at(offset)
+        && same_definition_target(&definition, target)
+    {
+        return true;
+    }
+    analysis.hover_at(offset).is_some_and(|hover| {
+        hover.kind == target.kind
+            && hover.name == target.name
+            && hover.definition_span == Some(target.span)
+    })
+}
+
 fn ranges_overlap(lhs: tower_lsp::lsp_types::Range, rhs: tower_lsp::lsp_types::Range) -> bool {
     position_leq(lhs.start, rhs.end) && position_leq(rhs.start, lhs.end)
 }
 
 fn position_leq(lhs: tower_lsp::lsp_types::Position, rhs: tower_lsp::lsp_types::Position) -> bool {
     (lhs.line, lhs.character) <= (rhs.line, rhs.character)
-}
-
-fn identifier_text_in_range(source: &str, range: tower_lsp::lsp_types::Range) -> Option<String> {
-    let start_offset = position_to_offset(source, range.start)?;
-    let end_offset = position_to_offset(source, range.end)?;
-    let (tokens, _) = lex(source);
-    tokens
-        .iter()
-        .find(|token| {
-            token.kind == TokenKind::Ident
-                && token.span.start >= start_offset
-                && token.span.end <= end_offset
-        })
-        .map(|token| token.text.clone())
 }
 
 fn dependency_references_for_position(
@@ -3461,6 +3497,10 @@ package demo.dep
 
 pub fn exported(value: Int) -> Int {
     return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
 }
 "#,
         );
@@ -5886,6 +5926,10 @@ package demo.core
 pub fn exported(value: Int) -> Int {
     return value
 }
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
 "#,
         );
         temp.write(
@@ -6791,6 +6835,10 @@ package demo.core
 pub fn exported(value: Int) -> Int {
     return value
 }
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
 "#,
         );
         temp.write(
@@ -6847,8 +6895,7 @@ pub fn exported(value: Int) -> Int
             true,
         )
         .expect("workspace import references should exist");
-
-        assert_eq!(references.len(), 3);
+        assert_eq!(references.len(), 4);
         assert_eq!(
             references[0]
                 .uri
@@ -6873,6 +6920,21 @@ pub fn exported(value: Int) -> Int
         assert_eq!(
             references[2].range.start,
             offset_to_position(&source, nth_offset(&source, "run", 2)),
+        );
+        assert_eq!(
+            references[3]
+                .uri
+                .to_file_path()
+                .expect("source reference URI should convert to a file path")
+                .canonicalize()
+                .expect("source reference path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+        assert_eq!(
+            references[3].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 2)),
         );
     }
 
@@ -6899,6 +6961,10 @@ package demo.core
 
 pub fn exported(value: Int) -> Int {
     return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
 }
 "#,
         );
@@ -6956,7 +7022,7 @@ pub fn exported(value: Int) -> Int
         )
         .expect("broken-source workspace import references should exist");
 
-        assert_eq!(references.len(), 3);
+        assert_eq!(references.len(), 4);
         assert_eq!(
             references[0]
                 .uri
@@ -6981,6 +7047,21 @@ pub fn exported(value: Int) -> Int
         assert_eq!(
             references[2].range.start,
             offset_to_position(&source, nth_offset(&source, "run", 3)),
+        );
+        assert_eq!(
+            references[3]
+                .uri
+                .to_file_path()
+                .expect("source reference URI should convert to a file path")
+                .canonicalize()
+                .expect("source reference path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+        assert_eq!(
+            references[3].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 2)),
         );
     }
 
@@ -7667,10 +7748,18 @@ impl Config {
     pub fn ping(self) -> Int {
         return self.value + self.limit
     }
+
+    pub fn use_ping(self) -> Int {
+        return self.ping()
+    }
 }
 
 pub fn exported(value: Int) -> Int {
     return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
 }
 "#,
         );
@@ -7754,7 +7843,15 @@ pub fn exported(value: Int) -> Int
                 vec![1usize],
                 Some(2usize),
             ),
-            ("ping", 1usize, "ping", 1usize, 2usize, vec![1usize], None),
+            (
+                "ping",
+                1usize,
+                "ping",
+                1usize,
+                3usize,
+                vec![1usize],
+                Some(3usize),
+            ),
             (
                 "value",
                 2usize,
@@ -7769,9 +7866,9 @@ pub fn exported(value: Int) -> Int
                 2usize,
                 "exported",
                 1usize,
-                3usize,
+                4usize,
                 vec![1usize, 2usize],
-                None,
+                Some(2usize),
             ),
         ] {
             let references = workspace_source_references_for_dependency(
@@ -7784,7 +7881,7 @@ pub fn exported(value: Int) -> Int
             )
             .unwrap_or_else(|| panic!("workspace dependency references should exist for {needle}"));
 
-            assert_eq!(references.len(), expected_count);
+            assert_eq!(references.len(), expected_count, "{needle}");
             assert_eq!(
                 references[0]
                     .uri
