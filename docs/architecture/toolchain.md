@@ -507,7 +507,7 @@ LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
 - explicit struct literal / struct pattern field label 现在也能直接复用同一套 field 查询面
 - enum variant declaration / pattern use / constructor use 现在也能直接复用同一套查询面
 - `ql-analysis` 现在也能基于同一份 occurrence 索引导出 same-file semantic tokens
-- `ql-analysis` 现在也已把 resolved dependency import roots、dependency-backed value roots、enum variant、显式 struct field label 与唯一 method member 收进 package-aware semantic-token truth surface；`qlsp` 会在健康 package/workspace 上把这层高亮叠到同一份 editor token stream，而且 dependency import roots 现在会优先覆盖 generic import token 并提升成解析后的真实 symbol kind，而不是另起一套 LSP heuristics；即使当前文件本身有 parse errors 或 source diagnostics，只要 package/dependency 上下文还能 best-effort 恢复，这条 dependency-backed semantic-token 保留面也会继续留住，而且 broken-source fallback 下的 dependency import roots 现在也会按 resolved dependency symbol kind 继续保留
+- `ql-analysis` 现在也已把 resolved dependency import roots、dependency-backed value roots、enum variant、显式 struct field label 与唯一 method member 收进 package-aware semantic-token truth surface；`qlsp` 会在健康 package/workspace 上把这层高亮叠到同一份 editor token stream，而且 dependency import roots 现在会优先覆盖 generic import token 并提升成解析后的真实 symbol kind，而不是另起一套 LSP heuristics；即使当前文件本身有 parse errors 或 source diagnostics，只要 package/dependency 上下文还能 best-effort 恢复，这条 dependency-backed semantic-token 保留面也会继续留住，而且 broken-source fallback 下的 dependency import roots 现在也会按 resolved dependency symbol kind 继续保留；同一条 best-effort fallback 现在也开始保留 dependency import-root 的常用 hover / definition / declaration / references / `typeDefinition`
 - `qlsp` 的第一版已经落地在 `crates/ql-lsp`
 - 当前通过 stdio 运行，复用 `ql-analysis`
 - 当前已实现：
