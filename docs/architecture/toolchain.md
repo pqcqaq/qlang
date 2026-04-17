@@ -507,7 +507,7 @@ LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
 - explicit struct literal / struct pattern field label 现在也能直接复用同一套 field 查询面
 - enum variant declaration / pattern use / constructor use 现在也能直接复用同一套查询面
 - `ql-analysis` 现在也能基于同一份 occurrence 索引导出 same-file semantic tokens
-- `ql-analysis` 现在也已把 resolved dependency import roots、dependency-backed value roots、enum variant、显式 struct field label 与唯一 method member 收进 package-aware semantic-token truth surface；`qlsp` 会在健康 package/workspace 上把这层高亮叠到同一份 editor token stream，而且 dependency import roots 现在会优先覆盖 generic import token 并提升成解析后的真实 symbol kind，而不是另起一套 LSP heuristics；即使当前文件本身有 parse errors 或 source diagnostics，只要 package/dependency 上下文还能 best-effort 恢复，这条 dependency-backed semantic-token 保留面也会继续留住，而且 broken-source fallback 下的 dependency import roots 现在也会按 resolved dependency symbol kind 继续保留；同一条 best-effort fallback 现在也开始保留 dependency import-root 的常用 hover / definition / declaration / references / `typeDefinition` / `prepareRename` / `rename`，而 workspace/package import root 现在也已开始优先命中唯一 workspace 源码定义上的 `hover` / `definition` / `declaration`；如果命中的是 type-like import root，`typeDefinition` 也会优先命中同一份 workspace 源码定义，并在 parse-error 文件里继续保留源码优先 `hover` / `definition` / `declaration` / `references` / `typeDefinition`，以及 current-document `documentHighlight` / `prepareRename` / `rename`
+- `ql-analysis` 现在也已把 resolved dependency import roots、dependency-backed value roots、enum variant、显式 struct field label 与唯一 method member 收进 package-aware semantic-token truth surface；`qlsp` 会在健康 package/workspace 上把这层高亮叠到同一份 editor token stream，而且 dependency import roots 现在会优先覆盖 generic import token 并提升成解析后的真实 symbol kind，而不是另起一套 LSP heuristics；即使当前文件本身有 parse errors 或 source diagnostics，只要 package/dependency 上下文还能 best-effort 恢复，这条 dependency-backed semantic-token 保留面也会继续留住，而且 broken-source fallback 下的 dependency import roots 现在也会按 resolved dependency symbol kind 继续保留；同一条 best-effort fallback 现在也开始保留 dependency import-root 的常用 hover / definition / declaration / references / `typeDefinition` / `prepareRename` / `rename`，而 workspace/package import root 现在也已开始优先命中唯一 workspace 源码定义上的 `hover` / `definition` / `declaration`；如果命中的是 type-like import root，`typeDefinition` 也会优先命中同一份 workspace 源码定义，而 `references` 现在也会在当前文件 import occurrences 之外，额外带上源码定义文件里的同文件 occurrences，并在 parse-error 文件里继续保留源码优先 `hover` / `definition` / `declaration` / `references` / `typeDefinition`，以及 current-document `documentHighlight` / `prepareRename` / `rename`
 - `qlsp` 的第一版已经落地在 `crates/ql-lsp`
 - 当前通过 stdio 运行，复用 `ql-analysis`
 - 当前已实现：
@@ -516,13 +516,16 @@ LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
   - `textDocument/didClose`
   - `textDocument/hover`
   - `textDocument/definition`
+  - `textDocument/declaration`
+  - `textDocument/typeDefinition`
   - `textDocument/references`（当前为 same-file + package-aware current-document occurrences；include declaration 时会优先用唯一 workspace 源码定义替换声明位点，但还不是完整 workspace-wide reference index）
   - `textDocument/documentHighlight`（当前为 current-document occurrence highlighting，复用 same-file / package-aware references；parse-error 文件里的 workspace/package import root 也会继续保留当前文档高亮）
   - `textDocument/completion`（当前为 same-file lexical scope + parsed member token + parsed enum variant path，且支持 local import alias -> local enum item 的 variant follow-through，并保留 escaped identifier 的合法 insert text）
   - `textDocument/semanticTokens/full`（当前为 same-file source-backed symbol + healthy package/workspace 下的 package-aware dependency-backed tokens）
   - `textDocument/prepareRename`（当前仍是保守 prepare-rename；parse-error 文件里的 workspace/package import root 也会继续保留）
-  - `textDocument/rename`（当前为 same-file；parse-error 文件里的 workspace/package import root 也会继续保留当前文档内的保守重命名）
+  - `textDocument/rename`（当前为 same-file；direct import 若没有显式 `as`，rename 会保留原始 import path 并插入 alias，而不是直接改写导入目标；parse-error 文件里的 workspace/package import root 也会继续保留当前文档内的保守重命名）
   - `textDocument/publishDiagnostics`
+  - `workspace/symbol`
 - LSP 协议桥接已单独分层：
   - 位置 `Position <-> byte offset` 换算
   - `Span -> Range`
