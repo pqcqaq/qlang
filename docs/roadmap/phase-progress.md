@@ -64,6 +64,7 @@
 - direct structured question-indexed receiver-method completion 现在也已有独立回归文件，显式覆盖 `(if ...)[0].ge` / `(match ...)[0].ge` 在 bridge 与 fallback 下的同轴补全合同。
 - direct structured question-indexed receiver-field queries 现在也已有独立回归文件，显式覆盖 `(if ...)[0].value` / `(match ...)[0].value` 的 hover / definition / declaration / references 在 bridge 与 fallback 下的同轴合同。
 - direct structured question-indexed receiver-method queries 现在也已有独立回归文件，显式覆盖 `(if ...)[0].get()` / `(match ...)[0].get()` 的 hover / definition / declaration / references 在 bridge 与 fallback 下的同轴合同。
+- direct indexed question-iterable receiver-field completion 现在也已有独立回归文件，显式覆盖 `config.maybe_children()?[0].va` 在正常 dependency 路径与 broken-source fallback 下的同轴补全合同。
 - direct indexed iterable receiver-field queries 现在也已有独立回归文件，显式覆盖 `config.children[0].value` 的 hover / definition / declaration / references 在正常 dependency 路径与 broken-source fallback 下的同轴合同。
 - direct indexed question-iterable receiver-field queries 现在也已有独立回归文件，显式覆盖 `config.maybe_children()?[0].value` 的 hover / definition / declaration / references 在正常 dependency 路径与 broken-source fallback 下的同轴合同。
 - direct indexed iterable receiver-method queries 现在也已有独立回归文件，显式覆盖 `config.children()[0].get()` 的 hover / definition / declaration / references 在正常 dependency 路径与 broken-source fallback 下的同轴合同。
