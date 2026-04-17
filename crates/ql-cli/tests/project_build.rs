@@ -535,6 +535,224 @@ dep = "../dep"
 }
 
 #[test]
+fn build_package_path_json_reports_dependency_interface_prep_manifest_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-dependency-prep-manifest");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(&dep_root).expect("create dependency root for prep manifest failure");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for prep manifest failure");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+"#,
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write("app/src/main.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` dependency interface prep manifest failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-package-json-dependency-prep-manifest",
+        "package build json dependency interface prep manifest failure",
+        &output,
+        1,
+    )
+    .expect("package-path `ql build --json` should fail on dependency prep manifest failures");
+    expect_empty_stderr(
+        "project-build-package-json-dependency-prep-manifest",
+        "package build json dependency interface prep manifest failure",
+        &stderr,
+    )
+    .expect("dependency prep manifest failures should stay on stdout in json mode");
+
+    let json = parse_json_output(
+        "project-build-package-json-dependency-prep-manifest",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_targets"], serde_json::json!([]));
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(
+        json["failure"]["manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["package_name"], JsonValue::Null);
+    assert_eq!(json["failure"]["selected"], false);
+    assert_eq!(json["failure"]["dependency_only"], true);
+    assert_eq!(json["failure"]["kind"], "interface");
+    assert_eq!(
+        json["failure"]["path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["error_kind"], "manifest");
+    assert_eq!(json["failure"]["stage"], "dependency-interface-prep");
+    assert_eq!(
+        json["failure"]["owner_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["failure"]["reference_manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["reference"], "../dep");
+    assert_eq!(json["failure"]["failing_dependency_count"], 1);
+    assert_eq!(
+        json["failure"]["first_failing_dependency_manifest"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert!(
+        json["failure"]["message"]
+            .as_str()
+            .expect("dependency prep manifest failure should expose a message")
+            .contains("does not declare `[package].name`"),
+        "dependency prep manifest failure should preserve the broken dependency manifest detail: {json}"
+    );
+}
+
+#[test]
+fn build_package_path_json_reports_dependency_interface_prep_output_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-dependency-prep-output");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src"))
+        .expect("create dependency source tree for prep output failure");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for prep output failure");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write("dep/src/lib.ql", "pub fn exported() -> Int { return 1 }\n");
+    let interface_output = dep_root.join("dep.qi");
+    std::fs::create_dir_all(&interface_output)
+        .expect("create blocking dependency interface directory for prep output failure");
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write("app/src/main.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` dependency interface prep output failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-package-json-dependency-prep-output",
+        "package build json dependency interface prep output failure",
+        &output,
+        1,
+    )
+    .expect("package-path `ql build --json` should fail on dependency prep output failures");
+    expect_empty_stderr(
+        "project-build-package-json-dependency-prep-output",
+        "package build json dependency interface prep output failure",
+        &stderr,
+    )
+    .expect("dependency prep output failures should stay on stdout in json mode");
+
+    let json = parse_json_output("project-build-package-json-dependency-prep-output", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_targets"], serde_json::json!([]));
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(
+        json["failure"]["manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["package_name"], JsonValue::Null);
+    assert_eq!(json["failure"]["selected"], false);
+    assert_eq!(json["failure"]["dependency_only"], true);
+    assert_eq!(json["failure"]["kind"], "interface");
+    assert_eq!(
+        json["failure"]["path"],
+        interface_output.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["error_kind"], "interface-output");
+    assert_eq!(json["failure"]["stage"], "dependency-interface-prep");
+    assert_eq!(
+        json["failure"]["output_path"],
+        interface_output.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["failure"]["owner_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["failure"]["reference_manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["reference"], "../dep");
+    assert_eq!(json["failure"]["failing_dependency_count"], 1);
+    assert_eq!(
+        json["failure"]["first_failing_dependency_manifest"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert!(
+        json["failure"]["message"]
+            .as_str()
+            .expect("dependency prep output failure should expose a message")
+            .contains("failed to write interface"),
+        "dependency prep output failure should preserve the blocked interface write detail: {json}"
+    );
+    assert!(
+        interface_output.is_dir(),
+        "dependency prep output failure should preserve `{}` as a directory",
+        interface_output.display()
+    );
+}
+
+#[test]
 fn build_package_path_json_reports_emit_interface_source_failure() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-package-json-emit-interface-source-failure");

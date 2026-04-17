@@ -2059,6 +2059,141 @@ fn build_json_emit_interface_failure(
     }
 }
 
+fn build_json_dependency_interface_prep_failure(
+    _request_path: &Path,
+    failure: &ReferenceInterfacePrepError,
+) -> JsonValue {
+    let manifest_path = failure.first_failure.manifest_path.as_deref().or(Some(
+        failure.first_failure.reference_manifest_path.as_path(),
+    ));
+    let reference_manifest_path = normalize_path(&failure.first_failure.reference_manifest_path);
+    let owner_manifest_path = failure
+        .first_failure
+        .owner_manifest_path
+        .as_ref()
+        .map(|path| normalize_path(path));
+    let first_failing_dependency_manifest = failure
+        .first_failure_manifest
+        .as_ref()
+        .map(|path| normalize_path(path));
+    let (error_kind, message, output_path, source_root, failing_source_count, first_failing_source) =
+        match &failure.first_failure.failure_kind {
+            ReferenceInterfacePrepFailureKind::Project {
+                error_kind,
+                message,
+                source_root,
+            } => (
+                *error_kind,
+                message.clone(),
+                None,
+                source_root.as_ref().map(|path| normalize_path(path)),
+                None,
+                None,
+            ),
+            ReferenceInterfacePrepFailureKind::InterfaceEmit(error) => match error {
+                EmitPackageInterfaceError::ManifestNotFound { start } => (
+                    "project-context",
+                    format!(
+                        "could not find `qlang.toml` starting from `{}`",
+                        normalize_path(start)
+                    ),
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                EmitPackageInterfaceError::ManifestFailure { message, .. } => {
+                    ("manifest", message.clone(), None, None, None, None)
+                }
+                EmitPackageInterfaceError::NoSourceFilesFailure { source_root, .. } => (
+                    "package-sources",
+                    format!(
+                        "no `.ql` files found under `{}`",
+                        normalize_path(source_root)
+                    ),
+                    None,
+                    Some(normalize_path(source_root)),
+                    None,
+                    None,
+                ),
+                EmitPackageInterfaceError::SourceRootFailure { source_root, .. } => (
+                    "package-source-root",
+                    format!(
+                        "package source directory `{}` does not exist",
+                        normalize_path(source_root)
+                    ),
+                    None,
+                    Some(normalize_path(source_root)),
+                    None,
+                    None,
+                ),
+                EmitPackageInterfaceError::OutputPathFailure {
+                    output_path,
+                    message,
+                    ..
+                } => (
+                    "interface-output",
+                    message.clone(),
+                    Some(normalize_path(output_path)),
+                    None,
+                    None,
+                    None,
+                ),
+                EmitPackageInterfaceError::SourceFailure {
+                    failure_count,
+                    first_failing_source,
+                    ..
+                } => (
+                    "package-sources",
+                    format!(
+                        "package interface emission found {failure_count} failing source file(s)"
+                    ),
+                    None,
+                    None,
+                    Some(*failure_count),
+                    first_failing_source
+                        .as_ref()
+                        .map(|path| normalize_path(path)),
+                ),
+                EmitPackageInterfaceError::Code { message, .. } => (
+                    "interface",
+                    message
+                        .clone()
+                        .unwrap_or_else(|| "dependency interface preparation failed".to_owned()),
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            },
+        };
+    let display_path = output_path
+        .clone()
+        .or_else(|| source_root.clone())
+        .or_else(|| manifest_path.map(normalize_path))
+        .unwrap_or_else(|| reference_manifest_path.clone());
+    json!({
+        "manifest_path": manifest_path.map(normalize_path),
+        "package_name": JsonValue::Null,
+        "selected": false,
+        "dependency_only": true,
+        "kind": "interface",
+        "path": display_path,
+        "error_kind": error_kind,
+        "stage": "dependency-interface-prep",
+        "message": message,
+        "output_path": output_path,
+        "source_root": source_root,
+        "failing_source_count": failing_source_count,
+        "first_failing_source": first_failing_source,
+        "owner_manifest_path": owner_manifest_path,
+        "reference_manifest_path": reference_manifest_path,
+        "reference": failure.first_failure.reference.clone(),
+        "failing_dependency_count": failure.failure_count,
+        "first_failing_dependency_manifest": first_failing_dependency_manifest,
+    })
+}
+
 fn emit_build_json_failure(
     json_report: &mut Option<BuildJsonReport>,
     failure: JsonValue,
@@ -3701,7 +3836,18 @@ fn build_project_path(
         .iter()
         .map(|member| member.member_manifest_path.clone())
         .collect::<Vec<_>>();
-    prepare_reference_interfaces_for_manifests(&member_manifest_paths, "`ql build`", !json)?;
+    if json {
+        if let Err(failure) =
+            prepare_reference_interfaces_for_manifests_quiet(&member_manifest_paths)
+        {
+            return emit_build_json_failure(
+                &mut json_report,
+                build_json_dependency_interface_prep_failure(path, &failure),
+            );
+        }
+    } else {
+        prepare_reference_interfaces_for_manifests(&member_manifest_paths, "`ql build`", true)?;
+    }
 
     let build_plan = resolve_project_build_plan_members(&members, &selected_members, "`ql build`")?;
 
@@ -6697,6 +6843,36 @@ struct ReferenceInterfaceCheckResult {
     first_failure_manifest: Option<PathBuf>,
 }
 
+struct ReferenceInterfacePrepError {
+    failure_count: usize,
+    first_failure_manifest: Option<PathBuf>,
+    first_failure: ReferenceInterfacePrepFailure,
+}
+
+struct ReferenceInterfacePrepFailure {
+    owner_manifest_path: Option<PathBuf>,
+    reference: Option<String>,
+    reference_manifest_path: PathBuf,
+    manifest_path: Option<PathBuf>,
+    failure_kind: ReferenceInterfacePrepFailureKind,
+}
+
+enum ReferenceInterfacePrepFailureKind {
+    Project {
+        error_kind: &'static str,
+        message: String,
+        source_root: Option<PathBuf>,
+    },
+    InterfaceEmit(EmitPackageInterfaceError),
+}
+
+#[derive(Default)]
+struct ReferenceInterfaceSyncQuietResult {
+    failure_count: usize,
+    first_failure_manifest: Option<PathBuf>,
+    first_failure: Option<ReferenceInterfacePrepFailure>,
+}
+
 fn emit_package_interface_path(
     path: &Path,
     output: Option<&Path>,
@@ -7376,6 +7552,222 @@ fn sync_reference_interfaces_recursive(
             }
         }
         sync_reference_interfaces_recursive(&dependency_manifest, visited, result, command_label);
+    }
+}
+
+fn prepare_reference_interfaces_for_manifests_quiet(
+    manifest_paths: &[PathBuf],
+) -> Result<(), ReferenceInterfacePrepError> {
+    if manifest_paths.is_empty() {
+        return Ok(());
+    }
+
+    let mut visited = BTreeSet::new();
+    let mut result = ReferenceInterfaceSyncQuietResult::default();
+    for manifest_path in manifest_paths {
+        let manifest = load_project_manifest(manifest_path).map_err(|error| {
+            let failure =
+                reference_interface_prep_project_failure(None, None, manifest_path, &error);
+            ReferenceInterfacePrepError {
+                failure_count: 1,
+                first_failure_manifest: failure.manifest_path.clone(),
+                first_failure: failure,
+            }
+        })?;
+        sync_reference_interfaces_recursive_quiet(&manifest, &mut visited, &mut result);
+    }
+
+    if result.failure_count > 0 {
+        return Err(ReferenceInterfacePrepError {
+            failure_count: result.failure_count,
+            first_failure_manifest: result.first_failure_manifest,
+            first_failure: result
+                .first_failure
+                .expect("quiet dependency interface prep failure should record the first failure"),
+        });
+    }
+
+    Ok(())
+}
+
+fn sync_reference_interfaces_recursive_quiet(
+    manifest: &ql_project::ProjectManifest,
+    visited: &mut BTreeSet<PathBuf>,
+    result: &mut ReferenceInterfaceSyncQuietResult,
+) {
+    let manifest_path = manifest.manifest_path.clone();
+    if !visited.insert(manifest_path) {
+        return;
+    }
+
+    for reference in &manifest.references.packages {
+        let reference_manifest_path = reference_manifest_path(manifest, reference);
+        let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+        let dependency_manifest = match load_project_manifest(&manifest_dir.join(reference)) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                record_reference_interface_prep_failure(
+                    result,
+                    reference_interface_prep_project_failure(
+                        Some(&manifest.manifest_path),
+                        Some(reference.as_str()),
+                        &reference_manifest_path,
+                        &error,
+                    ),
+                );
+                continue;
+            }
+        };
+        let interface_path = match default_interface_path(&dependency_manifest) {
+            Ok(path) => path,
+            Err(error) => {
+                record_reference_interface_prep_failure(
+                    result,
+                    reference_interface_prep_project_failure(
+                        Some(&manifest.manifest_path),
+                        Some(reference.as_str()),
+                        &reference_manifest_path,
+                        &error,
+                    ),
+                );
+                continue;
+            }
+        };
+        if interface_artifact_status(&dependency_manifest, &interface_path)
+            != InterfaceArtifactStatus::Valid
+        {
+            if let Err(error) =
+                emit_package_interface_path_quiet(&dependency_manifest.manifest_path, None, false)
+            {
+                record_reference_interface_prep_failure(
+                    result,
+                    reference_interface_prep_emit_failure(
+                        Some(&manifest.manifest_path),
+                        Some(reference.as_str()),
+                        &reference_manifest_path,
+                        &dependency_manifest.manifest_path,
+                        error,
+                    ),
+                );
+            }
+        }
+        sync_reference_interfaces_recursive_quiet(&dependency_manifest, visited, result);
+    }
+}
+
+fn reference_interface_prep_project_failure(
+    owner_manifest_path: Option<&Path>,
+    reference: Option<&str>,
+    reference_manifest_path: &Path,
+    error: &ql_project::ProjectError,
+) -> ReferenceInterfacePrepFailure {
+    let (manifest_path, error_kind, message, source_root) =
+        if let ql_project::ProjectError::ManifestNotFound { start } = error {
+            (
+                Some(reference_manifest_path.to_path_buf()),
+                "manifest",
+                format!(
+                    "could not find `qlang.toml` starting from `{}`",
+                    normalize_path(start)
+                ),
+                None,
+            )
+        } else if let Some(manifest_path) =
+            package_missing_name_manifest_path_from_project_error(error)
+        {
+            (
+                Some(manifest_path.to_path_buf()),
+                "manifest",
+                format!(
+                    "manifest `{}` does not declare `[package].name`",
+                    normalize_path(manifest_path)
+                ),
+                None,
+            )
+        } else if let ql_project::ProjectError::PackageSourceRootNotFound { path } = error {
+            (
+                Some(reference_manifest_path.to_path_buf()),
+                "package-source-root",
+                format!(
+                    "package source directory `{}` does not exist",
+                    normalize_path(path)
+                ),
+                Some(path.clone()),
+            )
+        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(error) {
+            (
+                Some(manifest_path.to_path_buf()),
+                "manifest",
+                error.to_string(),
+                None,
+            )
+        } else {
+            (
+                Some(reference_manifest_path.to_path_buf()),
+                "manifest",
+                error.to_string(),
+                None,
+            )
+        };
+    ReferenceInterfacePrepFailure {
+        owner_manifest_path: owner_manifest_path.map(Path::to_path_buf),
+        reference: reference.map(str::to_owned),
+        reference_manifest_path: reference_manifest_path.to_path_buf(),
+        manifest_path,
+        failure_kind: ReferenceInterfacePrepFailureKind::Project {
+            error_kind,
+            message,
+            source_root,
+        },
+    }
+}
+
+fn reference_interface_prep_emit_failure(
+    owner_manifest_path: Option<&Path>,
+    reference: Option<&str>,
+    reference_manifest_path: &Path,
+    dependency_manifest_path: &Path,
+    error: EmitPackageInterfaceError,
+) -> ReferenceInterfacePrepFailure {
+    let manifest_path = match &error {
+        EmitPackageInterfaceError::OutputPathFailure {
+            manifest_path: output_manifest_path,
+            ..
+        } => output_manifest_path
+            .clone()
+            .or(Some(dependency_manifest_path.to_path_buf())),
+        EmitPackageInterfaceError::ManifestFailure { manifest_path, .. } => {
+            Some(manifest_path.clone())
+        }
+        EmitPackageInterfaceError::NoSourceFilesFailure { manifest_path, .. } => {
+            Some(manifest_path.clone())
+        }
+        EmitPackageInterfaceError::SourceRootFailure { manifest_path, .. } => {
+            Some(manifest_path.clone())
+        }
+        _ => Some(dependency_manifest_path.to_path_buf()),
+    };
+    ReferenceInterfacePrepFailure {
+        owner_manifest_path: owner_manifest_path.map(Path::to_path_buf),
+        reference: reference.map(str::to_owned),
+        reference_manifest_path: reference_manifest_path.to_path_buf(),
+        manifest_path,
+        failure_kind: ReferenceInterfacePrepFailureKind::InterfaceEmit(error),
+    }
+}
+
+fn record_reference_interface_prep_failure(
+    result: &mut ReferenceInterfaceSyncQuietResult,
+    failure: ReferenceInterfacePrepFailure,
+) {
+    result.failure_count += 1;
+    let manifest_path = failure
+        .manifest_path
+        .clone()
+        .unwrap_or_else(|| failure.reference_manifest_path.clone());
+    record_reference_failure_manifest(&mut result.first_failure_manifest, manifest_path);
+    if result.first_failure.is_none() {
+        result.first_failure = Some(failure);
     }
 }
 
