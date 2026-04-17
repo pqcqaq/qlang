@@ -1531,6 +1531,173 @@ dep = "../dep"
 }
 
 #[test]
+fn build_package_path_json_reports_target_prep_dependency_extern_conflict() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-target-prep-extern-conflict");
+    let dep_a_root = temp.path().join("dep-a");
+    let dep_b_root = temp.path().join("dep-b");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_a_root.join("src"))
+        .expect("create dep-a source tree for target-prep extern conflict");
+    std::fs::create_dir_all(dep_b_root.join("src"))
+        .expect("create dep-b source tree for target-prep extern conflict");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for target-prep extern conflict");
+
+    let dep_a_manifest = temp.write(
+        "dep-a/qlang.toml",
+        r#"
+[package]
+name = "dep_a"
+"#,
+    );
+    temp.write(
+        "dep-a/src/lib.ql",
+        "extern \"c\" pub fn q_shared() -> Int { return 1 }\n",
+    );
+    let dep_b_manifest = temp.write(
+        "dep-b/qlang.toml",
+        r#"
+[package]
+name = "dep_b"
+"#,
+    );
+    temp.write(
+        "dep-b/src/lib.ql",
+        "extern \"c\" pub fn q_shared() -> Int { return 2 }\n",
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep_a = "../dep-a"
+dep_b = "../dep-b"
+"#,
+    );
+    temp.write("app/src/main.ql", "fn main() -> Int { return 0 }\n");
+
+    let dep_a_output = static_library_output_path(&dep_a_root.join("target/ql/debug"), "lib");
+    let dep_b_output = static_library_output_path(&dep_b_root.join("target/ql/debug"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` target-prep dependency extern conflict",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-package-json-target-prep-extern-conflict",
+        "package build json target-prep dependency extern conflict",
+        &output,
+        1,
+    )
+    .expect(
+        "package-path `ql build --json` should fail on target-prep dependency extern conflicts",
+    );
+    expect_empty_stderr(
+        "project-build-package-json-target-prep-extern-conflict",
+        "package build json target-prep dependency extern conflict",
+        &stderr,
+    )
+    .expect("target-prep dependency extern conflicts should stay on stdout in json mode");
+
+    let json = parse_json_output(
+        "project-build-package-json-target-prep-extern-conflict",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("target-prep conflict json should expose built_targets");
+    assert_eq!(built_targets.len(), 2);
+    assert_eq!(
+        built_targets[0]["manifest_path"],
+        dep_a_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(built_targets[0]["package_name"], "dep_a");
+    assert_eq!(built_targets[0]["selected"], false);
+    assert_eq!(built_targets[0]["dependency_only"], true);
+    assert_eq!(built_targets[0]["kind"], "lib");
+    assert_eq!(
+        built_targets[0]["artifact_path"],
+        dep_a_output.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        built_targets[1]["manifest_path"],
+        dep_b_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(built_targets[1]["package_name"], "dep_b");
+    assert_eq!(built_targets[1]["selected"], false);
+    assert_eq!(built_targets[1]["dependency_only"], true);
+    assert_eq!(built_targets[1]["kind"], "lib");
+    assert_eq!(
+        built_targets[1]["artifact_path"],
+        dep_b_output.display().to_string().replace('\\', "/")
+    );
+
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(
+        json["failure"]["manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["package_name"], "app");
+    assert_eq!(json["failure"]["selected"], true);
+    assert_eq!(json["failure"]["dependency_only"], false);
+    assert_eq!(json["failure"]["kind"], "bin");
+    assert_eq!(json["failure"]["path"], "src/main.ql");
+    assert_eq!(json["failure"]["stage"], "target-prep");
+    assert_eq!(json["failure"]["error_kind"], "dependency-extern-conflict");
+    assert_eq!(json["failure"]["symbol"], "q_shared");
+    assert_eq!(json["failure"]["first_dependency_package"], "dep_a");
+    assert_eq!(
+        json["failure"]["first_dependency_manifest_path"],
+        dep_a_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["conflicting_dependency_package"], "dep_b");
+    assert_eq!(
+        json["failure"]["conflicting_dependency_manifest_path"],
+        dep_b_manifest.display().to_string().replace('\\', "/")
+    );
+    assert!(
+        json["failure"]["message"]
+            .as_str()
+            .expect("target-prep conflict json should expose a message")
+            .contains("conflicting direct dependency extern imports"),
+        "target-prep conflict json should preserve the extern collision detail: {json}"
+    );
+
+    expect_file_exists(
+        "project-build-package-json-target-prep-extern-conflict",
+        &dep_a_output,
+        "dep-a artifact",
+        "package build json target-prep dependency extern conflict",
+    )
+    .expect("target-prep conflict should preserve dep-a artifact");
+    expect_file_exists(
+        "project-build-package-json-target-prep-extern-conflict",
+        &dep_b_output,
+        "dep-b artifact",
+        "package build json target-prep dependency extern conflict",
+    )
+    .expect("target-prep conflict should preserve dep-b artifact");
+}
+
+#[test]
 fn build_project_json_reports_emit_interface_output_failure() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-json-emit-interface-output-failure");

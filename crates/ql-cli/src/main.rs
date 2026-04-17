@@ -2230,6 +2230,119 @@ fn build_json_build_plan_failure(
     }
 }
 
+fn build_json_target_prep_failure(
+    member: &WorkspaceBuildTargets,
+    target: &BuildTarget,
+    selected: bool,
+    failure: &PrepareProjectTargetBuildError,
+) -> JsonValue {
+    let (
+        error_kind,
+        message,
+        dependency_manifest_path,
+        dependency_package,
+        interface_path,
+        symbol,
+        first_dependency_package,
+        first_dependency_manifest_path,
+        conflicting_dependency_package,
+        conflicting_dependency_manifest_path,
+        io_path,
+    ) = match &failure.failure_kind {
+        PrepareProjectTargetBuildFailureKind::DependencyManifest {
+            dependency_manifest_path,
+            error_kind,
+            message,
+        } => (
+            *error_kind,
+            message.clone(),
+            dependency_manifest_path
+                .as_ref()
+                .map(|path| json!(normalize_path(path)))
+                .unwrap_or(JsonValue::Null),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+        ),
+        PrepareProjectTargetBuildFailureKind::DependencyInterface {
+            dependency_manifest_path,
+            dependency_package,
+            interface_path,
+            message,
+        } => (
+            "dependency-interface",
+            message.clone(),
+            json!(normalize_path(dependency_manifest_path)),
+            json!(dependency_package),
+            json!(normalize_path(interface_path)),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+        ),
+        PrepareProjectTargetBuildFailureKind::DependencyExternConflict {
+            symbol,
+            first_package,
+            first_manifest_path,
+            conflicting_package,
+            conflicting_manifest_path,
+        } => (
+            "dependency-extern-conflict",
+            format!("found conflicting direct dependency extern imports for `{symbol}`"),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            json!(symbol),
+            json!(first_package),
+            json!(normalize_path(first_manifest_path)),
+            json!(conflicting_package),
+            json!(normalize_path(conflicting_manifest_path)),
+            JsonValue::Null,
+        ),
+        PrepareProjectTargetBuildFailureKind::SourceRead { path, message } => (
+            "io",
+            message.clone(),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            json!(normalize_path(path)),
+        ),
+    };
+
+    json!({
+        "manifest_path": normalize_path(&member.member_manifest_path),
+        "package_name": member.package_name,
+        "selected": selected,
+        "dependency_only": !selected,
+        "kind": target.kind.as_str(),
+        "path": project_target_display_path(&member.member_manifest_path, &target.path),
+        "error_kind": error_kind,
+        "stage": "target-prep",
+        "message": message,
+        "dependency_manifest_path": dependency_manifest_path,
+        "dependency_package": dependency_package,
+        "interface_path": interface_path,
+        "symbol": symbol,
+        "first_dependency_package": first_dependency_package,
+        "first_dependency_manifest_path": first_dependency_manifest_path,
+        "conflicting_dependency_package": conflicting_dependency_package,
+        "conflicting_dependency_manifest_path": conflicting_dependency_manifest_path,
+        "io_path": io_path,
+    })
+}
+
 fn emit_build_json_failure(
     json_report: &mut Option<BuildJsonReport>,
     failure: JsonValue,
@@ -3962,8 +4075,7 @@ fn build_project_path(
         };
         let first_artifact = if json {
             match build_project_source_target_result(
-                &members,
-                "`ql build`",
+                &build_plan,
                 &plan_member.member.member_manifest_path,
                 &first_target.path,
                 &first_options,
@@ -3971,7 +4083,17 @@ fn build_project_path(
                 profile_overridden,
             ) {
                 Ok(artifact) => artifact,
-                Err(BuildTargetJsonError::Early(code)) => return Err(code),
+                Err(BuildTargetJsonError::Early(error)) => {
+                    return emit_build_json_failure(
+                        &mut json_report,
+                        build_json_target_prep_failure(
+                            &plan_member.member,
+                            first_target,
+                            plan_member.require_targets,
+                            &error,
+                        ),
+                    );
+                }
                 Err(BuildTargetJsonError::Build(error)) => {
                     let mut report = json_report
                         .take()
@@ -4027,8 +4149,7 @@ fn build_project_path(
             };
             let artifact = if json {
                 match build_project_source_target_result(
-                    &members,
-                    "`ql build`",
+                    &build_plan,
                     &plan_member.member.member_manifest_path,
                     &target.path,
                     &target_options,
@@ -4036,7 +4157,17 @@ fn build_project_path(
                     profile_overridden,
                 ) {
                     Ok(artifact) => artifact,
-                    Err(BuildTargetJsonError::Early(code)) => return Err(code),
+                    Err(BuildTargetJsonError::Early(error)) => {
+                        return emit_build_json_failure(
+                            &mut json_report,
+                            build_json_target_prep_failure(
+                                &plan_member.member,
+                                target,
+                                plan_member.require_targets,
+                                &error,
+                            ),
+                        );
+                    }
                     Err(BuildTargetJsonError::Build(error)) => {
                         let mut report = json_report
                             .take()
@@ -4127,8 +4258,43 @@ struct ProjectBuildPlanMember {
 }
 
 enum BuildTargetJsonError {
-    Early(u8),
+    Early(PrepareProjectTargetBuildError),
     Build(BuildError),
+}
+
+struct PrepareProjectTargetBuildError {
+    failure_kind: PrepareProjectTargetBuildFailureKind,
+}
+
+enum PrepareProjectTargetBuildFailureKind {
+    DependencyManifest {
+        dependency_manifest_path: Option<PathBuf>,
+        error_kind: &'static str,
+        message: String,
+    },
+    DependencyInterface {
+        dependency_manifest_path: PathBuf,
+        dependency_package: String,
+        interface_path: PathBuf,
+        message: String,
+    },
+    DependencyExternConflict {
+        symbol: String,
+        first_package: String,
+        first_manifest_path: PathBuf,
+        conflicting_package: String,
+        conflicting_manifest_path: PathBuf,
+    },
+    SourceRead {
+        path: PathBuf,
+        message: String,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct DependencyExternOwner {
+    package_name: String,
+    manifest_path: PathBuf,
 }
 
 struct BuildPlanResolveError {
@@ -4564,6 +4730,32 @@ fn report_project_build_dependency_error(
     }
 }
 
+fn target_prep_dependency_manifest_failure(
+    dependency_manifest_path: Option<&Path>,
+    error: &ql_project::ProjectError,
+) -> PrepareProjectTargetBuildError {
+    let dependency_manifest_path =
+        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error) {
+            Some(manifest_path.to_path_buf())
+        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(error) {
+            Some(manifest_path.to_path_buf())
+        } else {
+            dependency_manifest_path.map(Path::to_path_buf)
+        };
+    let error_kind = match error {
+        ql_project::ProjectError::PackageSourceRootNotFound { .. } => "package-source-root",
+        _ => "manifest",
+    };
+
+    PrepareProjectTargetBuildError {
+        failure_kind: PrepareProjectTargetBuildFailureKind::DependencyManifest {
+            dependency_manifest_path,
+            error_kind,
+            message: error.to_string(),
+        },
+    }
+}
+
 fn report_project_build_dependency_cycle(
     command_label: &str,
     visiting: &[String],
@@ -4634,22 +4826,19 @@ fn build_project_source_target_silent(
 }
 
 fn build_project_source_target_result(
-    workspace_members: &[WorkspaceBuildTargets],
-    command_label: &str,
+    build_plan: &[ProjectBuildPlanMember],
     manifest_path: &Path,
     path: &Path,
     options: &BuildOptions,
     dependency_options: &BuildOptions,
     profile_overridden: bool,
 ) -> Result<BuildArtifact, BuildTargetJsonError> {
-    let prepared = prepare_project_target_build(
-        workspace_members,
-        command_label,
+    let prepared = prepare_project_target_build_quiet(
+        build_plan,
         manifest_path,
         path,
         dependency_options,
         profile_overridden,
-        false,
     )
     .map_err(BuildTargetJsonError::Early)?;
     build_single_source_target_with_inputs_result(
@@ -4683,6 +4872,39 @@ fn build_project_source_target_quiet(
         false,
         false,
     )
+}
+
+fn prepare_project_target_build_quiet(
+    build_plan: &[ProjectBuildPlanMember],
+    manifest_path: &Path,
+    path: &Path,
+    dependency_options: &BuildOptions,
+    profile_overridden: bool,
+) -> Result<PreparedProjectTargetBuild, PrepareProjectTargetBuildError> {
+    let additional_link_inputs =
+        project_dependency_link_inputs(build_plan, dependency_options, profile_overridden);
+    let dependency_declarations =
+        render_direct_dependency_extern_declarations_quiet(manifest_path)?;
+
+    let source_override = if dependency_declarations.is_empty() {
+        None
+    } else {
+        let source = fs::read_to_string(path).map_err(|error| PrepareProjectTargetBuildError {
+            failure_kind: PrepareProjectTargetBuildFailureKind::SourceRead {
+                path: path.to_path_buf(),
+                message: format!("failed to access `{}`: {error}", normalize_path(path)),
+            },
+        })?;
+        Some(append_dependency_declarations(
+            &source,
+            &dependency_declarations,
+        ))
+    };
+
+    Ok(PreparedProjectTargetBuild {
+        source_override,
+        additional_link_inputs,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4824,7 +5046,7 @@ fn render_direct_dependency_extern_declarations(
     })?;
 
     let mut declarations = Vec::new();
-    let mut owners_by_symbol = BTreeMap::<String, String>::new();
+    let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
 
     for dependency in direct_dependencies {
         let dependency_package = match package_name(&dependency) {
@@ -4863,6 +5085,7 @@ fn render_direct_dependency_extern_declarations(
         for module in &artifact.modules {
             collect_dependency_module_extern_declarations(
                 &dependency_package,
+                &dependency.manifest_path,
                 module.source_path.as_str(),
                 &module.syntax,
                 &module.contents,
@@ -4874,7 +5097,7 @@ fn render_direct_dependency_extern_declarations(
                     eprintln!(
                         "error: {command_label} found conflicting direct dependency extern imports for `{symbol}`"
                     );
-                    eprintln!("note: first package: `{owner}`");
+                    eprintln!("note: first package: `{}`", owner.package_name);
                     eprintln!("note: conflicting package: `{dependency_package}`");
                     eprintln!(
                         "hint: keep direct dependency `extern \"c\"` names unique until package-qualified extern resolution lands"
@@ -4888,14 +5111,84 @@ fn render_direct_dependency_extern_declarations(
     Ok(declarations.join("\n\n"))
 }
 
+fn render_direct_dependency_extern_declarations_quiet(
+    manifest_path: &Path,
+) -> Result<String, PrepareProjectTargetBuildError> {
+    let manifest = load_project_manifest(manifest_path)
+        .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
+    let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+
+    let mut declarations = Vec::new();
+    let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
+
+    for reference in &manifest.references.packages {
+        let reference_manifest_path = reference_manifest_path(&manifest, reference);
+        let dependency_manifest =
+            load_project_manifest(&manifest_dir.join(reference)).map_err(|error| {
+                target_prep_dependency_manifest_failure(Some(&reference_manifest_path), &error)
+            })?;
+        let dependency_package = package_name(&dependency_manifest)
+            .map(str::to_owned)
+            .map_err(|error| {
+                target_prep_dependency_manifest_failure(
+                    Some(&dependency_manifest.manifest_path),
+                    &error,
+                )
+            })?;
+        let interface_path = default_interface_path(&dependency_manifest).map_err(|error| {
+            target_prep_dependency_manifest_failure(
+                Some(&dependency_manifest.manifest_path),
+                &error,
+            )
+        })?;
+        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+            PrepareProjectTargetBuildError {
+                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
+                    dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                    dependency_package: dependency_package.clone(),
+                    interface_path: interface_path.clone(),
+                    message: format!(
+                        "failed to load referenced package interface `{}`: {error}",
+                        normalize_path(&interface_path)
+                    ),
+                },
+            }
+        })?;
+
+        for module in &artifact.modules {
+            collect_dependency_module_extern_declarations(
+                &dependency_package,
+                &dependency_manifest.manifest_path,
+                module.source_path.as_str(),
+                &module.syntax,
+                &module.contents,
+                &mut owners_by_symbol,
+                &mut declarations,
+            )
+            .map_err(|(symbol, owner)| PrepareProjectTargetBuildError {
+                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyExternConflict {
+                    symbol,
+                    first_package: owner.package_name,
+                    first_manifest_path: owner.manifest_path,
+                    conflicting_package: dependency_package.clone(),
+                    conflicting_manifest_path: dependency_manifest.manifest_path.clone(),
+                },
+            })?;
+        }
+    }
+
+    Ok(declarations.join("\n\n"))
+}
+
 fn collect_dependency_module_extern_declarations(
     dependency_package: &str,
+    dependency_manifest_path: &Path,
     _module_source_path: &str,
     module: &Module,
     contents: &str,
-    owners_by_symbol: &mut BTreeMap<String, String>,
+    owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     declarations: &mut Vec<String>,
-) -> Result<(), (String, String)> {
+) -> Result<(), (String, DependencyExternOwner)> {
     for item in &module.items {
         match &item.kind {
             ItemKind::Function(function)
@@ -4904,6 +5197,7 @@ fn collect_dependency_module_extern_declarations(
             {
                 record_dependency_extern_declaration(
                     dependency_package,
+                    dependency_manifest_path,
                     &function.name,
                     span_text(contents, item.span),
                     owners_by_symbol,
@@ -4918,6 +5212,7 @@ fn collect_dependency_module_extern_declarations(
                     declaration.push_str(span_text(contents, function.span).trim());
                     record_dependency_extern_declaration(
                         dependency_package,
+                        dependency_manifest_path,
                         &function.name,
                         declaration,
                         owners_by_symbol,
@@ -4933,15 +5228,22 @@ fn collect_dependency_module_extern_declarations(
 
 fn record_dependency_extern_declaration(
     dependency_package: &str,
+    dependency_manifest_path: &Path,
     symbol_name: &str,
     declaration: String,
-    owners_by_symbol: &mut BTreeMap<String, String>,
+    owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     declarations: &mut Vec<String>,
-) -> Result<(), (String, String)> {
+) -> Result<(), (String, DependencyExternOwner)> {
     if let Some(owner) = owners_by_symbol.get(symbol_name) {
         return Err((symbol_name.to_owned(), owner.clone()));
     }
-    owners_by_symbol.insert(symbol_name.to_owned(), dependency_package.to_owned());
+    owners_by_symbol.insert(
+        symbol_name.to_owned(),
+        DependencyExternOwner {
+            package_name: dependency_package.to_owned(),
+            manifest_path: dependency_manifest_path.to_path_buf(),
+        },
+    );
     declarations.push(declaration.trim().to_owned());
     Ok(())
 }
