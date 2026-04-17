@@ -7,7 +7,9 @@ use ql_analysis::{
     analyze_available_package_dependencies, analyze_package,
     analyze_package_with_available_dependencies, analyze_source,
 };
+use ql_lexer::{Token, TokenKind, lex};
 use ql_project::{collect_package_sources, load_project_manifest};
+use ql_span::Span;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::request::{
@@ -843,16 +845,22 @@ fn extend_workspace_import_definition_matches(
     }
 }
 
-fn workspace_source_definition_for_import(
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BrokenSourceImportBinding {
+    imported_name: String,
+    import_prefix: Vec<String>,
+    local_name: String,
+    definition_span: Span,
+}
+
+fn workspace_source_location_for_import_binding(
     uri: &Url,
     source: &str,
-    analysis: &Analysis,
+    analysis: Option<&Analysis>,
     package: &ql_analysis::PackageAnalysis,
-    position: tower_lsp::lsp_types::Position,
-) -> Option<GotoDefinitionResponse> {
-    let offset = position_to_offset(source, position)?;
-    let (binding, _) = analysis.import_binding_at(offset)?;
-    let (imported_name, import_prefix) = binding.path.segments.split_last()?;
+    import_prefix: &[String],
+    imported_name: &str,
+) -> Option<Location> {
     let current_path = uri.to_file_path().ok();
     let mut matches = Vec::new();
 
@@ -860,7 +868,7 @@ fn workspace_source_definition_for_import(
         package,
         current_path.as_deref(),
         Some(source),
-        Some(analysis),
+        analysis,
         import_prefix,
         imported_name,
         &mut matches,
@@ -891,7 +899,212 @@ fn workspace_source_definition_for_import(
         )
     });
     matches.dedup();
-    (matches.len() == 1).then(|| GotoDefinitionResponse::Scalar(matches[0].clone()))
+    (matches.len() == 1).then(|| matches[0].clone())
+}
+
+fn workspace_source_definition_for_import(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoDefinitionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let (binding, _) = analysis.import_binding_at(offset)?;
+    let (imported_name, import_prefix) = binding.path.segments.split_last()?;
+    workspace_source_location_for_import_binding(
+        uri,
+        source,
+        Some(analysis),
+        package,
+        import_prefix,
+        imported_name,
+    )
+    .map(GotoDefinitionResponse::Scalar)
+}
+
+fn workspace_source_definition_for_import_in_broken_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoDefinitionResponse> {
+    let binding = broken_source_import_binding_at(source, position)?;
+    workspace_source_location_for_import_binding(
+        uri,
+        source,
+        None,
+        package,
+        &binding.import_prefix,
+        binding.imported_name.as_str(),
+    )
+    .map(GotoDefinitionResponse::Scalar)
+}
+
+fn broken_source_import_binding_at(
+    source: &str,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<BrokenSourceImportBinding> {
+    let offset = position_to_offset(source, position)?;
+    let (tokens, _) = lex(source);
+    let bindings = broken_source_import_bindings_in_tokens(&tokens);
+    let mut local_name_counts = HashMap::<String, usize>::new();
+    for binding in &bindings {
+        *local_name_counts
+            .entry(binding.local_name.clone())
+            .or_insert(0usize) += 1;
+    }
+    let (index, token) = tokens
+        .iter()
+        .enumerate()
+        .find(|(_, token)| token.kind == TokenKind::Ident && token.span.contains(offset))?;
+    if local_name_counts.get(token.text.as_str()) != Some(&1usize) {
+        return None;
+    }
+    let binding = bindings
+        .into_iter()
+        .find(|binding| binding.local_name == token.text)?;
+    if token.span == binding.definition_span
+        || broken_source_import_token_matches_reference_context(&tokens, index)
+    {
+        return Some(binding);
+    }
+    None
+}
+
+fn broken_source_import_bindings_in_tokens(tokens: &[Token]) -> Vec<BrokenSourceImportBinding> {
+    let mut bindings = Vec::new();
+    let mut index = 0usize;
+    while index < tokens.len() {
+        if tokens[index].kind != TokenKind::Use {
+            index += 1;
+            continue;
+        }
+
+        let Some((next_index, use_bindings)) =
+            broken_source_import_bindings_after_use(tokens, index + 1)
+        else {
+            index += 1;
+            continue;
+        };
+        bindings.extend(use_bindings);
+        index = next_index.max(index + 1);
+    }
+    bindings
+}
+
+fn broken_source_import_bindings_after_use(
+    tokens: &[Token],
+    index: usize,
+) -> Option<(usize, Vec<BrokenSourceImportBinding>)> {
+    let (prefix, mut index) = broken_source_import_path_in_tokens(tokens, index)?;
+    if tokens.get(index).map(|token| token.kind) == Some(TokenKind::Dot)
+        && tokens.get(index + 1).map(|token| token.kind) == Some(TokenKind::LBrace)
+    {
+        index += 2;
+        let mut bindings = Vec::new();
+        loop {
+            if tokens.get(index).map(|token| token.kind) == Some(TokenKind::RBrace) {
+                return Some((index + 1, bindings));
+            }
+
+            let item = broken_source_import_ident_token(tokens, index)?;
+            let item_name = item.text.clone();
+            let item_span = item.span;
+            index += 1;
+
+            let (alias, alias_span, next_index) =
+                broken_source_import_alias_in_tokens(tokens, index)?;
+            index = next_index;
+
+            bindings.push(BrokenSourceImportBinding {
+                imported_name: item_name.clone(),
+                import_prefix: prefix.iter().map(|(segment, _)| segment.clone()).collect(),
+                local_name: alias.unwrap_or(item_name),
+                definition_span: alias_span.unwrap_or(item_span),
+            });
+
+            match tokens.get(index).map(|token| token.kind) {
+                Some(TokenKind::Comma) => index += 1,
+                Some(TokenKind::RBrace) => return Some((index + 1, bindings)),
+                _ => return None,
+            }
+        }
+    }
+
+    let (imported_name, definition_span) = prefix.last()?.clone();
+    let (alias, alias_span, index) = broken_source_import_alias_in_tokens(tokens, index)?;
+    Some((
+        index,
+        vec![BrokenSourceImportBinding {
+            imported_name: imported_name.clone(),
+            import_prefix: prefix[..prefix.len().saturating_sub(1)]
+                .iter()
+                .map(|(segment, _)| segment.clone())
+                .collect(),
+            local_name: alias.unwrap_or(imported_name),
+            definition_span: alias_span.unwrap_or(definition_span),
+        }],
+    ))
+}
+
+fn broken_source_import_path_in_tokens(
+    tokens: &[Token],
+    index: usize,
+) -> Option<(Vec<(String, Span)>, usize)> {
+    let mut index = index;
+    let first = broken_source_import_ident_token(tokens, index)?;
+    let mut segments = vec![(first.text.clone(), first.span)];
+    index += 1;
+
+    while tokens.get(index).map(|token| token.kind) == Some(TokenKind::Dot)
+        && tokens.get(index + 1).map(|token| token.kind) == Some(TokenKind::Ident)
+    {
+        let segment = tokens.get(index + 1)?;
+        segments.push((segment.text.clone(), segment.span));
+        index += 2;
+    }
+
+    Some((segments, index))
+}
+
+fn broken_source_import_alias_in_tokens(
+    tokens: &[Token],
+    index: usize,
+) -> Option<(Option<String>, Option<Span>, usize)> {
+    if tokens.get(index).map(|token| token.kind) != Some(TokenKind::As) {
+        return Some((None, None, index));
+    }
+    let alias = broken_source_import_ident_token(tokens, index + 1)?;
+    Some((Some(alias.text.clone()), Some(alias.span), index + 2))
+}
+
+fn broken_source_import_ident_token(tokens: &[Token], index: usize) -> Option<&Token> {
+    let token = tokens.get(index)?;
+    (token.kind == TokenKind::Ident).then_some(token)
+}
+
+fn broken_source_import_token_matches_reference_context(tokens: &[Token], index: usize) -> bool {
+    let prev_kind = index
+        .checked_sub(1)
+        .and_then(|index| tokens.get(index))
+        .map(|token| token.kind);
+    let next_kind = tokens.get(index + 1).map(|token| token.kind);
+
+    if matches!(prev_kind, Some(TokenKind::Dot | TokenKind::As)) {
+        return false;
+    }
+
+    matches!(
+        next_kind,
+        Some(
+            TokenKind::LParen
+                | TokenKind::LBracket
+                | TokenKind::LBrace
+                | TokenKind::Dot
+                | TokenKind::Question
+        )
+    ) || matches!(prev_kind, Some(TokenKind::Colon | TokenKind::Arrow))
 }
 
 fn extend_workspace_dependency_definition_matches(
@@ -1373,6 +1586,13 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(definition));
             }
+            if analysis.is_none()
+                && let Some(definition) = workspace_source_definition_for_import_in_broken_source(
+                    &uri, &source, &package, position,
+                )
+            {
+                return Ok(Some(definition));
+            }
             if let Some(definition) = workspace_source_definition_for_dependency(
                 &uri,
                 &source,
@@ -1422,6 +1642,14 @@ impl LanguageServer for Backend {
                 && let Some(GotoDefinitionResponse::Scalar(location)) =
                     workspace_source_definition_for_import(
                         &uri, &source, analysis, &package, position,
+                    )
+            {
+                return Ok(Some(GotoDeclarationResponse::Scalar(location)));
+            }
+            if analysis.is_none()
+                && let Some(GotoDefinitionResponse::Scalar(location)) =
+                    workspace_source_definition_for_import_in_broken_source(
+                        &uri, &source, &package, position,
                     )
             {
                 return Ok(Some(GotoDeclarationResponse::Scalar(location)));
@@ -1760,6 +1988,7 @@ mod tests {
         GotoTypeDefinitionResponse, document_highlights_for_analysis_at,
         document_highlights_for_package_analysis_at, package_analysis_for_path,
         workspace_source_definition_for_dependency, workspace_source_definition_for_import,
+        workspace_source_definition_for_import_in_broken_source,
         workspace_source_references_for_dependency, workspace_source_references_for_import,
         workspace_source_type_definition_for_dependency, workspace_symbols_for_documents,
         workspace_symbols_for_documents_and_roots,
@@ -4868,6 +5097,192 @@ pub fn exported(value: Int) -> Int
             offset_to_position(&source, nth_offset(&source, "run", 2)),
         )
         .expect("workspace import definition should exist");
+
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("workspace import definition should resolve to one location")
+        };
+        assert_eq!(
+            location
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+    }
+
+    #[test]
+    fn workspace_import_definition_survives_parse_errors_and_prefers_workspace_member_source() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-definition-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    let next = run(1)
+    return next
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let definition = workspace_source_definition_for_import_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        )
+        .expect("broken-source workspace import definition should exist");
+
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("workspace import definition should resolve to one location")
+        };
+        assert_eq!(
+            location
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+    }
+
+    #[test]
+    fn workspace_type_import_definition_survives_parse_errors_and_keeps_type_context() {
+        let temp = TempDir::new("ql-lsp-workspace-type-import-source-definition-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(value: Config) -> Config {
+    return Config { value
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let definition = workspace_source_definition_for_import_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "Config", 2)),
+        )
+        .expect("broken-source workspace type import definition should exist");
 
         let GotoDefinitionResponse::Scalar(location) = definition else {
             panic!("workspace import definition should resolve to one location")
