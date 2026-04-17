@@ -15,13 +15,14 @@ use ql_lsp::bridge::{
     hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
     references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_variants,
-    references_for_package_analysis, span_to_range,
+    references_for_package_analysis, semantic_tokens_for_package_analysis, semantic_tokens_legend,
+    span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::request::GotoDeclarationResponse;
 use tower_lsp::lsp_types::{
     CompletionItemKind, CompletionResponse, CompletionTextEdit, GotoDefinitionResponse,
-    HoverContents, Location, Position, TextEdit, Url,
+    HoverContents, Location, Position, SemanticTokenType, SemanticTokensResult, TextEdit, Url,
 };
 
 struct TempDir {
@@ -67,11 +68,39 @@ fn nth_offset(source: &str, needle: &str, occurrence: usize) -> usize {
         .expect("needle occurrence should exist")
 }
 
+fn nth_span(source: &str, needle: &str, occurrence: usize) -> Span {
+    source
+        .match_indices(needle)
+        .nth(occurrence.saturating_sub(1))
+        .map(|(start, matched)| Span::new(start, start + matched.len()))
+        .expect("needle occurrence should exist")
+}
+
 fn offset_to_position(source: &str, offset: usize) -> Position {
     let prefix = &source[..offset];
     let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
     let line_start = prefix.rfind('\n').map(|index| index + 1).unwrap_or(0);
     Position::new(line, (prefix[line_start..].chars().count()) as u32)
+}
+
+fn decode_semantic_tokens(
+    tokens: &[tower_lsp::lsp_types::SemanticToken],
+) -> Vec<(u32, u32, u32, u32)> {
+    let mut line = 0u32;
+    let mut start = 0u32;
+    let mut decoded = Vec::new();
+
+    for token in tokens {
+        line += token.delta_line;
+        if token.delta_line == 0 {
+            start += token.delta_start;
+        } else {
+            start = token.delta_start;
+        }
+        decoded.push((line, start, token.length, token.token_type));
+    }
+
+    decoded
 }
 
 #[test]
@@ -303,6 +332,118 @@ pub fn main() -> Int {
             .canonicalize()
             .expect("dependency artifact path should canonicalize"),
     );
+}
+
+#[test]
+fn package_bridge_semantic_tokens_cover_dependency_variants_fields_and_methods() {
+    let temp = TempDir::new("ql-lsp-package-semantic-tokens");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+use demo.dep.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    match config {
+        Cfg { value: current, limit: 3 } => current,
+    }
+    let command = Cmd.Retry(1)
+    let result = config.ping()
+    return built.value
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let analysis = analyze_source(source).expect("source should analyze");
+    let SemanticTokensResult::Tokens(tokens) =
+        semantic_tokens_for_package_analysis(source, &analysis, &package)
+    else {
+        panic!("expected full semantic tokens");
+    };
+    let decoded = decode_semantic_tokens(&tokens.data);
+    let legend = semantic_tokens_legend();
+    let function_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::FUNCTION)
+        .expect("function legend entry should exist") as u32;
+    let enum_member_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::ENUM_MEMBER)
+        .expect("enum member legend entry should exist") as u32;
+    let property_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::PROPERTY)
+        .expect("property legend entry should exist") as u32;
+    let method_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::METHOD)
+        .expect("method legend entry should exist") as u32;
+
+    for (span, token_type) in [
+        (nth_span(source, "main", 1), function_type),
+        (nth_span(source, "Retry", 1), enum_member_type),
+        (nth_span(source, "value", 1), property_type),
+        (nth_span(source, "value", 2), property_type),
+        (nth_span(source, "value", 3), property_type),
+        (nth_span(source, "ping", 1), method_type),
+    ] {
+        let range = span_to_range(source, span);
+        assert!(decoded.contains(&(
+            range.start.line,
+            range.start.character,
+            range.end.character - range.start.character,
+            token_type,
+        )));
+    }
 }
 
 #[test]

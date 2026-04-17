@@ -1332,6 +1332,47 @@ impl PackageAnalysis {
         Some(references)
     }
 
+    /// Return dependency-backed semantic-token occurrences for the current source.
+    ///
+    /// This augments same-file semantic tokens with dependency-aware member and variant surfaces
+    /// that require package interface knowledge.
+    pub fn dependency_semantic_tokens_in_source(
+        &self,
+        source: &str,
+    ) -> Vec<SemanticTokenOccurrence> {
+        let module = match parse_source(source) {
+            Ok(module) => module,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut tokens = dependency_variant_semantic_tokens_in_module(self, &module, source);
+        tokens.extend(
+            self.dependency_struct_field_occurrences(&module)
+                .into_iter()
+                .map(|occurrence| SemanticTokenOccurrence {
+                    span: occurrence.reference_span,
+                    kind: SymbolKind::Field,
+                }),
+        );
+        tokens.extend(
+            self.dependency_method_occurrences(&module)
+                .into_iter()
+                .map(|occurrence| SemanticTokenOccurrence {
+                    span: occurrence.reference_span,
+                    kind: SymbolKind::Method,
+                }),
+        );
+        tokens.sort_by_key(|token| {
+            (
+                token.span.start,
+                token.span.end,
+                semantic_token_kind_sort_rank(token.kind),
+            )
+        });
+        tokens.dedup_by(|left, right| left.span == right.span && left.kind == right.kind);
+        tokens
+    }
+
     pub fn dependency_hover_at(
         &self,
         analysis: &Analysis,
@@ -3113,6 +3154,44 @@ fn dependency_variant_reference_at(source: &str, offset: usize) -> Option<(usize
     ))
 }
 
+fn dependency_variant_semantic_tokens_in_module(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    source: &str,
+) -> Vec<SemanticTokenOccurrence> {
+    let mut tokens = Vec::new();
+    for (dot_offset, _) in source.match_indices('.') {
+        let member_offset = dot_offset + 1;
+        let Some((root_offset, span, variant_name)) =
+            dependency_variant_reference_at(source, member_offset)
+        else {
+            continue;
+        };
+        if span.start != member_offset {
+            continue;
+        }
+
+        let root_end = dependency_identifier_end(source, root_offset);
+        let Some(root_name) = source.get(root_offset..root_end) else {
+            continue;
+        };
+        let Some((dependency, symbol)) =
+            dependency_import_binding_for_local_name(package, module, root_name)
+        else {
+            continue;
+        };
+        if dependency.variant_for(symbol, &variant_name).is_none() {
+            continue;
+        }
+
+        tokens.push(SemanticTokenOccurrence {
+            span,
+            kind: SymbolKind::Variant,
+        });
+    }
+    tokens
+}
+
 fn dependency_variant_detail(enum_name: &str, variant: &ql_ast::EnumVariant) -> String {
     match &variant.fields {
         ql_ast::VariantFields::Unit => format!("variant {}.{}", enum_name, variant.name),
@@ -3145,6 +3224,27 @@ fn dependency_struct_field_detail(field: &ql_ast::FieldDecl) -> String {
         field.name,
         render_dependency_type_expr(&field.ty)
     )
+}
+
+const fn semantic_token_kind_sort_rank(kind: SymbolKind) -> u8 {
+    match kind {
+        SymbolKind::Function => 0,
+        SymbolKind::Const => 1,
+        SymbolKind::Static => 2,
+        SymbolKind::Struct => 3,
+        SymbolKind::Enum => 4,
+        SymbolKind::Variant => 5,
+        SymbolKind::Trait => 6,
+        SymbolKind::TypeAlias => 7,
+        SymbolKind::Field => 8,
+        SymbolKind::Method => 9,
+        SymbolKind::Local => 10,
+        SymbolKind::Parameter => 11,
+        SymbolKind::Generic => 12,
+        SymbolKind::SelfParameter => 13,
+        SymbolKind::BuiltinType => 14,
+        SymbolKind::Import => 15,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

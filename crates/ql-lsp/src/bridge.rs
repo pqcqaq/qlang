@@ -1080,37 +1080,25 @@ pub fn semantic_tokens_legend() -> SemanticTokensLegend {
 }
 
 pub fn semantic_tokens_for_analysis(source: &str, analysis: &Analysis) -> SemanticTokensResult {
-    let mut data = Vec::new();
-    let mut previous_line = 0u32;
-    let mut previous_start = 0u32;
+    semantic_tokens_result(source, analysis.semantic_tokens())
+}
 
-    for token in analysis.semantic_tokens() {
-        let start = offset_to_position(source, token.span.start);
-        let delta_line = start.line - previous_line;
-        let delta_start = if delta_line == 0 {
-            start.character - previous_start
-        } else {
-            start.character
-        };
-        let length = semantic_token_length(source, token.span);
-        let token_type = semantic_token_kind_index(token.kind);
-
-        data.push(SemanticToken {
-            delta_line,
-            delta_start,
-            length,
-            token_type,
-            token_modifiers_bitset: 0,
-        });
-
-        previous_line = start.line;
-        previous_start = start.character;
-    }
-
-    SemanticTokensResult::Tokens(SemanticTokens {
-        result_id: None,
-        data,
-    })
+pub fn semantic_tokens_for_package_analysis(
+    source: &str,
+    analysis: &Analysis,
+    package: &PackageAnalysis,
+) -> SemanticTokensResult {
+    let mut tokens = analysis.semantic_tokens();
+    tokens.extend(package.dependency_semantic_tokens_in_source(source));
+    tokens.sort_by_key(|token| {
+        (
+            token.span.start,
+            token.span.end,
+            semantic_token_kind_index(token.kind),
+        )
+    });
+    tokens.dedup_by(|left, right| left.span == right.span && left.kind == right.kind);
+    semantic_tokens_result(source, tokens)
 }
 
 pub fn document_symbols_for_analysis(source: &str, analysis: &Analysis) -> DocumentSymbolResponse {
@@ -1439,6 +1427,43 @@ fn semantic_token_length(source: &str, span: Span) -> u32 {
         .chars()
         .map(|ch| ch.len_utf16() as u32)
         .sum()
+}
+
+fn semantic_tokens_result(
+    source: &str,
+    tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
+) -> SemanticTokensResult {
+    let mut data = Vec::new();
+    let mut previous_line = 0u32;
+    let mut previous_start = 0u32;
+
+    for token in tokens {
+        let start = offset_to_position(source, token.span.start);
+        let delta_line = start.line - previous_line;
+        let delta_start = if delta_line == 0 {
+            start.character - previous_start
+        } else {
+            start.character
+        };
+        let length = semantic_token_length(source, token.span);
+        let token_type = semantic_token_kind_index(token.kind);
+
+        data.push(SemanticToken {
+            delta_line,
+            delta_start,
+            length,
+            token_type,
+            token_modifiers_bitset: 0,
+        });
+
+        previous_line = start.line;
+        previous_start = start.character;
+    }
+
+    SemanticTokensResult::Tokens(SemanticTokens {
+        result_id: None,
+        data,
+    })
 }
 
 fn is_completion_identifier_char(ch: char) -> bool {

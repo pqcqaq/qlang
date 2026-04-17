@@ -46,8 +46,9 @@ use crate::bridge::{
     references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_values,
     references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
-    rename_for_dependency_imports, semantic_tokens_for_analysis, semantic_tokens_legend,
-    span_to_range, type_definition_for_analysis, type_definition_for_dependency_imports,
+    rename_for_dependency_imports, semantic_tokens_for_analysis,
+    semantic_tokens_for_package_analysis, semantic_tokens_legend, span_to_range,
+    type_definition_for_analysis, type_definition_for_dependency_imports,
     type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
     type_definition_for_dependency_values, type_definition_for_dependency_variants,
     type_definition_for_package_analysis, workspace_symbols_for_analysis,
@@ -1414,6 +1415,12 @@ impl LanguageServer for Backend {
         let Some((source, analysis)) = self.analyzed_document(&uri).await else {
             return Ok(None);
         };
+
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            return Ok(Some(semantic_tokens_for_package_analysis(
+                &source, &analysis, &package,
+            )));
+        }
 
         Ok(Some(semantic_tokens_for_analysis(&source, &analysis)))
     }
