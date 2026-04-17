@@ -11,7 +11,7 @@ use ql_borrowck::{
 };
 use ql_diagnostics::{Diagnostic, Label, render_diagnostics};
 use ql_hir::{ExprId, LocalId, PatternId, lower_module};
-use ql_lexer::{is_keyword, is_valid_identifier};
+use ql_lexer::{Token, TokenKind, is_keyword, is_valid_identifier, lex};
 use ql_mir::{MirModule, lower_module as lower_mir, render_module as render_mir_module};
 use ql_parser::{ParseError, parse_source};
 use ql_project::{
@@ -1366,20 +1366,22 @@ impl PackageAnalysis {
     }
 
     /// Return dependency-backed semantic-token occurrences that remain available even when
-    /// same-file semantic analysis failed but parsing still succeeded.
+    /// same-file semantic analysis failed or the current source contains parse errors.
     pub fn dependency_fallback_semantic_tokens_in_source(
         &self,
         source: &str,
     ) -> Vec<SemanticTokenOccurrence> {
-        let module = match parse_source(source) {
-            Ok(module) => module,
-            Err(_) => return Vec::new(),
+        let mut tokens = match parse_source(source) {
+            Ok(module) => {
+                let mut tokens =
+                    collect_dependency_semantic_tokens_in_module(self, &module, source);
+                tokens.extend(collect_dependency_import_root_semantic_tokens_in_module(
+                    self, &module, source,
+                ));
+                tokens
+            }
+            Err(_) => collect_dependency_import_root_semantic_tokens_in_broken_source(self, source),
         };
-
-        let mut tokens = collect_dependency_semantic_tokens_in_module(self, &module, source);
-        tokens.extend(collect_dependency_import_root_semantic_tokens_in_module(
-            self, &module, source,
-        ));
         sort_and_dedup_semantic_tokens(&mut tokens);
         tokens
     }
@@ -3330,6 +3332,153 @@ fn collect_dependency_import_root_semantic_tokens_in_module(
         }
     }
     tokens
+}
+
+fn collect_dependency_import_root_semantic_tokens_in_broken_source(
+    package: &PackageAnalysis,
+    source: &str,
+) -> Vec<SemanticTokenOccurrence> {
+    let (tokens, _) = lex(source);
+    let mut unique_kinds = HashMap::new();
+    let mut local_name_counts = HashMap::new();
+    for binding in dependency_import_bindings_in_tokens(&tokens) {
+        let Some((_, symbol)) = package.resolve_dependency_import_binding(&binding) else {
+            continue;
+        };
+        *local_name_counts
+            .entry(binding.local_name.clone())
+            .or_insert(0usize) += 1;
+        unique_kinds.insert(binding.local_name, symbol.kind);
+    }
+
+    tokens
+        .into_iter()
+        .filter(|token| token.kind == TokenKind::Ident)
+        .filter_map(|token| {
+            (local_name_counts.get(token.text.as_str()) == Some(&1usize))
+                .then(|| unique_kinds.get(token.text.as_str()).copied())
+                .flatten()
+                .map(|kind| SemanticTokenOccurrence {
+                    span: token.span,
+                    kind,
+                })
+        })
+        .collect()
+}
+
+fn dependency_import_bindings_in_tokens(tokens: &[Token]) -> Vec<ImportBinding> {
+    let mut bindings = Vec::new();
+    let mut index = 0usize;
+    while index < tokens.len() {
+        if tokens[index].kind != TokenKind::Use {
+            index += 1;
+            continue;
+        }
+
+        let Some((next_index, use_bindings)) =
+            dependency_import_bindings_after_use(tokens, index + 1)
+        else {
+            index += 1;
+            continue;
+        };
+        bindings.extend(use_bindings);
+        index = next_index.max(index + 1);
+    }
+    bindings
+}
+
+fn dependency_import_bindings_after_use(
+    tokens: &[Token],
+    index: usize,
+) -> Option<(usize, Vec<ImportBinding>)> {
+    let (prefix, mut index) = dependency_import_path_in_tokens(tokens, index)?;
+    if tokens.get(index).map(|token| token.kind) == Some(TokenKind::Dot)
+        && tokens.get(index + 1).map(|token| token.kind) == Some(TokenKind::LBrace)
+    {
+        index += 2;
+        let mut bindings = Vec::new();
+        loop {
+            if tokens.get(index).map(|token| token.kind) == Some(TokenKind::RBrace) {
+                return Some((index + 1, bindings));
+            }
+
+            let item = dependency_import_ident_token(tokens, index)?;
+            let item_name = item.text.clone();
+            let item_span = item.span;
+            index += 1;
+
+            let (alias, alias_span, next_index) = dependency_import_alias_in_tokens(tokens, index)?;
+            index = next_index;
+
+            let mut path = prefix.clone();
+            path.segments.push(item_name.clone());
+            path.segment_spans.push(item_span);
+            bindings.push(ImportBinding {
+                local_name: alias.unwrap_or(item_name),
+                definition_span: alias_span.unwrap_or(item_span),
+                path,
+            });
+
+            match tokens.get(index).map(|token| token.kind) {
+                Some(TokenKind::Comma) => index += 1,
+                Some(TokenKind::RBrace) => return Some((index + 1, bindings)),
+                _ => return None,
+            }
+        }
+    }
+
+    let (alias, alias_span, index) = dependency_import_alias_in_tokens(tokens, index)?;
+    let local_name = alias.unwrap_or_else(|| prefix.segments.last().cloned().unwrap_or_default());
+    let definition_span = alias_span
+        .or_else(|| prefix.last_segment_span())
+        .unwrap_or_default();
+    Some((
+        index,
+        vec![ImportBinding {
+            local_name,
+            definition_span,
+            path: prefix,
+        }],
+    ))
+}
+
+fn dependency_import_path_in_tokens(
+    tokens: &[Token],
+    index: usize,
+) -> Option<(ql_ast::Path, usize)> {
+    let mut index = index;
+    let first = dependency_import_ident_token(tokens, index)?;
+    let mut segments = vec![first.text.clone()];
+    let mut spans = vec![first.span];
+    index += 1;
+
+    while tokens.get(index).map(|token| token.kind) == Some(TokenKind::Dot)
+        && tokens.get(index + 1).map(|token| token.kind) == Some(TokenKind::Ident)
+    {
+        let segment = &tokens[index + 1];
+        segments.push(segment.text.clone());
+        spans.push(segment.span);
+        index += 2;
+    }
+
+    Some((ql_ast::Path::with_spans(segments, spans), index))
+}
+
+fn dependency_import_alias_in_tokens(
+    tokens: &[Token],
+    index: usize,
+) -> Option<(Option<String>, Option<Span>, usize)> {
+    if tokens.get(index).map(|token| token.kind) != Some(TokenKind::As) {
+        return Some((None, None, index));
+    }
+
+    let alias = dependency_import_ident_token(tokens, index + 1)?;
+    Some((Some(alias.text.clone()), Some(alias.span), index + 2))
+}
+
+fn dependency_import_ident_token(tokens: &[Token], index: usize) -> Option<&Token> {
+    let token = tokens.get(index)?;
+    (token.kind == TokenKind::Ident).then_some(token)
 }
 
 fn dependency_import_local_names_in_module(module: &ql_ast::Module) -> HashSet<String> {

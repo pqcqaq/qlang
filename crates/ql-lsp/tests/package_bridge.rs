@@ -701,6 +701,102 @@ pub fn main(config: Cfg) -> Int {
 }
 
 #[test]
+fn package_bridge_keeps_dependency_import_root_semantic_tokens_after_parse_errors() {
+    let temp = TempDir::new("ql-lsp-package-import-root-semantic-tokens-parse-errors");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+use demo.dep.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2
+    let command = Cmd.Retry(1)
+    return built.value
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_source(source).is_err());
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let SemanticTokensResult::Tokens(tokens) =
+        semantic_tokens_for_dependency_fallback(source, &package)
+    else {
+        panic!("expected full semantic tokens");
+    };
+    let decoded = decode_semantic_tokens(&tokens.data);
+    let legend = semantic_tokens_legend();
+    let class_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::CLASS)
+        .expect("class legend entry should exist") as u32;
+    let enum_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::ENUM)
+        .expect("enum legend entry should exist") as u32;
+
+    for (span, token_type) in [
+        (nth_span(source, "Cfg", 1), class_type),
+        (nth_span(source, "Cfg", 2), class_type),
+        (nth_span(source, "Cfg", 3), class_type),
+        (nth_span(source, "Cmd", 1), enum_type),
+        (nth_span(source, "Cmd", 2), enum_type),
+    ] {
+        let range = span_to_range(source, span);
+        assert!(decoded.contains(&(
+            range.start.line,
+            range.start.character,
+            range.end.character - range.start.character,
+            token_type,
+        )));
+    }
+}
+
+#[test]
 fn package_bridge_surfaces_dependency_import_completion() {
     let temp = TempDir::new("ql-lsp-package-completion");
     let app_root = temp.path().join("workspace").join("app");
