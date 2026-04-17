@@ -36,6 +36,27 @@ npm run compile
 
 Then open `editors/vscode/qlang` in VS Code and run the `Run qlang` launch configuration.
 
+## Package VSIX
+
+Build a distributable VSIX from the extension directory:
+
+```powershell
+cd editors/vscode/qlang
+npm install
+npm run package:vsix
+```
+
+The package is written to:
+
+```text
+editors/vscode/qlang/dist/qlang.vsix
+```
+
+You can install it in VS Code with:
+
+- `Extensions: Install from VSIX...`
+- or `code --install-extension editors/vscode/qlang/dist/qlang.vsix`
+
 ## Settings
 
 - `qlang.server.path`: explicit path to the `qlsp` executable
@@ -48,7 +69,7 @@ Changing either setting restarts the client.
 This extension intentionally stays thin:
 
 - no bundled `qlsp` binary
-- no Marketplace packaging flow yet
+- local VSIX packaging flow exists, but Marketplace publish flow is not added yet
 - no TextMate grammar yet; semantic coloring comes from `qlsp`
 
 The current editor surface follows whatever `qlsp` already exposes: diagnostics, hover, definition, declaration, type definition, references, completion, document symbols, workspace symbols, semantic tokens, and conservative rename support.

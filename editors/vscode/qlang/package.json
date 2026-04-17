@@ -4,7 +4,12 @@
   "description": "VS Code language support for Qlang via qlsp.",
   "version": "0.0.1",
   "publisher": "qlang",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pqcqaq/qlang.git"
+  },
+  "homepage": "https://github.com/pqcqaq/qlang",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -51,14 +56,19 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -w -p ./",
-    "prepublishOnly": "npm run compile"
+    "prepublishOnly": "npm run compile",
+    "package:vsix": "npm run compile && node -e \"require('fs').mkdirSync('dist',{recursive:true})\" && npx @vscode/vsce package --out dist/qlang.vsix"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
+    "@vscode/vsce": "^3.6.2",
     "@types/node": "^22.15.3",
     "@types/vscode": "^1.90.0",
     "typescript": "^5.8.3"
+  },
+  "vsce": {
+    "yarn": false
   }
 }

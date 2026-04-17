@@ -38,6 +38,29 @@ npm install
 npm run compile
 ```
 
+如果要直接打成可分发的 VSIX：
+
+```powershell
+cd editors/vscode/qlang
+npm install
+npm run package:vsix
+```
+
+产物会输出到：
+
+```text
+editors/vscode/qlang/dist/qlang.vsix
+```
+
+安装方式：
+
+1. VSCode 命令面板执行 `Extensions: Install from VSIX...`
+2. 或命令行执行：
+
+```powershell
+code --install-extension editors/vscode/qlang/dist/qlang.vsix
+```
+
 ## 在 VSCode 里跑起来
 
 最直接的开发方式：
@@ -65,6 +88,6 @@ npm run compile
 ## 当前不做
 
 - 不内置 `qlsp` 二进制
-- 不提供 Marketplace 发布流
+- 已提供本地 VSIX 打包流，但还不提供 Marketplace 发布流
 - 不提供 TextMate grammar；当前高亮主要来自 `qlsp` 的 semantic tokens
 - 不扩大 `qlsp` 现有支持边界
