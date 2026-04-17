@@ -1,7 +1,7 @@
 mod query;
 mod runtime;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -1345,39 +1345,27 @@ impl PackageAnalysis {
             Err(_) => return Vec::new(),
         };
 
-        let mut tokens = dependency_variant_semantic_tokens_in_module(self, &module, source);
-        tokens.extend(
-            self.dependency_value_occurrences(&module)
-                .into_iter()
-                .map(|occurrence| SemanticTokenOccurrence {
-                    span: occurrence.reference_span,
-                    kind: occurrence.kind,
-                }),
-        );
-        tokens.extend(
-            self.dependency_struct_field_occurrences(&module)
-                .into_iter()
-                .map(|occurrence| SemanticTokenOccurrence {
-                    span: occurrence.reference_span,
-                    kind: SymbolKind::Field,
-                }),
-        );
-        tokens.extend(
-            self.dependency_method_occurrences(&module)
-                .into_iter()
-                .map(|occurrence| SemanticTokenOccurrence {
-                    span: occurrence.reference_span,
-                    kind: SymbolKind::Method,
-                }),
-        );
-        tokens.sort_by_key(|token| {
-            (
-                token.span.start,
-                token.span.end,
-                semantic_token_kind_sort_rank(token.kind),
-            )
-        });
-        tokens.dedup_by(|left, right| left.span == right.span && left.kind == right.kind);
+        let mut tokens = collect_dependency_semantic_tokens_in_module(self, &module, source);
+        sort_and_dedup_semantic_tokens(&mut tokens);
+        tokens
+    }
+
+    /// Return dependency-backed semantic-token occurrences that remain available even when
+    /// same-file semantic analysis failed but parsing still succeeded.
+    pub fn dependency_fallback_semantic_tokens_in_source(
+        &self,
+        source: &str,
+    ) -> Vec<SemanticTokenOccurrence> {
+        let module = match parse_source(source) {
+            Ok(module) => module,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut tokens = collect_dependency_semantic_tokens_in_module(self, &module, source);
+        tokens.extend(collect_dependency_import_root_semantic_tokens_in_module(
+            self, &module, source,
+        ));
+        sort_and_dedup_semantic_tokens(&mut tokens);
         tokens
     }
 
@@ -3253,6 +3241,97 @@ const fn semantic_token_kind_sort_rank(kind: SymbolKind) -> u8 {
         SymbolKind::BuiltinType => 14,
         SymbolKind::Import => 15,
     }
+}
+
+fn sort_and_dedup_semantic_tokens(tokens: &mut Vec<SemanticTokenOccurrence>) {
+    tokens.sort_by_key(|token| {
+        (
+            token.span.start,
+            token.span.end,
+            semantic_token_kind_sort_rank(token.kind),
+        )
+    });
+    tokens.dedup_by(|left, right| left.span == right.span && left.kind == right.kind);
+}
+
+fn collect_dependency_semantic_tokens_in_module(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    source: &str,
+) -> Vec<SemanticTokenOccurrence> {
+    let mut tokens = dependency_variant_semantic_tokens_in_module(package, module, source);
+    tokens.extend(
+        package
+            .dependency_value_occurrences(module)
+            .into_iter()
+            .map(|occurrence| SemanticTokenOccurrence {
+                span: occurrence.reference_span,
+                kind: occurrence.kind,
+            }),
+    );
+    tokens.extend(
+        package
+            .dependency_struct_field_occurrences(module)
+            .into_iter()
+            .map(|occurrence| SemanticTokenOccurrence {
+                span: occurrence.reference_span,
+                kind: SymbolKind::Field,
+            }),
+    );
+    tokens.extend(
+        package
+            .dependency_method_occurrences(module)
+            .into_iter()
+            .map(|occurrence| SemanticTokenOccurrence {
+                span: occurrence.reference_span,
+                kind: SymbolKind::Method,
+            }),
+    );
+    tokens
+}
+
+fn collect_dependency_import_root_semantic_tokens_in_module(
+    package: &PackageAnalysis,
+    module: &ql_ast::Module,
+    source: &str,
+) -> Vec<SemanticTokenOccurrence> {
+    let mut tokens = Vec::new();
+    for local_name in dependency_import_local_names_in_module(module) {
+        let Some((_, symbol)) =
+            dependency_import_binding_for_local_name(package, module, local_name.as_str())
+        else {
+            continue;
+        };
+        for (start, _) in source.match_indices(local_name.as_str()) {
+            let Some(occurrence) = dependency_import_occurrence_in_module(module, start) else {
+                continue;
+            };
+            if occurrence.local_name == local_name && occurrence.span.start == start {
+                tokens.push(SemanticTokenOccurrence {
+                    span: occurrence.span,
+                    kind: symbol.kind,
+                });
+            }
+        }
+    }
+    tokens
+}
+
+fn dependency_import_local_names_in_module(module: &ql_ast::Module) -> HashSet<String> {
+    let mut local_names = HashSet::new();
+    for use_decl in &module.uses {
+        if let Some(group) = &use_decl.group {
+            for item in group {
+                let binding = ImportBinding::grouped(&use_decl.prefix, item);
+                local_names.insert(binding.local_name);
+            }
+            continue;
+        }
+
+        let binding = ImportBinding::direct(use_decl);
+        local_names.insert(binding.local_name);
+    }
+    local_names
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

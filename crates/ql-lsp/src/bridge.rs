@@ -1105,7 +1105,10 @@ pub fn semantic_tokens_for_dependency_fallback(
     source: &str,
     package: &PackageAnalysis,
 ) -> SemanticTokensResult {
-    semantic_tokens_result(source, package.dependency_semantic_tokens_in_source(source))
+    semantic_tokens_result(
+        source,
+        package.dependency_fallback_semantic_tokens_in_source(source),
+    )
 }
 
 pub fn document_symbols_for_analysis(source: &str, analysis: &Analysis) -> DocumentSymbolResponse {
