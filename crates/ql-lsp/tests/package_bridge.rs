@@ -15,8 +15,8 @@ use ql_lsp::bridge::{
     hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
     references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_variants,
-    references_for_package_analysis, semantic_tokens_for_package_analysis, semantic_tokens_legend,
-    span_to_range,
+    references_for_package_analysis, semantic_tokens_for_dependency_fallback,
+    semantic_tokens_for_package_analysis, semantic_tokens_legend, span_to_range,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::request::GotoDeclarationResponse;
@@ -434,6 +434,110 @@ pub fn main(config: Cfg) -> Int {
         (nth_span(source, "value", 1), property_type),
         (nth_span(source, "value", 2), property_type),
         (nth_span(source, "value", 3), property_type),
+        (nth_span(source, "ping", 1), method_type),
+    ] {
+        let range = span_to_range(source, span);
+        assert!(decoded.contains(&(
+            range.start.line,
+            range.start.character,
+            range.end.character - range.start.character,
+            token_type,
+        )));
+    }
+}
+
+#[test]
+fn package_bridge_keeps_dependency_semantic_tokens_without_semantic_analysis() {
+    let temp = TempDir::new("ql-lsp-package-semantic-tokens-broken");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Command as Cmd
+use demo.dep.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    let command = Cmd.Retry(1)
+    let result = config.ping()
+    return "oops" + built.value + result
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let SemanticTokensResult::Tokens(tokens) =
+        semantic_tokens_for_dependency_fallback(source, &package)
+    else {
+        panic!("expected full semantic tokens");
+    };
+    let decoded = decode_semantic_tokens(&tokens.data);
+    let legend = semantic_tokens_legend();
+    let enum_member_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::ENUM_MEMBER)
+        .expect("enum member legend entry should exist") as u32;
+    let property_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::PROPERTY)
+        .expect("property legend entry should exist") as u32;
+    let method_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::METHOD)
+        .expect("method legend entry should exist") as u32;
+
+    for (span, token_type) in [
+        (nth_span(source, "Retry", 1), enum_member_type),
+        (nth_span(source, "value", 1), property_type),
+        (nth_span(source, "value", 2), property_type),
         (nth_span(source, "ping", 1), method_type),
     ] {
         let range = span_to_range(source, span);
