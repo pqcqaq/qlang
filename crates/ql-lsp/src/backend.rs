@@ -49,9 +49,8 @@ use crate::bridge::{
     references_for_dependency_imports, references_for_dependency_methods,
     references_for_dependency_struct_fields, references_for_dependency_values,
     references_for_dependency_variants, references_for_package_analysis, rename_for_analysis,
-    rename_for_dependency_imports, semantic_tokens_for_analysis,
-    semantic_tokens_for_dependency_fallback, semantic_tokens_for_package_analysis,
-    semantic_tokens_legend, span_to_range, type_definition_for_analysis,
+    rename_for_dependency_imports, semantic_tokens_for_analysis, semantic_tokens_legend,
+    semantic_tokens_result_from_occurrences, span_to_range, type_definition_for_analysis,
     type_definition_for_dependency_imports, type_definition_for_dependency_method_types,
     type_definition_for_dependency_struct_field_types, type_definition_for_dependency_values,
     type_definition_for_dependency_variants, type_definition_for_package_analysis,
@@ -799,7 +798,13 @@ fn package_module_matches_dependency_source_path(
         == normalized_dependency_source_path(dependency_source_path)
 }
 
-fn extend_workspace_import_definition_matches(
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkspaceSourceSymbolMatch {
+    location: Location,
+    kind: ql_analysis::SymbolKind,
+}
+
+fn extend_workspace_import_symbol_matches(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
     current_source: Option<&str>,
@@ -807,7 +812,7 @@ fn extend_workspace_import_definition_matches(
     import_prefix: &[String],
     imported_name: &str,
     supports_kind: fn(ql_analysis::SymbolKind) -> bool,
-    matches: &mut Vec<Location>,
+    matches: &mut Vec<WorkspaceSourceSymbolMatch>,
 ) {
     for module in package.modules() {
         let module_path = module.path();
@@ -848,10 +853,13 @@ fn extend_workspace_import_definition_matches(
             if symbol.name != imported_name || !supports_kind(symbol.kind) {
                 continue;
             }
-            matches.push(Location::new(
-                module_uri.clone(),
-                span_to_range(module_source, symbol.span),
-            ));
+            matches.push(WorkspaceSourceSymbolMatch {
+                location: Location::new(
+                    module_uri.clone(),
+                    span_to_range(module_source, symbol.span),
+                ),
+                kind: symbol.kind,
+            });
         }
     }
 }
@@ -864,7 +872,7 @@ struct BrokenSourceImportBinding {
     definition_span: Span,
 }
 
-fn workspace_source_locations_for_import_binding(
+fn workspace_source_symbol_matches_for_import_binding(
     uri: &Url,
     source: &str,
     analysis: Option<&Analysis>,
@@ -872,11 +880,11 @@ fn workspace_source_locations_for_import_binding(
     import_prefix: &[String],
     imported_name: &str,
     supports_kind: fn(ql_analysis::SymbolKind) -> bool,
-) -> Vec<Location> {
+) -> Vec<WorkspaceSourceSymbolMatch> {
     let current_path = uri.to_file_path().ok();
     let mut matches = Vec::new();
 
-    extend_workspace_import_definition_matches(
+    extend_workspace_import_symbol_matches(
         package,
         current_path.as_deref(),
         Some(source),
@@ -893,7 +901,7 @@ fn workspace_source_locations_for_import_binding(
         let Some(member_package) = package_analysis_for_path(&member_manifest_path) else {
             continue;
         };
-        extend_workspace_import_definition_matches(
+        extend_workspace_import_symbol_matches(
             &member_package,
             None,
             None,
@@ -905,15 +913,38 @@ fn workspace_source_locations_for_import_binding(
         );
     }
 
-    matches.sort_by_key(|location| {
+    matches.sort_by_key(|symbol| {
         (
-            location.uri.to_string(),
-            location.range.start.line,
-            location.range.start.character,
+            symbol.location.uri.to_string(),
+            symbol.location.range.start.line,
+            symbol.location.range.start.character,
         )
     });
-    matches.dedup();
+    matches.dedup_by(|left, right| left.location == right.location && left.kind == right.kind);
     matches
+}
+
+fn workspace_source_locations_for_import_binding(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    import_prefix: &[String],
+    imported_name: &str,
+    supports_kind: fn(ql_analysis::SymbolKind) -> bool,
+) -> Vec<Location> {
+    workspace_source_symbol_matches_for_import_binding(
+        uri,
+        source,
+        analysis,
+        package,
+        import_prefix,
+        imported_name,
+        supports_kind,
+    )
+    .into_iter()
+    .map(|symbol| symbol.location)
+    .collect()
 }
 
 fn workspace_source_location_for_import_binding(
@@ -954,6 +985,27 @@ fn workspace_source_type_definition_location_for_import_binding(
         supports_workspace_import_type_definition,
     );
     (matches.len() == 1).then(|| matches[0].clone())
+}
+
+fn workspace_source_kind_for_import_binding(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    import_prefix: &[String],
+    imported_name: &str,
+    supports_kind: fn(ql_analysis::SymbolKind) -> bool,
+) -> Option<ql_analysis::SymbolKind> {
+    let matches = workspace_source_symbol_matches_for_import_binding(
+        uri,
+        source,
+        analysis,
+        package,
+        import_prefix,
+        imported_name,
+        supports_kind,
+    );
+    (matches.len() == 1).then(|| matches[0].kind)
 }
 
 fn workspace_source_definition_for_import(
@@ -1108,6 +1160,167 @@ fn workspace_source_hover_for_import_in_broken_source(
     )?;
 
     hover_from_workspace_source_location(source, occurrence_span, source_location)
+}
+
+fn workspace_import_semantic_tokens_in_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+) -> Vec<ql_analysis::SemanticTokenOccurrence> {
+    let (tokens, _) = lex(source);
+    let bindings = broken_source_import_bindings_in_tokens(&tokens);
+    let mut local_name_counts = HashMap::<String, usize>::new();
+    let mut local_name_kinds = HashMap::<String, ql_analysis::SymbolKind>::new();
+
+    for binding in bindings {
+        let Some(kind) = workspace_source_kind_for_import_binding(
+            uri,
+            source,
+            Some(analysis),
+            package,
+            &binding.import_prefix,
+            binding.imported_name.as_str(),
+            supports_workspace_import_definition,
+        ) else {
+            continue;
+        };
+        *local_name_counts
+            .entry(binding.local_name.clone())
+            .or_insert(0usize) += 1;
+        local_name_kinds.insert(binding.local_name, kind);
+    }
+
+    let mut occurrences = Vec::new();
+    for (local_name, kind) in local_name_kinds {
+        if local_name_counts.get(local_name.as_str()) != Some(&1usize) {
+            continue;
+        }
+        for (start, _) in source.match_indices(local_name.as_str()) {
+            let Some((binding, span)) = analysis.import_binding_at(start) else {
+                continue;
+            };
+            if binding.local_name == local_name && span.start == start {
+                occurrences.push(ql_analysis::SemanticTokenOccurrence { span, kind });
+            }
+        }
+    }
+    occurrences
+}
+
+fn workspace_import_semantic_tokens_in_broken_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+) -> Vec<ql_analysis::SemanticTokenOccurrence> {
+    let (tokens, _) = lex(source);
+    let mut unique_bindings = HashMap::<String, (Span, ql_analysis::SymbolKind)>::new();
+    let mut local_name_counts = HashMap::<String, usize>::new();
+
+    for binding in broken_source_import_bindings_in_tokens(&tokens) {
+        let Some(kind) = workspace_source_kind_for_import_binding(
+            uri,
+            source,
+            None,
+            package,
+            &binding.import_prefix,
+            binding.imported_name.as_str(),
+            supports_workspace_import_definition,
+        ) else {
+            continue;
+        };
+        *local_name_counts
+            .entry(binding.local_name.clone())
+            .or_insert(0usize) += 1;
+        unique_bindings.insert(binding.local_name, (binding.definition_span, kind));
+    }
+
+    tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| token.kind == TokenKind::Ident)
+        .filter_map(|(index, token)| {
+            let (definition_span, kind) = unique_bindings.get(token.text.as_str())?;
+            (local_name_counts.get(token.text.as_str()) == Some(&1usize)
+                && (token.span == *definition_span
+                    || broken_source_import_token_matches_reference_context(&tokens, index)))
+            .then_some(ql_analysis::SemanticTokenOccurrence {
+                span: token.span,
+                kind: *kind,
+            })
+        })
+        .collect()
+}
+
+fn semantic_token_sort_index(kind: ql_analysis::SymbolKind) -> u32 {
+    match kind {
+        ql_analysis::SymbolKind::Import => 0,
+        ql_analysis::SymbolKind::BuiltinType | ql_analysis::SymbolKind::TypeAlias => 1,
+        ql_analysis::SymbolKind::Struct => 2,
+        ql_analysis::SymbolKind::Enum => 3,
+        ql_analysis::SymbolKind::Variant => 4,
+        ql_analysis::SymbolKind::Trait => 5,
+        ql_analysis::SymbolKind::Generic => 6,
+        ql_analysis::SymbolKind::Parameter => 7,
+        ql_analysis::SymbolKind::Local | ql_analysis::SymbolKind::SelfParameter => 8,
+        ql_analysis::SymbolKind::Field => 9,
+        ql_analysis::SymbolKind::Function
+        | ql_analysis::SymbolKind::Const
+        | ql_analysis::SymbolKind::Static => 10,
+        ql_analysis::SymbolKind::Method => 11,
+    }
+}
+
+fn sort_and_dedup_semantic_tokens(tokens: &mut Vec<ql_analysis::SemanticTokenOccurrence>) {
+    tokens.sort_by_key(|token| {
+        (
+            token.span.start,
+            token.span.end,
+            semantic_token_sort_index(token.kind),
+        )
+    });
+    tokens.dedup_by(|left, right| left.span == right.span && left.kind == right.kind);
+}
+
+fn semantic_tokens_for_workspace_package_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+) -> SemanticTokensResult {
+    let mut tokens = analysis.semantic_tokens();
+    let dependency_import_root_tokens =
+        package.dependency_import_root_semantic_tokens_in_source(source);
+    let workspace_import_root_tokens =
+        workspace_import_semantic_tokens_in_analysis(uri, source, analysis, package);
+    let overridden_import_spans = dependency_import_root_tokens
+        .iter()
+        .chain(workspace_import_root_tokens.iter())
+        .map(|token| (token.span.start, token.span.end))
+        .collect::<HashSet<_>>();
+
+    tokens.retain(|token| {
+        token.kind != ql_analysis::SymbolKind::Import
+            || !overridden_import_spans.contains(&(token.span.start, token.span.end))
+    });
+    tokens.extend(package.dependency_semantic_tokens_in_source(source));
+    tokens.extend(dependency_import_root_tokens);
+    tokens.extend(workspace_import_root_tokens);
+    sort_and_dedup_semantic_tokens(&mut tokens);
+    semantic_tokens_result_from_occurrences(source, tokens)
+}
+
+fn semantic_tokens_for_workspace_dependency_fallback(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+) -> SemanticTokensResult {
+    let mut tokens = package.dependency_fallback_semantic_tokens_in_source(source);
+    tokens.extend(workspace_import_semantic_tokens_in_broken_source(
+        uri, source, package,
+    ));
+    sort_and_dedup_semantic_tokens(&mut tokens);
+    semantic_tokens_result_from_occurrences(source, tokens)
 }
 
 fn broken_source_import_binding_at(
@@ -1403,7 +1616,11 @@ fn dependency_occurrence_span_at(
                 .dependency_value_hover_in_source_at(source, offset)
                 .map(|info| info.span)
         })
-        .or_else(|| package.dependency_hover_in_source_at(source, offset).map(|info| info.span))
+        .or_else(|| {
+            package
+                .dependency_hover_in_source_at(source, offset)
+                .map(|info| info.span)
+        })
 }
 
 fn workspace_source_location_for_dependency_target(
@@ -1963,9 +2180,13 @@ impl LanguageServer for Backend {
             ) {
                 return Ok(Some(hover));
             }
-            if let Some(hover) =
-                workspace_source_hover_for_dependency(&uri, &source, analysis.as_ref(), &package, position)
-            {
+            if let Some(hover) = workspace_source_hover_for_dependency(
+                &uri,
+                &source,
+                analysis.as_ref(),
+                &package,
+                position,
+            ) {
                 return Ok(Some(hover));
             }
             if let Some(hover) = hover_for_dependency_imports(&source, &package, position) {
@@ -2363,12 +2584,12 @@ impl LanguageServer for Backend {
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
             if let Ok(analysis) = analyze_source(&source) {
-                return Ok(Some(semantic_tokens_for_package_analysis(
-                    &source, &analysis, &package,
+                return Ok(Some(semantic_tokens_for_workspace_package_analysis(
+                    &uri, &source, &analysis, &package,
                 )));
             }
-            return Ok(Some(semantic_tokens_for_dependency_fallback(
-                &source, &package,
+            return Ok(Some(semantic_tokens_for_workspace_dependency_fallback(
+                &uri, &source, &package,
             )));
         }
 
@@ -2480,7 +2701,9 @@ mod tests {
         GotoTypeDefinitionResponse, document_highlights_for_analysis_at,
         document_highlights_for_package_analysis_at, fallback_document_highlights_for_package_at,
         package_analysis_for_path, prepare_rename_for_workspace_import_in_broken_source,
-        rename_for_workspace_import_in_broken_source, workspace_source_definition_for_dependency,
+        rename_for_workspace_import_in_broken_source,
+        semantic_tokens_for_workspace_dependency_fallback,
+        semantic_tokens_for_workspace_package_analysis, workspace_source_definition_for_dependency,
         workspace_source_definition_for_import,
         workspace_source_definition_for_import_in_broken_source, workspace_source_hover_for_import,
         workspace_source_hover_for_import_in_broken_source,
@@ -2491,7 +2714,7 @@ mod tests {
         workspace_source_type_definition_for_import_in_broken_source,
         workspace_symbols_for_documents, workspace_symbols_for_documents_and_roots,
     };
-    use crate::bridge::span_to_range;
+    use crate::bridge::{semantic_tokens_legend, span_to_range};
     use ql_analysis::{RenameError, SymbolKind as AnalysisSymbolKind, analyze_source};
     use ql_span::Span;
     use std::env;
@@ -2500,7 +2723,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower_lsp::lsp_types::{
         GotoDefinitionResponse, HoverContents, Location, Position, PrepareRenameResponse,
-        SymbolInformation, SymbolKind, TextEdit, Url, WorkspaceEdit,
+        SemanticTokenType, SemanticTokensResult, SymbolInformation, SymbolKind, TextEdit, Url,
+        WorkspaceEdit,
     };
 
     struct TempDir {
@@ -2551,6 +2775,26 @@ mod tests {
         let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
         let line_start = prefix.rfind('\n').map(|index| index + 1).unwrap_or(0);
         Position::new(line, prefix[line_start..].chars().count() as u32)
+    }
+
+    fn decode_semantic_tokens(
+        tokens: &[tower_lsp::lsp_types::SemanticToken],
+    ) -> Vec<(u32, u32, u32, u32)> {
+        let mut line = 0u32;
+        let mut start = 0u32;
+        let mut decoded = Vec::new();
+
+        for token in tokens {
+            line += token.delta_line;
+            if token.delta_line == 0 {
+                start += token.delta_start;
+            } else {
+                start = token.delta_start;
+            }
+            decoded.push((line, start, token.length, token.token_type));
+        }
+
+        decoded
     }
 
     fn assert_workspace_edit(edit: WorkspaceEdit, uri: &Url, expected: Vec<TextEdit>) {
@@ -5710,6 +5954,268 @@ pub fn exported(value: Int) -> Int
                 .contains("fn exported(value: Int, extra: Int) -> Int")
         );
         assert!(!markup.value.contains("fn exported(value: Int) -> Int"));
+    }
+
+    #[test]
+    fn workspace_import_semantic_tokens_prefer_workspace_member_symbol_kinds() {
+        let temp = TempDir::new("ql-lsp-workspace-import-semantic-tokens");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Command as Cmd
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2 }
+    let command = Cmd.Retry(1)
+    return built.value
+}
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let SemanticTokensResult::Tokens(tokens) =
+            semantic_tokens_for_workspace_package_analysis(&uri, &source, &analysis, &package)
+        else {
+            panic!("expected full semantic tokens")
+        };
+        let decoded = decode_semantic_tokens(&tokens.data);
+        let legend = semantic_tokens_legend();
+        let namespace_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::NAMESPACE)
+            .expect("namespace legend entry should exist") as u32;
+        let class_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::CLASS)
+            .expect("class legend entry should exist") as u32;
+        let enum_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::ENUM)
+            .expect("enum legend entry should exist") as u32;
+
+        for (needle, occurrence, token_type) in [
+            ("Cfg", 1usize, class_type),
+            ("Cfg", 2usize, class_type),
+            ("Cfg", 3usize, class_type),
+            ("Cmd", 1usize, enum_type),
+            ("Cmd", 2usize, enum_type),
+        ] {
+            let span = Span::new(
+                nth_offset(&source, needle, occurrence),
+                nth_offset(&source, needle, occurrence) + needle.len(),
+            );
+            let range = span_to_range(&source, span);
+            assert!(decoded.contains(&(
+                range.start.line,
+                range.start.character,
+                range.end.character - range.start.character,
+                token_type,
+            )));
+        }
+
+        for (needle, occurrence) in [("Cfg", 1usize), ("Cmd", 1usize)] {
+            let span = Span::new(
+                nth_offset(&source, needle, occurrence),
+                nth_offset(&source, needle, occurrence) + needle.len(),
+            );
+            let range = span_to_range(&source, span);
+            assert!(!decoded.contains(&(
+                range.start.line,
+                range.start.character,
+                range.end.character - range.start.character,
+                namespace_type,
+            )));
+        }
+    }
+
+    #[test]
+    fn workspace_import_semantic_tokens_survive_parse_errors() {
+        let temp = TempDir::new("ql-lsp-workspace-import-semantic-tokens-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Command as Cmd
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let built = Cfg { value: 1, limit: 2
+    let command = Cmd.Retry(1)
+    return built.value
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+}
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let SemanticTokensResult::Tokens(tokens) =
+            semantic_tokens_for_workspace_dependency_fallback(&uri, &source, &package)
+        else {
+            panic!("expected full semantic tokens")
+        };
+        let decoded = decode_semantic_tokens(&tokens.data);
+        let legend = semantic_tokens_legend();
+        let class_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::CLASS)
+            .expect("class legend entry should exist") as u32;
+        let enum_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::ENUM)
+            .expect("enum legend entry should exist") as u32;
+
+        for (needle, occurrence, token_type) in [
+            ("Cfg", 1usize, class_type),
+            ("Cfg", 2usize, class_type),
+            ("Cfg", 3usize, class_type),
+            ("Cmd", 1usize, enum_type),
+            ("Cmd", 2usize, enum_type),
+        ] {
+            let span = Span::new(
+                nth_offset(&source, needle, occurrence),
+                nth_offset(&source, needle, occurrence) + needle.len(),
+            );
+            let range = span_to_range(&source, span);
+            assert!(decoded.contains(&(
+                range.start.line,
+                range.start.character,
+                range.end.character - range.start.character,
+                token_type,
+            )));
+        }
     }
 
     #[test]

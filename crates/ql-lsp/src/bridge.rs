@@ -1490,6 +1490,13 @@ fn semantic_tokens_result(
     })
 }
 
+pub fn semantic_tokens_result_from_occurrences(
+    source: &str,
+    tokens: Vec<ql_analysis::SemanticTokenOccurrence>,
+) -> SemanticTokensResult {
+    semantic_tokens_result(source, tokens)
+}
+
 fn is_completion_identifier_char(ch: char) -> bool {
     ch == '_' || ch == '`' || ch.is_ascii_alphanumeric()
 }
