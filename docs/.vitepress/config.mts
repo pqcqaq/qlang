@@ -30,6 +30,10 @@ export default defineConfig({
           {
             text: "编译器、术语与生态入门",
             link: "/getting-started/compiler-primer"
+          },
+          {
+            text: "VSCode 插件 qlang",
+            link: "/getting-started/vscode-extension"
           }
         ]
       },

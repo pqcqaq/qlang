@@ -1,0 +1,64 @@
+{
+  "name": "qlang",
+  "displayName": "qlang",
+  "description": "VS Code language support for Qlang via qlsp.",
+  "version": "0.0.1",
+  "publisher": "qlang",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Programming Languages"],
+  "activationEvents": [
+    "onLanguage:qlang",
+    "onCommand:qlang.restartLanguageServer"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "qlang",
+        "aliases": ["Qlang", "qlang"],
+        "extensions": [".ql"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "qlang.restartLanguageServer",
+        "title": "Qlang: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "qlang",
+      "properties": {
+        "qlang.server.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path or workspace-relative path to the `qlsp` executable. Leave empty to auto-detect `target/debug/qlsp`, `target/release/qlsp`, then fall back to `qlsp` on PATH."
+        },
+        "qlang.server.args": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Additional command-line arguments passed to `qlsp`."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "prepublishOnly": "npm run compile"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.8.3"
+  }
+}

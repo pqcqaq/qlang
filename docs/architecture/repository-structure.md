@@ -17,6 +17,7 @@
 
 ```text
 .
+├─ editors/                   # 编辑器集成项目；当前包含 VSCode 扩展 `qlang`
 ├─ docs/                      # VitePress 文档站，承载设计、架构、路线图与教程
 ├─ crates/                    # Rust workspace：编译器、project/workspace、runtime 与工具层源码
 ├─ examples/                  # 已提交的 C / Rust 宿主互操作示例
@@ -33,6 +34,8 @@
 
 ```text
 .
+├─ editors/
+│  └─ vscode/qlang           # VSCode 扩展：注册 `.ql` 语言并启动 `qlsp`
 ├─ docs/                      # VitePress 文档站
 ├─ crates/
 │  ├─ ql-span                 # span 与基础定位
