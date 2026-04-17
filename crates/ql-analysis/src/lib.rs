@@ -115,6 +115,14 @@ struct DependencyImportOccurrence {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct BrokenSourceDependencyImportOccurrence {
+    local_name: String,
+    span: Span,
+    is_definition: bool,
+    target: DependencyResolvedTarget,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct DependencyValueOccurrence {
     kind: SymbolKind,
     local_name: String,
@@ -1631,44 +1639,71 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<Vec<ReferenceTarget>> {
-        let module = parse_source(source).ok()?;
-        let target_occurrence = dependency_import_occurrence_in_module(&module, offset)?;
-        let (dependency, symbol) =
-            dependency_import_binding_for_local_name(self, &module, &target_occurrence.local_name)?;
-        let mut references = source
-            .match_indices(&target_occurrence.local_name)
-            .filter_map(|(start, _)| {
-                let occurrence = dependency_import_occurrence_in_module(&module, start)?;
-                if occurrence.span.start != start
-                    || occurrence.local_name != target_occurrence.local_name
-                {
-                    return None;
-                }
+        let mut references = if let Ok(module) = parse_source(source) {
+            let target_occurrence = dependency_import_occurrence_in_module(&module, offset)?;
+            let (dependency, symbol) = dependency_import_binding_for_local_name(
+                self,
+                &module,
+                &target_occurrence.local_name,
+            )?;
+            source
+                .match_indices(&target_occurrence.local_name)
+                .filter_map(|(start, _)| {
+                    let occurrence = dependency_import_occurrence_in_module(&module, start)?;
+                    if occurrence.span.start != start
+                        || occurrence.local_name != target_occurrence.local_name
+                    {
+                        return None;
+                    }
 
-                let (occurrence_dependency, occurrence_symbol) =
-                    dependency_import_binding_for_local_name(
-                        self,
-                        &module,
-                        &occurrence.local_name,
-                    )?;
-                if occurrence_dependency.interface_path != dependency.interface_path
-                    || occurrence_dependency.artifact.package_name
-                        != dependency.artifact.package_name
-                    || occurrence_symbol.source_path != symbol.source_path
-                    || occurrence_symbol.kind != symbol.kind
-                    || occurrence_symbol.name != symbol.name
-                {
-                    return None;
-                }
+                    let (occurrence_dependency, occurrence_symbol) =
+                        dependency_import_binding_for_local_name(
+                            self,
+                            &module,
+                            &occurrence.local_name,
+                        )?;
+                    if occurrence_dependency.interface_path != dependency.interface_path
+                        || occurrence_dependency.artifact.package_name
+                            != dependency.artifact.package_name
+                        || occurrence_symbol.source_path != symbol.source_path
+                        || occurrence_symbol.kind != symbol.kind
+                        || occurrence_symbol.name != symbol.name
+                    {
+                        return None;
+                    }
 
-                Some(ReferenceTarget {
-                    kind: symbol.kind,
-                    name: symbol.name.clone(),
+                    Some(ReferenceTarget {
+                        kind: symbol.kind,
+                        name: symbol.name.clone(),
+                        span: occurrence.span,
+                        is_definition: occurrence.is_definition,
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            let occurrences = dependency_import_occurrences_in_broken_source(self, source);
+            let target_occurrence = occurrences
+                .iter()
+                .find(|occurrence| occurrence.span.contains(offset))?
+                .clone();
+            occurrences
+                .into_iter()
+                .filter(|occurrence| {
+                    occurrence.local_name == target_occurrence.local_name
+                        && occurrence.target.path == target_occurrence.target.path
+                        && occurrence.target.package_name == target_occurrence.target.package_name
+                        && occurrence.target.source_path == target_occurrence.target.source_path
+                        && occurrence.target.kind == target_occurrence.target.kind
+                        && occurrence.target.name == target_occurrence.target.name
+                })
+                .map(|occurrence| ReferenceTarget {
+                    kind: occurrence.target.kind,
+                    name: occurrence.target.name,
                     span: occurrence.span,
                     is_definition: occurrence.is_definition,
                 })
-            })
-            .collect::<Vec<_>>();
+                .collect::<Vec<_>>()
+        };
         if references.is_empty() {
             return None;
         }
@@ -1912,21 +1947,25 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyResolvedTarget> {
-        let module = parse_source(source).ok()?;
-        let occurrence = dependency_import_occurrence_in_module(&module, offset)?;
-        let (dependency, symbol) =
-            dependency_import_binding_for_local_name(self, &module, &occurrence.local_name)?;
-        let definition_span = dependency.artifact_span_for(symbol)?;
-        Some(DependencyResolvedTarget {
-            import_span: occurrence.span,
-            package_name: dependency.artifact.package_name.clone(),
-            source_path: symbol.source_path.clone(),
-            kind: symbol.kind,
-            name: symbol.name.clone(),
-            detail: symbol.detail.clone(),
-            path: dependency.interface_path.clone(),
-            definition_span,
-        })
+        if let Ok(module) = parse_source(source) {
+            let occurrence = dependency_import_occurrence_in_module(&module, offset)?;
+            let (dependency, symbol) =
+                dependency_import_binding_for_local_name(self, &module, &occurrence.local_name)?;
+            let definition_span = dependency.artifact_span_for(symbol)?;
+            return Some(DependencyResolvedTarget {
+                import_span: occurrence.span,
+                package_name: dependency.artifact.package_name.clone(),
+                source_path: symbol.source_path.clone(),
+                kind: symbol.kind,
+                name: symbol.name.clone(),
+                detail: symbol.detail.clone(),
+                path: dependency.interface_path.clone(),
+                definition_span,
+            });
+        }
+
+        dependency_import_occurrence_in_broken_source(self, source, offset)
+            .map(|occurrence| occurrence.target)
     }
 
     fn dependency_type_target_in_source_at(
@@ -1934,26 +1973,35 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyResolvedTarget> {
-        let module = parse_source(source).ok()?;
-        let occurrence = dependency_type_import_occurrence_in_module(&module, offset)?;
-        let (dependency, symbol) =
-            dependency_import_binding_for_local_name(self, &module, &occurrence.local_name)?;
-        if !matches!(
-            symbol.kind,
-            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::TypeAlias
-        ) {
-            return None;
+        if let Ok(module) = parse_source(source) {
+            let occurrence = dependency_type_import_occurrence_in_module(&module, offset)?;
+            let (dependency, symbol) =
+                dependency_import_binding_for_local_name(self, &module, &occurrence.local_name)?;
+            if !matches!(
+                symbol.kind,
+                SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::TypeAlias
+            ) {
+                return None;
+            }
+            let definition_span = dependency.artifact_span_for(symbol)?;
+            return Some(DependencyResolvedTarget {
+                import_span: occurrence.span,
+                package_name: dependency.artifact.package_name.clone(),
+                source_path: symbol.source_path.clone(),
+                kind: symbol.kind,
+                name: symbol.name.clone(),
+                detail: symbol.detail.clone(),
+                path: dependency.interface_path.clone(),
+                definition_span,
+            });
         }
-        let definition_span = dependency.artifact_span_for(symbol)?;
-        Some(DependencyResolvedTarget {
-            import_span: occurrence.span,
-            package_name: dependency.artifact.package_name.clone(),
-            source_path: symbol.source_path.clone(),
-            kind: symbol.kind,
-            name: symbol.name.clone(),
-            detail: symbol.detail.clone(),
-            path: dependency.interface_path.clone(),
-            definition_span,
+
+        dependency_import_occurrence_in_broken_source(self, source, offset).and_then(|occurrence| {
+            matches!(
+                occurrence.target.kind,
+                SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::TypeAlias
+            )
+            .then_some(occurrence.target)
         })
     }
 
@@ -3479,6 +3527,130 @@ fn dependency_import_alias_in_tokens(
 fn dependency_import_ident_token(tokens: &[Token], index: usize) -> Option<&Token> {
     let token = tokens.get(index)?;
     (token.kind == TokenKind::Ident).then_some(token)
+}
+
+fn dependency_import_occurrence_in_broken_source(
+    package: &PackageAnalysis,
+    source: &str,
+    offset: usize,
+) -> Option<BrokenSourceDependencyImportOccurrence> {
+    dependency_import_occurrences_in_broken_source(package, source)
+        .into_iter()
+        .find(|occurrence| occurrence.span.contains(offset))
+}
+
+fn dependency_import_occurrences_in_broken_source(
+    package: &PackageAnalysis,
+    source: &str,
+) -> Vec<BrokenSourceDependencyImportOccurrence> {
+    let (tokens, _) = lex(source);
+    let resolved_bindings = dependency_resolved_import_targets_in_tokens(package, &tokens);
+    tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, token)| {
+            let (binding, target) = resolved_bindings.get(token.text.as_str())?;
+            let is_definition = token.span == binding.definition_span;
+            if !is_definition
+                && !dependency_import_token_matches_broken_source_reference_context(
+                    &tokens,
+                    index,
+                    target.kind,
+                )
+            {
+                return None;
+            }
+            Some(BrokenSourceDependencyImportOccurrence {
+                local_name: binding.local_name.clone(),
+                span: token.span,
+                is_definition,
+                target: target.clone(),
+            })
+        })
+        .collect()
+}
+
+fn dependency_resolved_import_targets_in_tokens(
+    package: &PackageAnalysis,
+    tokens: &[Token],
+) -> HashMap<String, (ImportBinding, DependencyResolvedTarget)> {
+    let mut grouped_bindings = HashMap::<String, Vec<ImportBinding>>::new();
+    for binding in dependency_import_bindings_in_tokens(tokens) {
+        grouped_bindings
+            .entry(binding.local_name.clone())
+            .or_default()
+            .push(binding);
+    }
+
+    grouped_bindings
+        .into_iter()
+        .filter_map(|(local_name, bindings)| {
+            let mut matches = bindings
+                .into_iter()
+                .filter_map(|binding| {
+                    let (dependency, symbol) =
+                        package.resolve_dependency_import_binding(&binding)?;
+                    let definition_span = dependency.artifact_span_for(symbol)?;
+                    let import_span = binding.definition_span;
+                    Some((
+                        binding,
+                        DependencyResolvedTarget {
+                            import_span,
+                            package_name: dependency.artifact.package_name.clone(),
+                            source_path: symbol.source_path.clone(),
+                            kind: symbol.kind,
+                            name: symbol.name.clone(),
+                            detail: symbol.detail.clone(),
+                            path: dependency.interface_path.clone(),
+                            definition_span,
+                        },
+                    ))
+                })
+                .collect::<Vec<_>>();
+            if matches.len() != 1 {
+                return None;
+            }
+            matches.pop().map(|resolved| (local_name, resolved))
+        })
+        .collect()
+}
+
+fn dependency_import_token_matches_broken_source_reference_context(
+    tokens: &[Token],
+    index: usize,
+    kind: SymbolKind,
+) -> bool {
+    let prev_kind = index
+        .checked_sub(1)
+        .and_then(|index| tokens.get(index))
+        .map(|token| token.kind);
+    let next_kind = tokens.get(index + 1).map(|token| token.kind);
+
+    if matches!(prev_kind, Some(TokenKind::Dot | TokenKind::As)) {
+        return false;
+    }
+
+    if matches!(
+        next_kind,
+        Some(
+            TokenKind::LParen
+                | TokenKind::LBracket
+                | TokenKind::LBrace
+                | TokenKind::Dot
+                | TokenKind::Question
+        )
+    ) {
+        return true;
+    }
+
+    matches!(prev_kind, Some(TokenKind::Colon | TokenKind::Arrow))
+        || matches!(
+            (kind, next_kind),
+            (
+                SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::TypeAlias,
+                Some(TokenKind::Comma | TokenKind::RParen | TokenKind::Eq)
+            )
+        )
 }
 
 fn dependency_import_local_names_in_module(module: &ql_ast::Module) -> HashSet<String> {
