@@ -1334,7 +1334,7 @@ impl PackageAnalysis {
 
     /// Return dependency-backed semantic-token occurrences for the current source.
     ///
-    /// This augments same-file semantic tokens with dependency-aware member and variant surfaces
+    /// This augments same-file semantic tokens with dependency-aware value/member/variant surfaces
     /// that require package interface knowledge.
     pub fn dependency_semantic_tokens_in_source(
         &self,
@@ -1346,6 +1346,14 @@ impl PackageAnalysis {
         };
 
         let mut tokens = dependency_variant_semantic_tokens_in_module(self, &module, source);
+        tokens.extend(
+            self.dependency_value_occurrences(&module)
+                .into_iter()
+                .map(|occurrence| SemanticTokenOccurrence {
+                    span: occurrence.reference_span,
+                    kind: occurrence.kind,
+                }),
+        );
         tokens.extend(
             self.dependency_struct_field_occurrences(&module)
                 .into_iter()

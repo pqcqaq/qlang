@@ -528,6 +528,16 @@ pub fn main(config: Cfg) -> Int {
         .iter()
         .position(|token_type| *token_type == SemanticTokenType::PROPERTY)
         .expect("property legend entry should exist") as u32;
+    let parameter_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::PARAMETER)
+        .expect("parameter legend entry should exist") as u32;
+    let variable_type = legend
+        .token_types
+        .iter()
+        .position(|token_type| *token_type == SemanticTokenType::VARIABLE)
+        .expect("variable legend entry should exist") as u32;
     let method_type = legend
         .token_types
         .iter()
@@ -535,6 +545,9 @@ pub fn main(config: Cfg) -> Int {
         .expect("method legend entry should exist") as u32;
 
     for (span, token_type) in [
+        (nth_span(source, "config", 1), parameter_type),
+        (nth_span(source, "built", 1), variable_type),
+        (nth_span(source, "built", 2), variable_type),
         (nth_span(source, "Retry", 1), enum_member_type),
         (nth_span(source, "value", 1), property_type),
         (nth_span(source, "value", 2), property_type),
