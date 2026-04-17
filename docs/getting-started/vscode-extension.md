@@ -27,7 +27,7 @@
 
 - 插件声明了这些 LSP 能力，不等于它们已经在真实项目里做到了稳定可依赖。
 - 当前最可靠的仍然是 diagnostics、same-file 语义，以及 healthy package/workspace 下已经接通的那部分 dependency-backed 导航/高亮。
-- 这轮开始已经补上两条更接近真实项目的路径：workspace roots 驱动的保守 `workspace symbol` 搜索，以及 package/workspace import、当前文件里命中的 dependency value / enum variant / struct field / method member 的 `definition` / `declaration` / `references` 会优先跳到 workspace 内唯一可定位的源码定义，找不到唯一源码目标时再回退 `.qi`。
+- 这轮开始已经补上两条更接近真实项目的路径：workspace roots 驱动的保守 `workspace symbol` 搜索，以及 package/workspace import、当前文件里命中的 dependency value / enum variant / struct field / method member 的 `definition` / `declaration` / `references` / `typeDefinition` 会优先跳到 workspace 内唯一可定位的源码定义，找不到唯一源码目标时再回退 `.qi`。
 - 当前文件内的 symbol occurrence highlighting 也已经接上 `textDocument/documentHighlight`，会复用 same-file / package-aware references 面高亮当前文件里的定义和使用位。
 - package-aware `semantic tokens` 现在也已经开始覆盖 imported dependency enum variant、显式 struct field label 与唯一 method member，因此真实项目里不再只剩 TextMate fallback 的基础着色。
 - 但 project-scale 跳转、跨包导航、以及“像成熟语言插件那样稳定”的更完整高级高亮，仍然没有完全做实。
