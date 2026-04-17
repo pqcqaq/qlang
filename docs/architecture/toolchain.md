@@ -520,8 +520,8 @@ LSP 服务端，复用编译器 HIR 与查询系统。长期目标支持：
   - `textDocument/documentHighlight`（当前为 current-document occurrence highlighting，复用 same-file / package-aware references；parse-error 文件里的 workspace/package import root 也会继续保留当前文档高亮）
   - `textDocument/completion`（当前为 same-file lexical scope + parsed member token + parsed enum variant path，且支持 local import alias -> local enum item 的 variant follow-through，并保留 escaped identifier 的合法 insert text）
   - `textDocument/semanticTokens/full`（当前为 same-file source-backed symbol + healthy package/workspace 下的 package-aware dependency-backed tokens）
-  - `textDocument/prepareRename`
-  - `textDocument/rename`（当前为 same-file）
+  - `textDocument/prepareRename`（当前仍是保守 prepare-rename；parse-error 文件里的 workspace/package import root 也会继续保留）
+  - `textDocument/rename`（当前为 same-file；parse-error 文件里的 workspace/package import root 也会继续保留当前文档内的保守重命名）
   - `textDocument/publishDiagnostics`
 - LSP 协议桥接已单独分层：
   - 位置 `Position <-> byte offset` 换算
