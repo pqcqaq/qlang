@@ -3,11 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ql_analysis::{
-    Analysis, DependencyDefinitionTarget, DependencyInterface, PackageAnalysisError,
+    Analysis, DependencyDefinitionTarget, DependencyInterface, PackageAnalysisError, RenameError,
     analyze_available_package_dependencies, analyze_package,
     analyze_package_with_available_dependencies, analyze_source,
 };
-use ql_lexer::{Token, TokenKind, lex};
+use ql_lexer::{Token, TokenKind, is_keyword, is_valid_identifier, lex};
 use ql_project::{collect_package_sources, load_project_manifest};
 use ql_span::Span;
 use tokio::sync::RwLock;
@@ -26,7 +26,7 @@ use tower_lsp::lsp_types::{
     SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
     SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SymbolInformation,
     TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TypeDefinitionProviderCapability, Url, WorkspaceEdit,
+    TextDocumentSyncOptions, TextEdit, TypeDefinitionProviderCapability, Url, WorkspaceEdit,
     WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
@@ -853,14 +853,14 @@ struct BrokenSourceImportBinding {
     definition_span: Span,
 }
 
-fn workspace_source_location_for_import_binding(
+fn workspace_source_locations_for_import_binding(
     uri: &Url,
     source: &str,
     analysis: Option<&Analysis>,
     package: &ql_analysis::PackageAnalysis,
     import_prefix: &[String],
     imported_name: &str,
-) -> Option<Location> {
+) -> Vec<Location> {
     let current_path = uri.to_file_path().ok();
     let mut matches = Vec::new();
 
@@ -899,6 +899,25 @@ fn workspace_source_location_for_import_binding(
         )
     });
     matches.dedup();
+    matches
+}
+
+fn workspace_source_location_for_import_binding(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    import_prefix: &[String],
+    imported_name: &str,
+) -> Option<Location> {
+    let matches = workspace_source_locations_for_import_binding(
+        uri,
+        source,
+        analysis,
+        package,
+        import_prefix,
+        imported_name,
+    );
     (matches.len() == 1).then(|| matches[0].clone())
 }
 
@@ -1320,8 +1339,7 @@ fn workspace_source_references_for_import_in_broken_source(
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
     let binding = broken_source_import_binding_at(source, position)?;
-    let (tokens, _) = lex(source);
-    let source_definition = workspace_source_location_for_import_binding(
+    let source_matches = workspace_source_locations_for_import_binding(
         uri,
         source,
         None,
@@ -1329,6 +1347,12 @@ fn workspace_source_references_for_import_in_broken_source(
         &binding.import_prefix,
         binding.imported_name.as_str(),
     );
+    if source_matches.is_empty() {
+        return None;
+    }
+
+    let (tokens, _) = lex(source);
+    let source_definition = (source_matches.len() == 1).then(|| source_matches[0].clone());
 
     let mut locations = Vec::new();
     if include_declaration {
@@ -1355,6 +1379,147 @@ fn workspace_source_references_for_import_in_broken_source(
     );
 
     (!locations.is_empty()).then_some(locations)
+}
+
+fn workspace_import_document_highlights_in_broken_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Vec<DocumentHighlight>> {
+    let binding = broken_source_import_binding_at(source, position)?;
+    let locations = workspace_source_references_for_import_in_broken_source(
+        uri, source, package, position, true,
+    )?;
+    let mut highlights = document_highlights_from_locations(uri, locations).unwrap_or_default();
+    let definition_range = span_to_range(source, binding.definition_span);
+    if !highlights
+        .iter()
+        .any(|highlight| highlight.range == definition_range)
+    {
+        highlights.insert(
+            0,
+            DocumentHighlight {
+                range: definition_range,
+                kind: None,
+            },
+        );
+    }
+    Some(highlights)
+}
+
+fn validate_rename_text(text: &str) -> std::result::Result<(), RenameError> {
+    let escaped = text
+        .strip_prefix('`')
+        .and_then(|value| value.strip_suffix('`'));
+    if let Some(inner) = escaped {
+        return is_valid_identifier(inner)
+            .then_some(())
+            .ok_or_else(|| RenameError::InvalidIdentifier(text.to_owned()));
+    }
+
+    if !is_valid_identifier(text) {
+        return Err(RenameError::InvalidIdentifier(text.to_owned()));
+    }
+    if is_keyword(text) {
+        return Err(RenameError::Keyword(text.to_owned()));
+    }
+
+    Ok(())
+}
+
+fn prepare_rename_for_workspace_import_in_broken_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<PrepareRenameResponse> {
+    let binding = broken_source_import_binding_at(source, position)?;
+    if workspace_source_locations_for_import_binding(
+        uri,
+        source,
+        None,
+        package,
+        &binding.import_prefix,
+        binding.imported_name.as_str(),
+    )
+    .is_empty()
+    {
+        return None;
+    }
+
+    let offset = position_to_offset(source, position)?;
+    let (tokens, _) = lex(source);
+    let token = tokens.iter().find(|token| {
+        token.kind == TokenKind::Ident
+            && token.text == binding.local_name
+            && token.span.contains(offset)
+    })?;
+    let placeholder = source.get(token.span.start..token.span.end)?.to_owned();
+
+    Some(PrepareRenameResponse::RangeWithPlaceholder {
+        range: span_to_range(source, token.span),
+        placeholder,
+    })
+}
+
+fn rename_for_workspace_import_in_broken_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+    new_name: &str,
+) -> std::result::Result<Option<WorkspaceEdit>, RenameError> {
+    validate_rename_text(new_name)?;
+
+    let Some(binding) = broken_source_import_binding_at(source, position) else {
+        return Ok(None);
+    };
+    if workspace_source_locations_for_import_binding(
+        uri,
+        source,
+        None,
+        package,
+        &binding.import_prefix,
+        binding.imported_name.as_str(),
+    )
+    .is_empty()
+    {
+        return Ok(None);
+    }
+    if binding.local_name == new_name {
+        return Ok(None);
+    }
+
+    let mut edits = Vec::new();
+    let definition_replacement = if binding.local_name == binding.imported_name {
+        format!("{} as {}", binding.imported_name, new_name)
+    } else {
+        new_name.to_owned()
+    };
+    edits.push(TextEdit::new(
+        span_to_range(source, binding.definition_span),
+        definition_replacement,
+    ));
+
+    let (tokens, _) = lex(source);
+    edits.extend(
+        tokens
+            .iter()
+            .enumerate()
+            .filter(|(_, token)| token.kind == TokenKind::Ident && token.text == binding.local_name)
+            .filter(|(index, token)| {
+                token.span != binding.definition_span
+                    && broken_source_import_token_matches_reference_context(&tokens, *index)
+            })
+            .map(|(_, token)| {
+                TextEdit::new(span_to_range(source, token.span), new_name.to_owned())
+            }),
+    );
+
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), edits);
+    Ok(Some(WorkspaceEdit::new(changes)))
 }
 
 fn dependency_references_for_position(
@@ -1474,6 +1639,11 @@ fn fallback_document_highlights_for_package_at(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<Vec<DocumentHighlight>> {
+    if let Some(highlights) =
+        workspace_import_document_highlights_in_broken_source(uri, source, package, position)
+    {
+        return Some(highlights);
+    }
     if let Some(locations) = references_for_dependency_imports(uri, source, package, position, true)
     {
         return document_highlights_from_locations(uri, locations);
@@ -1995,17 +2165,32 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(rename));
             }
-            if position_to_offset(&source, position)
-                .and_then(|offset| package.dependency_hover_in_source_at(&source, offset))
-                .is_some()
-            {
+            let analysis = analyze_source(&source).ok();
+            if analysis.is_none() {
+                if let Some(rename) = prepare_rename_for_workspace_import_in_broken_source(
+                    &uri, &source, &package, position,
+                ) {
+                    return Ok(Some(rename));
+                }
+                if position_to_offset(&source, position)
+                    .and_then(|offset| package.dependency_hover_in_source_at(&source, offset))
+                    .is_some()
+                {
+                    return Ok(None);
+                }
                 return Ok(None);
             }
+
+            return Ok(prepare_rename_for_analysis(
+                &source,
+                analysis.as_ref().expect("analysis checked above"),
+                position,
+            ));
         }
+
         let Ok(analysis) = analyze_source(&source) else {
             return Ok(None);
         };
-
         Ok(prepare_rename_for_analysis(&source, &analysis, position))
     }
 
@@ -2022,17 +2207,41 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(edit));
             }
-            if position_to_offset(&source, position)
-                .and_then(|offset| package.dependency_hover_in_source_at(&source, offset))
-                .is_some()
-            {
+            let analysis = analyze_source(&source).ok();
+            if analysis.is_none() {
+                if let Some(edit) = rename_for_workspace_import_in_broken_source(
+                    &uri,
+                    &source,
+                    &package,
+                    position,
+                    &params.new_name,
+                )
+                .map_err(|error| Error::invalid_params(error.to_string()))?
+                {
+                    return Ok(Some(edit));
+                }
+                if position_to_offset(&source, position)
+                    .and_then(|offset| package.dependency_hover_in_source_at(&source, offset))
+                    .is_some()
+                {
+                    return Ok(None);
+                }
                 return Ok(None);
             }
+
+            return rename_for_analysis(
+                &uri,
+                &source,
+                analysis.as_ref().expect("analysis checked above"),
+                position,
+                &params.new_name,
+            )
+            .map_err(|error| Error::invalid_params(error.to_string()));
         }
+
         let Ok(analysis) = analyze_source(&source) else {
             return Ok(None);
         };
-
         rename_for_analysis(&uri, &source, &analysis, position, &params.new_name)
             .map_err(|error| Error::invalid_params(error.to_string()))
     }
@@ -2042,21 +2251,26 @@ impl LanguageServer for Backend {
 mod tests {
     use super::{
         GotoTypeDefinitionResponse, document_highlights_for_analysis_at,
-        document_highlights_for_package_analysis_at, package_analysis_for_path,
-        workspace_source_definition_for_dependency, workspace_source_definition_for_import,
+        document_highlights_for_package_analysis_at, fallback_document_highlights_for_package_at,
+        package_analysis_for_path, prepare_rename_for_workspace_import_in_broken_source,
+        rename_for_workspace_import_in_broken_source, workspace_source_definition_for_dependency,
+        workspace_source_definition_for_import,
         workspace_source_definition_for_import_in_broken_source,
         workspace_source_references_for_dependency, workspace_source_references_for_import,
         workspace_source_references_for_import_in_broken_source,
         workspace_source_type_definition_for_dependency, workspace_symbols_for_documents,
         workspace_symbols_for_documents_and_roots,
     };
-    use ql_analysis::{SymbolKind as AnalysisSymbolKind, analyze_source};
+    use crate::bridge::span_to_range;
+    use ql_analysis::{RenameError, SymbolKind as AnalysisSymbolKind, analyze_source};
+    use ql_span::Span;
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower_lsp::lsp_types::{
-        GotoDefinitionResponse, Location, Position, SymbolInformation, SymbolKind, Url,
+        GotoDefinitionResponse, Location, Position, PrepareRenameResponse, SymbolInformation,
+        SymbolKind, TextEdit, Url, WorkspaceEdit,
     };
 
     struct TempDir {
@@ -2107,6 +2321,16 @@ mod tests {
         let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
         let line_start = prefix.rfind('\n').map(|index| index + 1).unwrap_or(0);
         Position::new(line, prefix[line_start..].chars().count() as u32)
+    }
+
+    fn assert_workspace_edit(edit: WorkspaceEdit, uri: &Url, expected: Vec<TextEdit>) {
+        let changes = edit
+            .changes
+            .expect("workspace edit should contain direct changes");
+        let edits = changes
+            .get(uri)
+            .expect("workspace edit should target current document");
+        assert_eq!(edits, &expected);
     }
 
     fn assert_single_dependency_method_symbol(
@@ -5673,6 +5897,222 @@ pub struct Config {
     }
 
     #[test]
+    fn workspace_import_prepare_rename_survives_parse_errors() {
+        let temp = TempDir::new("ql-lsp-workspace-import-prepare-rename-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported
+
+pub fn main() -> Int {
+    let first = exported(1)
+    let second = exported(first)
+    return second
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let use_offset = nth_offset(&source, "exported", 2);
+
+        assert_eq!(
+            prepare_rename_for_workspace_import_in_broken_source(
+                &uri,
+                &source,
+                &package,
+                offset_to_position(&source, use_offset),
+            ),
+            Some(PrepareRenameResponse::RangeWithPlaceholder {
+                range: span_to_range(
+                    &source,
+                    Span::new(use_offset, use_offset + "exported".len()),
+                ),
+                placeholder: "exported".to_owned(),
+            }),
+        );
+    }
+
+    #[test]
+    fn workspace_import_rename_survives_parse_errors_and_inserts_alias() {
+        let temp = TempDir::new("ql-lsp-workspace-import-rename-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported
+
+pub fn main() -> Int {
+    let first = exported(1)
+    let second = exported(first)
+    return second
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let use_offset = nth_offset(&source, "exported", 2);
+
+        let edit = rename_for_workspace_import_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, use_offset),
+            "run",
+        )
+        .expect("rename should validate")
+        .expect("broken-source workspace import rename should produce edits");
+
+        assert_workspace_edit(
+            edit,
+            &uri,
+            vec![
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "exported", 1),
+                            nth_offset(&source, "exported", 1) + "exported".len(),
+                        ),
+                    ),
+                    "exported as run".to_owned(),
+                ),
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "exported", 2),
+                            nth_offset(&source, "exported", 2) + "exported".len(),
+                        ),
+                    ),
+                    "run".to_owned(),
+                ),
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "exported", 3),
+                            nth_offset(&source, "exported", 3) + "exported".len(),
+                        ),
+                    ),
+                    "run".to_owned(),
+                ),
+            ],
+        );
+
+        assert_eq!(
+            rename_for_workspace_import_in_broken_source(
+                &uri,
+                &source,
+                &package,
+                offset_to_position(&source, use_offset),
+                "match",
+            ),
+            Err(RenameError::Keyword("match".to_owned())),
+        );
+    }
+
+    #[test]
     fn workspace_dependency_definitions_prefer_workspace_member_source_over_interface_artifact() {
         let temp = TempDir::new("ql-lsp-workspace-dependency-source-definitions");
         let app_path = temp.write(
@@ -6298,5 +6738,155 @@ pub fn exported(value: Int) -> Int
         ];
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn document_highlight_keeps_workspace_import_occurrences_in_broken_source() {
+        let temp = TempDir::new("ql-lsp-document-highlight-package-import-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    let first = run(1)
+    let second = run(first)
+    return second
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let highlights = fallback_document_highlights_for_package_at(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        )
+        .expect("broken-source workspace import document highlight should exist");
+
+        let actual = highlights
+            .into_iter()
+            .map(|highlight| highlight.range.start)
+            .collect::<Vec<_>>();
+        let expected = vec![
+            offset_to_position(&source, nth_offset(&source, "run", 1)),
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            offset_to_position(&source, nth_offset(&source, "run", 3)),
+        ];
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn workspace_import_references_skip_non_workspace_dependency_in_broken_source() {
+        let temp = TempDir::new("ql-lsp-workspace-import-references-skip-dependency");
+        let app_path = temp.write(
+            "app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return run(
+"#,
+        );
+        temp.write(
+            "app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let references = workspace_source_references_for_import_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            true,
+        )
+        .is_none();
+
+        assert!(references);
     }
 }
