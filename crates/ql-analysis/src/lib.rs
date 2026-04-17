@@ -1716,7 +1716,15 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<RenameTarget> {
-        let module = parse_source(source).ok()?;
+        let Ok(module) = parse_source(source) else {
+            return dependency_import_occurrence_in_broken_source(self, source, offset).map(
+                |occurrence| RenameTarget {
+                    kind: SymbolKind::Import,
+                    name: occurrence.local_name,
+                    span: occurrence.span,
+                },
+            );
+        };
         if let Some(occurrence) = dependency_import_occurrence_in_module(&module, offset) {
             if let Some(binding) =
                 dependency_unique_import_binding_for_local_name(&module, &occurrence.local_name)
@@ -1748,7 +1756,9 @@ impl PackageAnalysis {
 
         let module = match parse_source(source) {
             Ok(module) => module,
-            Err(_) => return Ok(None),
+            Err(_) => {
+                return Ok(self.dependency_import_rename_in_broken_source(source, offset, new_name));
+            }
         };
         if let Some(target_occurrence) = dependency_import_occurrence_in_module(&module, offset) {
             if let Some(target_binding) = dependency_unique_import_binding_for_local_name(
@@ -1848,6 +1858,51 @@ impl PackageAnalysis {
             new_name: new_name.to_owned(),
             edits,
         }))
+    }
+
+    fn dependency_import_rename_in_broken_source(
+        &self,
+        source: &str,
+        offset: usize,
+        new_name: &str,
+    ) -> Option<RenameResult> {
+        let target_occurrence =
+            dependency_import_occurrence_in_broken_source(self, source, offset)?;
+        let target_local_name = target_occurrence.local_name.clone();
+        let target = target_occurrence.target.clone();
+        let (tokens, _) = lex(source);
+        let resolved_imports = dependency_resolved_import_targets_in_tokens(self, &tokens);
+        let (binding, _) = resolved_imports.get(target_local_name.as_str())?;
+        let imported_name = dependency_import_binding_uses_direct_local_name(binding)
+            .then(|| dependency_import_binding_imported_name(binding))
+            .flatten();
+        let mut edits = dependency_import_occurrences_in_broken_source(self, source)
+            .into_iter()
+            .filter(|occurrence| {
+                occurrence.local_name == target_local_name && occurrence.target == target
+            })
+            .map(|occurrence| RenameEdit {
+                span: occurrence.span,
+                replacement: if occurrence.is_definition {
+                    imported_name
+                        .map(|imported_name| format!("{imported_name} as {new_name}"))
+                        .unwrap_or_else(|| new_name.to_owned())
+                } else {
+                    new_name.to_owned()
+                },
+            })
+            .collect::<Vec<_>>();
+        if edits.is_empty() {
+            return None;
+        }
+        edits.sort_by_key(|edit| (edit.span.start, edit.span.end));
+
+        Some(RenameResult {
+            kind: SymbolKind::Import,
+            old_name: target_local_name,
+            new_name: new_name.to_owned(),
+            edits,
+        })
     }
 
     pub fn dependency_value_references_in_source_at(
