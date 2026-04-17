@@ -1008,6 +1008,93 @@ fn workspace_source_kind_for_import_binding(
     (matches.len() == 1).then(|| matches[0].kind)
 }
 
+fn extend_workspace_import_reference_locations(
+    package: &ql_analysis::PackageAnalysis,
+    current_path: Option<&Path>,
+    import_path: &[String],
+    include_declaration: bool,
+    locations: &mut Vec<Location>,
+) {
+    for module in package.modules() {
+        if current_path
+            .is_some_and(|path| canonicalize_or_clone(path) == canonicalize_or_clone(module.path()))
+        {
+            continue;
+        }
+        let Ok(source) = fs::read_to_string(module.path()) else {
+            continue;
+        };
+        let source = source.replace("\r\n", "\n");
+        let Ok(uri) = Url::from_file_path(module.path()) else {
+            continue;
+        };
+        let (tokens, _) = lex(&source);
+        let mut module_locations = tokens
+            .iter()
+            .filter(|token| token.kind == TokenKind::Ident)
+            .filter_map(|token| {
+                let (binding, occurrence_span) =
+                    module.analysis().import_binding_at(token.span.start)?;
+                (binding.path.segments.as_slice() == import_path
+                    && occurrence_span == token.span
+                    && (include_declaration || occurrence_span != binding.definition_span))
+                    .then(|| Location::new(uri.clone(), span_to_range(&source, occurrence_span)))
+            })
+            .collect::<Vec<_>>();
+        module_locations.sort_by_key(|location| {
+            (
+                location.range.start.line,
+                location.range.start.character,
+                location.range.end.line,
+                location.range.end.character,
+            )
+        });
+        module_locations.dedup_by(|left, right| same_location_anchor(left, right));
+        locations.extend(module_locations);
+    }
+}
+
+fn workspace_import_reference_locations(
+    package: &ql_analysis::PackageAnalysis,
+    current_path: Option<&Path>,
+    import_path: &[String],
+    include_declaration: bool,
+) -> Vec<Location> {
+    let mut locations = Vec::new();
+    extend_workspace_import_reference_locations(
+        package,
+        current_path,
+        import_path,
+        include_declaration,
+        &mut locations,
+    );
+    for member_manifest_path in
+        workspace_member_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(member_package) = package_analysis_for_path(&member_manifest_path) else {
+            continue;
+        };
+        extend_workspace_import_reference_locations(
+            &member_package,
+            None,
+            import_path,
+            include_declaration,
+            &mut locations,
+        );
+    }
+    locations.sort_by_key(|location| {
+        (
+            location.uri.to_string(),
+            location.range.start.line,
+            location.range.start.character,
+            location.range.end.line,
+            location.range.end.character,
+        )
+    });
+    locations.dedup_by(|left, right| same_location_anchor(left, right));
+    locations
+}
+
 fn workspace_source_definition_for_import(
     uri: &Url,
     source: &str,
@@ -1716,22 +1803,53 @@ fn workspace_source_references_for_import(
     position: tower_lsp::lsp_types::Position,
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
-    if !include_declaration {
+    let offset = position_to_offset(source, position)?;
+    let (binding, _) = analysis.import_binding_at(offset)?;
+    let (imported_name, import_prefix) = binding.path.segments.split_last()?;
+    let source_matches = workspace_source_locations_for_import_binding(
+        uri,
+        source,
+        Some(analysis),
+        package,
+        import_prefix,
+        imported_name,
+        supports_workspace_import_definition,
+    );
+    if source_matches.is_empty() {
         return None;
     }
 
-    let GotoDefinitionResponse::Scalar(source_definition) =
-        workspace_source_definition_for_import(uri, source, analysis, package, position)?
-    else {
-        return None;
-    };
-
-    let mut locations =
-        references_for_package_analysis(uri, source, analysis, package, position, true)?;
-    normalize_reference_locations_with_definition(&mut locations, &source_definition);
-    if let Some(source_locations) = same_file_references_for_source_location(&source_definition) {
+    let source_definition = (source_matches.len() == 1).then(|| source_matches[0].clone());
+    let mut locations = references_for_package_analysis(
+        uri,
+        source,
+        analysis,
+        package,
+        position,
+        include_declaration,
+    )?;
+    if include_declaration && let Some(source_definition) = source_definition.as_ref() {
+        normalize_reference_locations_with_definition(&mut locations, source_definition);
+    }
+    if let Some(source_definition) = source_definition.as_ref()
+        && let Some(mut source_locations) =
+            same_file_references_for_source_location(source_definition)
+    {
+        if !include_declaration {
+            source_locations.retain(|location| !same_location_anchor(location, source_definition));
+        }
         merge_unique_reference_locations(&mut locations, source_locations);
     }
+    let current_path = uri.to_file_path().ok();
+    merge_unique_reference_locations(
+        &mut locations,
+        workspace_import_reference_locations(
+            package,
+            current_path.as_deref(),
+            &binding.path.segments,
+            include_declaration,
+        ),
+    );
 
     Some(locations)
 }
@@ -1784,12 +1902,27 @@ fn workspace_source_references_for_import_in_broken_source(
             .map(|(_, token)| Location::new(uri.clone(), span_to_range(source, token.span))),
     );
 
-    if include_declaration
-        && let Some(source_definition) = source_definition.as_ref()
-        && let Some(source_locations) = same_file_references_for_source_location(source_definition)
+    if let Some(source_definition) = source_definition.as_ref()
+        && let Some(mut source_locations) =
+            same_file_references_for_source_location(source_definition)
     {
+        if !include_declaration {
+            source_locations.retain(|location| !same_location_anchor(location, source_definition));
+        }
         merge_unique_reference_locations(&mut locations, source_locations);
     }
+    let mut import_path = binding.import_prefix.clone();
+    import_path.push(binding.imported_name.clone());
+    let current_path = uri.to_file_path().ok();
+    merge_unique_reference_locations(
+        &mut locations,
+        workspace_import_reference_locations(
+            package,
+            current_path.as_deref(),
+            &import_path,
+            include_declaration,
+        ),
+    );
 
     (!locations.is_empty()).then_some(locations)
 }
@@ -6827,6 +6960,18 @@ pub fn main() -> Int {
 }
 "#,
         );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as call
+
+pub fn task() -> Int {
+    return call(2)
+}
+"#,
+        );
         let core_source_path = temp.write(
             "workspace/packages/core/src/lib.ql",
             r#"
@@ -6885,6 +7030,8 @@ pub fn exported(value: Int) -> Int
         let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
         let core_source =
             fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
 
         let references = workspace_source_references_for_import(
             &uri,
@@ -6895,7 +7042,7 @@ pub fn exported(value: Int) -> Int
             true,
         )
         .expect("workspace import references should exist");
-        assert_eq!(references.len(), 4);
+        assert_eq!(references.len(), 6);
         assert_eq!(
             references[0]
                 .uri
@@ -6936,6 +7083,142 @@ pub fn exported(value: Int) -> Int
             references[3].range.start,
             offset_to_position(&core_source, nth_offset(&core_source, "exported", 2)),
         );
+        assert_eq!(references[4].uri, task_uri);
+        assert_eq!(
+            references[4].range.start,
+            offset_to_position(&task_source, nth_offset(&task_source, "call", 1)),
+        );
+        assert_eq!(references[5].uri, task_uri);
+        assert_eq!(
+            references[5].range.start,
+            offset_to_position(&task_source, nth_offset(&task_source, "call", 2)),
+        );
+    }
+
+    #[test]
+    fn workspace_import_references_without_declaration_include_other_workspace_uses() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-references-no-decl");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as call
+
+pub fn task() -> Int {
+    return call(2)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+        let references = workspace_source_references_for_import(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            false,
+        )
+        .expect("workspace import references without declaration should exist");
+
+        assert_eq!(references.len(), 3);
+        assert_eq!(references[0].uri, uri);
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        );
+        assert_eq!(
+            references[1]
+                .uri
+                .to_file_path()
+                .expect("source reference URI should convert to a file path")
+                .canonicalize()
+                .expect("source reference path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+        assert_eq!(
+            references[1].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 2)),
+        );
+        assert_eq!(references[2].uri, task_uri);
+        assert_eq!(
+            references[2].range.start,
+            offset_to_position(&task_source, nth_offset(&task_source, "call", 2)),
+        );
     }
 
     #[test]
@@ -6952,6 +7235,18 @@ pub fn main() -> Int {
     let first = run(1)
     let second = run(first)
     return second
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as call
+
+pub fn task() -> Int {
+    return call(2)
+}
 "#,
         );
         let core_source_path = temp.write(
