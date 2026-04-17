@@ -750,6 +750,16 @@ fn supports_workspace_import_definition(kind: ql_analysis::SymbolKind) -> bool {
     )
 }
 
+fn supports_workspace_import_type_definition(kind: ql_analysis::SymbolKind) -> bool {
+    matches!(
+        kind,
+        ql_analysis::SymbolKind::Struct
+            | ql_analysis::SymbolKind::Enum
+            | ql_analysis::SymbolKind::Trait
+            | ql_analysis::SymbolKind::TypeAlias
+    )
+}
+
 fn supports_workspace_dependency_definition(kind: ql_analysis::SymbolKind) -> bool {
     matches!(
         kind,
@@ -796,6 +806,7 @@ fn extend_workspace_import_definition_matches(
     current_analysis: Option<&Analysis>,
     import_prefix: &[String],
     imported_name: &str,
+    supports_kind: fn(ql_analysis::SymbolKind) -> bool,
     matches: &mut Vec<Location>,
 ) {
     for module in package.modules() {
@@ -834,7 +845,7 @@ fn extend_workspace_import_definition_matches(
             continue;
         };
         for symbol in module_analysis.document_symbols() {
-            if symbol.name != imported_name || !supports_workspace_import_definition(symbol.kind) {
+            if symbol.name != imported_name || !supports_kind(symbol.kind) {
                 continue;
             }
             matches.push(Location::new(
@@ -860,6 +871,7 @@ fn workspace_source_locations_for_import_binding(
     package: &ql_analysis::PackageAnalysis,
     import_prefix: &[String],
     imported_name: &str,
+    supports_kind: fn(ql_analysis::SymbolKind) -> bool,
 ) -> Vec<Location> {
     let current_path = uri.to_file_path().ok();
     let mut matches = Vec::new();
@@ -871,6 +883,7 @@ fn workspace_source_locations_for_import_binding(
         analysis,
         import_prefix,
         imported_name,
+        supports_kind,
         &mut matches,
     );
 
@@ -887,6 +900,7 @@ fn workspace_source_locations_for_import_binding(
             None,
             import_prefix,
             imported_name,
+            supports_kind,
             &mut matches,
         );
     }
@@ -917,6 +931,27 @@ fn workspace_source_location_for_import_binding(
         package,
         import_prefix,
         imported_name,
+        supports_workspace_import_definition,
+    );
+    (matches.len() == 1).then(|| matches[0].clone())
+}
+
+fn workspace_source_type_definition_location_for_import_binding(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    import_prefix: &[String],
+    imported_name: &str,
+) -> Option<Location> {
+    let matches = workspace_source_locations_for_import_binding(
+        uri,
+        source,
+        analysis,
+        package,
+        import_prefix,
+        imported_name,
+        supports_workspace_import_type_definition,
     );
     (matches.len() == 1).then(|| matches[0].clone())
 }
@@ -940,6 +975,27 @@ fn workspace_source_definition_for_import(
         imported_name,
     )
     .map(GotoDefinitionResponse::Scalar)
+}
+
+fn workspace_source_type_definition_for_import(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoTypeDefinitionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let binding = analysis.type_import_binding_at(offset)?;
+    let (imported_name, import_prefix) = binding.path.segments.split_last()?;
+    workspace_source_type_definition_location_for_import_binding(
+        uri,
+        source,
+        Some(analysis),
+        package,
+        import_prefix,
+        imported_name,
+    )
+    .map(GotoTypeDefinitionResponse::Scalar)
 }
 
 fn hover_from_workspace_source_location(
@@ -996,6 +1052,24 @@ fn workspace_source_definition_for_import_in_broken_source(
         binding.imported_name.as_str(),
     )
     .map(GotoDefinitionResponse::Scalar)
+}
+
+fn workspace_source_type_definition_for_import_in_broken_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoTypeDefinitionResponse> {
+    let binding = broken_source_import_binding_at(source, position)?;
+    workspace_source_type_definition_location_for_import_binding(
+        uri,
+        source,
+        None,
+        package,
+        &binding.import_prefix,
+        binding.imported_name.as_str(),
+    )
+    .map(GotoTypeDefinitionResponse::Scalar)
 }
 
 fn broken_source_import_occurrence_span_at(
@@ -1267,6 +1341,7 @@ fn dependency_definition_target_at(
             .dependency_method_definition_at(analysis, offset)
             .or_else(|| package.dependency_struct_field_definition_at(analysis, offset))
             .or_else(|| package.dependency_variant_definition_at(analysis, source, offset))
+            .or_else(|| package.dependency_value_definition_in_source_at(source, offset))
             .or_else(|| package.dependency_definition_at(analysis, offset));
     }
 
@@ -1274,6 +1349,7 @@ fn dependency_definition_target_at(
         .dependency_method_definition_in_source_at(source, offset)
         .or_else(|| package.dependency_struct_field_definition_in_source_at(source, offset))
         .or_else(|| package.dependency_variant_definition_in_source_at(source, offset))
+        .or_else(|| package.dependency_value_definition_in_source_at(source, offset))
         .or_else(|| package.dependency_definition_in_source_at(source, offset))
 }
 
@@ -1301,6 +1377,33 @@ fn dependency_type_definition_target_at(
         .or_else(|| package.dependency_variant_type_definition_in_source_at(source, offset))
         .or_else(|| package.dependency_struct_field_type_definition_in_source_at(source, offset))
         .or_else(|| package.dependency_method_type_definition_in_source_at(source, offset))
+}
+
+fn dependency_occurrence_span_at(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Span> {
+    let offset = position_to_offset(source, position)?;
+    package
+        .dependency_method_hover_in_source_at(source, offset)
+        .map(|info| info.span)
+        .or_else(|| {
+            package
+                .dependency_struct_field_hover_in_source_at(source, offset)
+                .map(|info| info.span)
+        })
+        .or_else(|| {
+            package
+                .dependency_variant_hover_in_source_at(source, offset)
+                .map(|info| info.span)
+        })
+        .or_else(|| {
+            package
+                .dependency_value_hover_in_source_at(source, offset)
+                .map(|info| info.span)
+        })
+        .or_else(|| package.dependency_hover_in_source_at(source, offset).map(|info| info.span))
 }
 
 fn workspace_source_location_for_dependency_target(
@@ -1373,6 +1476,21 @@ fn workspace_source_type_definition_for_dependency(
         .map(GotoTypeDefinitionResponse::Scalar)
 }
 
+fn workspace_source_hover_for_dependency(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Hover> {
+    let occurrence_span = dependency_occurrence_span_at(source, package, position)?;
+    let target = dependency_definition_target_at(source, analysis, package, position)?;
+    let source_location =
+        workspace_source_location_for_dependency_target(uri, source, analysis, package, &target)?;
+
+    hover_from_workspace_source_location(source, occurrence_span, source_location)
+}
+
 fn workspace_source_references_for_import(
     uri: &Url,
     source: &str,
@@ -1422,6 +1540,7 @@ fn workspace_source_references_for_import_in_broken_source(
         package,
         &binding.import_prefix,
         binding.imported_name.as_str(),
+        supports_workspace_import_definition,
     );
     if source_matches.is_empty() {
         return None;
@@ -1518,6 +1637,7 @@ fn prepare_rename_for_workspace_import_in_broken_source(
         package,
         &binding.import_prefix,
         binding.imported_name.as_str(),
+        supports_workspace_import_definition,
     )
     .is_empty()
     {
@@ -1558,6 +1678,7 @@ fn rename_for_workspace_import_in_broken_source(
         package,
         &binding.import_prefix,
         binding.imported_name.as_str(),
+        supports_workspace_import_definition,
     )
     .is_empty()
     {
@@ -1842,6 +1963,11 @@ impl LanguageServer for Backend {
             ) {
                 return Ok(Some(hover));
             }
+            if let Some(hover) =
+                workspace_source_hover_for_dependency(&uri, &source, analysis.as_ref(), &package, position)
+            {
+                return Ok(Some(hover));
+            }
             if let Some(hover) = hover_for_dependency_imports(&source, &package, position) {
                 return Ok(Some(hover));
             }
@@ -2004,6 +2130,19 @@ impl LanguageServer for Backend {
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
             let analysis = analyze_source(&source).ok();
+            if let Some(analysis) = analysis.as_ref() {
+                if let Some(definition) = workspace_source_type_definition_for_import(
+                    &uri, &source, analysis, &package, position,
+                ) {
+                    return Ok(Some(definition));
+                }
+            } else if let Some(definition) =
+                workspace_source_type_definition_for_import_in_broken_source(
+                    &uri, &source, &package, position,
+                )
+            {
+                return Ok(Some(definition));
+            }
             if let Some(definition) = workspace_source_type_definition_for_dependency(
                 &uri,
                 &source,
@@ -2347,8 +2486,10 @@ mod tests {
         workspace_source_hover_for_import_in_broken_source,
         workspace_source_references_for_dependency, workspace_source_references_for_import,
         workspace_source_references_for_import_in_broken_source,
-        workspace_source_type_definition_for_dependency, workspace_symbols_for_documents,
-        workspace_symbols_for_documents_and_roots,
+        workspace_source_type_definition_for_dependency,
+        workspace_source_type_definition_for_import,
+        workspace_source_type_definition_for_import_in_broken_source,
+        workspace_symbols_for_documents, workspace_symbols_for_documents_and_roots,
     };
     use crate::bridge::span_to_range;
     use ql_analysis::{RenameError, SymbolKind as AnalysisSymbolKind, analyze_source};
@@ -5572,6 +5713,103 @@ pub fn exported(value: Int) -> Int
     }
 
     #[test]
+    fn workspace_type_import_type_definition_prefers_workspace_member_source_over_interface_artifact()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-type-import-source-type-definition");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(value: Config) -> Config {
+    return value
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+    extra: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let definition = workspace_source_type_definition_for_import(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "Config", 2)),
+        )
+        .expect("workspace import type definition should exist");
+
+        let GotoTypeDefinitionResponse::Scalar(location) = definition else {
+            panic!("workspace import type definition should resolve to one location")
+        };
+        assert_eq!(
+            location
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+    }
+
+    #[test]
     fn workspace_import_definition_survives_parse_errors_and_prefers_workspace_member_source() {
         let temp = TempDir::new("ql-lsp-workspace-import-source-definition-parse-errors");
         let app_path = temp.write(
@@ -5649,6 +5887,100 @@ pub fn exported(value: Int) -> Int
 
         let GotoDefinitionResponse::Scalar(location) = definition else {
             panic!("workspace import definition should resolve to one location")
+        };
+        assert_eq!(
+            location
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+    }
+
+    #[test]
+    fn workspace_type_import_type_definition_survives_parse_errors_and_prefers_workspace_member_source()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-type-import-source-type-definition-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(value: Config) -> Config {
+    return value
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let definition = workspace_source_type_definition_for_import_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "Config", 2)),
+        )
+        .expect("broken-source workspace import type definition should exist");
+
+        let GotoTypeDefinitionResponse::Scalar(location) = definition else {
+            panic!("workspace import type definition should resolve to one location")
         };
         assert_eq!(
             location
