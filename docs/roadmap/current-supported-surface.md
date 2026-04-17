@@ -10,7 +10,7 @@
 
 - 实现：`crates/*`
 - build / codegen / executable：`crates/ql-cli/tests/codegen.rs`、`crates/ql-cli/tests/string_codegen.rs`、`crates/ql-cli/tests/string_compare_codegen.rs`、`crates/ql-cli/tests/executable_examples.rs`
-- project / workspace / interface：`crates/ql-cli/tests/project_graph.rs`、`crates/ql-cli/tests/project_interface.rs`、`crates/ql-cli/tests/project_check.rs`
+- project / workspace / interface：`crates/ql-cli/tests/project_graph.rs`、`crates/ql-cli/tests/project_interface.rs`、`crates/ql-cli/tests/project_check.rs`、`crates/ql-cli/tests/project_build.rs`
 - dependency-backed editor contracts：`crates/ql-analysis/tests/*`、`crates/ql-lsp/tests/*`
 - 已提交的 `ramdon_tests/executable_examples/` 与 `ramdon_tests/async_program_surface_examples/` smoke corpus
 
@@ -21,9 +21,10 @@
 - Phase 1 到 Phase 6 的编译器和 same-file tooling 已经进入稳定迭代阶段。
 - Phase 7 已有保守 async/runtime/build 子集：`async fn`、`await`、`spawn`、`for await`、最小 `ql-runtime`、program-mode async `main`、保守 async `staticlib` / `dylib` 子集，以及 task-handle-aware lowering。
 - 但 Phase 7 的 async/codegen 面仍在持续回归收口；如果文档条目与当前实现不一致，以 `crates/ql-codegen-llvm/src/tests/*`、`crates/ql-cli/tests/codegen.rs` 和实际测试结果为准。
-- Phase 8 已进入真实交付面：最小 `qlang.toml` package/workspace graph、`ql project init`、`.qi` V1 emit/load、`ql project graph`、`ql project emit-interface`、`ql build --emit-interface`、`ql check --sync-interfaces`。
+- Phase 8 已进入真实交付面：最小 `qlang.toml` package/workspace graph、`ql project init`、`ql project targets`、`.qi` V1 emit/load、`ql project graph`、`ql project emit-interface`、`ql build --emit-interface`、`ql check --sync-interfaces`。
 - dependency-backed cross-file tooling 已开放首批合同：imported dependency symbol hover / definition / declaration / references、import path completion、dependency enum variant completion / `typeDefinition`、显式 struct field-label completion / query / `typeDefinition`（现在也覆盖 `Cfg.Scope.Config { child: value }` 这类更深层 struct-like path），以及语法局部可恢复 receiver 的最小 dependency member/query/typeDefinition；当同包里存在无关 dependency `.qi` 缺失、损坏、不可读，或某个 referenced package manifest 自身损坏时，这些 package-aware dependency import/completion/definition 基础能力现在也会继续保留其余健康依赖的结果，不再整包掉空。
-- 保守 `workspace/symbol` 现在可以在有 manifest 上下文时搜索当前包源码、同一 workspace 的 sibling members、当前包依赖 `.qi` 的 public symbols，以及 sibling member 依赖 `.qi` 的 public symbols；这里的 dependency public symbols 也明确包括 public trait / `impl` / `extend` methods，例如 `Config.get`、`Reader.poll`、`Buffer.twice`；当前包依赖与 sibling member 依赖两侧现在都已对 `trait` / `impl` / `extend` 三类 methods 建立显式 regression 锁定；对于当前包依赖侧与 sibling member 依赖侧，`missing .qi`、`invalid reference manifest` 与 `source diagnostics` 三条主要 fallback 入口下的 public method 保留面现在也都已有独立回归保护，而且 `trait` / `extend` methods 也不再只靠通用 method 回归隐含覆盖；如果当前包或 sibling member 因源码 diagnostics、单个 dependency `.qi` 缺失、损坏或不可读而无法整包分析，也会回退到 manifest/source + 可用依赖接口的粒度，继续保留仍可单独分析的模块符号和其余健康依赖符号，而不是因为一个坏依赖把整条搜索面一起丢掉。
+- 保守 `workspace/symbol` 现在可以在有 manifest 上下文时搜索当前包源码、同一 workspace 的 sibling members、当前包依赖 `.qi` 的 public symbols，以及 sibling member 依赖 `.qi` 的 public symbols；这里的 dependency public symbols 也明确包括 public trait / `impl` / `extend` methods，例如 `Config.get`、`Reader.poll`、`Buffer.twice`；当前包依赖与 sibling member 依赖两侧现在都已对 `trait` / `impl` / `extend` 三类 methods 建立显式 regression 锁定；对于当前包依赖侧与 sibling member 依赖侧，`missing .qi`、`invalid reference manifest` 与 `source diagnostics` 三条主要 fallback 入口下的 public method 保留面现在也都已有独立回归保护，而且 `trait` / `extend` methods 也不再只靠通用 method 回归隐含覆盖；如果当前包或 sibling member 因源码 diagnostics、单个 dependency `.qi` 缺失、损坏或不可读而无法整包分析，也会回退到 manifest/source + 可用依赖接口的粒度，继续保留仍可单独分析的模块符号和其余健康依赖符号，而不是因为一个坏依赖把整条搜索面一起丢掉；另外，当 `qlsp` 从 editor initialize 请求拿到 workspace roots 时，即使没有打开任何 `.ql` 文档，也会从 workspace manifest/source 建立这条保守 `workspace/symbol` 搜索面。
+- package/workspace import 的 definition / declaration 现在会优先尝试跳到当前 workspace 里唯一可定位的源码定义；只有找不到唯一源码目标时，才回退到 dependency `.qi` 里的接口定义位置。这条能力当前仍是保守导入面，不等于任意跨文件语义都已开放。
 
 ## 当前已开放的构建表面
 
@@ -42,8 +43,9 @@
 - `ql mir <file>`
 - `ql ownership <file>`
 - `ql runtime <file>`
-- `ql build <file> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]`
+- `ql build <file-or-dir> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]`
 - `ql project init [dir] [--workspace] [--name <package>]`
+- `ql project targets [file-or-dir]`
 - `ql project graph [file-or-dir]`
 - `ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]`
 - `ql ffi header <file> [--surface exports|imports|both] [-o <output>]`
@@ -58,6 +60,8 @@
 
 - package directory、`qlang.toml`、包内源码路径、workspace-only 根 manifest 都可进入 package-aware `check` 流程。
 - `ql project init` 已可直接生成最小 package / workspace 骨架；workspace 模式默认生成根 `qlang.toml`、`packages/<name>/qlang.toml` 与 `packages/<name>/src/lib.ql`，产物可立即进入 `ql project graph` / `ql check`。
+- `ql project targets` 已可枚举 package/workspace 的保守 build target：`src/lib.ql`、`src/main.ql`、`src/bin/**/*.ql`，若没有约定入口但包内只有一个源码文件则回退为 `source`；若没有可识别 target，会显式输出 `targets: (none found)`。
+- `ql build` 现在也接受 package directory、`qlang.toml`、workspace directory 与 workspace-only 根 manifest；会按 `ql project targets` 的发现结果逐个构建 target，并把默认产物写到各 package 自己的 `target/ql/<profile>/` 下，而不是统一堆到调用目录。`src/bin/...` 这类 nested target 也会保留相对目录层级，例如 `src/bin/tools/repl.ql -> target/ql/debug/bin/tools/repl.ll`。多 target 场景当前显式禁止 `--output` 与 `--header-output`，避免单一路径参数污染整组 target；如果多个 target 会落到同一个默认 artifact 或 header 输出路径，CLI 也会先显式失败。`--emit-interface` 现在允许在 package/workspace build 上使用，并且会在每个 package 的全部 discovered targets 构建成功后只发射一次默认 `.qi`。如果这次调用没有显式传 `--emit`，`lib` target 会保守落成 `staticlib`，`bin` / fallback `source` target 继续沿当前 single-file 默认 emit；一旦显式传了 `--emit`，整次 project-aware build 仍共享同一种 artifact 形态。
 - `ql project graph` 会展示 package/member、references，以及默认 `.qi` 的 `valid` / `missing` / `invalid` / `stale` 状态；`stale` 会给出 `stale_reasons`，`invalid` / `unreadable` 也会给出一行 `detail`；这些 `detail` / `member_error` 字段里的 manifest 路径现在也统一按 graph 根目录做相对化，不再混入绝对路径；每条 `reference_interfaces` 现在也会显式带出对应的 reference manifest 路径，方便直接定位引用项；如果 direct dependency 下面还有更深层坏引用，也会补一个保守的 `transitive_reference_failures` 计数，以及第一个坏点的 manifest / `.qi` path / status / detail；当这个坏点本身是 `stale` 时，也会继续带出第一处 transitive stale 的 `stale_reasons`。
 - workspace 根 `ql project graph` 在单个 member manifest 无法加载时不会整张图失败；已解析 members 会继续输出，坏 member 会落成 `package: <unresolved>` + `member_status` + `member_error`；其中缺 `[package].name` 会标成 `unresolved-package`，其余 manifest 读取/解析失败会标成 `unresolved-manifest`；如果坏 member 的问题是缺 `[package].name`，`member_error` 现在也会收敛成 `manifest ... does not declare [package].name`。direct `ql project graph` 命中同一问题时，stderr 也会保留 `ql project graph` 命令标签；如果 direct graph 的 manifest 自身语法损坏、不可读，或缺 `[package].name`，局部错误块现在也会补 `failing package manifest` 和可直接重跑的 `ql project graph <manifest>` hint；如果 direct `ql project graph` 的目标路径根本不在任何 package/workspace manifest 下，stderr 现在也会明确说明这条命令只接受可由 `qlang.toml` 发现的 package/workspace 上下文，并给出针对原路径的直接 rerun hint。
 - `ql project graph` 对 `reference_interfaces` 的 `unresolved-manifest` / `unresolved-package` 现在也会带 `detail`，直接说明是引用 manifest 语法坏了，还是引用目标没有 `[package].name`。

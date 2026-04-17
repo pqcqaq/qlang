@@ -25,7 +25,7 @@
 
 P4/P5 地基已经落地；当前一边保守扩展 Phase 7 async library/program build 子集，一边推进 Phase 8 的 package/`.qi` 工具链入口。现阶段 `ql build` 的职责是：
 
-- 读取单个 `.ql` 文件
+- 读取单个 `.ql` 文件，或从 package/workspace 入口解析保守 build targets
 - 复用 `ql-analysis` 完成 parse / HIR / resolve / typeck / MIR
 - 在无语义错误时调用 `ql-codegen-llvm`
 - 输出文本 LLVM IR、对象文件、动态库、静态库和基础可执行文件
@@ -38,7 +38,7 @@ P4/P5 地基已经落地；当前一边保守扩展 Phase 7 async library/progra
 
 当前可用命令形态：
 
-- `ql build <file>`
+- `ql build <file-or-dir>`
 - `ql build <file> --emit llvm-ir`
 - `ql build <file> --emit obj`
 - `ql build <file> --emit exe`
@@ -46,6 +46,7 @@ P4/P5 地基已经落地；当前一边保守扩展 Phase 7 async library/progra
 - `ql build <file> --emit staticlib`
 - `ql build <file> --release`
 - `ql build <file> -o <output>`
+- `ql build <package-or-workspace-dir> --emit llvm-ir`
 - `ql build <file> --emit dylib --header`
 - `ql build <file> --emit staticlib --header-surface imports`
 - `ql build <file> --emit dylib --header-output <output>`
@@ -58,6 +59,8 @@ P4/P5 地基已经落地；当前一边保守扩展 Phase 7 async library/progra
 - `target/ql/release/<stem>.obj` / `target/ql/release/<stem>.o`
 - `target/ql/debug/<stem>.exe` / `target/ql/debug/<stem>`
 - `target/ql/release/<stem>.exe` / `target/ql/release/<stem>`
+- 如果入口是 package/workspace，则默认输出根目录改为各 package 自己的根路径，也就是 `<package>/target/ql/<profile>/...`；workspace build 不会再把多个 member 的默认产物混到同一个调用目录。`src/bin/...` 这类 nested target 也会把相对目录结构保留下来，例如 `src/bin/tools/repl.ql -> target/ql/debug/bin/tools/repl.ll`。
+- 多 target 的 project-aware build 当前显式拒绝 `--output` 和 `--header-output`；这些单路径参数暂时只支持 single-target build。如果多个 target 会解析到同一个默认 artifact 或 header 输出路径，也会在真正 build 前先显式失败。`--emit-interface` 现在允许在 package/workspace build 上使用，并且会在每个 package 的全部 discovered targets 构建成功后只发射一次默认 `.qi`。如果这次调用没有显式传 `--emit`，`lib` target 会保守落成 `staticlib`，`bin` / fallback `source` target 继续沿当前 single-file 默认 emit；一旦显式传了 `--emit`，整次 project-aware build 仍共享同一种 artifact 形态。
 - `target/ql/debug/<stem>.dll` / `target/ql/debug/lib<stem>.so` / `target/ql/debug/lib<stem>.dylib`
 - `target/ql/release/<stem>.dll` / `target/ql/release/lib<stem>.so` / `target/ql/release/lib<stem>.dylib`
 - `target/ql/debug/<stem>.lib` / `target/ql/debug/lib<stem>.a`
@@ -112,6 +115,7 @@ P4/P5 地基已经落地；当前一边保守扩展 Phase 7 async library/progra
 - `crates/ql-cli/tests/codegen.rs` 现继续把 projected fixed-shape `for await` 的 library 合同补齐到两条公开 surface：`fixtures/codegen/pass/async_library_projected_for_await.ql` 与 `fixtures/codegen/pass/ffi_export_async_projected_for_await.ql` 已分别锁住 projected scalar array/tuple root 与 projected task array/tuple root 在 `staticlib` / `dylib` 下都会稳定通过，因此当前 library-mode `for await` 已不再局限于 direct iterable root
 - 最小 async executable 子集：`BuildEmit::Executable` 下的 `async fn main`、已接入的 task-handle / aggregate payload lowering，以及 fixed-shape iterable 的 `for await`
 - sync/async `unsafe fn` body 现也会沿当前普通 function / `async fn main` lowering 路径继续进入 executable build surface，而不再被 LLVM backend 预先拒绝
+- 注意：上述 async executable 描述表示当前目标和已打通的保守子集，不等于整个 async/codegen regression suite 已全绿；如果条目与测试现状冲突，以 `crates/ql-codegen-llvm/src/tests/*`、`crates/ql-cli/tests/codegen.rs` 和最新测试结果为准。
 - projected task-handle operand：tuple index / fixed-array literal index / struct-field 只读投影，也包括它们的递归嵌套组合，以及 direct call-root / nested call-root consume（例如 `await pair[0]`、`await tasks[0]`、`spawn pair.task`、`await pending[0].task`、`await tuple_tasks(10)[0]`、`spawn pair_tasks(11).left`、`await bundle_tasks(20).tasks[0]`）
 - sync/async executable surface 现也显式锁住 ordinary assignment-expression 子集：mutable local、tuple literal-index、same-file `const` / `static` / `use ... as ...` alias 驱动并支持 immutable direct local alias 复用的 foldable integer constant expression tuple index、struct-field 与 fixed-array literal-index assignment 继续走既有 statement lowering，而且当前本地 executable smoke contract 也已继续推进到 projected-root / nested projected-root / call-root nested projected-root / import-alias call-root nested projected-root / inline nested projected-root tuple / struct-field / fixed-array literal-index 链式写入，让“赋值表达式结果值可继续参与后续普通标量计算”这条用户面不只停留在 direct-root 形态
 - executable surface 现也显式锁住 dynamic array assignment 子集：sync program mode 已公开 non-`Task[...]` element dynamic array / nested dynamic array assignment，并继续推进到 projected-root dynamic array projection；同一条 sync surface 现在也已公开这些 dynamic array write 的 assignment-expression result form，并继续推进到 nested projected-root、call-root nested projected-root、import-alias call-root nested projected-root 与 inline nested projected-root 组合。async `fn main` 也已公开 direct-root `Task[...]` dynamic array write-before-consume success path，并继续推进到 projected-root write-before-consume success path；同时普通非 `Task[...]` 标量数组写入也已推进到 async executable surface，覆盖 direct-root、projected-root、call-root nested projected-root、import-alias call-root nested projected-root 与 inline nested projected-root 这几条 runtime-index path，并补上 assignment-expression result form

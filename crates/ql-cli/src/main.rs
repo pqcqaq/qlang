@@ -10,13 +10,15 @@ use ql_analysis::{
 };
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
-    BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile, CHeaderError,
-    CHeaderOptions, CHeaderSurface, ToolchainError, build_file, default_output_path, emit_c_header,
+    BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile,
+    CHeaderError, CHeaderOptions, CHeaderSurface, ToolchainError, build_file, default_output_path,
+    emit_c_header,
 };
 use ql_fmt::format_source;
 use ql_project::{
-    InterfaceArtifactStaleReason, InterfaceArtifactStatus, collect_package_sources,
-    default_interface_path, interface_artifact_stale_reasons, interface_artifact_status,
+    BuildTarget, BuildTargetKind, InterfaceArtifactStaleReason, InterfaceArtifactStatus,
+    WorkspaceBuildTargets, collect_package_sources, default_interface_path,
+    discover_workspace_build_targets, interface_artifact_stale_reasons, interface_artifact_status,
     interface_artifact_status_detail, load_project_manifest, package_name, package_source_root,
     render_module_interface, render_project_graph_resolved,
 };
@@ -109,11 +111,12 @@ fn run() -> Result<(), u8> {
         }
         "build" => {
             let Some(path) = args.next() else {
-                eprintln!("error: `ql build` expects a file path");
+                eprintln!("error: `ql build` expects a file or directory path");
                 return Err(1);
             };
 
             let mut options = BuildOptions::default();
+            let mut emit_overridden = false;
             let mut emit_interface = false;
             let remaining = args.collect::<Vec<_>>();
             let mut index = 0;
@@ -126,6 +129,7 @@ fn run() -> Result<(), u8> {
                             eprintln!("error: `ql build --emit` expects a value");
                             return Err(1);
                         };
+                        emit_overridden = true;
                         match value.as_str() {
                             "llvm-ir" => options.emit = BuildEmit::LlvmIr,
                             "asm" => options.emit = BuildEmit::Assembly,
@@ -195,7 +199,7 @@ fn run() -> Result<(), u8> {
                 index += 1;
             }
 
-            build_path(Path::new(&path), &options, emit_interface)
+            build_path(Path::new(&path), &options, emit_interface, emit_overridden)
         }
         "project" => {
             let Some(subcommand) = args.next() else {
@@ -204,6 +208,18 @@ fn run() -> Result<(), u8> {
             };
 
             match subcommand.as_str() {
+                "targets" => {
+                    let path = args
+                        .next()
+                        .map(PathBuf::from)
+                        .or_else(|| env::current_dir().ok())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    if let Some(extra) = args.next() {
+                        eprintln!("error: unknown `ql project targets` argument `{extra}`");
+                        return Err(1);
+                    }
+                    project_targets_path(&path)
+                }
                 "graph" => {
                     let path = args
                         .next()
@@ -1048,100 +1064,160 @@ fn render_runtime_requirements_path(path: &Path) -> Result<(), u8> {
     }
 }
 
-fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Result<(), u8> {
+fn build_path(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+    emit_overridden: bool,
+) -> Result<(), u8> {
+    if should_use_project_build(path) {
+        return build_project_path(path, options, emit_interface, emit_overridden);
+    }
+
+    let artifact = build_single_source_target(path, options, emit_interface)?;
+    if emit_interface {
+        emit_built_package_interface(path, options, &artifact.path, &[])?;
+    }
+    Ok(())
+}
+
+fn build_project_path(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+    emit_overridden: bool,
+) -> Result<(), u8> {
+    let members = load_workspace_build_targets_for_command(path, "`ql build`")?;
+    let total_targets = members
+        .iter()
+        .map(|member| member.targets.len())
+        .sum::<usize>();
+    if total_targets == 0 {
+        let normalized_path = normalize_path(path);
+        eprintln!("error: `ql build` found no discovered build targets under `{normalized_path}`");
+        eprintln!(
+            "hint: rerun `ql project targets {normalized_path}` to inspect the discovered build targets"
+        );
+        return Err(1);
+    }
+
+    if total_targets > 1 {
+        let normalized_path = normalize_path(path);
+        if options.output.is_some() {
+            eprintln!("error: `ql build --output` only supports a single discovered build target");
+            eprintln!("note: `{normalized_path}` resolved to {total_targets} build targets");
+            return Err(1);
+        }
+        if options
+            .c_header
+            .as_ref()
+            .and_then(|header| header.output.as_ref())
+            .is_some()
+        {
+            eprintln!(
+                "error: `ql build --header-output` only supports a single discovered build target"
+            );
+            eprintln!("note: `{normalized_path}` resolved to {total_targets} build targets");
+            return Err(1);
+        }
+    }
+
+    if let Some(output_path) =
+        first_colliding_project_build_output_path(&members, options, emit_overridden)
+    {
+        eprintln!(
+            "error: `ql build` resolved multiple build targets to the same output path `{}`",
+            normalize_path(&output_path)
+        );
+        eprintln!(
+            "hint: rerun a single package/target path or rename the conflicting build target stems"
+        );
+        return Err(1);
+    }
+    if let Some(output_path) =
+        first_colliding_project_build_header_output_path(&members, options, emit_overridden)
+    {
+        eprintln!(
+            "error: `ql build` resolved multiple build targets to the same header output path `{}`",
+            normalize_path(&output_path)
+        );
+        eprintln!(
+            "hint: rerun a single package/target path or rename the conflicting build target stems"
+        );
+        return Err(1);
+    }
+
+    for member in &members {
+        if member.targets.is_empty() {
+            eprintln!(
+                "error: `ql build` package `{}` has no discovered build targets",
+                member.package_name
+            );
+            eprintln!(
+                "note: failing package manifest: {}",
+                normalize_path(&member.member_manifest_path)
+            );
+            eprintln!(
+                "hint: rerun `ql project targets {}` to inspect the discovered build targets",
+                normalize_path(&member.member_manifest_path)
+            );
+            return Err(1);
+        }
+
+        let mut built_targets = member.targets.iter();
+        let first_target = built_targets
+            .next()
+            .expect("member targets emptiness checked above");
+        let first_options = project_target_build_options(
+            &member.member_manifest_path,
+            first_target,
+            options,
+            emit_overridden,
+        );
+        let first_artifact =
+            build_single_source_target(&first_target.path, &first_options, emit_interface)?;
+        let mut additional_artifacts = Vec::new();
+        for target in built_targets {
+            let target_options = project_target_build_options(
+                &member.member_manifest_path,
+                target,
+                options,
+                emit_overridden,
+            );
+            let artifact =
+                build_single_source_target(&target.path, &target_options, emit_interface)?;
+            additional_artifacts.push(artifact.path);
+        }
+
+        if emit_interface {
+            emit_built_package_interface(
+                &member.member_manifest_path,
+                options,
+                &first_artifact.path,
+                &additional_artifacts,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn build_single_source_target(
+    path: &Path,
+    options: &BuildOptions,
+    emit_interface: bool,
+) -> Result<BuildArtifact, u8> {
     match build_file(path, options) {
         Ok(artifact) => {
-            let artifact_path = artifact.path.clone();
             println!(
                 "wrote {}: {}",
                 artifact.emit.as_str(),
-                artifact_path.display()
+                artifact.path.display()
             );
-            if let Some(header) = artifact.c_header {
+            if let Some(header) = artifact.c_header.as_ref() {
                 println!("wrote c-header: {}", header.path.display());
             }
-            if emit_interface {
-                match emit_package_interface_path(path, None, "`ql build --emit-interface`", false)
-                {
-                    Ok(result) => report_emit_interface_result(result),
-                    Err(EmitPackageInterfaceError::ManifestNotFound) => {
-                        report_build_interface_package_context_failure(
-                            path,
-                            options,
-                            emit_interface,
-                            &artifact_path,
-                        );
-                        return Err(1);
-                    }
-                    Err(EmitPackageInterfaceError::SourceFailure(code)) => {
-                        report_build_interface_source_failure(
-                            path,
-                            options,
-                            emit_interface,
-                            &artifact_path,
-                        );
-                        return Err(code);
-                    }
-                    Err(EmitPackageInterfaceError::Code(code)) => {
-                        report_build_interface_failure(
-                            path,
-                            options,
-                            emit_interface,
-                            &artifact_path,
-                        );
-                        return Err(code);
-                    }
-                    Err(EmitPackageInterfaceError::ManifestFailure { manifest_path }) => {
-                        report_build_interface_manifest_failure(
-                            path,
-                            options,
-                            emit_interface,
-                            &artifact_path,
-                            &manifest_path,
-                        );
-                        return Err(1);
-                    }
-                    Err(EmitPackageInterfaceError::NoSourceFilesFailure {
-                        manifest_path,
-                        source_root,
-                    }) => {
-                        report_build_interface_no_sources_failure(
-                            path,
-                            options,
-                            emit_interface,
-                            &artifact_path,
-                            &manifest_path,
-                            &source_root,
-                        );
-                        return Err(1);
-                    }
-                    Err(EmitPackageInterfaceError::SourceRootFailure {
-                        manifest_path,
-                        source_root,
-                    }) => {
-                        report_build_interface_source_root_failure(
-                            path,
-                            options,
-                            emit_interface,
-                            &artifact_path,
-                            &manifest_path,
-                            &source_root,
-                        );
-                        return Err(1);
-                    }
-                    Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
-                        report_build_interface_output_failure(
-                            path,
-                            options,
-                            emit_interface,
-                            &artifact_path,
-                            &output_path,
-                        );
-                        return Err(1);
-                    }
-                }
-            }
-            Ok(())
+            Ok(artifact)
         }
         Err(BuildError::InvalidInput(message)) => {
             eprintln!("error: {message}");
@@ -1241,6 +1317,80 @@ fn build_path(path: &Path, options: &BuildOptions, emit_interface: bool) -> Resu
     }
 }
 
+fn emit_built_package_interface(
+    path: &Path,
+    options: &BuildOptions,
+    artifact_path: &Path,
+    additional_artifacts: &[PathBuf],
+) -> Result<(), u8> {
+    match emit_package_interface_path(path, None, "`ql build --emit-interface`", false) {
+        Ok(result) => report_emit_interface_result(result),
+        Err(EmitPackageInterfaceError::ManifestNotFound) => {
+            report_build_interface_package_context_failure(path, options, true, artifact_path);
+            report_remaining_build_artifacts(additional_artifacts);
+            return Err(1);
+        }
+        Err(EmitPackageInterfaceError::SourceFailure(code)) => {
+            report_build_interface_source_failure(path, options, true, artifact_path);
+            report_remaining_build_artifacts(additional_artifacts);
+            return Err(code);
+        }
+        Err(EmitPackageInterfaceError::Code(code)) => {
+            report_build_interface_failure(path, options, true, artifact_path);
+            report_remaining_build_artifacts(additional_artifacts);
+            return Err(code);
+        }
+        Err(EmitPackageInterfaceError::ManifestFailure { manifest_path }) => {
+            report_build_interface_manifest_failure(
+                path,
+                options,
+                true,
+                artifact_path,
+                &manifest_path,
+            );
+            report_remaining_build_artifacts(additional_artifacts);
+            return Err(1);
+        }
+        Err(EmitPackageInterfaceError::NoSourceFilesFailure {
+            manifest_path,
+            source_root,
+        }) => {
+            report_build_interface_no_sources_failure(
+                path,
+                options,
+                true,
+                artifact_path,
+                &manifest_path,
+                &source_root,
+            );
+            report_remaining_build_artifacts(additional_artifacts);
+            return Err(1);
+        }
+        Err(EmitPackageInterfaceError::SourceRootFailure {
+            manifest_path,
+            source_root,
+        }) => {
+            report_build_interface_source_root_failure(
+                path,
+                options,
+                true,
+                artifact_path,
+                &manifest_path,
+                &source_root,
+            );
+            report_remaining_build_artifacts(additional_artifacts);
+            return Err(1);
+        }
+        Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
+            report_build_interface_output_failure(path, options, true, artifact_path, &output_path);
+            report_remaining_build_artifacts(additional_artifacts);
+            return Err(1);
+        }
+    }
+
+    Ok(())
+}
+
 fn build_emit_cli_value(emit: BuildEmit) -> &'static str {
     match emit {
         BuildEmit::LlvmIr => "llvm-ir",
@@ -1276,6 +1426,55 @@ fn build_header_output_path(path: &Path, options: &BuildOptions) -> Option<PathB
     }
 }
 
+fn project_target_build_options(
+    manifest_path: &Path,
+    target: &BuildTarget,
+    options: &BuildOptions,
+    emit_overridden: bool,
+) -> BuildOptions {
+    let mut target_options = options.clone();
+    if !emit_overridden && target.kind == BuildTargetKind::Library {
+        target_options.emit = BuildEmit::StaticLibrary;
+    }
+    if target_options.output.is_none() {
+        target_options.output = Some(project_target_output_path(
+            manifest_path,
+            target.path.as_path(),
+            target_options.profile,
+            target_options.emit,
+        ));
+    }
+    target_options
+}
+
+fn project_target_output_path(
+    manifest_path: &Path,
+    target_path: &Path,
+    profile: BuildProfile,
+    emit: BuildEmit,
+) -> PathBuf {
+    let package_root = manifest_path.parent().unwrap_or(Path::new("."));
+    let source_root = package_root.join("src");
+    let relative_target = target_path
+        .strip_prefix(&source_root)
+        .unwrap_or(target_path);
+    let default_output = default_output_path(package_root, target_path, profile, emit);
+    let file_name = default_output
+        .file_name()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("artifact"));
+    let mut output_path = package_root
+        .join("target")
+        .join("ql")
+        .join(profile.dir_name());
+    if let Some(parent) = relative_target.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        output_path = output_path.join(parent);
+    }
+    output_path.join(file_name)
+}
+
 fn default_build_header_output_path(
     artifact_path: &Path,
     input_path: &Path,
@@ -1302,6 +1501,62 @@ fn colliding_build_header_output_path(path: &Path, options: &BuildOptions) -> Op
     let output_path = build_output_path(path, options)?;
     let header_output_path = build_header_output_path(path, options)?;
     (header_output_path == output_path).then_some(header_output_path)
+}
+
+fn first_colliding_project_build_output_path(
+    members: &[WorkspaceBuildTargets],
+    options: &BuildOptions,
+    emit_overridden: bool,
+) -> Option<PathBuf> {
+    let mut seen = BTreeSet::new();
+    for member in members {
+        for target in &member.targets {
+            let target_options = project_target_build_options(
+                &member.member_manifest_path,
+                target,
+                options,
+                emit_overridden,
+            );
+            let output_path = build_output_path(&target.path, &target_options)?;
+            if !seen.insert(output_path.clone()) {
+                return Some(output_path);
+            }
+        }
+    }
+    None
+}
+
+fn first_colliding_project_build_header_output_path(
+    members: &[WorkspaceBuildTargets],
+    options: &BuildOptions,
+    emit_overridden: bool,
+) -> Option<PathBuf> {
+    if options.c_header.is_none() {
+        return None;
+    }
+
+    let mut seen = BTreeSet::new();
+    for member in members {
+        for target in &member.targets {
+            let target_options = project_target_build_options(
+                &member.member_manifest_path,
+                target,
+                options,
+                emit_overridden,
+            );
+            let output_path = build_header_output_path(&target.path, &target_options)?;
+            if !seen.insert(output_path.clone()) {
+                return Some(output_path);
+            }
+        }
+    }
+    None
+}
+
+fn report_remaining_build_artifacts(paths: &[PathBuf]) {
+    for path in paths {
+        eprintln!("note: build artifact remains at `{}`", normalize_path(path));
+    }
 }
 
 fn unsupported_build_header_emit(options: &BuildOptions) -> bool {
@@ -2061,6 +2316,102 @@ fn project_graph_path(path: &Path) -> Result<(), u8> {
     })?;
     print!("{rendered}");
     Ok(())
+}
+
+fn load_workspace_build_targets_for_command(
+    path: &Path,
+    command_label: &str,
+) -> Result<Vec<WorkspaceBuildTargets>, u8> {
+    let manifest = load_project_manifest(path).map_err(|error| {
+        if let ql_project::ProjectError::ManifestNotFound { start } = &error {
+            eprintln!(
+                "error: {command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+                normalize_path(start)
+            );
+        } else if let Some(manifest_path) =
+            package_missing_name_manifest_path_from_project_error(&error)
+        {
+            eprintln!(
+                "error: {command_label} manifest `{}` does not declare `[package].name`",
+                normalize_path(manifest_path)
+            );
+        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
+        {
+            eprintln!("error: {command_label} {error}");
+            eprintln!("note: failing package manifest: {}", normalize_path(manifest_path));
+        } else {
+            eprintln!("error: {command_label} {error}");
+        }
+        1
+    })?;
+
+    discover_workspace_build_targets(&manifest).map_err(|error| {
+        if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error) {
+            eprintln!(
+                "error: {command_label} manifest `{}` does not declare `[package].name`",
+                normalize_path(manifest_path)
+            );
+        } else if let ql_project::ProjectError::PackageSourceRootNotFound { path } = &error {
+            eprintln!(
+                "error: {command_label} package source directory `{}` does not exist",
+                normalize_path(path)
+            );
+        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
+            eprintln!("error: {command_label} {error}");
+            eprintln!(
+                "note: failing package manifest: {}",
+                normalize_path(manifest_path)
+            );
+        } else {
+            eprintln!("error: {command_label} {error}");
+        }
+        1
+    })
+}
+
+fn project_targets_path(path: &Path) -> Result<(), u8> {
+    let members = load_workspace_build_targets_for_command(path, "`ql project targets`")?;
+
+    for (index, member) in members.iter().enumerate() {
+        if index > 0 {
+            println!();
+        }
+        print_project_target_member(
+            member.member_manifest_path.as_path(),
+            &member.package_name,
+            &member.targets,
+        );
+    }
+
+    Ok(())
+}
+
+fn print_project_target_member(manifest_path: &Path, package_name: &str, targets: &[BuildTarget]) {
+    println!("manifest: {}", normalize_path(manifest_path));
+    println!("package: {package_name}");
+
+    if targets.is_empty() {
+        println!("targets: (none found)");
+        return;
+    }
+
+    println!("targets:");
+    for target in targets {
+        println!(
+            "  - {}: {}",
+            target.kind.as_str(),
+            project_target_display_path(manifest_path, target.path.as_path())
+        );
+    }
+}
+
+fn project_target_display_path(manifest_path: &Path, target_path: &Path) -> String {
+    let package_root = manifest_path.parent().unwrap_or(Path::new("."));
+    if let Ok(relative) = target_path.strip_prefix(package_root) {
+        normalize_path(relative)
+    } else {
+        normalize_path(target_path)
+    }
 }
 
 fn project_emit_interface_path(
@@ -3665,6 +4016,14 @@ fn should_use_package_check(path: &Path) -> bool {
             .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
 }
 
+fn should_use_project_build(path: &Path) -> bool {
+    path.is_dir()
+        || path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
+}
+
 fn is_ql_source_file(path: &Path) -> bool {
     path.is_file()
         && path
@@ -3750,8 +4109,9 @@ fn print_usage() {
     eprintln!("usage:");
     eprintln!("  ql check <file-or-dir> [--sync-interfaces]");
     eprintln!(
-        "  ql build <file> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
+        "  ql build <file-or-dir> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
     );
+    eprintln!("  ql project targets [file-or-dir]");
     eprintln!("  ql project graph [file-or-dir]");
     eprintln!("  ql project init [dir] [--workspace] [--name <package>]");
     eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]");
@@ -4041,7 +4401,7 @@ fn main() -> Int {
             toolchain: ToolchainOptions::default(),
         };
 
-        assert!(build_path(&dir.path().join("sample.ql"), &options, false).is_ok());
+        assert!(build_path(&dir.path().join("sample.ql"), &options, false, false).is_ok());
 
         let rendered = fs::read_to_string(output).expect("read emitted LLVM IR");
         assert!(rendered.contains("define i32 @main()"));
@@ -4071,7 +4431,7 @@ fn main() -> Int {
             },
         };
 
-        assert!(build_path(&dir.path().join("sample.ql"), &options, false).is_ok());
+        assert!(build_path(&dir.path().join("sample.ql"), &options, false, false).is_ok());
 
         let rendered = fs::read_to_string(output).expect("read emitted assembly placeholder");
         assert_eq!(rendered, "mock-assembly");
@@ -4104,7 +4464,7 @@ fn main() -> Int {
             },
         };
 
-        assert!(build_path(&dir.path().join("sample.ql"), &options, false).is_ok());
+        assert!(build_path(&dir.path().join("sample.ql"), &options, false, false).is_ok());
 
         let rendered = fs::read_to_string(output).expect("read emitted object placeholder");
         assert_eq!(rendered, "mock-object");
@@ -4137,7 +4497,7 @@ fn main() -> Int {
             },
         };
 
-        assert!(build_path(&dir.path().join("sample.ql"), &options, false).is_ok());
+        assert!(build_path(&dir.path().join("sample.ql"), &options, false, false).is_ok());
 
         let rendered = fs::read_to_string(output).expect("read emitted executable placeholder");
         assert_eq!(rendered, "mock-executable");
@@ -4172,7 +4532,7 @@ extern "c" pub fn q_add(left: Int, right: Int) -> Int {
             },
         };
 
-        assert!(build_path(&dir.path().join("ffi_export.ql"), &options, false).is_ok());
+        assert!(build_path(&dir.path().join("ffi_export.ql"), &options, false, false).is_ok());
 
         let rendered =
             fs::read_to_string(output).expect("read emitted dynamic library placeholder");
@@ -4206,7 +4566,7 @@ fn add_one(value: Int) -> Int {
             },
         };
 
-        assert!(build_path(&dir.path().join("math.ql"), &options, false).is_ok());
+        assert!(build_path(&dir.path().join("math.ql"), &options, false, false).is_ok());
 
         let rendered = fs::read_to_string(output).expect("read emitted static library placeholder");
         assert_eq!(rendered, "mock-staticlib");
