@@ -241,6 +241,83 @@ fn build_single_file_json_reports_toolchain_failure() {
 }
 
 #[test]
+fn build_single_file_json_reports_emit_interface_package_context_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-file-json-emit-interface-context");
+    let source_path = temp.write("sample.ql", "fn main() -> Int { return 0 }\n");
+    let artifact_path = temp.path().join("target/ql/debug/sample.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&source_path)
+        .args(["--emit-interface", "--json"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface --json` single file package context failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-file-json-emit-interface-context",
+        "single-file build json emit-interface package context failure",
+        &output,
+        1,
+    )
+    .expect("single-file `ql build --emit-interface --json` should exit with code 1");
+    expect_empty_stderr(
+        "project-build-file-json-emit-interface-context",
+        "single-file build json emit-interface package context failure",
+        &stderr,
+    )
+    .expect("single-file `ql build --emit-interface --json` should not print stderr");
+
+    let json = parse_json_output("project-build-file-json-emit-interface-context", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(json["scope"], "file");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["emit_interface"], true);
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(json["failure"]["manifest_path"], JsonValue::Null);
+    assert_eq!(json["failure"]["package_name"], JsonValue::Null);
+    assert_eq!(json["failure"]["selected"], true);
+    assert_eq!(json["failure"]["dependency_only"], false);
+    assert_eq!(json["failure"]["kind"], "interface");
+    assert_eq!(
+        json["failure"]["path"],
+        source_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["error_kind"], "project-context");
+    assert_eq!(json["failure"]["stage"], "emit-interface");
+    assert_eq!(json["failure"]["output_path"], JsonValue::Null);
+    assert_eq!(json["failure"]["source_root"], JsonValue::Null);
+    assert_eq!(json["failure"]["failing_source_count"], JsonValue::Null);
+    assert_eq!(json["failure"]["first_failing_source"], JsonValue::Null);
+    assert!(
+        json["failure"]["message"]
+            .as_str()
+            .expect("emit-interface package context failure should expose a message")
+            .contains("requires a package manifest"),
+        "single-file emit-interface package context failure should explain the missing package context: {json}"
+    );
+
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("emit-interface package context failure should expose built_targets");
+    assert_eq!(built_targets.len(), 1);
+    assert_eq!(
+        built_targets[0]["artifact_path"],
+        artifact_path.display().to_string().replace('\\', "/")
+    );
+    expect_file_exists(
+        "project-build-file-json-emit-interface-context",
+        &artifact_path,
+        "single-file build artifact",
+        "single-file build json emit-interface package context failure",
+    )
+    .expect("single-file `ql build --emit-interface --json` should preserve the built artifact");
+}
+
+#[test]
 fn build_package_path_builds_all_discovered_targets() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-package");
@@ -455,6 +532,210 @@ dep = "../dep"
         "package dependency-plan build json",
     )
     .expect("package-path `ql build --json` should emit the package interface");
+}
+
+#[test]
+fn build_package_path_json_reports_emit_interface_source_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-emit-interface-source-failure");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for emit-interface source failure test");
+
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    let extra_source = temp.write(
+        "app/src/extra.ql",
+        "fn broken() -> Int { return \"oops\" }\n",
+    );
+
+    let app_lib_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&project_root)
+        .args(["--emit-interface", "--json"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface --json` package interface source failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-package-json-emit-interface-source-failure",
+        "package interface source failure build json",
+        &output,
+        1,
+    )
+    .expect("package-path `ql build --emit-interface --json` should exit with code 1");
+    expect_empty_stderr(
+        "project-build-package-json-emit-interface-source-failure",
+        "package interface source failure build json",
+        &stderr,
+    )
+    .expect("package-path `ql build --emit-interface --json` should not print stderr");
+
+    let json = parse_json_output(
+        "project-build-package-json-emit-interface-source-failure",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["emit_interface"], true);
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(json["built_targets"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        json["failure"]["manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["package_name"], "app");
+    assert_eq!(json["failure"]["selected"], true);
+    assert_eq!(json["failure"]["dependency_only"], false);
+    assert_eq!(json["failure"]["kind"], "interface");
+    assert_eq!(
+        json["failure"]["path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["error_kind"], "package-sources");
+    assert_eq!(json["failure"]["stage"], "emit-interface");
+    assert_eq!(
+        json["failure"]["message"],
+        "package interface emission found 1 failing source file(s)"
+    );
+    assert_eq!(json["failure"]["output_path"], JsonValue::Null);
+    assert_eq!(json["failure"]["source_root"], JsonValue::Null);
+    assert_eq!(json["failure"]["failing_source_count"], 1);
+    assert_eq!(
+        json["failure"]["first_failing_source"],
+        extra_source.display().to_string().replace('\\', "/")
+    );
+
+    expect_file_exists(
+        "project-build-package-json-emit-interface-source-failure",
+        &app_lib_output,
+        "package library artifact",
+        "package interface source failure build json",
+    )
+    .expect("package-path `ql build --emit-interface --json` should preserve the build artifact");
+}
+
+#[test]
+fn build_package_path_json_reports_emit_interface_output_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-emit-interface-output-failure");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for emit-interface output failure test");
+
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    let interface_output = project_root.join("app.qi");
+    std::fs::create_dir_all(&interface_output)
+        .expect("occupy the default interface output path with a directory");
+    let app_lib_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&project_root)
+        .args(["--emit-interface", "--json"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface --json` package interface output failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-package-json-emit-interface-output-failure",
+        "package interface output failure build json",
+        &output,
+        1,
+    )
+    .expect("package-path `ql build --emit-interface --json` should exit with code 1");
+    expect_empty_stderr(
+        "project-build-package-json-emit-interface-output-failure",
+        "package interface output failure build json",
+        &stderr,
+    )
+    .expect("package-path `ql build --emit-interface --json` should not print stderr");
+
+    let json = parse_json_output(
+        "project-build-package-json-emit-interface-output-failure",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["emit_interface"], true);
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(json["built_targets"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        json["failure"]["manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["package_name"], "app");
+    assert_eq!(json["failure"]["selected"], true);
+    assert_eq!(json["failure"]["dependency_only"], false);
+    assert_eq!(json["failure"]["kind"], "interface");
+    assert_eq!(
+        json["failure"]["path"],
+        interface_output.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["error_kind"], "interface-output");
+    assert_eq!(json["failure"]["stage"], "emit-interface");
+    assert!(
+        json["failure"]["message"]
+            .as_str()
+            .expect("interface output failure json should expose a message")
+            .contains(&format!(
+                "failed to write interface `{}`",
+                interface_output.display().to_string().replace('\\', "/")
+            )),
+        "interface output failure json should preserve the write failure context: {json}"
+    );
+    assert_eq!(
+        json["failure"]["output_path"],
+        interface_output.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["source_root"], JsonValue::Null);
+    assert_eq!(json["failure"]["failing_source_count"], JsonValue::Null);
+    assert_eq!(json["failure"]["first_failing_source"], JsonValue::Null);
+
+    expect_file_exists(
+        "project-build-package-json-emit-interface-output-failure",
+        &app_lib_output,
+        "package library artifact",
+        "package interface output failure build json",
+    )
+    .expect("package-path `ql build --emit-interface --json` should preserve the build artifact");
 }
 
 #[test]
@@ -760,6 +1041,128 @@ dep = "../dep"
     )
     .expect(
         "package-path `ql build --json` should preserve the already-built package library artifact",
+    );
+}
+
+#[test]
+fn build_project_json_reports_emit_interface_output_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-json-emit-interface-output-failure");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for json emit-interface output failure test");
+    let manifest_path = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn util() -> Int { return 1 }\n");
+    temp.write("app/src/main.ql", "fn main() -> Int { return 0 }\n");
+
+    let lib_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let main_output = project_root.join("target/ql/debug/main.ll");
+    let interface_output = project_root.join("app.qi");
+    std::fs::create_dir_all(&interface_output)
+        .expect("create blocking interface directory for json emit-interface output failure test");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&project_root)
+        .args(["--emit-interface", "--json"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --emit-interface --json` blocked interface output path",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-json-emit-interface-output-failure",
+        "project build json emit-interface output failure",
+        &output,
+        1,
+    )
+    .expect("project-path `ql build --emit-interface --json` should exit with code 1");
+    expect_empty_stderr(
+        "project-build-json-emit-interface-output-failure",
+        "project build json emit-interface output failure",
+        &stderr,
+    )
+    .expect("project-path `ql build --emit-interface --json` should not print stderr");
+
+    let json = parse_json_output("project-build-json-emit-interface-output-failure", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        manifest_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["emit_interface"], true);
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(
+        json["failure"]["manifest_path"],
+        manifest_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["package_name"], "app");
+    assert_eq!(json["failure"]["selected"], true);
+    assert_eq!(json["failure"]["dependency_only"], false);
+    assert_eq!(json["failure"]["kind"], "interface");
+    assert_eq!(
+        json["failure"]["path"],
+        interface_output.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["error_kind"], "interface-output");
+    assert_eq!(json["failure"]["stage"], "emit-interface");
+    assert_eq!(
+        json["failure"]["output_path"],
+        interface_output.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["source_root"], JsonValue::Null);
+    assert_eq!(json["failure"]["failing_source_count"], JsonValue::Null);
+    assert_eq!(json["failure"]["first_failing_source"], JsonValue::Null);
+    assert!(
+        json["failure"]["message"]
+            .as_str()
+            .expect("emit-interface output failure should expose a message")
+            .contains("failed to write interface"),
+        "emit-interface output failure should preserve the interface write failure: {json}"
+    );
+
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("emit-interface output failure should expose built_targets");
+    assert_eq!(built_targets.len(), 2);
+    assert_eq!(
+        built_targets[0]["artifact_path"],
+        lib_output.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        built_targets[1]["artifact_path"],
+        main_output.display().to_string().replace('\\', "/")
+    );
+    expect_file_exists(
+        "project-build-json-emit-interface-output-failure",
+        &lib_output,
+        "package library artifact",
+        "project build json emit-interface output failure",
+    )
+    .expect("project-path `ql build --emit-interface --json` should preserve the library artifact");
+    expect_file_exists(
+        "project-build-json-emit-interface-output-failure",
+        &main_output,
+        "package binary artifact",
+        "project build json emit-interface output failure",
+    )
+    .expect("project-path `ql build --emit-interface --json` should preserve the binary artifact");
+    assert!(
+        interface_output.is_dir(),
+        "project-path `ql build --emit-interface --json` should not replace the blocked interface output directory"
     );
 }
 

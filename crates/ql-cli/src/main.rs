@@ -1546,9 +1546,18 @@ fn build_path(
         };
         report.record_source_target(path, &artifact);
         if emit_interface {
-            let interface_result =
-                emit_built_package_interface_quiet(path, options, &artifact.path, &[])?;
-            report.record_interface_result(None, None, true, interface_result);
+            match emit_built_package_interface_quiet(path, options, &artifact.path, &[]) {
+                Ok(interface_result) => {
+                    report.record_interface_result(None, None, true, interface_result);
+                }
+                Err(error) => {
+                    report.record_preflight_failure(build_json_emit_interface_failure(
+                        path, None, None, &error,
+                    ));
+                    print!("{}", report.into_json());
+                    return Err(1);
+                }
+            }
         }
         print!("{}", report.into_json());
         return Ok(());
@@ -1899,6 +1908,155 @@ fn build_json_project_error(
         None,
         None,
     )
+}
+
+fn build_json_interface_failure(
+    request_path: &Path,
+    manifest_path: Option<&Path>,
+    package_name: Option<&str>,
+    error_kind: &str,
+    message: String,
+    output_path: Option<String>,
+    source_root: Option<String>,
+    failing_source_count: Option<usize>,
+    first_failing_source: Option<String>,
+) -> JsonValue {
+    let display_path = output_path
+        .clone()
+        .or_else(|| manifest_path.map(normalize_path))
+        .unwrap_or_else(|| normalize_path(request_path));
+    json!({
+        "manifest_path": manifest_path.map(normalize_path),
+        "package_name": package_name,
+        "selected": true,
+        "dependency_only": false,
+        "kind": "interface",
+        "path": display_path,
+        "error_kind": error_kind,
+        "stage": "emit-interface",
+        "message": message,
+        "output_path": output_path,
+        "source_root": source_root,
+        "failing_source_count": failing_source_count,
+        "first_failing_source": first_failing_source,
+    })
+}
+
+fn build_json_emit_interface_failure(
+    request_path: &Path,
+    manifest_path: Option<&Path>,
+    package_name: Option<&str>,
+    error: &EmitPackageInterfaceError,
+) -> JsonValue {
+    match error {
+        EmitPackageInterfaceError::ManifestNotFound { start } => build_json_interface_failure(
+            request_path,
+            None,
+            package_name,
+            "project-context",
+            format!(
+                "build-side interface emission requires a package manifest; could not find `qlang.toml` starting from `{}`",
+                normalize_path(start)
+            ),
+            None,
+            None,
+            None,
+            None,
+        ),
+        EmitPackageInterfaceError::ManifestFailure {
+            manifest_path,
+            message,
+        } => build_json_interface_failure(
+            request_path,
+            Some(manifest_path),
+            package_name,
+            "manifest",
+            message.clone(),
+            None,
+            None,
+            None,
+            None,
+        ),
+        EmitPackageInterfaceError::NoSourceFilesFailure {
+            manifest_path,
+            source_root,
+        } => build_json_interface_failure(
+            request_path,
+            Some(manifest_path),
+            package_name,
+            "package-sources",
+            format!(
+                "no `.ql` files found under `{}`",
+                normalize_path(source_root)
+            ),
+            None,
+            Some(normalize_path(source_root)),
+            None,
+            None,
+        ),
+        EmitPackageInterfaceError::SourceRootFailure {
+            manifest_path,
+            source_root,
+        } => build_json_interface_failure(
+            request_path,
+            Some(manifest_path),
+            package_name,
+            "package-source-root",
+            format!(
+                "package source directory `{}` does not exist",
+                normalize_path(source_root)
+            ),
+            None,
+            Some(normalize_path(source_root)),
+            None,
+            None,
+        ),
+        EmitPackageInterfaceError::OutputPathFailure {
+            manifest_path: output_manifest_path,
+            output_path,
+            message,
+        } => build_json_interface_failure(
+            request_path,
+            output_manifest_path.as_deref().or(manifest_path),
+            package_name,
+            "interface-output",
+            message.clone(),
+            Some(normalize_path(output_path)),
+            None,
+            None,
+            None,
+        ),
+        EmitPackageInterfaceError::SourceFailure {
+            failure_count,
+            first_failing_source,
+            ..
+        } => build_json_interface_failure(
+            request_path,
+            manifest_path,
+            package_name,
+            "package-sources",
+            format!("package interface emission found {failure_count} failing source file(s)"),
+            None,
+            None,
+            Some(*failure_count),
+            first_failing_source
+                .as_ref()
+                .map(|path| normalize_path(path)),
+        ),
+        EmitPackageInterfaceError::Code { message, .. } => build_json_interface_failure(
+            request_path,
+            manifest_path,
+            package_name,
+            "interface",
+            message
+                .clone()
+                .unwrap_or_else(|| "build-side interface emission failed".to_owned()),
+            None,
+            None,
+            None,
+            None,
+        ),
+    }
 }
 
 fn emit_build_json_failure(
@@ -3724,12 +3882,25 @@ fn build_project_path(
 
         if plan_member.emit_interface {
             if let Some(report) = json_report.as_mut() {
-                let interface_result = emit_built_package_interface_quiet(
+                let interface_result = match emit_built_package_interface_quiet(
                     &plan_member.member.member_manifest_path,
                     options,
                     &first_artifact.path,
                     &additional_artifacts,
-                )?;
+                ) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        return emit_build_json_failure(
+                            &mut json_report,
+                            build_json_emit_interface_failure(
+                                path,
+                                Some(&plan_member.member.member_manifest_path),
+                                Some(plan_member.member.package_name.as_str()),
+                                &error,
+                            ),
+                        );
+                    }
+                };
                 report.record_interface_result(
                     Some(&plan_member.member.member_manifest_path),
                     Some(plan_member.member.package_name.as_str()),
@@ -4606,8 +4777,9 @@ fn emit_built_package_interface_quiet(
     options: &BuildOptions,
     artifact_path: &Path,
     additional_artifacts: &[PathBuf],
-) -> Result<EmitPackageInterfaceResult, u8> {
-    emit_built_package_interface_impl(path, options, artifact_path, additional_artifacts)
+) -> Result<EmitPackageInterfaceResult, EmitPackageInterfaceError> {
+    let _ = (options, artifact_path, additional_artifacts);
+    emit_package_interface_path_quiet(path, None, false)
 }
 
 fn emit_built_package_interface_impl(
@@ -4618,22 +4790,22 @@ fn emit_built_package_interface_impl(
 ) -> Result<EmitPackageInterfaceResult, u8> {
     match emit_package_interface_path(path, None, "`ql build --emit-interface`", false) {
         Ok(result) => Ok(result),
-        Err(EmitPackageInterfaceError::ManifestNotFound) => {
+        Err(EmitPackageInterfaceError::ManifestNotFound { .. }) => {
             report_build_interface_package_context_failure(path, options, true, artifact_path);
             report_remaining_build_artifacts(additional_artifacts);
             Err(1)
         }
-        Err(EmitPackageInterfaceError::SourceFailure(code)) => {
+        Err(EmitPackageInterfaceError::SourceFailure { code, .. }) => {
             report_build_interface_source_failure(path, options, true, artifact_path);
             report_remaining_build_artifacts(additional_artifacts);
             Err(code)
         }
-        Err(EmitPackageInterfaceError::Code(code)) => {
+        Err(EmitPackageInterfaceError::Code { code, .. }) => {
             report_build_interface_failure(path, options, true, artifact_path);
             report_remaining_build_artifacts(additional_artifacts);
             Err(code)
         }
-        Err(EmitPackageInterfaceError::ManifestFailure { manifest_path }) => {
+        Err(EmitPackageInterfaceError::ManifestFailure { manifest_path, .. }) => {
             report_build_interface_manifest_failure(
                 path,
                 options,
@@ -4674,7 +4846,7 @@ fn emit_built_package_interface_impl(
             report_remaining_build_artifacts(additional_artifacts);
             Err(1)
         }
-        Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
+        Err(EmitPackageInterfaceError::OutputPathFailure { output_path, .. }) => {
             report_build_interface_output_failure(path, options, true, artifact_path, &output_path);
             report_remaining_build_artifacts(additional_artifacts);
             Err(1)
@@ -6075,7 +6247,7 @@ fn project_emit_interface_path(
         }
         match emit_package_interface_path(path, output, emit_command_label.as_str(), changed_only) {
             Ok(result) => report_emit_interface_result(result),
-            Err(EmitPackageInterfaceError::ManifestNotFound) => {
+            Err(EmitPackageInterfaceError::ManifestNotFound { .. }) => {
                 report_package_interface_failure(
                     &manifest.manifest_path,
                     None,
@@ -6085,7 +6257,7 @@ fn project_emit_interface_path(
                 );
                 return Err(1);
             }
-            Err(EmitPackageInterfaceError::SourceFailure(code)) => {
+            Err(EmitPackageInterfaceError::SourceFailure { code, .. }) => {
                 report_package_interface_source_failure(
                     &manifest.manifest_path,
                     None,
@@ -6095,7 +6267,7 @@ fn project_emit_interface_path(
                 );
                 return Err(code);
             }
-            Err(EmitPackageInterfaceError::Code(code)) => {
+            Err(EmitPackageInterfaceError::Code { code, .. }) => {
                 report_package_interface_failure(
                     &manifest.manifest_path,
                     None,
@@ -6137,7 +6309,7 @@ fn project_emit_interface_path(
                 );
                 return Err(1);
             }
-            Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
+            Err(EmitPackageInterfaceError::OutputPathFailure { output_path, .. }) => {
                 report_package_interface_output_failure(
                     &manifest.manifest_path,
                     None,
@@ -6329,7 +6501,7 @@ fn project_emit_interface_path(
                 changed_only,
             ) {
                 Ok(result) => report_emit_interface_result(result),
-                Err(EmitPackageInterfaceError::ManifestNotFound) => {
+                Err(EmitPackageInterfaceError::ManifestNotFound { .. }) => {
                     report_package_interface_failure(
                         &member_manifest.manifest_path,
                         Some(&member_manifest.manifest_path),
@@ -6343,7 +6515,7 @@ fn project_emit_interface_path(
                         member_manifest.manifest_path.clone(),
                     );
                 }
-                Err(EmitPackageInterfaceError::SourceFailure(_)) => {
+                Err(EmitPackageInterfaceError::SourceFailure { .. }) => {
                     report_package_interface_source_failure(
                         &member_manifest.manifest_path,
                         Some(&member_manifest.manifest_path),
@@ -6357,7 +6529,7 @@ fn project_emit_interface_path(
                         member_manifest.manifest_path.clone(),
                     );
                 }
-                Err(EmitPackageInterfaceError::Code(_)) => {
+                Err(EmitPackageInterfaceError::Code { .. }) => {
                     report_package_interface_failure(
                         &member_manifest.manifest_path,
                         Some(&member_manifest.manifest_path),
@@ -6415,7 +6587,7 @@ fn project_emit_interface_path(
                         member_manifest.manifest_path.clone(),
                     );
                 }
-                Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
+                Err(EmitPackageInterfaceError::OutputPathFailure { output_path, .. }) => {
                     report_package_interface_output_failure(
                         &member_manifest.manifest_path,
                         Some(&member_manifest.manifest_path),
@@ -6481,11 +6653,21 @@ enum CheckPackageInterfaceResult {
 }
 
 enum EmitPackageInterfaceError {
-    Code(u8),
-    SourceFailure(u8),
-    ManifestNotFound,
+    Code {
+        code: u8,
+        message: Option<String>,
+    },
+    SourceFailure {
+        code: u8,
+        failure_count: usize,
+        first_failing_source: Option<PathBuf>,
+    },
+    ManifestNotFound {
+        start: PathBuf,
+    },
     ManifestFailure {
         manifest_path: PathBuf,
+        message: String,
     },
     NoSourceFilesFailure {
         manifest_path: PathBuf,
@@ -6496,7 +6678,9 @@ enum EmitPackageInterfaceError {
         source_root: PathBuf,
     },
     OutputPathFailure {
+        manifest_path: Option<PathBuf>,
         output_path: PathBuf,
+        message: String,
     },
 }
 
@@ -6519,41 +6703,85 @@ fn emit_package_interface_path(
     command_label: &str,
     changed_only: bool,
 ) -> Result<EmitPackageInterfaceResult, EmitPackageInterfaceError> {
+    emit_package_interface_path_impl(path, output, command_label, changed_only, true)
+}
+
+fn emit_package_interface_path_quiet(
+    path: &Path,
+    output: Option<&Path>,
+    changed_only: bool,
+) -> Result<EmitPackageInterfaceResult, EmitPackageInterfaceError> {
+    emit_package_interface_path_impl(
+        path,
+        output,
+        "`ql build --emit-interface`",
+        changed_only,
+        false,
+    )
+}
+
+fn emit_package_interface_path_impl(
+    path: &Path,
+    output: Option<&Path>,
+    command_label: &str,
+    changed_only: bool,
+    report_failure: bool,
+) -> Result<EmitPackageInterfaceResult, EmitPackageInterfaceError> {
     let manifest = load_project_manifest(path).map_err(|error| match error {
         ql_project::ProjectError::ManifestNotFound { start } => {
-            eprintln!(
-                "error: {command_label} requires a package manifest; could not find `qlang.toml` starting from `{}`",
-                normalize_path(&start)
-            );
-            EmitPackageInterfaceError::ManifestNotFound
+            if report_failure {
+                eprintln!(
+                    "error: {command_label} requires a package manifest; could not find `qlang.toml` starting from `{}`",
+                    normalize_path(&start)
+                );
+            }
+            EmitPackageInterfaceError::ManifestNotFound { start }
         }
         error => {
             if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error)
             {
-                eprintln!(
-                    "error: {} manifest `{}` does not declare `[package].name`",
-                    command_label,
-                    normalize_path(manifest_path)
-                );
-                EmitPackageInterfaceError::ManifestFailure {
-                    manifest_path: manifest_path.to_path_buf(),
+                if report_failure {
+                    eprintln!(
+                        "error: {} manifest `{}` does not declare `[package].name`",
+                        command_label,
+                        normalize_path(manifest_path)
+                    );
                 }
-            } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error)
-            {
-                eprintln!("error: {command_label} {error}");
                 EmitPackageInterfaceError::ManifestFailure {
                     manifest_path: manifest_path.to_path_buf(),
+                    message: format!(
+                        "manifest `{}` does not declare `[package].name`",
+                        normalize_path(manifest_path)
+                    ),
+                }
+            } else if let Some(manifest_path) =
+                package_check_manifest_path_from_project_error(&error)
+            {
+                if report_failure {
+                    eprintln!("error: {command_label} {error}");
+                }
+                EmitPackageInterfaceError::ManifestFailure {
+                    manifest_path: manifest_path.to_path_buf(),
+                    message: error.to_string(),
                 }
             } else {
-                eprintln!("error: {error}");
-                EmitPackageInterfaceError::Code(1)
+                if report_failure {
+                    eprintln!("error: {error}");
+                }
+                EmitPackageInterfaceError::Code {
+                    code: 1,
+                    message: Some(error.to_string()),
+                }
             }
         }
     })?;
     let package_name = package_name(&manifest).map_err(|error| {
-        eprintln!("error: {command_label} {error}");
+        if report_failure {
+            eprintln!("error: {command_label} {error}");
+        }
         EmitPackageInterfaceError::ManifestFailure {
             manifest_path: manifest.manifest_path.clone(),
+            message: error.to_string(),
         }
     })?;
     let output_path = output.map(Path::to_path_buf).unwrap_or_else(|| {
@@ -6570,25 +6798,34 @@ fn emit_package_interface_path(
         package_source_root(&manifest).expect("package interface emission requires a package");
     let files = collect_package_sources(&manifest).map_err(|error| match error {
         ql_project::ProjectError::PackageSourceRootNotFound { path } => {
-            eprintln!(
-                "error: {command_label} package source directory `{}` does not exist",
-                normalize_path(&path)
-            );
+            if report_failure {
+                eprintln!(
+                    "error: {command_label} package source directory `{}` does not exist",
+                    normalize_path(&path)
+                );
+            }
             EmitPackageInterfaceError::SourceRootFailure {
                 manifest_path: manifest.manifest_path.clone(),
                 source_root: path,
             }
         }
         error => {
-            eprintln!("error: {error}");
-            EmitPackageInterfaceError::SourceFailure(1)
+            if report_failure {
+                eprintln!("error: {error}");
+            }
+            EmitPackageInterfaceError::Code {
+                code: 1,
+                message: Some(error.to_string()),
+            }
         }
     })?;
     if files.is_empty() {
-        eprintln!(
-            "error: {command_label} no `.ql` files found under `{}`",
-            normalize_path(&source_root)
-        );
+        if report_failure {
+            eprintln!(
+                "error: {command_label} no `.ql` files found under `{}`",
+                normalize_path(&source_root)
+            );
+        }
         return Err(EmitPackageInterfaceError::NoSourceFilesFailure {
             manifest_path: manifest.manifest_path.clone(),
             source_root,
@@ -6600,7 +6837,9 @@ fn emit_package_interface_path(
     let mut first_failing_source = None;
     for file in files {
         let source = fs::read_to_string(&file).map_err(|error| {
-            eprintln!("error: failed to read `{}`: {error}", file.display());
+            if report_failure {
+                eprintln!("error: failed to read `{}`: {error}", file.display());
+            }
             error
         });
         let source = match source {
@@ -6614,14 +6853,18 @@ fn emit_package_interface_path(
         let analysis = match analyze_semantics(&source) {
             Ok(analysis) => analysis,
             Err(diagnostics) => {
-                print_diagnostics(&file, &source, &diagnostics);
+                if report_failure {
+                    print_diagnostics(&file, &source, &diagnostics);
+                }
                 failing_source_count += 1;
                 record_first_failing_path(&mut first_failing_source, &file);
                 continue;
             }
         };
         if analysis.has_errors() {
-            print_diagnostics(&file, &source, analysis.diagnostics());
+            if report_failure {
+                print_diagnostics(&file, &source, analysis.diagnostics());
+            }
             failing_source_count += 1;
             record_first_failing_path(&mut first_failing_source, &file);
             continue;
@@ -6633,37 +6876,57 @@ fn emit_package_interface_path(
     }
 
     if failing_source_count > 0 {
-        eprintln!("error: {command_label} found {failing_source_count} failing source file(s)");
-        if failing_source_count > 1 {
-            if let Some(path) = &first_failing_source {
-                eprintln!("note: first failing source file: {}", normalize_path(path));
+        if report_failure {
+            eprintln!("error: {command_label} found {failing_source_count} failing source file(s)");
+            if failing_source_count > 1 {
+                if let Some(path) = &first_failing_source {
+                    eprintln!("note: first failing source file: {}", normalize_path(path));
+                }
             }
         }
-        return Err(EmitPackageInterfaceError::SourceFailure(1));
+        return Err(EmitPackageInterfaceError::SourceFailure {
+            code: 1,
+            failure_count: failing_source_count,
+            first_failing_source,
+        });
     }
 
     if let Some(parent) = output_path.parent()
         && !parent.as_os_str().is_empty()
     {
         fs::create_dir_all(parent).map_err(|error| {
-            eprintln!(
-                "error: failed to create interface output directory `{}`: {error}",
-                parent.display()
-            );
+            if report_failure {
+                eprintln!(
+                    "error: failed to create interface output directory `{}`: {error}",
+                    parent.display()
+                );
+            }
             EmitPackageInterfaceError::OutputPathFailure {
+                manifest_path: Some(manifest.manifest_path.clone()),
                 output_path: output_path.clone(),
+                message: format!(
+                    "failed to create interface output directory `{}`: {error}",
+                    normalize_path(parent)
+                ),
             }
         })?;
     }
 
     let rendered = render_interface_artifact(package_name, &rendered_modules);
     fs::write(&output_path, rendered).map_err(|error| {
-        eprintln!(
-            "error: failed to write interface `{}`: {error}",
-            output_path.display()
-        );
+        if report_failure {
+            eprintln!(
+                "error: failed to write interface `{}`: {error}",
+                output_path.display()
+            );
+        }
         EmitPackageInterfaceError::OutputPathFailure {
+            manifest_path: Some(manifest.manifest_path.clone()),
             output_path: output_path.clone(),
+            message: format!(
+                "failed to write interface `{}`: {error}",
+                normalize_path(&output_path)
+            ),
         }
     })?;
     Ok(EmitPackageInterfaceResult::Wrote(output_path))
@@ -6995,7 +7258,7 @@ fn sync_reference_interfaces_recursive(
             match emit_result {
                 Ok(EmitPackageInterfaceResult::Wrote(path)) => result.written.push(path),
                 Ok(EmitPackageInterfaceResult::UpToDate(_)) => {}
-                Err(EmitPackageInterfaceError::ManifestNotFound) => {
+                Err(EmitPackageInterfaceError::ManifestNotFound { .. }) => {
                     let owner_note =
                         format_reference_interface_sync_note(&manifest.manifest_path, reference);
                     report_package_interface_failure(
@@ -7011,7 +7274,7 @@ fn sync_reference_interfaces_recursive(
                         dependency_manifest.manifest_path.clone(),
                     );
                 }
-                Err(EmitPackageInterfaceError::SourceFailure(_)) => {
+                Err(EmitPackageInterfaceError::SourceFailure { .. }) => {
                     let owner_note =
                         format_reference_interface_sync_note(&manifest.manifest_path, reference);
                     report_package_interface_source_failure(
@@ -7027,7 +7290,7 @@ fn sync_reference_interfaces_recursive(
                         dependency_manifest.manifest_path.clone(),
                     );
                 }
-                Err(EmitPackageInterfaceError::Code(_)) => {
+                Err(EmitPackageInterfaceError::Code { .. }) => {
                     let owner_note =
                         format_reference_interface_sync_note(&manifest.manifest_path, reference);
                     report_package_interface_failure(
@@ -7060,7 +7323,7 @@ fn sync_reference_interfaces_recursive(
                         dependency_manifest.manifest_path.clone(),
                     );
                 }
-                Err(EmitPackageInterfaceError::ManifestFailure { manifest_path }) => {
+                Err(EmitPackageInterfaceError::ManifestFailure { manifest_path, .. }) => {
                     let owner_note =
                         format_reference_interface_sync_note(&manifest.manifest_path, reference);
                     report_package_interface_manifest_failure(
@@ -7093,7 +7356,7 @@ fn sync_reference_interfaces_recursive(
                         dependency_manifest.manifest_path.clone(),
                     );
                 }
-                Err(EmitPackageInterfaceError::OutputPathFailure { output_path }) => {
+                Err(EmitPackageInterfaceError::OutputPathFailure { output_path, .. }) => {
                     let owner_note =
                         format_reference_interface_sync_note(&manifest.manifest_path, reference);
                     report_package_interface_output_failure(
