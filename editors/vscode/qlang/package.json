@@ -28,6 +28,13 @@
         "configuration": "./language-configuration.json"
       }
     ],
+    "grammars": [
+      {
+        "language": "qlang",
+        "scopeName": "source.qlang",
+        "path": "./syntaxes/qlang.tmLanguage.json"
+      }
+    ],
     "commands": [
       {
         "command": "qlang.restartLanguageServer",

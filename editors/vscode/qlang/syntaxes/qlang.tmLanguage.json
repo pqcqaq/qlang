@@ -1,0 +1,187 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Qlang",
+  "scopeName": "source.qlang",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#function-declarations"
+    },
+    {
+      "include": "#type-declarations"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#escaped-identifiers"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.qlang",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.qlang",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.qlang",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.qlang",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.qlang",
+          "match": "\\b(if|else|match|for|while|in|return|break|continue)\\b"
+        },
+        {
+          "name": "storage.modifier.qlang",
+          "match": "\\b(pub|unsafe|move|defer|async|await|spawn)\\b"
+        },
+        {
+          "name": "storage.type.qlang",
+          "match": "\\b(fn|struct|enum|trait|impl|extend|type|opaque|data|extern)\\b"
+        },
+        {
+          "name": "keyword.declaration.qlang",
+          "match": "\\b(let|var|const|static|import|use)\\b"
+        }
+      ]
+    },
+    "function-declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.function.qlang"
+            },
+            "2": {
+              "name": "entity.name.function.qlang"
+            }
+          }
+        },
+        {
+          "match": "\\b(fn)\\s+(`[^`]+`)",
+          "captures": {
+            "1": {
+              "name": "storage.type.function.qlang"
+            },
+            "2": {
+              "name": "entity.name.function.qlang"
+            }
+          }
+        }
+      ]
+    },
+    "type-declarations": {
+      "patterns": [
+        {
+          "match": "\\b(struct|enum|trait|type|opaque)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.qlang"
+            },
+            "2": {
+              "name": "entity.name.type.qlang"
+            }
+          }
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.type.builtin.qlang",
+          "match": "\\b(Void|Bool|String|Char|Byte|Int|Float|U8|U16|U32|U64|USize|I8|I16|I32|I64|ISize|Task|Option|Result)\\b"
+        },
+        {
+          "name": "storage.type.self.qlang",
+          "match": "\\bself\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.qlang",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.qlang",
+          "match": "\\b\\d+(?:\\.\\d+)?\\b"
+        }
+      ]
+    },
+    "escaped-identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.readwrite.escaped.qlang",
+          "match": "`[^`]+`"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.qlang",
+          "match": "->|=>|==|!=|<=|>=|&&|\\|\\||[+\\-*/%<>=!]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.qlang",
+          "match": "[,.;:]"
+        },
+        {
+          "name": "punctuation.brackets.qlang",
+          "match": "[()\\[\\]{}]"
+        }
+      ]
+    }
+  }
+}

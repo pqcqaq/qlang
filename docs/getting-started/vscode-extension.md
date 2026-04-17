@@ -15,12 +15,22 @@
 - hover
 - definition / declaration / type definition
 - references
+- document highlight
 - completion
 - document symbol / workspace symbol
 - semantic tokens
 - conservative rename
 
 真正的语义边界仍以 `crates/ql-lsp` 和 `docs/roadmap/current-supported-surface.md` 为准。
+
+但这里要明确一件事：
+
+- 插件声明了这些 LSP 能力，不等于它们已经在真实项目里做到了稳定可依赖。
+- 当前最可靠的仍然是 diagnostics 和保守 same-file 语义。
+- 这轮开始已经补上两条更接近真实项目的路径：workspace roots 驱动的保守 `workspace symbol` 搜索，以及 package/workspace import 优先跳到 workspace 源码定义。
+- 当前文件内的 symbol occurrence highlighting 也已经接上 `textDocument/documentHighlight`，会复用 same-file / package-aware references 面高亮当前文件里的定义和使用位。
+- 但 project-scale 跳转、跨包导航、以及“像成熟语言插件那样稳定”的高级高亮，仍然没有完全做实。
+- 当前已经内置最小 TextMate grammar fallback；当 `qlsp` 没有返回足够的 semantic tokens 时，编辑器至少还有基础语法着色，但高亮质量仍然偏保守。
 
 ## 先决条件
 
@@ -89,5 +99,6 @@ code --install-extension editors/vscode/qlang/dist/qlang.vsix
 
 - 不内置 `qlsp` 二进制
 - 已提供本地 VSIX 打包流，但还不提供 Marketplace 发布流
-- 不提供 TextMate grammar；当前高亮主要来自 `qlsp` 的 semantic tokens
+- 已提供最小 TextMate grammar；更细粒度的高亮仍主要依赖 `qlsp` 的 semantic tokens
 - 不扩大 `qlsp` 现有支持边界
+- 不承诺当前已经具备成熟语言插件级别的跳转、高亮和重构体验

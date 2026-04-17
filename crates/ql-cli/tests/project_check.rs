@@ -1,8 +1,9 @@
 mod support;
 
 use support::{
-    TempDir, expect_exit_code, expect_stderr_contains, expect_stderr_not_contains,
-    expect_stdout_contains_all, expect_success, ql_command, run_command_capture, workspace_root,
+    TempDir, expect_empty_stderr, expect_exit_code, expect_snapshot_matches,
+    expect_stderr_contains, expect_stderr_not_contains, expect_stdout_contains_all, expect_success,
+    ql_command, run_command_capture, workspace_root,
 };
 
 #[test]
@@ -90,6 +91,87 @@ pub fn main() -> Int {
         stderr.trim().is_empty(),
         "expected package-aware ql check stderr to stay empty, got:\n{stderr}"
     );
+}
+
+#[test]
+fn check_package_dir_supports_json_output() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-json");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("app");
+    let source_path = app_root.join("src").join("lib.ql");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let interface_path = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+    let manifest_path = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check", "--json"]).arg(&app_root);
+    let output = run_command_capture(&mut command, "`ql check --json` package dir");
+    let (stdout, stderr) = expect_success(
+        "project-check-json-success",
+        "package-aware ql check json",
+        &output,
+    )
+    .expect("package-aware ql check json should succeed");
+    expect_empty_stderr(
+        "project-check-json-success",
+        "package-aware ql check json",
+        &stderr,
+    )
+    .expect("package-aware ql check json should not print stderr");
+
+    let expected = format!(
+        "{{\n  \"checked_files\": [\n    \"{}\"\n  ],\n  \"diagnostic_files\": [],\n  \"failing_manifests\": [],\n  \"loaded_interfaces\": [\n    \"{}\"\n  ],\n  \"project_manifest_path\": \"{}\",\n  \"schema\": \"ql.check.v1\",\n  \"scope\": \"package\",\n  \"status\": \"ok\",\n  \"sync_interfaces\": false,\n  \"written_interfaces\": []\n}}\n",
+        source_path.display().to_string().replace('\\', "/"),
+        interface_path.display().to_string().replace('\\', "/"),
+        manifest_path.display().to_string().replace('\\', "/"),
+    );
+    expect_snapshot_matches(
+        "project-check-json-success",
+        "package check json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("package-aware ql check json should match the stable contract");
 }
 
 #[test]
@@ -1691,6 +1773,7 @@ pub fn main() -> Int {
     )
     .expect("sync path should still summarize the failing referenced package");
 }
+
 #[test]
 fn check_package_dir_reports_stale_dependency_interface() {
     let workspace_root = workspace_root();
@@ -2469,7 +2552,9 @@ name = "broken"
                 .replace('\\', "/")
         ),
     )
-    .expect("workspace-root ql check should preserve the command label for broken member manifests");
+    .expect(
+        "workspace-root ql check should preserve the command label for broken member manifests",
+    );
     expect_stderr_not_contains(
         "project-check-workspace-single-failure",
         "workspace-root ql check with single failing member",
@@ -2623,9 +2708,8 @@ name = "broken"
         .display()
         .to_string()
         .replace('\\', "/");
-    let error_line = format!(
-        "error: `ql check --sync-interfaces` invalid manifest `{broken_manifest}`"
-    );
+    let error_line =
+        format!("error: `ql check --sync-interfaces` invalid manifest `{broken_manifest}`");
     let old_error_line = format!("error: invalid manifest `{broken_manifest}`");
     let package_note = format!("note: failing package manifest: {broken_manifest}");
     let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
@@ -2645,7 +2729,9 @@ name = "broken"
         &normalized_stderr,
         &old_error_line,
     )
-    .expect("workspace-root ql check sync should not fall back to the generic broken member error line");
+    .expect(
+        "workspace-root ql check sync should not fall back to the generic broken member error line",
+    );
     expect_stderr_contains(
         "project-check-workspace-sync-single-failure",
         "workspace-root ql check sync with single failing member",
@@ -2680,7 +2766,9 @@ name = "broken"
         &normalized_stderr,
         "note: first failing member manifest:",
     )
-    .expect("single failing sync workspace members should not repeat the manifest in the final summary");
+    .expect(
+        "single failing sync workspace members should not repeat the manifest in the final summary",
+    );
 }
 
 #[test]
@@ -2791,9 +2879,8 @@ pub fn main() -> Int {
         format!("error: manifest `{broken_manifest}` does not declare `[package].name`");
     let package_note = format!("note: failing package manifest: {broken_manifest}");
     let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
-    let rerun_hint = format!(
-        "hint: rerun `ql check {broken_manifest}` after fixing the package manifest"
-    );
+    let rerun_hint =
+        format!("hint: rerun `ql check {broken_manifest}` after fixing the package manifest");
     expect_stderr_contains(
         "project-check-workspace-non-package-member",
         "workspace-root ql check with non-package member",
@@ -3306,9 +3393,9 @@ pub fn main() -> Int {
     .expect(
         "workspace-root ql check sync should not fall back to the generic missing member package-name error line",
     );
-    let error_line_index = normalized_stderr
-        .find(&error_line)
-        .expect("workspace-root ql check sync should include the missing member package-name error");
+    let error_line_index = normalized_stderr.find(&error_line).expect(
+        "workspace-root ql check sync should include the missing member package-name error",
+    );
     let package_note_index = normalized_stderr
         .find(&package_note)
         .expect("workspace-root ql check sync should include the package manifest note");
@@ -3428,8 +3515,14 @@ pub fn main() -> Int {
         "project-check-workspace-missing-source-root",
         &normalized_stdout,
         &[
-            &format!("ok: {}", app_source.display().to_string().replace('\\', "/")),
-            &format!("ok: {}", tool_source.display().to_string().replace('\\', "/")),
+            &format!(
+                "ok: {}",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "ok: {}",
+                tool_source.display().to_string().replace('\\', "/")
+            ),
         ],
     )
     .expect("workspace-root ql check should continue checking later valid members");
@@ -3443,17 +3536,15 @@ pub fn main() -> Int {
         .display()
         .to_string()
         .replace('\\', "/");
-    let error_line = format!(
-        "error: `ql check` package source directory `{broken_source_root}` does not exist"
-    );
+    let error_line =
+        format!("error: `ql check` package source directory `{broken_source_root}` does not exist");
     let old_error_line =
         format!("error: package source directory `{broken_source_root}` does not exist");
     let package_note = format!("note: failing package manifest: {broken_manifest}");
     let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
     let source_root_note = format!("note: failing package source root: {broken_source_root}");
-    let rerun_hint = format!(
-        "hint: rerun `ql check {broken_manifest}` after fixing the package source root"
-    );
+    let rerun_hint =
+        format!("hint: rerun `ql check {broken_manifest}` after fixing the package source root");
     expect_stderr_contains(
         "project-check-workspace-missing-source-root",
         "workspace-root ql check with missing source root member",
@@ -3467,7 +3558,9 @@ pub fn main() -> Int {
         &normalized_stderr,
         &old_error_line,
     )
-    .expect("workspace-root ql check should not fall back to the generic missing source-root error");
+    .expect(
+        "workspace-root ql check should not fall back to the generic missing source-root error",
+    );
     expect_stderr_contains(
         "project-check-workspace-missing-source-root",
         "workspace-root ql check with missing source root member",
@@ -3618,8 +3711,14 @@ pub fn main() -> Int {
         "project-check-workspace-sync-missing-source-root",
         &normalized_stdout,
         &[
-            &format!("ok: {}", app_source.display().to_string().replace('\\', "/")),
-            &format!("ok: {}", tool_source.display().to_string().replace('\\', "/")),
+            &format!(
+                "ok: {}",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "ok: {}",
+                tool_source.display().to_string().replace('\\', "/")
+            ),
         ],
     )
     .expect("workspace-root ql check sync should continue checking later valid members");
@@ -3650,7 +3749,9 @@ pub fn main() -> Int {
         &normalized_stderr,
         &error_line,
     )
-    .expect("workspace-root ql check sync should preserve the command label for missing source roots");
+    .expect(
+        "workspace-root ql check sync should preserve the command label for missing source roots",
+    );
     expect_stderr_not_contains(
         "project-check-workspace-sync-missing-source-root",
         "workspace-root ql check sync with missing source root member",
@@ -3806,8 +3907,14 @@ pub fn main() -> Int {
         "project-check-workspace-empty-source-root",
         &normalized_stdout,
         &[
-            &format!("ok: {}", app_source.display().to_string().replace('\\', "/")),
-            &format!("ok: {}", tool_source.display().to_string().replace('\\', "/")),
+            &format!(
+                "ok: {}",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "ok: {}",
+                tool_source.display().to_string().replace('\\', "/")
+            ),
         ],
     )
     .expect("workspace-root ql check should continue checking later valid members");
@@ -3821,15 +3928,13 @@ pub fn main() -> Int {
         .display()
         .to_string()
         .replace('\\', "/");
-    let error_line =
-        format!("error: `ql check` no `.ql` files found under `{broken_source_root}`");
+    let error_line = format!("error: `ql check` no `.ql` files found under `{broken_source_root}`");
     let old_error_line = format!("error: no `.ql` files found under `{broken_source_root}`");
     let package_note = format!("note: failing package manifest: {broken_manifest}");
     let member_note = format!("note: failing workspace member manifest: {broken_manifest}");
     let source_root_note = format!("note: failing package source root: {broken_source_root}");
-    let rerun_hint = format!(
-        "hint: rerun `ql check {broken_manifest}` after adding package source files"
-    );
+    let rerun_hint =
+        format!("hint: rerun `ql check {broken_manifest}` after adding package source files");
     expect_stderr_contains(
         "project-check-workspace-empty-source-root",
         "workspace-root ql check with empty source root member",
@@ -3994,8 +4099,14 @@ pub fn main() -> Int {
         "project-check-workspace-sync-empty-source-root",
         &normalized_stdout,
         &[
-            &format!("ok: {}", app_source.display().to_string().replace('\\', "/")),
-            &format!("ok: {}", tool_source.display().to_string().replace('\\', "/")),
+            &format!(
+                "ok: {}",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "ok: {}",
+                tool_source.display().to_string().replace('\\', "/")
+            ),
         ],
     )
     .expect("workspace-root ql check sync should continue checking later valid members");
@@ -4025,14 +4136,18 @@ pub fn main() -> Int {
         &normalized_stderr,
         &error_line,
     )
-    .expect("workspace-root ql check sync should preserve the command label for empty source roots");
+    .expect(
+        "workspace-root ql check sync should preserve the command label for empty source roots",
+    );
     expect_stderr_not_contains(
         "project-check-workspace-sync-empty-source-root",
         "workspace-root ql check sync with empty source root member",
         &normalized_stderr,
         &old_error_line,
     )
-    .expect("workspace-root ql check sync should not fall back to the generic empty source-root error");
+    .expect(
+        "workspace-root ql check sync should not fall back to the generic empty source-root error",
+    );
     expect_stderr_contains(
         "project-check-workspace-sync-empty-source-root",
         "workspace-root ql check sync with empty source root member",
@@ -4192,8 +4307,14 @@ pub fn main() -> Int {
         "project-check-workspace-source-diagnostics",
         &normalized_stdout,
         &[
-            &format!("ok: {}", app_source.display().to_string().replace('\\', "/")),
-            &format!("ok: {}", tool_source.display().to_string().replace('\\', "/")),
+            &format!(
+                "ok: {}",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "ok: {}",
+                tool_source.display().to_string().replace('\\', "/")
+            ),
         ],
     )
     .expect("workspace-root ql check should continue checking later valid members");
@@ -4227,7 +4348,9 @@ pub fn main() -> Int {
         &normalized_stderr,
         &rerun_hint,
     )
-    .expect("workspace-root ql check should suggest rerunning the broken member after fixing sources");
+    .expect(
+        "workspace-root ql check should suggest rerunning the broken member after fixing sources",
+    );
     let broken_source_index = normalized_stderr
         .find(&broken_source_line)
         .expect("workspace-root ql check should include the broken source path");
@@ -4260,6 +4383,166 @@ pub fn main() -> Int {
         "note: first failing member manifest:",
     )
     .expect("single source-diagnostic workspace members should not repeat the manifest in the final summary");
+}
+
+#[test]
+fn check_workspace_root_supports_json_source_diagnostics() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-workspace-json-source-diagnostics");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+    let broken_root = temp
+        .path()
+        .join("workspace")
+        .join("packages")
+        .join("broken");
+    let tool_root = temp.path().join("workspace").join("packages").join("tool");
+    let app_source = app_root.join("src").join("lib.ql");
+    let broken_source = broken_root.join("src").join("lib.ql");
+    let tool_source = tool_root.join("src").join("lib.ql");
+    let workspace_manifest = temp.path().join("workspace");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(broken_root.join("src")).expect("create broken source directory");
+    std::fs::create_dir_all(tool_root.join("src")).expect("create tool source directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/broken", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../../dep"]
+"#,
+    );
+    let broken_manifest = temp.write(
+        "workspace/packages/broken/qlang.toml",
+        r#"
+[package]
+name = "broken"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/broken/src/lib.ql",
+        r#"
+package demo.broken
+
+pub fn main() -> Int {
+    return "oops"
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn main() -> Int {
+    return 3
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check", "--json"]).arg(&workspace_manifest);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check --json` workspace root with source diagnostics",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-workspace-json-source-diagnostics",
+        "workspace-root ql check json with source diagnostics",
+        &output,
+        1,
+    )
+    .expect("workspace-root ql check json with source diagnostics should fail");
+    expect_empty_stderr(
+        "project-check-workspace-json-source-diagnostics",
+        "workspace-root ql check json with source diagnostics",
+        &stderr,
+    )
+    .expect("workspace-root ql check json with source diagnostics should keep stderr empty");
+
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-check-workspace-json-source-diagnostics",
+        &normalized_stdout,
+        &[
+            "\"schema\": \"ql.check.v1\"",
+            "\"scope\": \"workspace\"",
+            "\"status\": \"diagnostics\"",
+            &format!(
+                "\"project_manifest_path\": \"{}\"",
+                workspace_manifest
+                    .join("qlang.toml")
+                    .display()
+                    .to_string()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "\"{}\"",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "\"{}\"",
+                tool_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "\"{}\"",
+                broken_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "\"{}\"",
+                broken_manifest.display().to_string().replace('\\', "/")
+            ),
+            "\"message\": \"return value has type mismatch: expected `Int`, found `String`\"",
+        ],
+    )
+    .expect("workspace-root ql check json should report healthy files and structured diagnostics");
 }
 
 #[test]
@@ -4361,8 +4644,14 @@ pub fn main() -> Int {
         "project-check-workspace-sync-source-diagnostics",
         &normalized_stdout,
         &[
-            &format!("ok: {}", app_source.display().to_string().replace('\\', "/")),
-            &format!("ok: {}", tool_source.display().to_string().replace('\\', "/")),
+            &format!(
+                "ok: {}",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "ok: {}",
+                tool_source.display().to_string().replace('\\', "/")
+            ),
         ],
     )
     .expect("workspace-root ql check sync should continue checking later valid members");
@@ -4540,8 +4829,14 @@ pub fn main() -> Int {
         "project-check-workspace-reference-failure",
         &normalized_stdout,
         &[
-            &format!("ok: {}", app_source.display().to_string().replace('\\', "/")),
-            &format!("ok: {}", tool_source.display().to_string().replace('\\', "/")),
+            &format!(
+                "ok: {}",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "ok: {}",
+                tool_source.display().to_string().replace('\\', "/")
+            ),
         ],
     )
     .expect("workspace-root ql check should continue checking later valid members");
@@ -4561,8 +4856,7 @@ pub fn main() -> Int {
     let rerun_hint = format!(
         "hint: rerun `ql check {broken_manifest}` after fixing the referenced package or reference manifest"
     );
-    let error_line =
-        "error: `ql check` failed to load referenced package `../../broken_ref`";
+    let error_line = "error: `ql check` failed to load referenced package `../../broken_ref`";
     let old_error_line = "error: failed to load referenced package `../../broken_ref`";
     expect_stderr_contains(
         "project-check-workspace-reference-failure",
@@ -4591,7 +4885,9 @@ pub fn main() -> Int {
         &normalized_stderr,
         &member_note,
     )
-    .expect("workspace-root ql check should point the reference failure back to the member manifest");
+    .expect(
+        "workspace-root ql check should point the reference failure back to the member manifest",
+    );
     expect_stderr_contains(
         "project-check-workspace-reference-failure",
         "workspace-root ql check with reference failure",
@@ -4743,8 +5039,14 @@ pub fn main() -> Int {
         "project-check-workspace-sync-reference-failure",
         &normalized_stdout,
         &[
-            &format!("ok: {}", app_source.display().to_string().replace('\\', "/")),
-            &format!("ok: {}", tool_source.display().to_string().replace('\\', "/")),
+            &format!(
+                "ok: {}",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            &format!(
+                "ok: {}",
+                tool_source.display().to_string().replace('\\', "/")
+            ),
         ],
     )
     .expect("workspace-root ql check sync should continue checking later valid members");
@@ -5154,8 +5456,9 @@ version = "0.1.0"
         .display()
         .to_string()
         .replace('\\', "/");
-    let error_line =
-        format!("error: `ql check` manifest `{manifest_display}` does not declare `[package].name`");
+    let error_line = format!(
+        "error: `ql check` manifest `{manifest_display}` does not declare `[package].name`"
+    );
     let old_error_line = format!(
         "error: `ql check` invalid manifest `{manifest_display}`: `[package].name` must be present"
     );
@@ -5228,9 +5531,8 @@ name = "app"
         .display()
         .to_string()
         .replace('\\', "/");
-    let error_line = format!(
-        "error: `ql check --sync-interfaces` invalid manifest `{manifest_display}`"
-    );
+    let error_line =
+        format!("error: `ql check --sync-interfaces` invalid manifest `{manifest_display}`");
     let old_error_line = format!("error: invalid manifest `{manifest_display}`");
     let package_note = format!("note: failing package manifest: {manifest_display}");
     let rerun_hint = format!(
@@ -5390,9 +5692,8 @@ name = "app"
         format!("error: package source directory `{source_root_display}` does not exist");
     let package_note = format!("note: failing package manifest: {manifest_display}");
     let source_root_note = format!("note: failing package source root: {source_root_display}");
-    let rerun_hint = format!(
-        "hint: rerun `ql check {manifest_display}` after fixing the package source root"
-    );
+    let rerun_hint =
+        format!("hint: rerun `ql check {manifest_display}` after fixing the package source root");
     expect_stderr_contains(
         "project-check-package-missing-source-root",
         "direct package ql check with missing source root",
@@ -5406,7 +5707,9 @@ name = "app"
         &normalized_stderr,
         &old_error_line,
     )
-    .expect("direct package ql check should not fall back to the generic missing source-root error");
+    .expect(
+        "direct package ql check should not fall back to the generic missing source-root error",
+    );
     expect_stderr_contains(
         "project-check-package-missing-source-root",
         "direct package ql check with missing source root",
@@ -5486,7 +5789,9 @@ name = "app"
         &normalized_stderr,
         &error_line,
     )
-    .expect("direct package ql check sync should preserve the command label for missing source roots");
+    .expect(
+        "direct package ql check sync should preserve the command label for missing source roots",
+    );
     expect_stderr_not_contains(
         "project-check-sync-missing-source-root",
         "direct package ql check sync with missing source root",
@@ -5561,9 +5866,8 @@ name = "app"
     let old_error_line = format!("error: no `.ql` files found under `{source_root_display}`");
     let package_note = format!("note: failing package manifest: {manifest_display}");
     let source_root_note = format!("note: failing package source root: {source_root_display}");
-    let rerun_hint = format!(
-        "hint: rerun `ql check {manifest_display}` after adding package source files"
-    );
+    let rerun_hint =
+        format!("hint: rerun `ql check {manifest_display}` after adding package source files");
     expect_stderr_contains(
         "project-check-package-empty-source-root",
         "direct package ql check with empty source root",
@@ -5656,7 +5960,9 @@ name = "app"
         &normalized_stderr,
         &error_line,
     )
-    .expect("direct package ql check sync should preserve the command label for empty source roots");
+    .expect(
+        "direct package ql check sync should preserve the command label for empty source roots",
+    );
     expect_stderr_not_contains(
         "project-check-sync-empty-source-root",
         "direct package ql check sync with empty source root",
@@ -5756,7 +6062,9 @@ pub fn main( -> Int {
         &normalized_stderr,
         &rerun_hint,
     )
-    .expect("direct package ql check should suggest rerunning the same manifest after fixing sources");
+    .expect(
+        "direct package ql check should suggest rerunning the same manifest after fixing sources",
+    );
     let broken_source_index = normalized_stderr
         .find(&broken_source_line)
         .expect("direct package ql check should include the broken source path");

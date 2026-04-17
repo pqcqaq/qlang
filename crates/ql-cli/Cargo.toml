@@ -11,9 +11,12 @@ path = "src/main.rs"
 
 [dependencies]
 ql-analysis.workspace = true
+ql-ast.workspace = true
 ql-diagnostics.workspace = true
 ql-driver.workspace = true
 ql-fmt.workspace = true
 ql-parser.workspace = true
 ql-project.workspace = true
 ql-runtime.workspace = true
+ql-span.workspace = true
+serde_json = "1"

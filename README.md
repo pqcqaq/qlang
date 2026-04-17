@@ -10,7 +10,10 @@ The current compiler and tools are implemented in a Rust workspace. Qlang remain
 - Phase 1 through Phase 6 foundations are already landed.
 - Active work is split across:
   - Phase 7: async/runtime/task-handle lowering, library/program build surface, and Rust interop
-  - Phase 8: package/workspace manifests, `.qi` interface artifacts, and dependency-backed cross-file tooling
+  - Phase 8: package/workspace manifests, local-path manifest dependencies, `.qi` interface artifacts, and dependency-backed cross-file tooling
+- Near-term priority is to close the real project workflow gap first: package/workspace build-run-test, richer manifests/dependencies, reproducible automation, and only then broader language/runtime expansion.
+- The current `qlang.toml` surface is still intentionally small: `[package].name`, `[workspace].members`, legacy `[references].packages`, local-path `[dependencies]`, and package-level `[profile].default = "debug" | "release"`; this is not yet a full dependency build graph or full profile system.
+- Project-aware `ql build` / `ql run` / `ql test` now execute one narrow cross-package path: a package can call a direct local dependency's public `extern "c"` symbols through the project dependency graph. This is still a C-ABI bridge, not general cross-package Qlang free-function/member/const semantics.
 - The stable external interop boundary is still C ABI.
 - Current async surface:
   - async library build for `staticlib` and the current minimal `dylib` subset
@@ -57,15 +60,25 @@ cargo run -p ql-cli -- check fixtures/codegen/pass/minimal_build.ql
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir
 cargo run -p ql-cli -- build path/to/package/src/lib.ql --emit llvm-ir --emit-interface
 cargo run -p ql-cli -- fmt fixtures/parser/pass/basic.ql
+cargo run -p ql-cli -- project init demo-workspace --workspace --name app
+cargo run -p ql-cli -- project graph demo-workspace
+cargo run -p ql-cli -- check demo-workspace
 ```
 
 When a clang-style toolchain is available:
 
 ```bash
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit exe
+cargo run -p ql-cli -- run fixtures/codegen/pass/minimal_build.ql
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_library.ql --emit staticlib
 cargo run -p ql-cli -- build tests/ffi/pass/extern_c_export.ql --emit dylib --header
+cargo run -p ql-cli -- build demo-workspace
+cargo run -p ql-cli -- run demo-workspace
+cargo run -p ql-cli -- test demo-workspace
 ```
+
+`ql project init` 生成的最小 package / workspace 脚手架现在会同时带上 `src/lib.ql`、`src/main.ql` 和 `tests/smoke.ql`，因此新项目可以直接从根目录进入 `ql project graph` / `ql check` / `ql build` / `ql run` / `ql test`。
+如果 workspace/member 之间要发生真实调用，当前稳定边界仍然只覆盖 direct dependency 的 public `extern "c"` 符号；普通跨包 Qlang 语义还没有开放。
 
 ## Docs
 

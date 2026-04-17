@@ -107,11 +107,24 @@ impl DiscoveredToolchain {
         input_object: &Path,
         output_executable: &Path,
     ) -> Result<(), ToolchainError> {
-        self.run_clang([
-            input_object.display().to_string(),
-            "-o".to_owned(),
-            output_executable.display().to_string(),
-        ])
+        self.link_object_to_executable_with_inputs(input_object, output_executable, &[])
+    }
+
+    pub fn link_object_to_executable_with_inputs(
+        &self,
+        input_object: &Path,
+        output_executable: &Path,
+        additional_inputs: &[PathBuf],
+    ) -> Result<(), ToolchainError> {
+        let mut args = vec![input_object.display().to_string()];
+        args.extend(
+            additional_inputs
+                .iter()
+                .map(|path| path.display().to_string()),
+        );
+        args.push("-o".to_owned());
+        args.push(output_executable.display().to_string());
+        self.run_clang(args)
     }
 
     pub fn link_object_to_dynamic_library(
@@ -120,12 +133,32 @@ impl DiscoveredToolchain {
         output_dynamic_library: &Path,
         exported_symbols: &[String],
     ) -> Result<(), ToolchainError> {
+        self.link_object_to_dynamic_library_with_inputs(
+            input_object,
+            output_dynamic_library,
+            exported_symbols,
+            &[],
+        )
+    }
+
+    pub fn link_object_to_dynamic_library_with_inputs(
+        &self,
+        input_object: &Path,
+        output_dynamic_library: &Path,
+        exported_symbols: &[String],
+        additional_inputs: &[PathBuf],
+    ) -> Result<(), ToolchainError> {
         let mut args = if cfg!(target_os = "macos") {
             vec!["-dynamiclib".to_owned()]
         } else {
             vec!["-shared".to_owned()]
         };
         args.push(input_object.display().to_string());
+        args.extend(
+            additional_inputs
+                .iter()
+                .map(|path| path.display().to_string()),
+        );
         args.push("-o".to_owned());
         args.push(output_dynamic_library.display().to_string());
 

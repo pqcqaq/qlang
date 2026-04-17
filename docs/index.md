@@ -28,7 +28,7 @@ features:
 
 - Phase 1 到 Phase 6 的基础能力已经落地
 - Phase 7 已建立最小 runtime/executor、task-handle 类型面、共享 runtime hook ABI skeleton，以及受控的 async library/program build 子集
-- Phase 8 已落地最小 `qlang.toml` manifest graph、`.qi` emit/load、`ql project graph` / `ql project emit-interface`、package-aware `ql check --sync-interfaces` 与首批 dependency-backed cross-file LSP/query 合同
+- Phase 8 已落地最小 `qlang.toml` manifest graph、`.qi` emit/load、`ql project graph` / `ql project emit-interface`、package-aware `ql check --sync-interfaces`、首批 dependency-backed cross-file LSP/query 合同，以及 project-aware `ql build/run/test` 下 direct dependency public `extern "c"` 调用这条窄执行路径
 - 当前真实支持面与未支持边界已集中收口到 [当前支持基线](/roadmap/current-supported-surface)
 - executable smoke harness 当前锁定 `60` 个 sync 示例与 `222` 个 async 示例；这两个数字已按目录与测试代码重新核对
 - sync/async tuple assignment executable surface 现也已覆盖 same-file `const` / `static` item 名与 same-file `use ... as ...` alias 驱动的元组索引写入

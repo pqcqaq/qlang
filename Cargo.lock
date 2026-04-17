@@ -452,12 +452,15 @@ name = "ql-cli"
 version = "0.1.0"
 dependencies = [
  "ql-analysis",
+ "ql-ast",
  "ql-diagnostics",
  "ql-driver",
  "ql-fmt",
  "ql-parser",
  "ql-project",
  "ql-runtime",
+ "ql-span",
+ "serde_json",
 ]
 
 [[package]]
@@ -561,6 +564,7 @@ dependencies = [
  "ql-ast",
  "ql-lexer",
  "ql-parser",
+ "serde_json",
  "toml",
 ]
 

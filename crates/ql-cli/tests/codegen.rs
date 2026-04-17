@@ -6475,7 +6475,9 @@ fn import_alias_nested_projected_aggregate_match_catch_all_codegen_case_matches(
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("import-alias nested projected aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "import-alias nested projected aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
@@ -6495,7 +6497,9 @@ fn control_flow_nested_projected_aggregate_match_catch_all_codegen_case_matches(
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("control-flow nested projected aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "control-flow nested projected aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
@@ -6504,8 +6508,7 @@ fn import_alias_control_flow_nested_projected_aggregate_match_catch_all_codegen_
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_control_flow_nested_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_control_flow_nested_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_control_flow_nested_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6549,8 +6552,7 @@ fn import_alias_question_wrapped_projected_aggregate_match_catch_all_codegen_cas
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_question_wrapped_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_question_wrapped_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_question_wrapped_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6572,8 +6574,7 @@ fn control_flow_question_wrapped_projected_aggregate_match_catch_all_codegen_cas
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "control_flow_question_wrapped_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/control_flow_question_wrapped_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/control_flow_question_wrapped_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6591,13 +6592,12 @@ fn control_flow_question_wrapped_projected_aggregate_match_catch_all_codegen_cas
 }
 
 #[test]
-fn import_alias_control_flow_question_wrapped_projected_aggregate_match_catch_all_codegen_case_matches(
-) {
+fn import_alias_control_flow_question_wrapped_projected_aggregate_match_catch_all_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_control_flow_question_wrapped_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_control_flow_question_wrapped_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_control_flow_question_wrapped_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6619,8 +6619,7 @@ fn question_wrapped_nested_projected_aggregate_match_catch_all_codegen_case_matc
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "question_wrapped_nested_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/question_wrapped_nested_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/question_wrapped_nested_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6642,8 +6641,7 @@ fn import_alias_question_wrapped_nested_projected_aggregate_match_catch_all_code
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_question_wrapped_nested_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_question_wrapped_nested_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_question_wrapped_nested_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6665,8 +6663,7 @@ fn control_flow_question_wrapped_nested_projected_aggregate_match_catch_all_code
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "control_flow_question_wrapped_nested_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/control_flow_question_wrapped_nested_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/control_flow_question_wrapped_nested_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6684,13 +6681,12 @@ fn control_flow_question_wrapped_nested_projected_aggregate_match_catch_all_code
 }
 
 #[test]
-fn import_alias_control_flow_question_wrapped_nested_projected_aggregate_match_catch_all_codegen_case_matches(
-) {
+fn import_alias_control_flow_question_wrapped_nested_projected_aggregate_match_catch_all_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_control_flow_question_wrapped_nested_projected_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_control_flow_question_wrapped_nested_projected_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_control_flow_question_wrapped_nested_projected_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6772,8 +6768,7 @@ fn import_alias_control_flow_call_root_aggregate_match_catch_all_codegen_case_ma
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_control_flow_call_root_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_control_flow_call_root_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_control_flow_call_root_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6806,7 +6801,9 @@ fn question_wrapped_call_root_aggregate_match_catch_all_codegen_case_matches() {
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("question-wrapped call-root aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "question-wrapped call-root aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
@@ -6815,8 +6812,7 @@ fn import_alias_question_wrapped_call_root_aggregate_match_catch_all_codegen_cas
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_question_wrapped_call_root_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_question_wrapped_call_root_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_question_wrapped_call_root_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6838,8 +6834,7 @@ fn control_flow_question_wrapped_call_root_aggregate_match_catch_all_codegen_cas
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "control_flow_question_wrapped_call_root_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/control_flow_question_wrapped_call_root_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/control_flow_question_wrapped_call_root_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6857,13 +6852,12 @@ fn control_flow_question_wrapped_call_root_aggregate_match_catch_all_codegen_cas
 }
 
 #[test]
-fn import_alias_control_flow_question_wrapped_call_root_aggregate_match_catch_all_codegen_case_matches(
-) {
+fn import_alias_control_flow_question_wrapped_call_root_aggregate_match_catch_all_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_control_flow_question_wrapped_call_root_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_control_flow_question_wrapped_call_root_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_control_flow_question_wrapped_call_root_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6885,8 +6879,7 @@ fn question_wrapped_nested_call_root_aggregate_match_catch_all_codegen_case_matc
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "question_wrapped_nested_call_root_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6908,8 +6901,7 @@ fn import_alias_question_wrapped_nested_call_root_aggregate_match_catch_all_code
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_question_wrapped_nested_call_root_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6931,8 +6923,7 @@ fn control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all_code
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -6950,13 +6941,12 @@ fn control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all_code
 }
 
 #[test]
-fn import_alias_control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all_codegen_case_matches(
-) {
+fn import_alias_control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all_codegen_case_matches()
+ {
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,
@@ -7095,7 +7085,9 @@ fn import_alias_awaited_call_root_aggregate_match_catch_all_codegen_case_matches
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("import-alias awaited call-root aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "import-alias awaited call-root aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
@@ -7115,7 +7107,9 @@ fn control_flow_awaited_call_root_aggregate_match_catch_all_codegen_case_matches
     };
 
     if let Err(message) = run_pass_case(&workspace_root, &case) {
-        panic!("control-flow awaited call-root aggregate match catch-all build regression:\n\n{message}");
+        panic!(
+            "control-flow awaited call-root aggregate match catch-all build regression:\n\n{message}"
+        );
     }
 }
 
@@ -7124,8 +7118,7 @@ fn import_alias_control_flow_awaited_call_root_aggregate_match_catch_all_codegen
     let workspace_root = workspace_root();
     let case = PassCase {
         name: "import_alias_control_flow_awaited_call_root_aggregate_match_catch_all_build",
-        source_relative:
-            "fixtures/codegen/pass/import_alias_control_flow_awaited_call_root_aggregate_match_catch_all.ql",
+        source_relative: "fixtures/codegen/pass/import_alias_control_flow_awaited_call_root_aggregate_match_catch_all.ql",
         emit: "obj",
         expected_relative: "tests/codegen/pass/minimal_build.obj.txt",
         mock_compiler: true,

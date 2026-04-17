@@ -2393,11 +2393,12 @@ impl Analysis {
         self.symbol_at(offset)
     }
 
-    fn import_binding_at(&self, offset: usize) -> Option<(ImportBinding, Span)> {
+    /// Return the source-backed import binding covering `offset`.
+    pub fn import_binding_at(&self, offset: usize) -> Option<(ImportBinding, Span)> {
         self.index.import_binding_at(offset)
     }
 
-    fn type_import_binding_at(&self, offset: usize) -> Option<ImportBinding> {
+    pub fn type_import_binding_at(&self, offset: usize) -> Option<ImportBinding> {
         self.index.type_import_binding_at(offset)
     }
 
@@ -5973,10 +5974,7 @@ fn collect_dependency_method_occurrences_in_expr(
                 }
             }
         }
-        ql_ast::ExprKind::Member {
-            object,
-            ..
-        } => {
+        ql_ast::ExprKind::Member { object, .. } => {
             collect_dependency_method_occurrences_in_expr(
                 package,
                 module,

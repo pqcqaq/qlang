@@ -83,6 +83,89 @@ pub fn run() -> Int
 }
 
 #[test]
+fn project_graph_supports_json_output_for_package_graph() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-json");
+    let project_root = temp.path().join("workspace").join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create nested project directory for project graph json test");
+    std::fs::create_dir_all(temp.path().join("workspace").join("core"))
+        .expect("create core directory for project graph json test");
+    std::fs::create_dir_all(temp.path().join("workspace").join("runtime"))
+        .expect("create runtime directory for project graph json test");
+    let manifest_path = temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[workspace]
+members = ["packages/app", "packages/core"]
+
+[references]
+packages = ["../core", "../runtime"]
+"#,
+    );
+    temp.write(
+        "workspace/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/runtime/qlang.toml",
+        r#"
+[package]
+name = "runtime"
+"#,
+    );
+    temp.write("workspace/app/app.qi", "broken interface\n");
+    temp.write(
+        "workspace/runtime/runtime.qi",
+        r#"
+// qlang interface v1
+// package: runtime
+
+// source: src/lib.ql
+package demo.runtime
+
+pub fn run() -> Int
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph", "--json"])
+        .arg(project_root.join("src"));
+    let output = run_command_capture(&mut command, "`ql project graph --json`");
+    let (stdout, stderr) = expect_success(
+        "project-graph-json-success",
+        "project graph json rendering",
+        &output,
+    )
+    .expect("project graph json rendering should succeed");
+    expect_empty_stderr(
+        "project-graph-json-success",
+        "project graph json rendering",
+        &stderr,
+    )
+    .expect("successful project graph json rendering should stay silent on stderr");
+
+    let expected = format!(
+        "{{\n  \"interface\": {{\n    \"detail\": \"expected `// qlang interface v1` header\",\n    \"path\": \"app.qi\",\n    \"stale_reasons\": [],\n    \"status\": \"invalid\"\n  }},\n  \"manifest_path\": \"{}\",\n  \"package_name\": \"app\",\n  \"reference_interfaces\": [\n    {{\n      \"detail\": null,\n      \"manifest_path\": \"../core/qlang.toml\",\n      \"package_name\": \"core\",\n      \"path\": \"../core/core.qi\",\n      \"reference\": \"../core\",\n      \"stale_reasons\": [],\n      \"status\": \"missing\",\n      \"transitive_reference_failures\": {{\n        \"count\": 0,\n        \"first_failure\": null\n      }}\n    }},\n    {{\n      \"detail\": null,\n      \"manifest_path\": \"../runtime/qlang.toml\",\n      \"package_name\": \"runtime\",\n      \"path\": \"../runtime/runtime.qi\",\n      \"reference\": \"../runtime\",\n      \"stale_reasons\": [],\n      \"status\": \"valid\",\n      \"transitive_reference_failures\": {{\n        \"count\": 0,\n        \"first_failure\": null\n      }}\n    }}\n  ],\n  \"references\": [\n    \"../core\",\n    \"../runtime\"\n  ],\n  \"schema\": \"ql.project.graph.v1\",\n  \"workspace_members\": [\n    \"packages/app\",\n    \"packages/core\"\n  ],\n  \"workspace_packages\": []\n}}\n",
+        manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-graph-json-success",
+        "project graph json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("project graph json stdout should match the resolved manifest graph");
+}
+
+#[test]
 fn project_graph_rejects_manifest_without_package_or_workspace() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-graph-invalid");
@@ -547,6 +630,106 @@ pub fn exported() -> Int
         &stdout,
     )
     .expect("workspace root project graph stdout should match resolved member graph");
+}
+
+#[test]
+fn project_graph_supports_json_output_for_workspace_root() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-workspace-root-json");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages").join("app").join("src"))
+        .expect("create workspace app source tree for workspace root json test");
+    std::fs::create_dir_all(project_root.join("packages").join("tool").join("src"))
+        .expect("create workspace tool source tree for workspace root json test");
+    std::fs::create_dir_all(project_root.join("dep"))
+        .expect("create workspace dependency tree for workspace root json test");
+
+    let manifest_path = temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/app.qi",
+        r#"
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn run() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph"])
+        .arg(&project_root)
+        .arg("--json");
+    let output = run_command_capture(&mut command, "`ql project graph --json` workspace root");
+    let (stdout, stderr) = expect_success(
+        "project-graph-workspace-root-json",
+        "workspace root project graph json rendering",
+        &output,
+    )
+    .expect("workspace root project graph json rendering should succeed");
+    expect_empty_stderr(
+        "project-graph-workspace-root-json",
+        "workspace root project graph json rendering",
+        &stderr,
+    )
+    .expect("workspace root project graph json rendering should stay silent on stderr");
+
+    let expected = format!(
+        "{{\n  \"interface\": null,\n  \"manifest_path\": \"{}\",\n  \"package_name\": null,\n  \"reference_interfaces\": [],\n  \"references\": [],\n  \"schema\": \"ql.project.graph.v1\",\n  \"workspace_members\": [\n    \"packages/app\",\n    \"packages/tool\"\n  ],\n  \"workspace_packages\": [\n    {{\n      \"interface\": {{\n        \"detail\": null,\n        \"path\": \"packages/app/app.qi\",\n        \"stale_reasons\": [],\n        \"status\": \"valid\"\n      }},\n      \"manifest_path\": \"packages/app/qlang.toml\",\n      \"member\": \"packages/app\",\n      \"member_error\": null,\n      \"member_status\": null,\n      \"package_name\": \"app\",\n      \"reference_interfaces\": [\n        {{\n          \"detail\": null,\n          \"manifest_path\": \"dep/qlang.toml\",\n          \"package_name\": \"dep\",\n          \"path\": \"dep/dep.qi\",\n          \"reference\": \"../../dep\",\n          \"stale_reasons\": [],\n          \"status\": \"valid\",\n          \"transitive_reference_failures\": {{\n            \"count\": 0,\n            \"first_failure\": null\n          }}\n        }}\n      ],\n      \"references\": [\n        \"../../dep\"\n      ]\n    }},\n    {{\n      \"interface\": {{\n        \"detail\": null,\n        \"path\": \"packages/tool/tool.qi\",\n        \"stale_reasons\": [],\n        \"status\": \"missing\"\n      }},\n      \"manifest_path\": \"packages/tool/qlang.toml\",\n      \"member\": \"packages/tool\",\n      \"member_error\": null,\n      \"member_status\": null,\n      \"package_name\": \"tool\",\n      \"reference_interfaces\": [],\n      \"references\": []\n    }}\n  ]\n}}\n",
+        manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-graph-workspace-root-json",
+        "workspace root project graph json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("workspace root project graph json stdout should match resolved member graph");
 }
 
 #[test]

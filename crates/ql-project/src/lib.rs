@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -11,11 +11,35 @@ use ql_ast::{
 };
 use ql_lexer::is_keyword as lexer_is_keyword;
 use ql_parser::parse_interface_source;
+use serde_json::{Value as JsonValue, json};
 use toml::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackageManifest {
     pub name: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManifestBuildProfile {
+    Debug,
+    Release,
+}
+
+impl ManifestBuildProfile {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "debug" => Some(Self::Debug),
+            "release" => Some(Self::Release),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Debug => "debug",
+            Self::Release => "release",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,12 +53,32 @@ pub struct ReferencesManifest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LibraryTargetManifest {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BinaryTargetManifest {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileManifest {
+    pub default: ManifestBuildProfile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProjectManifest {
     pub manifest_path: PathBuf,
     pub package: Option<PackageManifest>,
     pub workspace: Option<WorkspaceManifest>,
     pub references: ReferencesManifest,
+    pub profile: Option<ProfileManifest>,
+    pub lib: Option<LibraryTargetManifest>,
+    pub bins: Vec<BinaryTargetManifest>,
 }
+
+pub const PROJECT_LOCKFILE_NAME: &str = "qlang.lock";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InterfaceModule {
@@ -47,6 +91,53 @@ pub struct InterfaceModule {
 pub struct InterfaceArtifact {
     pub package_name: String,
     pub modules: Vec<InterfaceModule>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildTargetKind {
+    Library,
+    Binary,
+    Source,
+}
+
+impl BuildTargetKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Library => "lib",
+            Self::Binary => "bin",
+            Self::Source => "source",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuildTarget {
+    pub kind: BuildTargetKind,
+    pub path: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceBuildTargets {
+    pub member_manifest_path: PathBuf,
+    pub package_name: String,
+    pub default_profile: Option<ManifestBuildProfile>,
+    pub targets: Vec<BuildTarget>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProjectLockRoot {
+    manifest_path: PathBuf,
+    default_profile: Option<ManifestBuildProfile>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProjectLockPackage {
+    manifest_path: PathBuf,
+    package_name: String,
+    selected: bool,
+    default_profile: Option<ManifestBuildProfile>,
+    dependencies: Vec<PathBuf>,
+    targets: Vec<BuildTarget>,
 }
 
 #[derive(Debug)]
@@ -147,6 +238,9 @@ pub fn load_project_manifest(path: &Path) -> Result<ProjectManifest, ProjectErro
     let package = parse_package(root, &manifest_path)?;
     let workspace = parse_workspace(root, &manifest_path)?;
     let references = parse_references(root, &manifest_path)?;
+    let profile = parse_profile(root, &manifest_path)?;
+    let lib = parse_lib(root, &manifest_path)?;
+    let bins = parse_bins(root, &manifest_path)?;
 
     if package.is_none() && workspace.is_none() {
         return Err(ProjectError::Parse {
@@ -155,11 +249,21 @@ pub fn load_project_manifest(path: &Path) -> Result<ProjectManifest, ProjectErro
         });
     }
 
+    if package.is_none() && (lib.is_some() || !bins.is_empty()) {
+        return Err(ProjectError::Parse {
+            path: manifest_path.clone(),
+            message: "`[lib]` and `[[bin]]` require `[package]`".to_owned(),
+        });
+    }
+
     Ok(ProjectManifest {
         manifest_path,
         package,
         workspace,
         references,
+        profile,
+        lib,
+        bins,
     })
 }
 
@@ -290,6 +394,477 @@ pub fn render_project_graph_resolved(manifest: &ProjectManifest) -> Result<Strin
     }
 
     Ok(output)
+}
+
+pub fn render_project_graph_resolved_json(
+    manifest: &ProjectManifest,
+) -> Result<String, ProjectError> {
+    let rendered = serde_json::to_string_pretty(&project_graph_json(manifest))
+        .expect("project graph json should serialize");
+    Ok(format!("{rendered}\n"))
+}
+
+pub fn project_lockfile_path(manifest: &ProjectManifest) -> PathBuf {
+    manifest_dir(manifest).join(PROJECT_LOCKFILE_NAME)
+}
+
+pub fn render_project_lockfile(manifest: &ProjectManifest) -> Result<String, ProjectError> {
+    let rendered = serde_json::to_string_pretty(&project_lock_json(manifest)?)
+        .expect("project lock json should serialize");
+    Ok(format!("{rendered}\n"))
+}
+
+fn project_lock_json(manifest: &ProjectManifest) -> Result<JsonValue, ProjectError> {
+    let root = manifest_dir(manifest);
+    let lock_roots = project_lock_roots(manifest)?;
+    let workspace_members = if manifest.workspace.is_some() {
+        lock_roots
+            .iter()
+            .map(|root_package| relative_display_path(root, &root_package.manifest_path))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let packages = collect_project_lock_packages(manifest, &lock_roots)?;
+
+    Ok(json!({
+        "schema": "ql.project.lock.v1",
+        "root": {
+            "kind": if manifest.workspace.is_some() { "workspace" } else { "package" },
+            "manifest_path": relative_display_path(root, &manifest.manifest_path),
+        },
+        "workspace_members": workspace_members,
+        "packages": packages
+            .iter()
+            .map(|package| project_lock_package_json(root, package))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+fn project_lock_roots(manifest: &ProjectManifest) -> Result<Vec<ProjectLockRoot>, ProjectError> {
+    if manifest.workspace.is_none() {
+        return Ok(vec![ProjectLockRoot {
+            manifest_path: manifest.manifest_path.clone(),
+            default_profile: manifest.profile.as_ref().map(|profile| profile.default),
+        }]);
+    }
+
+    Ok(discover_workspace_build_targets(manifest)?
+        .into_iter()
+        .map(|member| ProjectLockRoot {
+            manifest_path: member.member_manifest_path,
+            default_profile: member.default_profile,
+        })
+        .collect())
+}
+
+fn collect_project_lock_packages(
+    root_manifest: &ProjectManifest,
+    roots: &[ProjectLockRoot],
+) -> Result<Vec<ProjectLockPackage>, ProjectError> {
+    let mut selected_profiles = BTreeMap::new();
+    for root in roots {
+        selected_profiles.insert(normalize_path(&root.manifest_path), root.default_profile);
+    }
+
+    let mut manifest_cache = BTreeMap::new();
+    manifest_cache.insert(
+        normalize_path(&root_manifest.manifest_path),
+        root_manifest.clone(),
+    );
+
+    let mut visiting = Vec::new();
+    let mut visited = BTreeSet::new();
+    let mut packages = Vec::new();
+
+    for root in roots {
+        visit_project_lock_package(
+            &normalize_path(&root.manifest_path),
+            root_manifest,
+            &selected_profiles,
+            &mut manifest_cache,
+            &mut visiting,
+            &mut visited,
+            &mut packages,
+        )?;
+    }
+
+    Ok(packages)
+}
+
+fn visit_project_lock_package(
+    manifest_path: &Path,
+    root_manifest: &ProjectManifest,
+    selected_profiles: &BTreeMap<PathBuf, Option<ManifestBuildProfile>>,
+    manifest_cache: &mut BTreeMap<PathBuf, ProjectManifest>,
+    visiting: &mut Vec<PathBuf>,
+    visited: &mut BTreeSet<PathBuf>,
+    packages: &mut Vec<ProjectLockPackage>,
+) -> Result<(), ProjectError> {
+    let manifest_path = normalize_path(manifest_path);
+    if visited.contains(&manifest_path) {
+        return Ok(());
+    }
+
+    if let Some(cycle_start) = visiting.iter().position(|path| path == &manifest_path) {
+        let cycle_packages = visiting[cycle_start..]
+            .iter()
+            .map(|path| project_lock_cycle_label(manifest_cache, path))
+            .collect::<Vec<_>>();
+        return Err(ProjectError::Parse {
+            path: root_manifest.manifest_path.clone(),
+            message: format!(
+                "local dependencies contain a cycle involving: {}",
+                cycle_packages.join(", ")
+            ),
+        });
+    }
+
+    let manifest = load_cached_project_manifest(manifest_cache, &manifest_path)?;
+    let package_name = package_name(&manifest)?.to_owned();
+    let targets = discover_package_build_targets(&manifest)?;
+    let references = load_reference_manifests(&manifest)?;
+    let dependency_paths = references
+        .iter()
+        .map(|reference| normalize_path(&reference.manifest_path))
+        .collect::<Vec<_>>();
+
+    for reference in references {
+        manifest_cache.insert(normalize_path(&reference.manifest_path), reference);
+    }
+
+    visiting.push(manifest_path.clone());
+    for dependency_path in &dependency_paths {
+        visit_project_lock_package(
+            dependency_path,
+            root_manifest,
+            selected_profiles,
+            manifest_cache,
+            visiting,
+            visited,
+            packages,
+        )?;
+    }
+    visiting.pop();
+    visited.insert(manifest_path.clone());
+
+    packages.push(ProjectLockPackage {
+        selected: selected_profiles.contains_key(&manifest_path),
+        default_profile: selected_profiles
+            .get(&manifest_path)
+            .copied()
+            .flatten()
+            .or_else(|| manifest.profile.as_ref().map(|profile| profile.default)),
+        manifest_path,
+        package_name,
+        dependencies: dependency_paths,
+        targets,
+    });
+
+    Ok(())
+}
+
+fn load_cached_project_manifest(
+    manifest_cache: &mut BTreeMap<PathBuf, ProjectManifest>,
+    manifest_path: &Path,
+) -> Result<ProjectManifest, ProjectError> {
+    let manifest_path = normalize_path(manifest_path);
+    if let Some(manifest) = manifest_cache.get(&manifest_path) {
+        return Ok(manifest.clone());
+    }
+
+    let manifest = load_project_manifest(&manifest_path)?;
+    manifest_cache.insert(manifest_path, manifest.clone());
+    Ok(manifest)
+}
+
+fn project_lock_cycle_label(
+    manifest_cache: &BTreeMap<PathBuf, ProjectManifest>,
+    manifest_path: &Path,
+) -> String {
+    manifest_cache
+        .get(&normalize_path(manifest_path))
+        .and_then(|manifest| {
+            manifest
+                .package
+                .as_ref()
+                .map(|package| package.name.clone())
+        })
+        .unwrap_or_else(|| normalize_display_path(manifest_path))
+}
+
+fn project_lock_package_json(root: &Path, package: &ProjectLockPackage) -> JsonValue {
+    json!({
+        "manifest_path": relative_display_path(root, &package.manifest_path),
+        "package_name": package.package_name,
+        "selected": package.selected,
+        "default_profile": package.default_profile.map(|profile| profile.as_str()),
+        "dependencies": package
+            .dependencies
+            .iter()
+            .map(|path| relative_display_path(root, path))
+            .collect::<Vec<_>>(),
+        "targets": package
+            .targets
+            .iter()
+            .map(|target| json!({
+                "kind": target.kind.as_str(),
+                "path": relative_display_path(root, &target.path),
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn project_graph_json(manifest: &ProjectManifest) -> JsonValue {
+    let manifest_dir = manifest_dir(manifest);
+    let interface = if manifest.package.is_some() {
+        let interface_path =
+            default_interface_path(manifest).expect("package manifests have a default interface");
+        project_graph_interface_summary_json(manifest_dir, manifest, &interface_path)
+    } else {
+        JsonValue::Null
+    };
+    let reference_interfaces = if manifest.package.is_some() {
+        project_graph_reference_interface_summaries_json(manifest_dir, manifest)
+    } else {
+        Vec::new()
+    };
+    let workspace_packages = if manifest.package.is_none() && manifest.workspace.is_some() {
+        project_graph_workspace_packages_json(manifest)
+    } else {
+        Vec::new()
+    };
+
+    json!({
+        "schema": "ql.project.graph.v1",
+        "manifest_path": display_path(&manifest.manifest_path),
+        "package_name": manifest.package.as_ref().map(|package| package.name.as_str()),
+        "workspace_members": manifest.workspace.as_ref().map(|workspace| workspace.members.clone()).unwrap_or_default(),
+        "references": manifest.references.packages.clone(),
+        "interface": interface,
+        "reference_interfaces": reference_interfaces,
+        "workspace_packages": workspace_packages,
+    })
+}
+
+fn project_graph_workspace_packages_json(manifest: &ProjectManifest) -> Vec<JsonValue> {
+    let root = manifest_dir(manifest);
+    let mut members = Vec::new();
+
+    for member in &manifest
+        .workspace
+        .as_ref()
+        .expect("workspace exists")
+        .members
+    {
+        let member_path = root.join(member);
+        let member_manifest = match load_project_manifest(&member_path) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                members.push(project_graph_workspace_member_error_json(
+                    root,
+                    member,
+                    &project_manifest_path(&member_path),
+                    &error,
+                ));
+                continue;
+            }
+        };
+        let package = match package_name(&member_manifest) {
+            Ok(package) => package.to_owned(),
+            Err(error) => {
+                members.push(project_graph_workspace_member_error_json(
+                    root,
+                    member,
+                    &member_manifest.manifest_path,
+                    &error,
+                ));
+                continue;
+            }
+        };
+        let interface_path = match default_interface_path(&member_manifest) {
+            Ok(path) => path,
+            Err(error) => {
+                members.push(project_graph_workspace_member_error_json(
+                    root,
+                    member,
+                    &member_manifest.manifest_path,
+                    &error,
+                ));
+                continue;
+            }
+        };
+
+        members.push(json!({
+            "member": member,
+            "manifest_path": relative_display_path(root, &member_manifest.manifest_path),
+            "package_name": package,
+            "member_status": JsonValue::Null,
+            "member_error": JsonValue::Null,
+            "interface": project_graph_interface_summary_json(root, &member_manifest, &interface_path),
+            "references": member_manifest.references.packages.clone(),
+            "reference_interfaces": project_graph_reference_interface_summaries_json(root, &member_manifest),
+        }));
+    }
+
+    members
+}
+
+fn project_graph_workspace_member_error_json(
+    root: &Path,
+    member: &str,
+    manifest_path: &Path,
+    error: &ProjectError,
+) -> JsonValue {
+    json!({
+        "member": member,
+        "manifest_path": relative_display_path(root, manifest_path),
+        "package_name": JsonValue::Null,
+        "member_status": project_graph_member_status(error),
+        "member_error": project_graph_error_display_relative(root, error),
+        "interface": JsonValue::Null,
+        "references": Vec::<String>::new(),
+        "reference_interfaces": Vec::<JsonValue>::new(),
+    })
+}
+
+fn project_graph_interface_summary_json(
+    root: &Path,
+    manifest: &ProjectManifest,
+    interface_path: &Path,
+) -> JsonValue {
+    let status = interface_artifact_status(manifest, interface_path);
+    let stale_reasons = if status == InterfaceArtifactStatus::Stale {
+        interface_artifact_stale_reasons(manifest, interface_path)
+    } else {
+        Vec::new()
+    };
+
+    json!({
+        "path": relative_display_path(root, interface_path),
+        "status": status.label(),
+        "detail": interface_artifact_status_detail(interface_path, status),
+        "stale_reasons": project_graph_stale_reasons_json(root, &stale_reasons),
+    })
+}
+
+fn project_graph_reference_interface_summaries_json(
+    root: &Path,
+    manifest: &ProjectManifest,
+) -> Vec<JsonValue> {
+    let manifest_dir = manifest_dir(manifest);
+    let mut references = Vec::new();
+
+    for reference in &manifest.references.packages {
+        let reference_manifest_path = project_manifest_path(&manifest_dir.join(reference));
+        match load_project_manifest(&manifest_dir.join(reference)) {
+            Ok(reference_manifest) => match default_interface_path(&reference_manifest) {
+                Ok(interface_path) => {
+                    let status = interface_artifact_status(&reference_manifest, &interface_path);
+                    let stale_reasons = if status == InterfaceArtifactStatus::Stale {
+                        interface_artifact_stale_reasons(&reference_manifest, &interface_path)
+                    } else {
+                        Vec::new()
+                    };
+                    let transitive_reference_failures =
+                        summarize_transitive_reference_failures(root, &reference_manifest);
+
+                    references.push(json!({
+                        "reference": reference,
+                        "manifest_path": relative_display_path(root, &reference_manifest_path),
+                        "package_name": reference_manifest.package.as_ref().map(|package| package.name.as_str()),
+                        "path": relative_display_path(root, &interface_path),
+                        "status": status.label(),
+                        "detail": interface_artifact_status_detail(&interface_path, status),
+                        "stale_reasons": project_graph_stale_reasons_json(root, &stale_reasons),
+                        "transitive_reference_failures": project_graph_transitive_reference_failures_json(
+                            root,
+                            &transitive_reference_failures,
+                        ),
+                    }));
+                }
+                Err(error) => {
+                    references.push(json!({
+                        "reference": reference,
+                        "manifest_path": relative_display_path(root, &reference_manifest_path),
+                        "package_name": JsonValue::Null,
+                        "path": JsonValue::Null,
+                        "status": "unresolved-package",
+                        "detail": project_graph_error_display_relative(root, &error),
+                        "stale_reasons": Vec::<JsonValue>::new(),
+                        "transitive_reference_failures": project_graph_transitive_reference_failures_json(
+                            root,
+                            &TransitiveReferenceFailureSummary {
+                                count: 0,
+                                first_failure: None,
+                            },
+                        ),
+                    }));
+                }
+            },
+            Err(error) => {
+                references.push(json!({
+                    "reference": reference,
+                    "manifest_path": relative_display_path(root, &reference_manifest_path),
+                    "package_name": JsonValue::Null,
+                    "path": JsonValue::Null,
+                    "status": "unresolved-manifest",
+                    "detail": project_graph_error_display_relative(root, &error),
+                    "stale_reasons": Vec::<JsonValue>::new(),
+                    "transitive_reference_failures": project_graph_transitive_reference_failures_json(
+                        root,
+                        &TransitiveReferenceFailureSummary {
+                            count: 0,
+                            first_failure: None,
+                        },
+                    ),
+                }));
+            }
+        }
+    }
+
+    references
+}
+
+fn project_graph_transitive_reference_failures_json(
+    root: &Path,
+    summary: &TransitiveReferenceFailureSummary,
+) -> JsonValue {
+    json!({
+        "count": summary.count,
+        "first_failure": summary
+            .first_failure
+            .as_ref()
+            .map(|failure| project_graph_transitive_reference_failure_json(root, failure)),
+    })
+}
+
+fn project_graph_transitive_reference_failure_json(
+    root: &Path,
+    failure: &TransitiveReferenceFailure,
+) -> JsonValue {
+    json!({
+        "manifest_path": relative_display_path(root, &failure.manifest_path),
+        "interface_path": failure.interface_path.as_ref().map(|path| relative_display_path(root, path)),
+        "status": failure.status,
+        "detail": failure.detail,
+        "stale_reasons": project_graph_stale_reasons_json(root, &failure.stale_reasons),
+    })
+}
+
+fn project_graph_stale_reasons_json(
+    root: &Path,
+    stale_reasons: &[InterfaceArtifactStaleReason],
+) -> Vec<JsonValue> {
+    stale_reasons
+        .iter()
+        .map(|reason| {
+            json!({
+                "kind": reason.label(),
+                "path": relative_display_path(root, reason.path()),
+            })
+        })
+        .collect()
 }
 
 fn append_workspace_member_error(
@@ -809,6 +1384,234 @@ pub fn collect_package_sources(manifest: &ProjectManifest) -> Result<Vec<PathBuf
     Ok(files)
 }
 
+pub fn discover_package_build_targets(
+    manifest: &ProjectManifest,
+) -> Result<Vec<BuildTarget>, ProjectError> {
+    let _ = package_name(manifest)?;
+    let source_root = package_source_root(manifest)?;
+    if !source_root.is_dir() {
+        return Err(ProjectError::PackageSourceRootNotFound { path: source_root });
+    }
+
+    let mut targets = Vec::new();
+    if let Some(lib) = &manifest.lib {
+        targets.push(BuildTarget {
+            kind: BuildTargetKind::Library,
+            path: resolve_declared_target_path(manifest, &lib.path, "`[lib].path`")?,
+        });
+    } else {
+        let lib_path = source_root.join("lib.ql");
+        if lib_path.is_file() {
+            targets.push(BuildTarget {
+                kind: BuildTargetKind::Library,
+                path: lib_path,
+            });
+        }
+    }
+
+    if !manifest.bins.is_empty() {
+        let mut seen = BTreeSet::new();
+        for bin in &manifest.bins {
+            let path = resolve_declared_target_path(manifest, &bin.path, "`[[bin]].path`")?;
+            if seen.insert(path.clone()) {
+                targets.push(BuildTarget {
+                    kind: BuildTargetKind::Binary,
+                    path,
+                });
+            }
+        }
+    } else {
+        let main_path = source_root.join("main.ql");
+        if main_path.is_file() {
+            targets.push(BuildTarget {
+                kind: BuildTargetKind::Binary,
+                path: main_path,
+            });
+        }
+
+        let bin_root = source_root.join("bin");
+        if bin_root.is_dir() {
+            let mut bin_targets = Vec::new();
+            collect_bin_targets_recursive(&bin_root, &mut bin_targets)?;
+            bin_targets.sort_by(|left, right| left.path.cmp(&right.path));
+            targets.extend(bin_targets);
+        }
+    }
+
+    if targets.is_empty() {
+        let sources = collect_package_sources(manifest)?;
+        if sources.len() == 1 {
+            targets.push(BuildTarget {
+                kind: BuildTargetKind::Source,
+                path: sources[0].clone(),
+            });
+        }
+    }
+
+    Ok(targets)
+}
+
+fn resolve_declared_target_path(
+    manifest: &ProjectManifest,
+    relative_path: &str,
+    field_name: &str,
+) -> Result<PathBuf, ProjectError> {
+    let raw_path = Path::new(relative_path);
+    if raw_path.is_absolute() {
+        return Err(parse_error(
+            &manifest.manifest_path,
+            format!("{field_name} must be a package-relative `.ql` path under `src/`"),
+        ));
+    }
+
+    let package_root = normalize_path(manifest_dir(manifest));
+    let source_root = normalize_path(&package_root.join("src"));
+    let target_path = normalize_path(&package_root.join(raw_path));
+    if !target_path.starts_with(&source_root) {
+        return Err(parse_error(
+            &manifest.manifest_path,
+            format!("{field_name} must stay under `src/`"),
+        ));
+    }
+
+    if target_path.extension().and_then(|ext| ext.to_str()) != Some("ql") {
+        return Err(parse_error(
+            &manifest.manifest_path,
+            format!("{field_name} must point to a `.ql` source file under `src/`"),
+        ));
+    }
+
+    if !target_path.is_file() {
+        return Err(parse_error(
+            &manifest.manifest_path,
+            format!(
+                "{field_name} declares missing target `{}`",
+                normalize_display_path(&target_path)
+            ),
+        ));
+    }
+
+    Ok(target_path)
+}
+
+pub fn discover_workspace_build_targets(
+    manifest: &ProjectManifest,
+) -> Result<Vec<WorkspaceBuildTargets>, ProjectError> {
+    if manifest.workspace.is_none() {
+        return Ok(vec![WorkspaceBuildTargets {
+            member_manifest_path: manifest.manifest_path.clone(),
+            package_name: package_name(manifest)?.to_owned(),
+            default_profile: manifest.profile.as_ref().map(|profile| profile.default),
+            targets: discover_package_build_targets(manifest)?,
+        }]);
+    }
+
+    let workspace_default_profile = manifest.profile.as_ref().map(|profile| profile.default);
+    let member_manifests = ordered_workspace_member_manifests(manifest)?;
+    let mut members = Vec::with_capacity(member_manifests.len());
+    for member_manifest in &member_manifests {
+        members.push(WorkspaceBuildTargets {
+            member_manifest_path: member_manifest.manifest_path.clone(),
+            package_name: package_name(member_manifest)?.to_owned(),
+            default_profile: member_manifest
+                .profile
+                .as_ref()
+                .map(|profile| profile.default)
+                .or(workspace_default_profile),
+            targets: discover_package_build_targets(member_manifest)?,
+        });
+    }
+    Ok(members)
+}
+
+fn ordered_workspace_member_manifests(
+    workspace_manifest: &ProjectManifest,
+) -> Result<Vec<ProjectManifest>, ProjectError> {
+    let manifest_dir = manifest_dir(workspace_manifest);
+    let mut member_manifests = Vec::new();
+    for member in &workspace_manifest
+        .workspace
+        .as_ref()
+        .expect("workspace presence checked above")
+        .members
+    {
+        let member_path = manifest_dir.join(member);
+        member_manifests.push(load_project_manifest(&member_path)?);
+    }
+
+    let ordered_member_indexes =
+        workspace_member_dependency_order(workspace_manifest, &member_manifests)?;
+    Ok(ordered_member_indexes
+        .into_iter()
+        .map(|index| member_manifests[index].clone())
+        .collect())
+}
+
+fn workspace_member_dependency_order(
+    workspace_manifest: &ProjectManifest,
+    member_manifests: &[ProjectManifest],
+) -> Result<Vec<usize>, ProjectError> {
+    let mut member_indexes = std::collections::HashMap::with_capacity(member_manifests.len());
+    for (index, manifest) in member_manifests.iter().enumerate() {
+        member_indexes.insert(normalize_path(&manifest.manifest_path), index);
+    }
+
+    let mut indegrees = vec![0usize; member_manifests.len()];
+    let mut dependents = vec![Vec::new(); member_manifests.len()];
+
+    for (member_index, manifest) in member_manifests.iter().enumerate() {
+        let member_dir = manifest_dir(manifest);
+        let mut local_dependencies = BTreeSet::new();
+        for reference in &manifest.references.packages {
+            let dependency_manifest_path =
+                normalize_path(&project_manifest_path(&member_dir.join(reference)));
+            let Some(&dependency_index) = member_indexes.get(&dependency_manifest_path) else {
+                continue;
+            };
+            if local_dependencies.insert(dependency_index) {
+                indegrees[member_index] += 1;
+                dependents[dependency_index].push(member_index);
+            }
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(member_manifests.len());
+    let mut processed = vec![false; member_manifests.len()];
+    while let Some(next_index) =
+        (0..member_manifests.len()).find(|&index| !processed[index] && indegrees[index] == 0)
+    {
+        processed[next_index] = true;
+        ordered.push(next_index);
+        for &dependent_index in &dependents[next_index] {
+            indegrees[dependent_index] -= 1;
+        }
+    }
+
+    if ordered.len() == member_manifests.len() {
+        return Ok(ordered);
+    }
+
+    let cycle_packages = member_manifests
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !processed[*index])
+        .map(|(_, manifest)| {
+            manifest
+                .package
+                .as_ref()
+                .map(|package| package.name.clone())
+                .unwrap_or_else(|| normalize_display_path(&manifest.manifest_path))
+        })
+        .collect::<Vec<_>>();
+    Err(ProjectError::Parse {
+        path: workspace_manifest.manifest_path.clone(),
+        message: format!(
+            "workspace member local dependencies contain a cycle involving: {}",
+            cycle_packages.join(", ")
+        ),
+    })
+}
+
 pub fn default_interface_path(manifest: &ProjectManifest) -> Result<PathBuf, ProjectError> {
     let package_name = package_name(manifest)?;
     Ok(manifest_dir(manifest).join(format!("{package_name}.qi")))
@@ -896,6 +1699,31 @@ fn collect_package_sources_recursive(
             collect_package_sources_recursive(&entry_path, files)?;
         } else if entry_path.extension().and_then(|ext| ext.to_str()) == Some("ql") {
             files.push(entry_path);
+        }
+    }
+    Ok(())
+}
+
+fn collect_bin_targets_recursive(
+    path: &Path,
+    targets: &mut Vec<BuildTarget>,
+) -> Result<(), ProjectError> {
+    for entry in fs::read_dir(path).map_err(|error| ProjectError::Read {
+        path: path.to_path_buf(),
+        error,
+    })? {
+        let entry = entry.map_err(|error| ProjectError::Read {
+            path: path.to_path_buf(),
+            error,
+        })?;
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            collect_bin_targets_recursive(&entry_path, targets)?;
+        } else if entry_path.extension().and_then(|ext| ext.to_str()) == Some("ql") {
+            targets.push(BuildTarget {
+                kind: BuildTargetKind::Binary,
+                path: entry_path,
+            });
         }
     }
     Ok(())
@@ -1110,12 +1938,140 @@ fn parse_workspace(
     Ok(Some(WorkspaceManifest { members }))
 }
 
+fn parse_profile(
+    root: &toml::Table,
+    manifest_path: &Path,
+) -> Result<Option<ProfileManifest>, ProjectError> {
+    let Some(profile) = root.get("profile") else {
+        return Ok(None);
+    };
+    let Some(profile) = profile.as_table() else {
+        return Err(parse_error(
+            manifest_path,
+            "`[profile]` must be a TOML table",
+        ));
+    };
+    if profile.keys().any(|key| key != "default") {
+        return Err(parse_error(
+            manifest_path,
+            "`[profile]` currently only supports `default = \"debug|release\"`",
+        ));
+    }
+
+    let Some(default) = profile.get("default") else {
+        return Err(parse_error(
+            manifest_path,
+            "`[profile].default` must be present",
+        ));
+    };
+    let Some(default) = default.as_str() else {
+        return Err(parse_error(
+            manifest_path,
+            "`[profile].default` must be a string",
+        ));
+    };
+    let Some(default) = ManifestBuildProfile::parse(default) else {
+        return Err(parse_error(
+            manifest_path,
+            "`[profile].default` must be `debug` or `release`",
+        ));
+    };
+
+    Ok(Some(ProfileManifest { default }))
+}
+
+fn parse_lib(
+    root: &toml::Table,
+    manifest_path: &Path,
+) -> Result<Option<LibraryTargetManifest>, ProjectError> {
+    let Some(lib) = root.get("lib") else {
+        return Ok(None);
+    };
+    let Some(lib) = lib.as_table() else {
+        return Err(parse_error(manifest_path, "`[lib]` must be a TOML table"));
+    };
+    let path = parse_declared_target_path_field(lib, manifest_path, "`[lib]`")?;
+    Ok(Some(LibraryTargetManifest { path }))
+}
+
+fn parse_bins(
+    root: &toml::Table,
+    manifest_path: &Path,
+) -> Result<Vec<BinaryTargetManifest>, ProjectError> {
+    let Some(bins) = root.get("bin") else {
+        return Ok(Vec::new());
+    };
+    let Some(bins) = bins.as_array() else {
+        return Err(parse_error(
+            manifest_path,
+            "`[[bin]]` must be an array of TOML tables",
+        ));
+    };
+
+    let mut parsed = Vec::with_capacity(bins.len());
+    for bin in bins {
+        let Some(bin) = bin.as_table() else {
+            return Err(parse_error(
+                manifest_path,
+                "`[[bin]]` entries must be TOML tables",
+            ));
+        };
+        let path = parse_declared_target_path_field(bin, manifest_path, "`[[bin]]`")?;
+        parsed.push(BinaryTargetManifest { path });
+    }
+    Ok(parsed)
+}
+
+fn parse_declared_target_path_field(
+    table: &toml::Table,
+    manifest_path: &Path,
+    table_name: &str,
+) -> Result<String, ProjectError> {
+    if table.keys().any(|key| key != "path") {
+        return Err(parse_error(
+            manifest_path,
+            format!("{table_name} currently only supports `path = \"src/...\"`"),
+        ));
+    }
+
+    let Some(path) = table.get("path") else {
+        return Err(parse_error(
+            manifest_path,
+            format!("{table_name}.path must be present"),
+        ));
+    };
+    let Some(path) = path.as_str() else {
+        return Err(parse_error(
+            manifest_path,
+            format!("{table_name}.path must be a string"),
+        ));
+    };
+    if path.trim().is_empty() {
+        return Err(parse_error(
+            manifest_path,
+            format!("{table_name}.path must not be empty"),
+        ));
+    }
+
+    Ok(path.to_owned())
+}
+
 fn parse_references(
     root: &toml::Table,
     manifest_path: &Path,
 ) -> Result<ReferencesManifest, ProjectError> {
+    let mut packages = parse_legacy_reference_paths(root, manifest_path)?;
+    packages.extend(parse_dependency_paths(root, manifest_path)?);
+    packages = dedup_manifest_paths(packages);
+    Ok(ReferencesManifest { packages })
+}
+
+fn parse_legacy_reference_paths(
+    root: &toml::Table,
+    manifest_path: &Path,
+) -> Result<Vec<String>, ProjectError> {
     let Some(references) = root.get("references") else {
-        return Ok(ReferencesManifest::default());
+        return Ok(Vec::new());
     };
     let Some(references) = references.as_table() else {
         return Err(parse_error(
@@ -1129,7 +2085,84 @@ fn parse_references(
         manifest_path,
     )?
     .unwrap_or_default();
-    Ok(ReferencesManifest { packages })
+    Ok(packages)
+}
+
+fn parse_dependency_paths(
+    root: &toml::Table,
+    manifest_path: &Path,
+) -> Result<Vec<String>, ProjectError> {
+    let Some(dependencies) = root.get("dependencies") else {
+        return Ok(Vec::new());
+    };
+    let Some(dependencies) = dependencies.as_table() else {
+        return Err(parse_error(
+            manifest_path,
+            "`[dependencies]` must be a TOML table",
+        ));
+    };
+
+    let mut packages = Vec::with_capacity(dependencies.len());
+    for (dependency_name, value) in dependencies {
+        let field_name = format!("`[dependencies].{dependency_name}`");
+        let path = parse_dependency_path_value(value, manifest_path, &field_name)?;
+        packages.push(path);
+    }
+    Ok(packages)
+}
+
+fn parse_dependency_path_value(
+    value: &Value,
+    manifest_path: &Path,
+    field_name: &str,
+) -> Result<String, ProjectError> {
+    if let Some(path) = value.as_str() {
+        return Ok(path.to_owned());
+    }
+
+    let Some(table) = value.as_table() else {
+        return Err(parse_error(
+            manifest_path,
+            format!(
+                "{field_name} currently only supports local path dependencies written as a string or `{{ path = \"...\" }}`"
+            ),
+        ));
+    };
+
+    if table.keys().any(|key| key != "path") {
+        return Err(parse_error(
+            manifest_path,
+            format!(
+                "{field_name} currently only supports local path dependencies written as a string or `{{ path = \"...\" }}`"
+            ),
+        ));
+    }
+
+    let Some(path) = table.get("path") else {
+        return Err(parse_error(
+            manifest_path,
+            format!(
+                "{field_name} currently only supports local path dependencies written as a string or `{{ path = \"...\" }}`"
+            ),
+        ));
+    };
+    let Some(path) = path.as_str() else {
+        return Err(parse_error(
+            manifest_path,
+            format!("{field_name}.path must be a string"),
+        ));
+    };
+    Ok(path.to_owned())
+}
+
+fn dedup_manifest_paths(paths: Vec<String>) -> Vec<String> {
+    let mut unique = Vec::with_capacity(paths.len());
+    for path in paths {
+        if !unique.contains(&path) {
+            unique.push(path);
+        }
+    }
+    unique
 }
 
 fn parse_string_array(

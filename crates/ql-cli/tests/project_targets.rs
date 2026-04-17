@@ -1,8 +1,8 @@
 mod support;
 
 use support::{
-    TempDir, expect_empty_stderr, expect_exit_code, expect_stdout_contains_all, expect_success,
-    ql_command, run_command_capture, workspace_root,
+    TempDir, expect_empty_stderr, expect_exit_code, expect_snapshot_matches,
+    expect_stdout_contains_all, expect_success, ql_command, run_command_capture, workspace_root,
 };
 
 #[test]
@@ -59,6 +59,141 @@ name = "app"
         ],
     )
     .expect("package target discovery output should include all discovered targets");
+}
+
+#[test]
+fn project_targets_uses_declared_target_paths_and_ignores_default_conventions() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-targets-declared-targets");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/runtime"))
+        .expect("create package runtime source tree");
+    std::fs::create_dir_all(project_root.join("src/tools"))
+        .expect("create package tools source tree");
+
+    let manifest_path = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[lib]
+path = "src/runtime/core.ql"
+
+[[bin]]
+path = "src/tools/repl.ql"
+"#,
+    );
+    temp.write(
+        "app/src/runtime/core.ql",
+        "pub fn core() -> Int { return 1 }\n",
+    );
+    temp.write("app/src/tools/repl.ql", "fn main() -> Int { return 0 }\n");
+    temp.write(
+        "app/src/lib.ql",
+        "pub fn default_lib() -> Int { return 2 }\n",
+    );
+    temp.write("app/src/main.ql", "fn main() -> Int { return 3 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "targets"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql project targets` declared targets");
+    let (stdout, stderr) = expect_success(
+        "project-targets-declared-targets",
+        "declared target discovery",
+        &output,
+    )
+    .expect("declared target discovery should succeed");
+    expect_empty_stderr(
+        "project-targets-declared-targets",
+        "declared target discovery",
+        &stderr,
+    )
+    .expect("declared target discovery should not print stderr");
+
+    let normalized_stdout = stdout.replace('\\', "/");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-targets-declared-targets",
+        &normalized_stdout,
+        &[
+            &format!("manifest: {manifest_display}"),
+            "package: app",
+            "targets:",
+            "  - lib: src/runtime/core.ql",
+            "  - bin: src/tools/repl.ql",
+        ],
+    )
+    .expect("declared target discovery output should include the declared lib and bin paths");
+    assert!(
+        !normalized_stdout.contains("src/lib.ql"),
+        "declared target discovery should not fall back to the default lib target when `[lib]` is present, got:\n{stdout}"
+    );
+    assert!(
+        !normalized_stdout.contains("src/main.ql"),
+        "declared target discovery should not fall back to the default main target when `[[bin]]` is present, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn project_targets_supports_json_output_for_declared_targets() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-targets-json-declared-targets");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/runtime"))
+        .expect("create package runtime source tree");
+    std::fs::create_dir_all(project_root.join("src/tools"))
+        .expect("create package tools source tree");
+
+    let manifest_path = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[lib]
+path = "src/runtime/core.ql"
+
+[[bin]]
+path = "src/tools/repl.ql"
+"#,
+    );
+    temp.write(
+        "app/src/runtime/core.ql",
+        "pub fn core() -> Int { return 1 }\n",
+    );
+    temp.write("app/src/tools/repl.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "targets"])
+        .arg(&project_root)
+        .arg("--json");
+    let output = run_command_capture(&mut command, "`ql project targets --json` declared targets");
+    let (stdout, stderr) = expect_success(
+        "project-targets-json-declared-targets",
+        "declared target json rendering",
+        &output,
+    )
+    .expect("declared target json rendering should succeed");
+    expect_empty_stderr(
+        "project-targets-json-declared-targets",
+        "declared target json rendering",
+        &stderr,
+    )
+    .expect("declared target json rendering should not print stderr");
+
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    let expected = format!(
+        "{{\n  \"schema\": \"ql.project.targets.v1\",\n  \"members\": [\n    {{\n      \"manifest_path\": \"{manifest_display}\",\n      \"package_name\": \"app\",\n      \"targets\": [\n        {{\n          \"kind\": \"lib\",\n          \"path\": \"src/runtime/core.ql\"\n        }},\n        {{\n          \"kind\": \"bin\",\n          \"path\": \"src/tools/repl.ql\"\n        }}\n      ]\n    }}\n  ]\n}}\n"
+    );
+    expect_snapshot_matches(
+        "project-targets-json-declared-targets",
+        "declared target json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("declared target json output should match the stable contract");
 }
 
 #[test]
@@ -133,6 +268,243 @@ members = ["packages/app", "packages/worker"]
         ],
     )
     .expect("workspace target discovery output should include member targets");
+}
+
+#[test]
+fn project_targets_lists_workspace_members_in_dependency_order() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-targets-workspace-dependency-order");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/core/src"))
+        .expect("create core package source tree");
+
+    let app_manifest = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+core = "../core"
+"#,
+    );
+    let core_manifest = temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+    temp.write(
+        "workspace/packages/core/src/lib.ql",
+        "pub fn answer() -> Int { return 42 }\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "targets"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project targets` workspace dependency order",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-targets-workspace-dependency-order",
+        "workspace target dependency ordering",
+        &output,
+    )
+    .expect("workspace target discovery should succeed when members depend on one another");
+    expect_empty_stderr(
+        "project-targets-workspace-dependency-order",
+        "workspace target dependency ordering",
+        &stderr,
+    )
+    .expect("workspace target discovery should not print stderr");
+
+    let normalized_stdout = stdout.replace('\\', "/");
+    let app_manifest_display = app_manifest.to_string_lossy().replace('\\', "/");
+    let core_manifest_display = core_manifest.to_string_lossy().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-targets-workspace-dependency-order",
+        &normalized_stdout,
+        &[
+            &format!("manifest: {core_manifest_display}"),
+            "package: core",
+            &format!("manifest: {app_manifest_display}"),
+            "package: app",
+        ],
+    )
+    .expect("workspace target discovery should print both member packages");
+    assert!(
+        normalized_stdout
+            .find(&format!("manifest: {core_manifest_display}"))
+            .expect("core manifest should be present")
+            < normalized_stdout
+                .find(&format!("manifest: {app_manifest_display}"))
+                .expect("app manifest should be present"),
+        "workspace target discovery should list dependency members before dependents, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn project_targets_supports_json_output_for_workspace_members_in_dependency_order() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-targets-json-workspace-dependency-order");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/core/src"))
+        .expect("create core package source tree");
+
+    let app_manifest = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+core = "../core"
+"#,
+    );
+    let core_manifest = temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+    temp.write(
+        "workspace/packages/core/src/lib.ql",
+        "pub fn answer() -> Int { return 42 }\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "targets", "--json"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project targets --json` workspace dependency order",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-targets-json-workspace-dependency-order",
+        "workspace target dependency ordering json rendering",
+        &output,
+    )
+    .expect("workspace target json rendering should succeed when members depend on one another");
+    expect_empty_stderr(
+        "project-targets-json-workspace-dependency-order",
+        "workspace target dependency ordering json rendering",
+        &stderr,
+    )
+    .expect("workspace target json rendering should not print stderr");
+
+    let app_manifest_display = app_manifest.to_string_lossy().replace('\\', "/");
+    let core_manifest_display = core_manifest.to_string_lossy().replace('\\', "/");
+    let expected = format!(
+        "{{\n  \"schema\": \"ql.project.targets.v1\",\n  \"members\": [\n    {{\n      \"manifest_path\": \"{core_manifest_display}\",\n      \"package_name\": \"core\",\n      \"targets\": [\n        {{\n          \"kind\": \"lib\",\n          \"path\": \"src/lib.ql\"\n        }}\n      ]\n    }},\n    {{\n      \"manifest_path\": \"{app_manifest_display}\",\n      \"package_name\": \"app\",\n      \"targets\": [\n        {{\n          \"kind\": \"bin\",\n          \"path\": \"src/main.ql\"\n        }}\n      ]\n    }}\n  ]\n}}\n"
+    );
+    expect_snapshot_matches(
+        "project-targets-json-workspace-dependency-order",
+        "workspace target json stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("workspace target json output should match the stable contract");
+}
+
+#[test]
+fn project_targets_rejects_workspace_member_dependency_cycles() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-targets-workspace-dependency-cycle");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/core/src"))
+        .expect("create core package source tree");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+core = "../core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+
+[dependencies]
+app = "../app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+    temp.write(
+        "workspace/packages/core/src/lib.ql",
+        "pub fn answer() -> Int { return 42 }\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "targets"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project targets` workspace dependency cycle",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-targets-workspace-dependency-cycle",
+        "workspace target dependency cycle rejection",
+        &output,
+        1,
+    )
+    .expect("workspace target discovery should reject cyclic local dependencies");
+    assert!(
+        stdout.trim().is_empty(),
+        "cyclic workspace target discovery should not print stdout, got:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("workspace member local dependencies contain a cycle involving: app, core")
+            || stderr.contains(
+                "workspace member local dependencies contain a cycle involving: core, app"
+            ),
+        "expected cycle diagnostic for workspace member local dependencies, got:\n{stderr}"
+    );
 }
 
 #[test]

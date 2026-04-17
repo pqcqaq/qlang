@@ -70,6 +70,14 @@ This extension intentionally stays thin:
 
 - no bundled `qlsp` binary
 - local VSIX packaging flow exists, but Marketplace publish flow is not added yet
-- no TextMate grammar yet; semantic coloring comes from `qlsp`
+- ships a minimal TextMate grammar fallback for base syntax coloring
 
-The current editor surface follows whatever `qlsp` already exposes: diagnostics, hover, definition, declaration, type definition, references, completion, document symbols, workspace symbols, semantic tokens, and conservative rename support.
+The current editor surface follows whatever `qlsp` already exposes: diagnostics, hover, definition, declaration, type definition, references, document highlight, completion, document symbols, workspace symbols, semantic tokens, and conservative rename support.
+
+That does not mean all of those surfaces are already project-grade.
+
+- The most reliable path today is still diagnostics plus conservative same-file semantics.
+- Workspace-root-driven symbol search is now wired up, and package/workspace imports prefer workspace source definitions when a unique source target exists.
+- Current-document occurrence highlighting now also reuses the same-file and package-aware references surface through `textDocument/documentHighlight`.
+- Workspace-scale navigation and highlighting are still incomplete beyond that conservative slice.
+- Semantic highlighting quality still depends on `qlsp`; the fallback grammar only guarantees basic syntax coloring.

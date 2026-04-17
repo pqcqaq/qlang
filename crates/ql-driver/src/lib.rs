@@ -4,7 +4,7 @@ mod toolchain;
 
 pub use build::{
     BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile,
-    build_file, default_output_path,
+    build_file, build_file_with_link_inputs, build_source_with_link_inputs, default_output_path,
 };
 pub use ffi::{
     CHeaderArtifact, CHeaderError, CHeaderOptions, CHeaderSurface, default_c_header_output_path,

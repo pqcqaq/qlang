@@ -6,7 +6,8 @@
 
 - `docs/roadmap/` 负责回答“现在做到了什么”
 - `docs/plans/` 负责回答“这些阶段最初是怎么设计和收敛的”
-- 同一阶段的分散切片稿已经合并成 phase 级文档，便于后续会话恢复和新 agent 接手
+- 已稳定阶段的分散切片稿已经合并成 phase 级文档，便于后续会话恢复和新 agent 接手
+- 仍在推进中的 Phase 8 暂时保留为设计入口文档，避免在边界仍频繁变化时过早冻结成“总稿”
 - 原始切片稿保留在 archive 目录中，只在需要审计旧记录时再进入
 
 ## 当前合并文档
@@ -18,12 +19,13 @@
 - [Phase 5 C FFI 与宿主互操作地基](/plans/phase-5-ffi-and-c-abi)
 - [Phase 6 LSP 与编辑器语义收口](/plans/phase-6-lsp-and-editor-experience)
 - [Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop)
+- [Phase 8：`.qi` 接口产物与 Cross-File LSP 设计入口](/plans/2026-04-05-phase8-interface-artifacts-and-cross-file-lsp)
 
 ## 如何使用
 
 如果你想快速恢复项目状态，建议按这个顺序阅读：
 
-1. [P1-P7 阶段总览](/roadmap/phase-progress)
+1. [P1-P8 阶段总览](/roadmap/phase-progress)
 2. [开发计划](/roadmap/development-plan)
 3. 本页对应阶段的合并设计稿
 4. 只有在追溯具体历史切片时，再看 archive 目录
@@ -41,5 +43,6 @@
 
 这意味着后续开发的主任务已经不是“重新搭骨架”，而是沿着现有分层继续扩展。
 
-当前最活跃的主线是 [Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop)。如果你要接着推进 async/runtime 相关工作，优先从该文档恢复上下文。
+当前并行主线有两条：[Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop) 负责 async/runtime/task-handle/build/interop，[Phase 8：`.qi` 接口产物与 Cross-File LSP 设计入口](/plans/2026-04-05-phase8-interface-artifacts-and-cross-file-lsp) 负责 package/workspace、`.qi` 与 dependency-backed cross-file tooling。
+如果你要接着推进 async/runtime 相关工作，优先从 Phase 7 文档恢复上下文；如果你要继续推进 package / `.qi` / cross-file tooling，则优先从 Phase 8 入口文档恢复上下文。
 较细的按日执行稿保留在 `docs/plans/` 根目录与 archive 目录中，但不再放进主阅读路径。

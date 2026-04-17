@@ -1,10 +1,244 @@
 mod support;
 
+use serde_json::Value as JsonValue;
 use support::{
     TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_file_exists,
     expect_stdout_contains_all, expect_success, ql_command, run_command_capture,
     static_library_output_path, workspace_root,
 };
+
+fn normalize_output_text(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
+fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
+    serde_json::from_str(&normalize_output_text(stdout))
+        .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
+}
+
+fn write_mock_clang_failure_script(temp: &TempDir) -> std::path::PathBuf {
+    if cfg!(windows) {
+        temp.write(
+            "mock-clang-fail.cmd",
+            "@echo off\r\necho mock clang failure 1>&2\r\nexit /b 9\r\n",
+        )
+    } else {
+        let script = temp.write(
+            "mock-clang-fail.sh",
+            "#!/bin/sh\necho 'mock clang failure' 1>&2\nexit 9\n",
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = std::fs::metadata(&script)
+                .expect("read mock clang failure script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&script, permissions)
+                .expect("mark mock clang failure script executable");
+        }
+        script
+    }
+}
+
+#[test]
+fn build_single_file_supports_json_output() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-file-json");
+    let source_path = temp.write("sample.ql", "fn main() -> Int { return 0 }\n");
+    let artifact_path = temp.path().join("target/ql/debug/sample.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&source_path).arg("--json");
+    let output = run_command_capture(&mut command, "`ql build --json` single file");
+    let (stdout, stderr) =
+        expect_success("project-build-file-json", "single-file build json", &output)
+            .expect("single-file `ql build --json` should succeed");
+    expect_empty_stderr("project-build-file-json", "single-file build json", &stderr)
+        .expect("single-file `ql build --json` should not print stderr");
+
+    let json = parse_json_output("project-build-file-json", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.build.v1",
+        "path": source_path.display().to_string().replace('\\', "/"),
+        "scope": "file",
+        "project_manifest_path": JsonValue::Null,
+        "requested_emit": "llvm-ir",
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "emit_interface": false,
+        "status": "ok",
+        "failure": JsonValue::Null,
+        "built_targets": [
+            {
+                "manifest_path": JsonValue::Null,
+                "package_name": JsonValue::Null,
+                "selected": true,
+                "dependency_only": false,
+                "kind": "source",
+                "path": source_path.display().to_string().replace('\\', "/"),
+                "emit": "llvm-ir",
+                "profile": "debug",
+                "artifact_path": artifact_path.display().to_string().replace('\\', "/"),
+                "c_header_path": JsonValue::Null,
+            }
+        ],
+        "interfaces": [],
+    });
+    assert_eq!(
+        json, expected,
+        "single-file `ql build --json` should match the stable contract"
+    );
+    expect_file_exists(
+        "project-build-file-json",
+        &artifact_path,
+        "single-file build artifact",
+        "single-file build json",
+    )
+    .expect("single-file `ql build --json` should still write the artifact");
+}
+
+#[test]
+fn build_single_file_json_reports_diagnostics_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-file-json-failure");
+    let source_path = temp.write("sample.ql", "fn main() -> Int { return \"oops\" }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&source_path).arg("--json");
+    let output = run_command_capture(&mut command, "`ql build --json` single file diagnostics");
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-file-json-failure",
+        "single-file build json diagnostics failure",
+        &output,
+        1,
+    )
+    .expect("single-file `ql build --json` diagnostics failure should exit with code 1");
+    expect_empty_stderr(
+        "project-build-file-json-failure",
+        "single-file build json diagnostics failure",
+        &stderr,
+    )
+    .expect("single-file `ql build --json` diagnostics failure should not print stderr");
+
+    let json = parse_json_output("project-build-file-json-failure", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        source_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "file");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["requested_emit"], "llvm-ir");
+    assert_eq!(json["requested_profile"], "debug");
+    assert_eq!(json["profile_overridden"], false);
+    assert_eq!(json["emit_interface"], false);
+    assert_eq!(json["built_targets"], serde_json::json!([]));
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(json["failure"]["manifest_path"], JsonValue::Null);
+    assert_eq!(json["failure"]["package_name"], JsonValue::Null);
+    assert_eq!(json["failure"]["selected"], true);
+    assert_eq!(json["failure"]["dependency_only"], false);
+    assert_eq!(json["failure"]["kind"], "source");
+    assert_eq!(
+        json["failure"]["path"],
+        source_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["error_kind"], "diagnostics");
+    assert_eq!(json["failure"]["message"], "build produced diagnostics");
+    assert_eq!(
+        json["failure"]["diagnostic_file"]["path"],
+        source_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["failure"]["diagnostic_file"]["diagnostics"][0]["message"],
+        "return value has type mismatch: expected `Int`, found `String`"
+    );
+}
+
+#[test]
+fn build_single_file_json_reports_toolchain_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-file-json-toolchain-failure");
+    let source_path = temp.write("sample.ql", "fn main() -> Int { return 0 }\n");
+    let clang_path = write_mock_clang_failure_script(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .env("QLANG_CLANG", &clang_path)
+        .args(["build"])
+        .arg(&source_path)
+        .args(["--emit", "obj", "--json"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` single file toolchain failure",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-file-json-toolchain-failure",
+        "single-file build json toolchain failure",
+        &output,
+        1,
+    )
+    .expect("single-file `ql build --json` toolchain failure should exit with code 1");
+    expect_empty_stderr(
+        "project-build-file-json-toolchain-failure",
+        "single-file build json toolchain failure",
+        &stderr,
+    )
+    .expect("single-file `ql build --json` toolchain failure should not print stderr");
+
+    let json = parse_json_output("project-build-file-json-toolchain-failure", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        source_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "file");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["requested_emit"], "obj");
+    assert_eq!(json["requested_profile"], "debug");
+    assert_eq!(json["profile_overridden"], false);
+    assert_eq!(json["emit_interface"], false);
+    assert_eq!(json["built_targets"], serde_json::json!([]));
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(json["failure"]["manifest_path"], JsonValue::Null);
+    assert_eq!(json["failure"]["package_name"], JsonValue::Null);
+    assert_eq!(json["failure"]["selected"], true);
+    assert_eq!(json["failure"]["dependency_only"], false);
+    assert_eq!(json["failure"]["kind"], "source");
+    assert_eq!(
+        json["failure"]["path"],
+        source_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["error_kind"], "toolchain");
+    assert!(
+        json["failure"]["message"]
+            .as_str()
+            .expect("toolchain failure message should be a string")
+            .contains("mock clang failure"),
+        "toolchain failure json should preserve the toolchain stderr payload: {json}"
+    );
+    assert!(
+        json["failure"]["preserved_artifacts"]
+            .as_array()
+            .expect("toolchain failure should expose preserved artifacts")
+            .iter()
+            .any(|value| value
+                .as_str()
+                .is_some_and(|path| path.ends_with(".codegen.ll"))),
+        "toolchain failure json should preserve the intermediate LLVM IR path: {json}"
+    );
+    assert!(
+        json["failure"]["intermediate_ir"]
+            .as_str()
+            .is_some_and(|path| path.ends_with(".codegen.ll")),
+        "toolchain failure json should surface the primary intermediate IR path: {json}"
+    );
+}
 
 #[test]
 fn build_package_path_builds_all_discovered_targets() {
@@ -71,6 +305,640 @@ name = "app"
         "package path build",
     )
     .expect("package path build should emit nested bin artifacts under a stable relative path");
+}
+
+#[test]
+fn build_package_path_supports_json_output_for_dependency_build_plan() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write("dep/src/lib.ql", "pub fn exported() -> Int { return 1 }\n");
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write("app/src/main.ql", "fn main() -> Int { return 0 }\n");
+
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let app_lib_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let app_main_output = project_root.join("target/ql/debug/main.ll");
+    let interface_output = project_root.join("app.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&project_root)
+        .args(["--emit-interface", "--json"]);
+    let output = run_command_capture(&mut command, "`ql build --json` package dependency plan");
+    let (stdout, stderr) = expect_success(
+        "project-build-package-json",
+        "package dependency-plan build json",
+        &output,
+    )
+    .expect("package-path `ql build --json` should succeed");
+    expect_empty_stderr(
+        "project-build-package-json",
+        "package dependency-plan build json",
+        &stderr,
+    )
+    .expect("package-path `ql build --json` should not print stderr");
+
+    let json = parse_json_output("project-build-package-json", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.build.v1",
+        "path": project_root.display().to_string().replace('\\', "/"),
+        "scope": "project",
+        "project_manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+        "requested_emit": "llvm-ir",
+        "requested_profile": "debug",
+        "profile_overridden": false,
+        "emit_interface": true,
+        "status": "ok",
+        "failure": JsonValue::Null,
+        "built_targets": [
+            {
+                "manifest_path": dep_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "dep",
+                "selected": false,
+                "dependency_only": true,
+                "kind": "lib",
+                "path": "src/lib.ql",
+                "emit": "staticlib",
+                "profile": "debug",
+                "artifact_path": dep_output.display().to_string().replace('\\', "/"),
+                "c_header_path": JsonValue::Null,
+            },
+            {
+                "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "selected": true,
+                "dependency_only": false,
+                "kind": "lib",
+                "path": "src/lib.ql",
+                "emit": "staticlib",
+                "profile": "debug",
+                "artifact_path": app_lib_output.display().to_string().replace('\\', "/"),
+                "c_header_path": JsonValue::Null,
+            },
+            {
+                "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "selected": true,
+                "dependency_only": false,
+                "kind": "bin",
+                "path": "src/main.ql",
+                "emit": "llvm-ir",
+                "profile": "debug",
+                "artifact_path": app_main_output.display().to_string().replace('\\', "/"),
+                "c_header_path": JsonValue::Null,
+            }
+        ],
+        "interfaces": [
+            {
+                "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "selected": true,
+                "status": "wrote",
+                "path": interface_output.display().to_string().replace('\\', "/"),
+            }
+        ],
+    });
+    assert_eq!(
+        json, expected,
+        "package-path `ql build --json` should match the stable contract"
+    );
+
+    expect_file_exists(
+        "project-build-package-json",
+        &dep_output,
+        "dependency package artifact",
+        "package dependency-plan build json",
+    )
+    .expect("package-path `ql build --json` should emit the dependency artifact");
+    expect_file_exists(
+        "project-build-package-json",
+        &app_lib_output,
+        "package library artifact",
+        "package dependency-plan build json",
+    )
+    .expect("package-path `ql build --json` should emit the package library artifact");
+    expect_file_exists(
+        "project-build-package-json",
+        &app_main_output,
+        "package binary artifact",
+        "package dependency-plan build json",
+    )
+    .expect("package-path `ql build --json` should emit the package binary artifact");
+    expect_file_exists(
+        "project-build-package-json",
+        &interface_output,
+        "package interface artifact",
+        "package dependency-plan build json",
+    )
+    .expect("package-path `ql build --json` should emit the package interface");
+}
+
+#[test]
+fn build_project_json_reports_invalid_manifest_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-json-invalid-manifest");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(&project_root)
+        .expect("create package root for invalid manifest json test");
+    let manifest_path = temp.write(
+        "app/qlang.toml",
+        r#"
+[package
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(&mut command, "`ql build --json` invalid manifest");
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-json-invalid-manifest",
+        "invalid manifest build json failure",
+        &output,
+        1,
+    )
+    .expect("project-path `ql build --json` invalid manifest should exit with code 1");
+    expect_empty_stderr(
+        "project-build-json-invalid-manifest",
+        "invalid manifest build json failure",
+        &stderr,
+    )
+    .expect("project-path `ql build --json` invalid manifest should not print stderr");
+
+    let json = parse_json_output("project-build-json-invalid-manifest", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(json["project_manifest_path"], JsonValue::Null);
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_targets"], serde_json::json!([]));
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(
+        json["failure"]["manifest_path"],
+        manifest_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["package_name"], JsonValue::Null);
+    assert_eq!(json["failure"]["selected"], JsonValue::Null);
+    assert_eq!(json["failure"]["dependency_only"], JsonValue::Null);
+    assert_eq!(json["failure"]["kind"], JsonValue::Null);
+    assert_eq!(
+        json["failure"]["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["error_kind"], "manifest");
+    assert_eq!(json["failure"]["stage"], "manifest-load");
+    assert!(
+        json["failure"]["message"]
+            .as_str()
+            .expect("invalid manifest json failure should expose a message")
+            .contains("invalid manifest"),
+        "invalid manifest json failure should preserve the manifest parse failure: {json}"
+    );
+}
+
+#[test]
+fn build_project_json_reports_selector_miss_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-json-selector-miss");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create tool package source tree");
+
+    let workspace_manifest = temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn app_value() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        "pub fn tool_value() -> Int { return 2 }\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&project_root)
+        .args(["--package", "missing", "--json"]);
+    let output = run_command_capture(&mut command, "`ql build --json --package missing`");
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-json-selector-miss",
+        "selector miss build json failure",
+        &output,
+        1,
+    )
+    .expect("project-path `ql build --json --package missing` should exit with code 1");
+    expect_empty_stderr(
+        "project-build-json-selector-miss",
+        "selector miss build json failure",
+        &stderr,
+    )
+    .expect("project-path `ql build --json --package missing` should not print stderr");
+
+    let json = parse_json_output("project-build-json-selector-miss", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        workspace_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_targets"], serde_json::json!([]));
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(json["failure"]["manifest_path"], JsonValue::Null);
+    assert_eq!(json["failure"]["package_name"], JsonValue::Null);
+    assert_eq!(json["failure"]["selected"], JsonValue::Null);
+    assert_eq!(json["failure"]["dependency_only"], JsonValue::Null);
+    assert_eq!(json["failure"]["kind"], JsonValue::Null);
+    assert_eq!(
+        json["failure"]["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["error_kind"], "selector");
+    assert_eq!(json["failure"]["stage"], "target-selection");
+    assert_eq!(json["failure"]["selector"], "package `missing`");
+    assert!(
+        json["failure"]["message"]
+            .as_str()
+            .expect("selector miss json failure should expose a message")
+            .contains("target selector matched no build targets"),
+        "selector miss json failure should describe the selector mismatch: {json}"
+    );
+}
+
+#[test]
+fn build_package_path_json_reports_target_failure_after_partial_build() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-failure");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write("dep/src/lib.ql", "pub fn exported() -> Int { return 1 }\n");
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    let app_main_path = temp.write("app/src/main.ql", "fn main() -> Int { return \"oops\" }\n");
+
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let app_lib_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` package target failure after partial build",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-package-json-failure",
+        "package target failure after partial build json",
+        &output,
+        1,
+    )
+    .expect("package-path `ql build --json` target failure should exit with code 1");
+    expect_empty_stderr(
+        "project-build-package-json-failure",
+        "package target failure after partial build json",
+        &stderr,
+    )
+    .expect("package-path `ql build --json` target failure should not print stderr");
+
+    let json = parse_json_output("project-build-package-json-failure", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["requested_emit"], "llvm-ir");
+    assert_eq!(json["requested_profile"], "debug");
+    assert_eq!(json["profile_overridden"], false);
+    assert_eq!(json["emit_interface"], false);
+
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("build failure json should expose built_targets");
+    assert_eq!(built_targets.len(), 2);
+    assert_eq!(
+        built_targets[0]["manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(built_targets[0]["package_name"], "dep");
+    assert_eq!(built_targets[0]["selected"], false);
+    assert_eq!(built_targets[0]["dependency_only"], true);
+    assert_eq!(built_targets[0]["kind"], "lib");
+    assert_eq!(built_targets[0]["path"], "src/lib.ql");
+    assert_eq!(built_targets[0]["emit"], "staticlib");
+    assert_eq!(
+        built_targets[0]["artifact_path"],
+        dep_output.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        built_targets[1]["manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(built_targets[1]["package_name"], "app");
+    assert_eq!(built_targets[1]["selected"], true);
+    assert_eq!(built_targets[1]["dependency_only"], false);
+    assert_eq!(built_targets[1]["kind"], "lib");
+    assert_eq!(built_targets[1]["path"], "src/lib.ql");
+    assert_eq!(built_targets[1]["emit"], "staticlib");
+    assert_eq!(
+        built_targets[1]["artifact_path"],
+        app_lib_output.display().to_string().replace('\\', "/")
+    );
+
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(
+        json["failure"]["manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["package_name"], "app");
+    assert_eq!(json["failure"]["selected"], true);
+    assert_eq!(json["failure"]["dependency_only"], false);
+    assert_eq!(json["failure"]["kind"], "bin");
+    assert_eq!(json["failure"]["path"], "src/main.ql");
+    assert_eq!(json["failure"]["error_kind"], "diagnostics");
+    assert_eq!(json["failure"]["message"], "build produced diagnostics");
+    assert_eq!(
+        json["failure"]["diagnostic_file"]["path"],
+        app_main_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["failure"]["diagnostic_file"]["diagnostics"][0]["message"],
+        "return value has type mismatch: expected `Int`, found `String`"
+    );
+
+    expect_file_exists(
+        "project-build-package-json-failure",
+        &dep_output,
+        "dependency package artifact",
+        "package target failure after partial build json",
+    )
+    .expect("package-path `ql build --json` should preserve the dependency artifact");
+    expect_file_exists(
+        "project-build-package-json-failure",
+        &app_lib_output,
+        "package library artifact",
+        "package target failure after partial build json",
+    )
+    .expect(
+        "package-path `ql build --json` should preserve the already-built package library artifact",
+    );
+}
+
+#[test]
+fn build_package_path_uses_manifest_default_release_profile() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-manifest-profile");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for manifest profile build test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[profile]
+default = "release"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn util() -> Int { return 1 }\n");
+
+    let output_path = static_library_output_path(&project_root.join("target/ql/release"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql build` manifest default profile");
+    let (stdout, stderr) = expect_success(
+        "project-build-manifest-profile",
+        "manifest default profile build",
+        &output,
+    )
+    .expect("package-path `ql build` should honor the manifest default profile");
+    expect_empty_stderr(
+        "project-build-manifest-profile",
+        "manifest default profile build",
+        &stderr,
+    )
+    .expect("manifest default profile build should not print stderr");
+    expect_stdout_contains_all(
+        "project-build-manifest-profile",
+        &stdout.replace('\\', "/"),
+        &[&format!("wrote staticlib: {}", output_path.display()).replace('\\', "/")],
+    )
+    .expect("package-path `ql build` should write artifacts under the manifest-selected profile");
+    expect_file_exists(
+        "project-build-manifest-profile",
+        &output_path,
+        "manifest default profile artifact",
+        "manifest default profile build",
+    )
+    .expect("manifest default profile build should emit the release artifact");
+}
+
+#[test]
+fn build_package_path_profile_flag_overrides_manifest_default_profile() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-profile-override");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for profile override build test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[profile]
+default = "release"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn util() -> Int { return 1 }\n");
+
+    let debug_output = static_library_output_path(&project_root.join("target/ql/debug"), "lib");
+    let release_output = static_library_output_path(&project_root.join("target/ql/release"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&project_root)
+        .args(["--profile", "debug"]);
+    let output = run_command_capture(&mut command, "`ql build --profile` manifest override");
+    let (stdout, stderr) = expect_success(
+        "project-build-profile-override",
+        "manifest profile override build",
+        &output,
+    )
+    .expect("package-path `ql build --profile` should override the manifest default");
+    expect_empty_stderr(
+        "project-build-profile-override",
+        "manifest profile override build",
+        &stderr,
+    )
+    .expect("manifest profile override build should not print stderr");
+    expect_stdout_contains_all(
+        "project-build-profile-override",
+        &stdout.replace('\\', "/"),
+        &[&format!("wrote staticlib: {}", debug_output.display()).replace('\\', "/")],
+    )
+    .expect("`--profile debug` should write artifacts under the debug profile");
+    expect_file_exists(
+        "project-build-profile-override",
+        &debug_output,
+        "manifest profile override artifact",
+        "manifest profile override build",
+    )
+    .expect("profile override build should emit the debug artifact");
+    assert!(
+        !release_output.exists(),
+        "`ql build --profile debug` should not silently fall back to the manifest-selected release profile"
+    );
+}
+
+#[test]
+fn build_workspace_path_uses_workspace_default_profile() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-workspace-profile");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create workspace package source tree for workspace profile build test");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+
+[profile]
+default = "release"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn util() -> Int { return 1 }\n",
+    );
+
+    let output_path =
+        static_library_output_path(&project_root.join("packages/app/target/ql/release"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql build` workspace default profile");
+    let (stdout, stderr) = expect_success(
+        "project-build-workspace-profile",
+        "workspace default profile build",
+        &output,
+    )
+    .expect("workspace-path `ql build` should honor the workspace default profile");
+    expect_empty_stderr(
+        "project-build-workspace-profile",
+        "workspace default profile build",
+        &stderr,
+    )
+    .expect("workspace default profile build should not print stderr");
+    expect_stdout_contains_all(
+        "project-build-workspace-profile",
+        &stdout.replace('\\', "/"),
+        &[&format!("wrote staticlib: {}", output_path.display()).replace('\\', "/")],
+    )
+    .expect(
+        "workspace-path `ql build` should write artifacts under the workspace-selected profile",
+    );
+    expect_file_exists(
+        "project-build-workspace-profile",
+        &output_path,
+        "workspace default profile artifact",
+        "workspace default profile build",
+    )
+    .expect("workspace default profile build should emit the release artifact");
 }
 
 #[test]
@@ -154,6 +1022,218 @@ name = "tool"
 }
 
 #[test]
+fn build_workspace_path_selects_requested_package_targets() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-selector");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create tool package source tree");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn app_value() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        "pub fn tool_value() -> Int { return 2 }\n",
+    );
+
+    let app_output =
+        static_library_output_path(&project_root.join("packages/app/target/ql/debug"), "lib");
+    let tool_output =
+        static_library_output_path(&project_root.join("packages/tool/target/ql/debug"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&project_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(&mut command, "`ql build --package` workspace path");
+    let (stdout, stderr) = expect_success(
+        "project-build-package-selector",
+        "workspace package selector build",
+        &output,
+    )
+    .expect("workspace-path `ql build --package` should succeed");
+    expect_empty_stderr(
+        "project-build-package-selector",
+        "workspace package selector build",
+        &stderr,
+    )
+    .expect("workspace-path `ql build --package` should not print stderr");
+    expect_stdout_contains_all(
+        "project-build-package-selector",
+        &stdout.replace('\\', "/"),
+        &[&format!("wrote staticlib: {}", app_output.display()).replace('\\', "/")],
+    )
+    .expect("workspace-path `ql build --package` should report only the selected package artifact");
+    expect_file_exists(
+        "project-build-package-selector",
+        &app_output,
+        "selected package artifact",
+        "workspace package selector build",
+    )
+    .expect("workspace-path `ql build --package` should emit the selected package artifact");
+    assert!(
+        !tool_output.exists(),
+        "workspace-path `ql build --package` should not build unselected package artifacts"
+    );
+}
+
+#[test]
+fn build_workspace_package_selector_builds_local_dependency_packages_first() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-workspace-dependency-closure");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/core/src"))
+        .expect("create core package source tree");
+    std::fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create tool package source tree");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+core = "../core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn app_value() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/core/src/lib.ql",
+        "pub fn core_value() -> Int { return 2 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        "pub fn tool_value() -> Int { return 3 }\n",
+    );
+
+    let app_output =
+        static_library_output_path(&project_root.join("packages/app/target/ql/debug"), "lib");
+    let core_output =
+        static_library_output_path(&project_root.join("packages/core/target/ql/debug"), "lib");
+    let tool_output =
+        static_library_output_path(&project_root.join("packages/tool/target/ql/debug"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&project_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --package` workspace dependency closure",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-workspace-dependency-closure",
+        "workspace package selector dependency closure build",
+        &output,
+    )
+    .expect("workspace-path `ql build --package` should build local dependency packages first");
+    expect_empty_stderr(
+        "project-build-workspace-dependency-closure",
+        "workspace package selector dependency closure build",
+        &stderr,
+    )
+    .expect("workspace package selector dependency closure build should not print stderr");
+
+    let normalized_stdout = stdout.replace('\\', "/");
+    let core_fragment = format!("wrote staticlib: {}", core_output.display()).replace('\\', "/");
+    let app_fragment = format!("wrote staticlib: {}", app_output.display()).replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-build-workspace-dependency-closure",
+        &normalized_stdout,
+        &[&core_fragment, &app_fragment],
+    )
+    .expect("workspace package selector dependency closure build should report dependency and root artifacts");
+
+    let core_index = normalized_stdout
+        .find(&core_fragment)
+        .expect("workspace dependency artifact should be present in stdout");
+    let app_index = normalized_stdout
+        .find(&app_fragment)
+        .expect("workspace root artifact should be present in stdout");
+    assert!(
+        core_index < app_index,
+        "workspace dependency package should be built before the selected root package, got:\n{stdout}"
+    );
+
+    expect_file_exists(
+        "project-build-workspace-dependency-closure",
+        &core_output,
+        "workspace dependency artifact",
+        "workspace package selector dependency closure build",
+    )
+    .expect(
+        "workspace package selector dependency closure build should emit the dependency artifact",
+    );
+    expect_file_exists(
+        "project-build-workspace-dependency-closure",
+        &app_output,
+        "workspace selected package artifact",
+        "workspace package selector dependency closure build",
+    )
+    .expect("workspace package selector dependency closure build should emit the selected package artifact");
+    assert!(
+        !tool_output.exists(),
+        "workspace package selector dependency closure build should not build unrelated package artifacts"
+    );
+}
+
+#[test]
 fn build_project_path_rejects_output_for_multiple_targets() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-output");
@@ -198,6 +1278,64 @@ name = "app"
             .contains("error: `ql build --output` only supports a single discovered build target"),
         "expected multi-target output rejection, got:\n{stderr}"
     );
+}
+
+#[test]
+fn build_package_path_selects_requested_target_for_custom_output() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-target-selector");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/bin/tools"))
+        .expect("create package source tree for target selector build test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn util() -> Int { return 1 }\n");
+    temp.write("app/src/main.ql", "fn main() -> Int { return 0 }\n");
+    temp.write(
+        "app/src/bin/tools/repl.ql",
+        "fn main() -> Int { return 2 }\n",
+    );
+
+    let output_path = project_root.join("custom.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["build"])
+        .arg(&project_root)
+        .args(["--target", "src/bin/tools/repl.ql", "--output"])
+        .arg(&output_path);
+    let output = run_command_capture(&mut command, "`ql build --target --output` package path");
+    let (stdout, stderr) = expect_success(
+        "project-build-target-selector",
+        "selected target custom output build",
+        &output,
+    )
+    .expect("package-path `ql build --target --output` should succeed for one selected target");
+    expect_empty_stderr(
+        "project-build-target-selector",
+        "selected target custom output build",
+        &stderr,
+    )
+    .expect("package-path `ql build --target --output` should not print stderr");
+    expect_stdout_contains_all(
+        "project-build-target-selector",
+        &stdout.replace('\\', "/"),
+        &[&format!("wrote llvm-ir: {}", output_path.display()).replace('\\', "/")],
+    )
+    .expect("package-path `ql build --target --output` should report the selected artifact");
+    expect_file_exists(
+        "project-build-target-selector",
+        &output_path,
+        "selected target custom output artifact",
+        "selected target custom output build",
+    )
+    .expect("package-path `ql build --target --output` should write the selected artifact");
 }
 
 #[test]
@@ -257,4 +1395,112 @@ name = "app"
         "package path build with interface emission",
     )
     .expect("package path build with interface emission should write the package interface");
+}
+
+#[test]
+fn build_package_path_syncs_dependency_interfaces_from_manifest_dependencies() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-dependency-sync");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "extern \"c\" pub fn q_add(left: Int, right: Int) -> Int { return left + right }\n",
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        "use dep.q_add as add\n\nfn main() -> Int { return add(2, 3) }\n",
+    );
+
+    let interface_output = dep_root.join("dep.qi");
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let dep_output_suffix = "dep/target/ql/debug/lib.lib";
+    let app_output = project_root.join("target/ql/debug/main.ll");
+    assert!(
+        !interface_output.exists(),
+        "dependency interface should start missing for sync test"
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql build` dependency sync");
+    let (stdout, stderr) = expect_success(
+        "project-build-dependency-sync",
+        "package path build with dependency sync",
+        &output,
+    )
+    .expect("package-path `ql build` should sync dependency interfaces before building");
+    expect_empty_stderr(
+        "project-build-dependency-sync",
+        "package path build with dependency sync",
+        &stderr,
+    )
+    .expect("dependency-sync build should not print stderr");
+    expect_stdout_contains_all(
+        "project-build-dependency-sync",
+        &stdout.replace('\\', "/"),
+        &[
+            "wrote interface: ",
+            "dep.qi",
+            dep_output_suffix,
+            &format!("wrote llvm-ir: {}", app_output.display()).replace('\\', "/"),
+        ],
+    )
+    .expect(
+        "dependency-sync build should report the synced interface plus dependency and root artifacts",
+    );
+    let normalized_stdout = stdout.replace('\\', "/");
+    let dep_fragment = dep_output_suffix.to_owned();
+    let app_fragment = format!("wrote llvm-ir: {}", app_output.display()).replace('\\', "/");
+    let dep_index = normalized_stdout
+        .find(&dep_fragment)
+        .expect("dependency artifact should be present in stdout");
+    let app_index = normalized_stdout
+        .find(&app_fragment)
+        .expect("root artifact should be present in stdout");
+    assert!(
+        dep_index < app_index,
+        "dependency package should be built before the root package, got:\n{stdout}"
+    );
+    expect_file_exists(
+        "project-build-dependency-sync",
+        &interface_output,
+        "synced dependency interface",
+        "package path build with dependency sync",
+    )
+    .expect("dependency-sync build should emit the dependency interface");
+    expect_file_exists(
+        "project-build-dependency-sync",
+        &dep_output,
+        "dependency package build artifact",
+        "package path build with dependency sync",
+    )
+    .expect("dependency-sync build should emit the dependency package artifact");
+    expect_file_exists(
+        "project-build-dependency-sync",
+        &app_output,
+        "package build artifact",
+        "package path build with dependency sync",
+    )
+    .expect("dependency-sync build should still emit the package artifact");
 }

@@ -604,7 +604,7 @@ fn local_item_for_import_binding(
     module: &hir::Module,
     import_binding: &ImportBinding,
 ) -> Option<ItemId> {
-    let [name] = import_binding.path.segments.as_slice() else {
+    let Some(name) = import_binding.path.segments.last() else {
         return None;
     };
 

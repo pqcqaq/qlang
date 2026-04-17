@@ -7,6 +7,7 @@ use ql_analysis::{
     analyze_package, analyze_package_with_available_dependencies, analyze_source,
 };
 use ql_project::{collect_package_sources, load_project_manifest};
+use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::request::{
     GotoDeclarationParams, GotoDeclarationResponse, GotoTypeDefinitionParams,
@@ -15,14 +16,15 @@ use tower_lsp::lsp_types::request::{
 use tower_lsp::lsp_types::{
     CompletionOptions, CompletionParams, CompletionResponse, DeclarationCapability,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
-    InitializedParams, Location, MessageType, OneOf, PrepareRenameResponse, ReferenceParams,
-    RenameOptions, RenameParams, SemanticTokensFullOptions, SemanticTokensOptions,
-    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
-    ServerCapabilities, ServerInfo, SymbolInformation, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
+    DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
+    InitializeParams, InitializeResult, InitializedParams, Location, MessageType, OneOf,
+    PrepareRenameResponse, ReferenceParams, RenameOptions, RenameParams, SemanticTokensFullOptions,
+    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SymbolInformation,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TypeDefinitionProviderCapability, Url, WorkspaceEdit,
+    WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -56,6 +58,7 @@ use crate::store::DocumentStore;
 pub struct Backend {
     client: Client,
     documents: DocumentStore,
+    workspace_roots: RwLock<Vec<PathBuf>>,
 }
 
 impl Backend {
@@ -63,6 +66,7 @@ impl Backend {
         Self {
             client,
             documents: DocumentStore::default(),
+            workspace_roots: RwLock::default(),
         }
     }
 
@@ -87,6 +91,28 @@ impl Backend {
         let path = uri.to_file_path().ok()?;
         package_analysis_for_path(&path)
     }
+}
+
+fn configure_workspace_roots(params: &InitializeParams) -> Vec<PathBuf> {
+    let mut roots = params
+        .workspace_folders
+        .as_ref()
+        .into_iter()
+        .flatten()
+        .filter_map(|folder| folder.uri.to_file_path().ok())
+        .map(|path| canonicalize_or_clone(&path))
+        .collect::<Vec<_>>();
+
+    if roots.is_empty()
+        && let Some(root_uri) = params.root_uri.as_ref()
+        && let Ok(root_path) = root_uri.to_file_path()
+    {
+        roots.push(canonicalize_or_clone(&root_path));
+    }
+
+    roots.sort();
+    roots.dedup();
+    roots
 }
 
 fn package_analysis_for_path(path: &Path) -> Option<ql_analysis::PackageAnalysis> {
@@ -158,6 +184,56 @@ fn workspace_member_manifest_paths_for_package(package_manifest_path: &Path) -> 
     }
 
     Vec::new()
+}
+
+fn append_manifest_and_workspace_symbols(
+    manifest: &ql_project::ProjectManifest,
+    open_docs: &HashMap<PathBuf, (Url, String)>,
+    searched_packages: &mut HashSet<PathBuf>,
+    covered_files: &mut HashSet<PathBuf>,
+    symbols: &mut Vec<SymbolInformation>,
+    query: &str,
+) {
+    if manifest.package.is_some() {
+        let manifest_path = manifest.manifest_path.clone();
+        if searched_packages.insert(manifest_path.clone()) {
+            append_manifest_source_workspace_symbols(
+                manifest,
+                open_docs,
+                covered_files,
+                symbols,
+                query,
+            );
+            append_dependency_workspace_symbols(&manifest_path, symbols, query);
+        }
+    }
+
+    let Some(workspace) = manifest.workspace.as_ref() else {
+        return;
+    };
+
+    let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let mut member_manifests = workspace
+        .members
+        .iter()
+        .filter_map(|member| load_project_manifest(&manifest_dir.join(member)).ok())
+        .map(|member_manifest| member_manifest.manifest_path)
+        .collect::<Vec<_>>();
+    member_manifests.sort();
+    member_manifests.dedup();
+
+    for member_manifest_path in member_manifests {
+        if !searched_packages.insert(member_manifest_path.clone()) {
+            continue;
+        }
+        append_workspace_member_symbols(
+            &member_manifest_path,
+            open_docs,
+            covered_files,
+            symbols,
+            query,
+        );
+    }
 }
 
 #[allow(deprecated)]
@@ -337,8 +413,17 @@ fn is_interface_artifact_failure(error: &PackageAnalysisError) -> bool {
     }
 }
 
+#[cfg(test)]
 fn workspace_symbols_for_documents(
     documents: Vec<(Url, String)>,
+    query: &str,
+) -> Vec<SymbolInformation> {
+    workspace_symbols_for_documents_and_roots(documents, &[], query)
+}
+
+fn workspace_symbols_for_documents_and_roots(
+    documents: Vec<(Url, String)>,
+    workspace_roots: &[PathBuf],
     query: &str,
 ) -> Vec<SymbolInformation> {
     let normalized_query = query.trim().to_ascii_lowercase();
@@ -545,6 +630,27 @@ fn workspace_symbols_for_documents(
         }
     }
 
+    let mut sorted_workspace_roots = workspace_roots
+        .iter()
+        .map(|path| canonicalize_or_clone(path))
+        .collect::<Vec<_>>();
+    sorted_workspace_roots.sort();
+    sorted_workspace_roots.dedup();
+
+    for workspace_root in sorted_workspace_roots {
+        let Ok(manifest) = load_project_manifest(&workspace_root) else {
+            continue;
+        };
+        append_manifest_and_workspace_symbols(
+            &manifest,
+            &open_docs,
+            &mut searched_packages,
+            &mut covered_files,
+            &mut symbols,
+            &normalized_query,
+        );
+    }
+
     for (uri, source) in non_file_docs {
         if let Ok(analysis) = analyze_source(&source) {
             symbols.extend(workspace_symbols_for_analysis(
@@ -608,9 +714,246 @@ fn workspace_symbols_for_dependencies(
     symbols
 }
 
+fn package_path_segments(source: &str) -> Option<Vec<&str>> {
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        let rest = trimmed.strip_prefix("package ")?;
+        let segments = rest
+            .split('.')
+            .map(str::trim)
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>();
+        return (!segments.is_empty()).then_some(segments);
+    }
+    None
+}
+
+fn supports_workspace_import_definition(kind: ql_analysis::SymbolKind) -> bool {
+    matches!(
+        kind,
+        ql_analysis::SymbolKind::Function
+            | ql_analysis::SymbolKind::Const
+            | ql_analysis::SymbolKind::Static
+            | ql_analysis::SymbolKind::Struct
+            | ql_analysis::SymbolKind::Enum
+            | ql_analysis::SymbolKind::Variant
+            | ql_analysis::SymbolKind::Trait
+            | ql_analysis::SymbolKind::TypeAlias
+    )
+}
+
+fn extend_workspace_import_definition_matches(
+    package: &ql_analysis::PackageAnalysis,
+    current_path: Option<&Path>,
+    current_source: Option<&str>,
+    current_analysis: Option<&Analysis>,
+    import_prefix: &[String],
+    imported_name: &str,
+    matches: &mut Vec<Location>,
+) {
+    for module in package.modules() {
+        let module_path = module.path();
+        let owned_source = if current_path
+            .is_some_and(|path| canonicalize_or_clone(path) == canonicalize_or_clone(module_path))
+        {
+            None
+        } else {
+            let Ok(source) = fs::read_to_string(module_path) else {
+                continue;
+            };
+            Some(source.replace("\r\n", "\n"))
+        };
+        let module_source = owned_source
+            .as_deref()
+            .unwrap_or_else(|| current_source.unwrap_or_default());
+        let module_analysis = if owned_source.is_some() {
+            module.analysis()
+        } else {
+            current_analysis.unwrap_or(module.analysis())
+        };
+        let Some(package_segments) = package_path_segments(module_source) else {
+            continue;
+        };
+        if package_segments.len() != import_prefix.len()
+            || !package_segments
+                .iter()
+                .zip(import_prefix)
+                .all(|(left, right)| *left == right)
+        {
+            continue;
+        }
+
+        let Ok(module_uri) = Url::from_file_path(module_path) else {
+            continue;
+        };
+        for symbol in module_analysis.document_symbols() {
+            if symbol.name != imported_name || !supports_workspace_import_definition(symbol.kind) {
+                continue;
+            }
+            matches.push(Location::new(
+                module_uri.clone(),
+                span_to_range(module_source, symbol.span),
+            ));
+        }
+    }
+}
+
+fn workspace_source_definition_for_import(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoDefinitionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let (binding, _) = analysis.import_binding_at(offset)?;
+    let (imported_name, import_prefix) = binding.path.segments.split_last()?;
+    let current_path = uri.to_file_path().ok();
+    let mut matches = Vec::new();
+
+    extend_workspace_import_definition_matches(
+        package,
+        current_path.as_deref(),
+        Some(source),
+        Some(analysis),
+        import_prefix,
+        imported_name,
+        &mut matches,
+    );
+
+    for member_manifest_path in
+        workspace_member_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(member_package) = package_analysis_for_path(&member_manifest_path) else {
+            continue;
+        };
+        extend_workspace_import_definition_matches(
+            &member_package,
+            None,
+            None,
+            None,
+            import_prefix,
+            imported_name,
+            &mut matches,
+        );
+    }
+
+    matches.sort_by_key(|location| {
+        (
+            location.uri.to_string(),
+            location.range.start.line,
+            location.range.start.character,
+        )
+    });
+    matches.dedup();
+    (matches.len() == 1).then(|| GotoDefinitionResponse::Scalar(matches[0].clone()))
+}
+
+fn workspace_source_references_for_import(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    if !include_declaration {
+        return None;
+    }
+
+    let GotoDefinitionResponse::Scalar(source_definition) =
+        workspace_source_definition_for_import(uri, source, analysis, package, position)?
+    else {
+        return None;
+    };
+
+    let mut locations =
+        references_for_package_analysis(uri, source, analysis, package, position, true)?;
+    if let Some(existing_index) = locations
+        .iter()
+        .position(|location| *location == source_definition)
+    {
+        locations.swap(0, existing_index);
+    } else if let Some(first_location) = locations.first_mut() {
+        *first_location = source_definition;
+    } else {
+        locations.push(source_definition);
+    }
+
+    Some(locations)
+}
+
+fn document_highlights_from_locations(
+    uri: &Url,
+    locations: Vec<Location>,
+) -> Option<Vec<DocumentHighlight>> {
+    let highlights = locations
+        .into_iter()
+        .filter(|location| location.uri == *uri)
+        .map(|location| DocumentHighlight {
+            range: location.range,
+            kind: None,
+        })
+        .collect::<Vec<_>>();
+    (!highlights.is_empty()).then_some(highlights)
+}
+
+fn document_highlights_for_analysis_at(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Vec<DocumentHighlight>> {
+    let locations = references_for_analysis(uri, source, analysis, position, true)?;
+    document_highlights_from_locations(uri, locations)
+}
+
+fn document_highlights_for_package_analysis_at(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Vec<DocumentHighlight>> {
+    let locations =
+        references_for_package_analysis(uri, source, analysis, package, position, true)?;
+    document_highlights_from_locations(uri, locations)
+}
+
+fn fallback_document_highlights_for_package_at(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Vec<DocumentHighlight>> {
+    if let Some(locations) = references_for_dependency_imports(uri, source, package, position, true)
+    {
+        return document_highlights_from_locations(uri, locations);
+    }
+    if let Some(locations) = references_for_dependency_values(uri, source, package, position, true)
+    {
+        return document_highlights_from_locations(uri, locations);
+    }
+    if let Some(locations) = references_for_dependency_methods(uri, source, package, position, true)
+    {
+        return document_highlights_from_locations(uri, locations);
+    }
+    if let Some(locations) =
+        references_for_dependency_variants(uri, source, package, position, true)
+    {
+        return document_highlights_from_locations(uri, locations);
+    }
+    let locations = references_for_dependency_struct_fields(uri, source, package, position, true)?;
+    document_highlights_from_locations(uri, locations)
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        *self.workspace_roots.write().await = configure_workspace_roots(&params);
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: "qlsp".to_owned(),
@@ -629,6 +972,7 @@ impl LanguageServer for Backend {
                 declaration_provider: Some(DeclarationCapability::Simple(true)),
                 type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
+                document_highlight_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions::default()),
@@ -757,6 +1101,11 @@ impl LanguageServer for Backend {
                     &source, &package, position,
                 ));
             };
+            if let Some(definition) =
+                workspace_source_definition_for_import(&uri, &source, &analysis, &package, position)
+            {
+                return Ok(Some(definition));
+            }
             return Ok(definition_for_package_analysis(
                 &uri, &source, &analysis, &package, position,
             ));
@@ -806,6 +1155,11 @@ impl LanguageServer for Backend {
                     &source, &package, position,
                 ));
             };
+            if let Some(GotoDefinitionResponse::Scalar(location)) =
+                workspace_source_definition_for_import(&uri, &source, &analysis, &package, position)
+            {
+                return Ok(Some(GotoDeclarationResponse::Scalar(location)));
+            }
             return Ok(declaration_for_package_analysis(
                 &uri, &source, &analysis, &package, position,
             ));
@@ -920,6 +1274,16 @@ impl LanguageServer for Backend {
                     params.context.include_declaration,
                 ));
             };
+            if let Some(references) = workspace_source_references_for_import(
+                &uri,
+                &source,
+                &analysis,
+                &package,
+                position,
+                params.context.include_declaration,
+            ) {
+                return Ok(Some(references));
+            }
             return Ok(references_for_package_analysis(
                 &uri,
                 &source,
@@ -939,6 +1303,35 @@ impl LanguageServer for Backend {
             &analysis,
             position,
             params.context.include_declaration,
+        ))
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+
+        if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let Ok(analysis) = analyze_source(&source) else {
+                return Ok(fallback_document_highlights_for_package_at(
+                    &uri, &source, &package, position,
+                ));
+            };
+            return Ok(document_highlights_for_package_analysis_at(
+                &uri, &source, &analysis, &package, position,
+            ));
+        }
+
+        let Ok(analysis) = analyze_source(&source) else {
+            return Ok(None);
+        };
+        Ok(document_highlights_for_analysis_at(
+            &uri, &source, &analysis, position,
         ))
     }
 
@@ -1004,8 +1397,11 @@ impl LanguageServer for Backend {
         &self,
         params: WorkspaceSymbolParams,
     ) -> Result<Option<Vec<SymbolInformation>>> {
-        Ok(Some(workspace_symbols_for_documents(
-            self.documents.entries().await,
+        let documents = self.documents.entries().await;
+        let workspace_roots = self.workspace_roots.read().await.clone();
+        Ok(Some(workspace_symbols_for_documents_and_roots(
+            documents,
+            &workspace_roots,
             &params.query,
         )))
     }
@@ -1081,13 +1477,20 @@ impl LanguageServer for Backend {
 
 #[cfg(test)]
 mod tests {
-    use super::{package_analysis_for_path, workspace_symbols_for_documents};
-    use ql_analysis::SymbolKind as AnalysisSymbolKind;
+    use super::{
+        document_highlights_for_analysis_at, document_highlights_for_package_analysis_at,
+        package_analysis_for_path, workspace_source_definition_for_import,
+        workspace_source_references_for_import, workspace_symbols_for_documents,
+        workspace_symbols_for_documents_and_roots,
+    };
+    use ql_analysis::{SymbolKind as AnalysisSymbolKind, analyze_source};
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
-    use tower_lsp::lsp_types::{Location, SymbolInformation, SymbolKind, Url};
+    use tower_lsp::lsp_types::{
+        GotoDefinitionResponse, Location, Position, SymbolInformation, SymbolKind, Url,
+    };
 
     struct TempDir {
         path: PathBuf,
@@ -1130,6 +1533,13 @@ mod tests {
             .nth(occurrence.saturating_sub(1))
             .map(|(start, _)| start)
             .expect("needle occurrence should exist")
+    }
+
+    fn offset_to_position(source: &str, offset: usize) -> Position {
+        let prefix = &source[..offset];
+        let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u32;
+        let line_start = prefix.rfind('\n').map(|index| index + 1).unwrap_or(0);
+        Position::new(line, prefix[line_start..].chars().count() as u32)
     }
 
     fn assert_single_dependency_method_symbol(
@@ -1363,8 +1773,8 @@ fn broken() -> Int {
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_keeps_member_dependency_methods_for_open_packages_when_member_has_source_diagnostics(
-    ) {
+    fn workspace_symbol_search_keeps_member_dependency_methods_for_open_packages_when_member_has_source_diagnostics()
+     {
         let temp = TempDir::new("ql-lsp-workspace-symbol-open-broken-member-method");
 
         temp.write(
@@ -2146,8 +2556,8 @@ fn main(config: Cfg) -> Int {
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_includes_dependency_interface_trait_and_extend_methods_for_open_packages(
-    ) {
+    fn workspace_symbol_search_includes_dependency_interface_trait_and_extend_methods_for_open_packages()
+     {
         let temp = TempDir::new("ql-lsp-workspace-symbol-dependency-trait-extend-methods");
 
         temp.write(
@@ -2200,8 +2610,10 @@ fn main() -> Int {
         let open_source = fs::read_to_string(&open_path).expect("open file should read");
         let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
 
-        let trait_symbols = workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
-        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+        let trait_symbols =
+            workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
+        let extend_symbols =
+            workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
 
         assert_eq!(
             trait_symbols,
@@ -2444,7 +2856,7 @@ impl Config {
     #[allow(deprecated)]
     #[test]
     fn workspace_symbol_search_keeps_available_dependency_symbols_when_one_package_interface_is_missing()
-    {
+     {
         let temp = TempDir::new("ql-lsp-workspace-symbol-partial-dependency");
 
         temp.write(
@@ -2521,10 +2933,9 @@ fn main() -> Int {
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_includes_dependency_interface_trait_and_extend_methods_for_workspace_members(
-    ) {
-        let temp =
-            TempDir::new("ql-lsp-workspace-symbol-member-dependency-trait-extend-methods");
+    fn workspace_symbol_search_includes_dependency_interface_trait_and_extend_methods_for_workspace_members()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-member-dependency-trait-extend-methods");
 
         temp.write(
             "workspace/qlang.toml",
@@ -2598,8 +3009,10 @@ extend Buffer {
         let open_source = fs::read_to_string(&open_path).expect("open file should read");
         let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
 
-        let trait_symbols = workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
-        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+        let trait_symbols =
+            workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
+        let extend_symbols =
+            workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
 
         assert_eq!(
             trait_symbols,
@@ -2647,8 +3060,8 @@ extend Buffer {
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_keeps_available_dependency_methods_when_one_package_interface_is_missing(
-    ) {
+    fn workspace_symbol_search_keeps_available_dependency_methods_when_one_package_interface_is_missing()
+     {
         let temp = TempDir::new("ql-lsp-workspace-symbol-partial-dependency-method");
 
         temp.write(
@@ -2731,8 +3144,8 @@ fn main() -> Int {
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_keeps_available_dependency_methods_when_reference_manifest_is_invalid(
-    ) {
+    fn workspace_symbol_search_keeps_available_dependency_methods_when_reference_manifest_is_invalid()
+     {
         let temp = TempDir::new("ql-lsp-workspace-symbol-invalid-reference-manifest-method");
 
         temp.write(
@@ -3329,8 +3742,7 @@ name = "bad"
     #[test]
     fn workspace_symbol_search_keeps_available_member_dependency_methods_when_member_reference_manifest_is_invalid()
      {
-        let temp =
-            TempDir::new("ql-lsp-workspace-symbol-invalid-member-reference-manifest-method");
+        let temp = TempDir::new("ql-lsp-workspace-symbol-invalid-member-reference-manifest-method");
 
         temp.write(
             "workspace/qlang.toml",
@@ -3434,8 +3846,8 @@ name = "bad"
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_keeps_member_dependency_trait_and_extend_methods_for_open_packages_when_member_has_source_diagnostics(
-    ) {
+    fn workspace_symbol_search_keeps_member_dependency_trait_and_extend_methods_for_open_packages_when_member_has_source_diagnostics()
+     {
         let temp =
             TempDir::new("ql-lsp-workspace-symbol-open-broken-member-trait-and-extend-methods");
 
@@ -3520,11 +3932,10 @@ extend Buffer {
         let open_source = fs::read_to_string(&open_path).expect("open file should read");
         let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
 
-        let trait_symbols = workspace_symbols_for_documents(
-            vec![(open_uri.clone(), open_source.clone())],
-            "poll",
-        );
-        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+        let trait_symbols =
+            workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
+        let extend_symbols =
+            workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
 
         assert_single_dependency_method_symbol(
             trait_symbols,
@@ -3606,11 +4017,10 @@ fn main() -> Int {
         let open_source = fs::read_to_string(&open_path).expect("open file should read");
         let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
 
-        let trait_symbols = workspace_symbols_for_documents(
-            vec![(open_uri.clone(), open_source.clone())],
-            "poll",
-        );
-        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+        let trait_symbols =
+            workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
+        let extend_symbols =
+            workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
 
         assert_single_dependency_method_symbol(
             trait_symbols,
@@ -3634,11 +4044,10 @@ fn main() -> Int {
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_keeps_available_dependency_trait_and_extend_methods_when_one_package_interface_is_missing(
-    ) {
-        let temp = TempDir::new(
-            "ql-lsp-workspace-symbol-partial-dependency-trait-and-extend-methods",
-        );
+    fn workspace_symbol_search_keeps_available_dependency_trait_and_extend_methods_when_one_package_interface_is_missing()
+     {
+        let temp =
+            TempDir::new("ql-lsp-workspace-symbol-partial-dependency-trait-and-extend-methods");
 
         temp.write(
             "workspace/good/qlang.toml",
@@ -3697,11 +4106,10 @@ fn main() -> Int {
         let open_source = fs::read_to_string(&open_path).expect("open file should read");
         let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
 
-        let trait_symbols = workspace_symbols_for_documents(
-            vec![(open_uri.clone(), open_source.clone())],
-            "poll",
-        );
-        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+        let trait_symbols =
+            workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
+        let extend_symbols =
+            workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
 
         assert_single_dependency_method_symbol(
             trait_symbols,
@@ -3725,8 +4133,8 @@ fn main() -> Int {
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_keeps_available_dependency_trait_and_extend_methods_when_reference_manifest_is_invalid(
-    ) {
+    fn workspace_symbol_search_keeps_available_dependency_trait_and_extend_methods_when_reference_manifest_is_invalid()
+     {
         let temp = TempDir::new(
             "ql-lsp-workspace-symbol-invalid-reference-manifest-trait-and-extend-methods",
         );
@@ -3788,11 +4196,10 @@ fn main() -> Int {
         let open_source = fs::read_to_string(&open_path).expect("open file should read");
         let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
 
-        let trait_symbols = workspace_symbols_for_documents(
-            vec![(open_uri.clone(), open_source.clone())],
-            "poll",
-        );
-        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+        let trait_symbols =
+            workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
+        let extend_symbols =
+            workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
 
         assert_single_dependency_method_symbol(
             trait_symbols,
@@ -3816,8 +4223,8 @@ fn main() -> Int {
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_keeps_available_member_dependency_trait_and_extend_methods_when_one_member_interface_is_missing(
-    ) {
+    fn workspace_symbol_search_keeps_available_member_dependency_trait_and_extend_methods_when_one_member_interface_is_missing()
+     {
         let temp = TempDir::new(
             "ql-lsp-workspace-symbol-partial-member-dependency-trait-and-extend-methods",
         );
@@ -3901,11 +4308,10 @@ name = "bad"
         let open_source = fs::read_to_string(&open_path).expect("open file should read");
         let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
 
-        let trait_symbols = workspace_symbols_for_documents(
-            vec![(open_uri.clone(), open_source.clone())],
-            "poll",
-        );
-        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+        let trait_symbols =
+            workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
+        let extend_symbols =
+            workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
 
         assert_single_dependency_method_symbol(
             trait_symbols,
@@ -3929,8 +4335,8 @@ name = "bad"
 
     #[allow(deprecated)]
     #[test]
-    fn workspace_symbol_search_keeps_available_member_dependency_trait_and_extend_methods_when_member_reference_manifest_is_invalid(
-    ) {
+    fn workspace_symbol_search_keeps_available_member_dependency_trait_and_extend_methods_when_member_reference_manifest_is_invalid()
+     {
         let temp = TempDir::new(
             "ql-lsp-workspace-symbol-invalid-member-reference-manifest-trait-and-extend-methods",
         );
@@ -4014,11 +4420,10 @@ name = "bad"
         let open_source = fs::read_to_string(&open_path).expect("open file should read");
         let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
 
-        let trait_symbols = workspace_symbols_for_documents(
-            vec![(open_uri.clone(), open_source.clone())],
-            "poll",
-        );
-        let extend_symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+        let trait_symbols =
+            workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
+        let extend_symbols =
+            workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
 
         assert_single_dependency_method_symbol(
             trait_symbols,
@@ -4038,5 +4443,402 @@ name = "bad"
             29,
             "good",
         );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_uses_workspace_roots_without_open_documents() {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-roots");
+        let workspace_root = temp.path().join("workspace");
+        let helper_path = temp.write(
+            "workspace/packages/tool/src/helper.ql",
+            r#"
+package demo.tool
+
+pub fn helper() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/packages/tool/qlang.toml",
+            r#"
+[package]
+name = "tool"
+"#,
+        );
+
+        let symbols =
+            workspace_symbols_for_documents_and_roots(Vec::new(), &[workspace_root], "helper");
+
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "helper");
+        assert_eq!(
+            symbols[0]
+                .location
+                .uri
+                .to_file_path()
+                .expect("workspace symbol path should convert")
+                .canonicalize()
+                .expect("workspace symbol path should canonicalize"),
+            helper_path
+                .canonicalize()
+                .expect("helper path should canonicalize"),
+        );
+    }
+
+    #[test]
+    fn workspace_import_definition_prefers_workspace_member_source_over_interface_artifact() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-definition");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let definition = workspace_source_definition_for_import(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        )
+        .expect("workspace import definition should exist");
+
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("workspace import definition should resolve to one location")
+        };
+        assert_eq!(
+            location
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+    }
+
+    #[test]
+    fn workspace_import_references_prefer_workspace_member_source_over_interface_artifact() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-references");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+
+        let references = workspace_source_references_for_import(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            true,
+        )
+        .expect("workspace import references should exist");
+
+        assert_eq!(references.len(), 3);
+        assert_eq!(
+            references[0]
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 1)),
+        );
+        assert_eq!(references[1].uri, uri);
+        assert_eq!(
+            references[1].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 1)),
+        );
+        assert_eq!(references[2].uri, uri);
+        assert_eq!(
+            references[2].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        );
+    }
+
+    #[test]
+    fn document_highlight_keeps_same_file_definition_and_usages() {
+        let temp = TempDir::new("ql-lsp-document-highlight-same-file");
+        let source_path = temp.write(
+            "pkg/src/main.ql",
+            r#"
+pub fn helper() -> Int {
+    return 1
+}
+
+pub fn main() -> Int {
+    let first = helper()
+    return helper() + first
+}
+"#,
+        );
+        let source = fs::read_to_string(&source_path).expect("source should read");
+        let analysis = analyze_source(&source).expect("source should analyze");
+        let uri = Url::from_file_path(&source_path).expect("source path should convert to URI");
+
+        let highlights = document_highlights_for_analysis_at(
+            &uri,
+            &source,
+            &analysis,
+            offset_to_position(&source, nth_offset(&source, "helper", 2)),
+        )
+        .expect("same-file document highlight should exist");
+
+        let actual = highlights
+            .into_iter()
+            .map(|highlight| highlight.range.start)
+            .collect::<Vec<_>>();
+        let expected = vec![
+            offset_to_position(&source, nth_offset(&source, "helper", 1)),
+            offset_to_position(&source, nth_offset(&source, "helper", 2)),
+            offset_to_position(&source, nth_offset(&source, "helper", 3)),
+        ];
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn document_highlight_keeps_package_import_occurrences_in_current_file() {
+        let temp = TempDir::new("ql-lsp-document-highlight-package-import");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let highlights = document_highlights_for_package_analysis_at(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        )
+        .expect("package-aware document highlight should exist");
+
+        let actual = highlights
+            .into_iter()
+            .map(|highlight| highlight.range.start)
+            .collect::<Vec<_>>();
+        let expected = vec![
+            offset_to_position(&source, nth_offset(&source, "run", 1)),
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        ];
+
+        assert_eq!(actual, expected);
     }
 }

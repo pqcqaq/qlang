@@ -1,10 +1,21 @@
 mod support;
 
+use ql_driver::{ToolchainOptions, discover_toolchain};
 use support::{
-    TempDir, expect_empty_stderr, expect_empty_stdout, expect_stderr_contains,
-    expect_stdout_contains_all, expect_success, ql_command, read_normalized_file,
-    run_command_capture, workspace_root,
+    TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
+    expect_file_exists, expect_silent_output, expect_stderr_contains, expect_stdout_contains_all,
+    expect_success, ql_command, read_normalized_file, run_command_capture, workspace_root,
 };
+
+fn toolchain_available(context: &str) -> bool {
+    let Ok(_toolchain) = discover_toolchain(&ToolchainOptions::default()) else {
+        eprintln!(
+            "skipping {context}: no clang-style compiler found via ql-driver toolchain discovery"
+        );
+        return false;
+    };
+    true
+}
 
 #[test]
 fn project_init_creates_package_scaffold_and_check_succeeds() {
@@ -36,6 +47,22 @@ fn project_init_creates_package_scaffold_and_check_succeeds() {
                     .to_string_lossy()
                     .replace('\\', "/")
             ),
+            &format!(
+                "created: {}",
+                project_root
+                    .join("src")
+                    .join("main.ql")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "created: {}",
+                project_root
+                    .join("tests")
+                    .join("smoke.ql")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
         ],
     )
     .unwrap();
@@ -47,6 +74,14 @@ fn project_init_creates_package_scaffold_and_check_succeeds() {
     assert_eq!(
         read_normalized_file(&project_root.join("src/lib.ql"), "package source"),
         "pub fn run() -> Int {\n    return 0\n}\n"
+    );
+    assert_eq!(
+        read_normalized_file(&project_root.join("src/main.ql"), "package main source"),
+        "fn main() -> Int {\n    return 0\n}\n"
+    );
+    assert_eq!(
+        read_normalized_file(&project_root.join("tests/smoke.ql"), "package smoke test"),
+        "fn main() -> Int {\n    return 0\n}\n"
     );
 
     let mut check = ql_command(&workspace_root);
@@ -62,6 +97,60 @@ fn project_init_creates_package_scaffold_and_check_succeeds() {
             "ok: {}",
             project_root.join("src").join("lib.ql").to_string_lossy()
         )],
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_init_creates_runnable_package_scaffold() {
+    if !toolchain_available("`ql project init` runnable package test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-init-package-run");
+    let project_root = temp.path().join("demo-package");
+    let output_path = executable_output_path(&project_root.join("target/ql/debug"), "main");
+
+    let mut init = ql_command(&workspace_root);
+    init.args(["project", "init", &project_root.to_string_lossy()]);
+    let output = run_command_capture(&mut init, "`ql project init` runnable package");
+    let (_stdout, stderr) = expect_success(
+        "project-init-package-run",
+        "package init for runnable scaffold",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-init-package-run",
+        "package init for runnable scaffold",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut run = ql_command(&workspace_root);
+    run.current_dir(temp.path());
+    run.args(["run"]).arg(&project_root);
+    let output = run_command_capture(&mut run, "`ql run` initialized package");
+    let (stdout, stderr) = expect_exit_code(
+        "project-init-package-run",
+        "run initialized package",
+        &output,
+        0,
+    )
+    .unwrap();
+    expect_silent_output(
+        "project-init-package-run",
+        "run initialized package",
+        &stdout,
+        &stderr,
+    )
+    .unwrap();
+    expect_file_exists(
+        "project-init-package-run",
+        &output_path,
+        "initialized package executable",
+        "run initialized package",
     )
     .unwrap();
 }
@@ -111,7 +200,27 @@ fn project_init_creates_workspace_scaffold_and_graph_succeeds() {
                     .join("packages")
                     .join("app")
                     .join("src")
+                    .join("main.ql")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "created: {}",
+                project_root
+                    .join("packages")
+                    .join("app")
+                    .join("src")
                     .join("lib.ql")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "created: {}",
+                project_root
+                    .join("packages")
+                    .join("app")
+                    .join("tests")
+                    .join("smoke.ql")
                     .to_string_lossy()
                     .replace('\\', "/")
             ),
@@ -129,6 +238,20 @@ fn project_init_creates_workspace_scaffold_and_graph_succeeds() {
             "workspace member manifest"
         ),
         "[package]\nname = \"app\"\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/app/src/main.ql"),
+            "workspace member main source"
+        ),
+        "fn main() -> Int {\n    return 0\n}\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/app/tests/smoke.ql"),
+            "workspace member smoke test"
+        ),
+        "fn main() -> Int {\n    return 0\n}\n"
     );
 
     let mut graph = ql_command(&workspace_root);

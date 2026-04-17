@@ -268,6 +268,7 @@ source
 - `ql-analysis` 聚合 parse / HIR / resolve / typeck / MIR / borrowck snapshot，并维护统一 query index
 - same-file symbol / hover / definition / references / rename / completion / semantic tokens 与 dependency-backed package queries 复用同一份 analysis identity
 - `ql-cli`、`ql-lsp` 和 `ql-project` 驱动的 package/workspace 路径都建立在这条共享分析边界之上，而不是各自复制一套语义逻辑
+- project-aware `ql build/run/test` 这轮也开始复用这条共享边界，把 direct dependency public `extern "c"` 符号投影到 root target 的分析/代码生成输入；但这不等于一般性的跨包 lowering 已经完成
 
 这样做的好处非常直接：
 
@@ -314,6 +315,7 @@ source
 - `ql-codegen-llvm` 现在区分 program mode 与 library mode：前者会把用户态 `main` lower 成内部符号并补宿主 wrapper，后者则直接导出 free function 集合
 - 当前还新增了一层 callable identity：顶层函数与 `extern` block 声明会统一走 `FunctionRef`，因此 extern C direct call 不再是 parser-only 语法，而是能进入 typeck / MIR / LLVM IR 的真实后端路径
 - 顶层 `extern "c"` 函数定义现在也已经进入真实后端路径，并会使用稳定 C 符号名而不是内部 mangling
+- 在 project-aware `build/run/test` 路径上，driver 现在也会把 direct dependency `.qi` 里的 public `extern "c"` 签名注入 root target，并在 executable/dylib link 时附上预构建的 dependency staticlibs；普通跨包 Qlang free function/member/const lowering 仍未开放
 - `ql-driver` 现在还会在 `dylib` 请求里先投影 exported C symbol 列表，再把这份符号集传给 toolchain；Windows 下会显式把它们转成 `/EXPORT:<symbol>` linker 参数
 - build-side header sidecar 只允许用于 `dylib` / `staticlib`，会提前拒绝与主 artifact 路径冲突的 `--header-output`，并在 sidecar 失败时回收刚生成的 library artifact，避免 pipeline 暴露半成功状态
 - backend / header unsupported diagnostics 现在也继续保留 deferred multi-segment source-backed type 文本，不会把 `Cmd.Scope.Config` 这类路径误折叠成 same-file `Command` 再报错

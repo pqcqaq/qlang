@@ -161,6 +161,14 @@ impl BuildError {
 }
 
 pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, BuildError> {
+    build_file_with_link_inputs(path, options, &[])
+}
+
+pub fn build_file_with_link_inputs(
+    path: &Path,
+    options: &BuildOptions,
+    additional_link_inputs: &[PathBuf],
+) -> Result<BuildArtifact, BuildError> {
     if !path.is_file() {
         return Err(BuildError::InvalidInput(format!(
             "`{}` is not a file",
@@ -168,17 +176,27 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
         )));
     }
 
+    let source = fs::read_to_string(path).map_err(|error| BuildError::Io {
+        path: path.to_path_buf(),
+        error,
+    })?;
+
+    build_source_with_link_inputs(path, &source, options, additional_link_inputs)
+}
+
+pub fn build_source_with_link_inputs(
+    path: &Path,
+    source: &str,
+    options: &BuildOptions,
+    additional_link_inputs: &[PathBuf],
+) -> Result<BuildArtifact, BuildError> {
     if options.c_header.is_some() && !build_emit_supports_c_header(options.emit) {
         return Err(BuildError::InvalidInput(format!(
             "build-side C header generation only supports `dylib` and `staticlib`, found `{}`",
             options.emit.as_str()
         )));
     }
-
-    let source = fs::read_to_string(path).map_err(|error| BuildError::Io {
-        path: path.to_path_buf(),
-        error,
-    })?;
+    let source = source.to_owned();
 
     let analysis = analyze_source(&source).map_err(|diagnostics| BuildError::Diagnostics {
         path: path.to_path_buf(),
@@ -313,10 +331,21 @@ pub fn build_file(path: &Path, options: &BuildOptions) -> Result<BuildArtifact, 
             build_object_file(&output_path, &ir, &options.toolchain)?;
         }
         BuildEmit::Executable => {
-            build_executable_file(&output_path, &ir, &options.toolchain)?;
+            build_executable_file(
+                &output_path,
+                &ir,
+                additional_link_inputs,
+                &options.toolchain,
+            )?;
         }
         BuildEmit::DynamicLibrary => {
-            build_dynamic_library_file(&output_path, &ir, &exported_symbols, &options.toolchain)?;
+            build_dynamic_library_file(
+                &output_path,
+                &ir,
+                &exported_symbols,
+                additional_link_inputs,
+                &options.toolchain,
+            )?;
         }
         BuildEmit::StaticLibrary => {
             build_static_library_file(&output_path, &ir, &options.toolchain)?;
@@ -570,6 +599,7 @@ fn build_object_file(
 fn build_executable_file(
     output_path: &Path,
     ir: &str,
+    additional_link_inputs: &[PathBuf],
     toolchain_options: &ToolchainOptions,
 ) -> Result<(), BuildError> {
     let intermediate_ir = intermediate_ir_path(output_path);
@@ -589,7 +619,11 @@ fn build_executable_file(
         return Err(toolchain_failure(error, vec![intermediate_ir]));
     }
 
-    if let Err(error) = toolchain.link_object_to_executable(&intermediate_object, output_path) {
+    if let Err(error) = toolchain.link_object_to_executable_with_inputs(
+        &intermediate_object,
+        output_path,
+        additional_link_inputs,
+    ) {
         let _ = fs::remove_file(output_path);
         return Err(toolchain_failure(
             error,
@@ -644,6 +678,7 @@ fn build_dynamic_library_file(
     output_path: &Path,
     ir: &str,
     exported_symbols: &[String],
+    additional_link_inputs: &[PathBuf],
     toolchain_options: &ToolchainOptions,
 ) -> Result<(), BuildError> {
     let intermediate_ir = intermediate_ir_path(output_path);
@@ -663,10 +698,11 @@ fn build_dynamic_library_file(
         return Err(toolchain_failure(error, vec![intermediate_ir]));
     }
 
-    if let Err(error) = toolchain.link_object_to_dynamic_library(
+    if let Err(error) = toolchain.link_object_to_dynamic_library_with_inputs(
         &intermediate_object,
         output_path,
         exported_symbols,
+        additional_link_inputs,
     ) {
         let _ = fs::remove_file(output_path);
         return Err(toolchain_failure(
@@ -1095,16 +1131,20 @@ fn main() -> Int {
 
         assert_eq!(artifact.path, output);
         assert_eq!(rendered, "mock-assembly");
-        let leftovers = fs::read_dir(output.parent().expect("assembly output should have a parent"))
-            .expect("read output directory")
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.contains(".codegen.ll"))
-            })
-            .collect::<Vec<_>>();
+        let leftovers = fs::read_dir(
+            output
+                .parent()
+                .expect("assembly output should have a parent"),
+        )
+        .expect("read output directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains(".codegen.ll"))
+        })
+        .collect::<Vec<_>>();
         assert!(
             leftovers.is_empty(),
             "successful assembly emission should clean up intermediate LLVM IR"
@@ -8601,7 +8641,7 @@ async fn main() -> Int {
 
     #[test]
     fn build_file_writes_llvm_ir_with_import_alias_control_flow_awaited_call_root_aggregate_match_catch_all()
-    {
+     {
         let dir = TestDir::new(
             "ql-driver-import-alias-control-flow-awaited-call-root-aggregate-match-catch-all",
         );
@@ -8687,7 +8727,9 @@ async fn main() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect("import-alias control-flow awaited call-root aggregate match catch-all should build");
+        .expect(
+            "import-alias control-flow awaited call-root aggregate match catch-all should build",
+        );
 
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
@@ -13383,7 +13425,7 @@ fn main() -> Int {
 
     #[test]
     fn build_file_writes_llvm_ir_with_import_alias_control_flow_nested_projected_aggregate_match_catch_all()
-    {
+     {
         let dir = TestDir::new(
             "ql-driver-import-alias-control-flow-nested-projected-aggregate-match-catch-all",
         );
@@ -13578,9 +13620,9 @@ fn main() -> Int {
 }
 "#,
         );
-        let output = dir
-            .path()
-            .join("artifacts/import_alias_control_flow_nested_projected_aggregate_match_catch_all.ll");
+        let output = dir.path().join(
+            "artifacts/import_alias_control_flow_nested_projected_aggregate_match_catch_all.ll",
+        );
         let artifact = build_file(
             &source,
             &BuildOptions {
@@ -13693,10 +13735,11 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_question_wrapped_projected_aggregate_match_catch_all(
-    ) {
-        let dir =
-            TestDir::new("ql-driver-import-alias-question-wrapped-projected-aggregate-match-catch-all");
+    fn build_file_writes_llvm_ir_with_import_alias_question_wrapped_projected_aggregate_match_catch_all()
+     {
+        let dir = TestDir::new(
+            "ql-driver-import-alias-question-wrapped-projected-aggregate-match-catch-all",
+        );
         let source = dir.write(
             "import_alias_question_wrapped_projected_aggregate_match_catch_all.ql",
             r#"
@@ -13766,9 +13809,9 @@ fn main() -> Int {
 }
 "#,
         );
-        let output = dir.path().join(
-            "artifacts/import_alias_question_wrapped_projected_aggregate_match_catch_all.ll",
-        );
+        let output = dir
+            .path()
+            .join("artifacts/import_alias_question_wrapped_projected_aggregate_match_catch_all.ll");
         let artifact = build_file(
             &source,
             &BuildOptions {
@@ -13779,7 +13822,9 @@ fn main() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect("import-alias question-wrapped projected aggregate match catch-all should emit LLVM IR");
+        .expect(
+            "import-alias question-wrapped projected aggregate match catch-all should emit LLVM IR",
+        );
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);
@@ -13793,10 +13838,11 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_control_flow_question_wrapped_projected_aggregate_match_catch_all(
-    ) {
-        let dir =
-            TestDir::new("ql-driver-control-flow-question-wrapped-projected-aggregate-match-catch-all");
+    fn build_file_writes_llvm_ir_with_control_flow_question_wrapped_projected_aggregate_match_catch_all()
+     {
+        let dir = TestDir::new(
+            "ql-driver-control-flow-question-wrapped-projected-aggregate-match-catch-all",
+        );
         let source = dir.write(
             "control_flow_question_wrapped_projected_aggregate_match_catch_all.ql",
             r#"
@@ -13878,7 +13924,9 @@ fn main() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect("control-flow question-wrapped projected aggregate match catch-all should emit LLVM IR");
+        .expect(
+            "control-flow question-wrapped projected aggregate match catch-all should emit LLVM IR",
+        );
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);
@@ -13892,8 +13940,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_control_flow_question_wrapped_projected_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_import_alias_control_flow_question_wrapped_projected_aggregate_match_catch_all()
+     {
         let dir = TestDir::new(
             "ql-driver-import-alias-control-flow-question-wrapped-projected-aggregate-match-catch-all",
         );
@@ -14015,8 +14063,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_question_wrapped_nested_projected_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_question_wrapped_nested_projected_aggregate_match_catch_all()
+    {
         let dir =
             TestDir::new("ql-driver-question-wrapped-nested-projected-aggregate-match-catch-all");
         let source = dir.write(
@@ -14148,8 +14196,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_question_wrapped_nested_projected_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_import_alias_question_wrapped_nested_projected_aggregate_match_catch_all()
+     {
         let dir = TestDir::new(
             "ql-driver-import-alias-question-wrapped-nested-projected-aggregate-match-catch-all",
         );
@@ -14317,8 +14365,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_control_flow_question_wrapped_nested_projected_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_control_flow_question_wrapped_nested_projected_aggregate_match_catch_all()
+     {
         let dir = TestDir::new(
             "ql-driver-control-flow-question-wrapped-nested-projected-aggregate-match-catch-all",
         );
@@ -14475,8 +14523,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_control_flow_question_wrapped_nested_projected_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_import_alias_control_flow_question_wrapped_nested_projected_aggregate_match_catch_all()
+     {
         let dir = TestDir::new(
             "ql-driver-import-alias-control-flow-question-wrapped-nested-projected-aggregate-match-catch-all",
         );
@@ -14970,8 +15018,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_control_flow_call_root_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_import_alias_control_flow_call_root_aggregate_match_catch_all()
+     {
         let dir =
             TestDir::new("ql-driver-import-alias-control-flow-call-root-aggregate-match-catch-all");
         let source = dir.write(
@@ -15064,7 +15112,9 @@ fn main() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect("import-alias control-flow call-root aggregate match catch-all should emit LLVM IR");
+        .expect(
+            "import-alias control-flow call-root aggregate match catch-all should emit LLVM IR",
+        );
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);
@@ -15163,8 +15213,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_question_wrapped_call_root_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_import_alias_question_wrapped_call_root_aggregate_match_catch_all()
+     {
         let dir = TestDir::new(
             "ql-driver-import-alias-question-wrapped-call-root-aggregate-match-catch-all",
         );
@@ -15256,10 +15306,11 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_control_flow_question_wrapped_call_root_aggregate_match_catch_all(
-    ) {
-        let dir =
-            TestDir::new("ql-driver-control-flow-question-wrapped-call-root-aggregate-match-catch-all");
+    fn build_file_writes_llvm_ir_with_control_flow_question_wrapped_call_root_aggregate_match_catch_all()
+     {
+        let dir = TestDir::new(
+            "ql-driver-control-flow-question-wrapped-call-root-aggregate-match-catch-all",
+        );
         let source = dir.write(
             "control_flow_question_wrapped_call_root_aggregate_match_catch_all.ql",
             r#"
@@ -15358,8 +15409,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_control_flow_question_wrapped_call_root_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_import_alias_control_flow_question_wrapped_call_root_aggregate_match_catch_all()
+     {
         let dir = TestDir::new(
             "ql-driver-import-alias-control-flow-question-wrapped-call-root-aggregate-match-catch-all",
         );
@@ -15470,8 +15521,10 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_question_wrapped_nested_call_root_aggregate_match_catch_all() {
-        let dir = TestDir::new("ql-driver-question-wrapped-nested-call-root-aggregate-match-catch-all");
+    fn build_file_writes_llvm_ir_with_question_wrapped_nested_call_root_aggregate_match_catch_all()
+    {
+        let dir =
+            TestDir::new("ql-driver-question-wrapped-nested-call-root-aggregate-match-catch-all");
         let source = dir.write(
             "question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
             r#"
@@ -15615,10 +15668,11 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_question_wrapped_nested_call_root_aggregate_match_catch_all(
-    ) {
-        let dir =
-            TestDir::new("ql-driver-import-alias-question-wrapped-nested-call-root-aggregate-match-catch-all");
+    fn build_file_writes_llvm_ir_with_import_alias_question_wrapped_nested_call_root_aggregate_match_catch_all()
+     {
+        let dir = TestDir::new(
+            "ql-driver-import-alias-question-wrapped-nested-call-root-aggregate-match-catch-all",
+        );
         let source = dir.write(
             "import_alias_question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
             r#"
@@ -15740,9 +15794,9 @@ fn main() -> Int {
 }
 "#,
         );
-        let output = dir
-            .path()
-            .join("artifacts/import_alias_question_wrapped_nested_call_root_aggregate_match_catch_all.ll");
+        let output = dir.path().join(
+            "artifacts/import_alias_question_wrapped_nested_call_root_aggregate_match_catch_all.ll",
+        );
         let artifact = build_file(
             &source,
             &BuildOptions {
@@ -15753,7 +15807,9 @@ fn main() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect("import-alias question-wrapped nested call-root aggregate match catch-all should build");
+        .expect(
+            "import-alias question-wrapped nested call-root aggregate match catch-all should build",
+        );
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);
@@ -15767,10 +15823,11 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all(
-    ) {
-        let dir =
-            TestDir::new("ql-driver-control-flow-question-wrapped-nested-call-root-aggregate-match-catch-all");
+    fn build_file_writes_llvm_ir_with_control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all()
+     {
+        let dir = TestDir::new(
+            "ql-driver-control-flow-question-wrapped-nested-call-root-aggregate-match-catch-all",
+        );
         let source = dir.write(
             "control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all.ql",
             r#"
@@ -15895,9 +15952,9 @@ fn main() -> Int {
 }
 "#,
         );
-        let output = dir
-            .path()
-            .join("artifacts/control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all.ll");
+        let output = dir.path().join(
+            "artifacts/control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all.ll",
+        );
         let artifact = build_file(
             &source,
             &BuildOptions {
@@ -15908,7 +15965,9 @@ fn main() -> Int {
                 toolchain: ToolchainOptions::default(),
             },
         )
-        .expect("control-flow question-wrapped nested call-root aggregate match catch-all should build");
+        .expect(
+            "control-flow question-wrapped nested call-root aggregate match catch-all should build",
+        );
         let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
 
         assert_eq!(artifact.path, output);
@@ -15922,8 +15981,8 @@ fn main() -> Int {
     }
 
     #[test]
-    fn build_file_writes_llvm_ir_with_import_alias_control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all(
-    ) {
+    fn build_file_writes_llvm_ir_with_import_alias_control_flow_question_wrapped_nested_call_root_aggregate_match_catch_all()
+     {
         let dir = TestDir::new(
             "ql-driver-import-alias-control-flow-question-wrapped-nested-call-root-aggregate-match-catch-all",
         );
