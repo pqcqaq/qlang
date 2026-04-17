@@ -3505,6 +3505,62 @@ impl Counter {
 }
 
 #[test]
+fn rename_queries_support_direct_imports_by_inserting_aliases() {
+    let source = r#"
+use std.collections.HashMap
+
+fn build(cache: HashMap[String, Int]) -> HashMap[String, Int] {
+    return cache
+}
+"#;
+
+    let analysis = analyzed(source);
+    let first_use_start = source
+        .find("HashMap[String, Int]")
+        .expect("first direct import use should exist");
+    let second_use_start = source
+        .rfind("HashMap[String, Int]")
+        .expect("second direct import use should exist");
+    let first_use_span = Span::new(first_use_start, first_use_start + "HashMap".len());
+    let second_use_span = Span::new(second_use_start, second_use_start + "HashMap".len());
+    let import_use = first_use_span.start;
+
+    assert_eq!(
+        analysis.prepare_rename_at(import_use),
+        Some(ql_analysis::RenameTarget {
+            kind: SymbolKind::Import,
+            name: "HashMap".to_owned(),
+            span: first_use_span,
+        })
+    );
+    assert_eq!(
+        analysis.rename_at(import_use, "CacheMap"),
+        Ok(Some(ql_analysis::RenameResult {
+            kind: SymbolKind::Import,
+            old_name: "HashMap".to_owned(),
+            new_name: "CacheMap".to_owned(),
+            edits: vec![
+                ql_analysis::RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "HashMap", 1),
+                        nth_offset(source, "HashMap", 1) + "HashMap".len(),
+                    ),
+                    replacement: "HashMap as CacheMap".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: first_use_span,
+                    replacement: "CacheMap".to_owned(),
+                },
+                ql_analysis::RenameEdit {
+                    span: second_use_span,
+                    replacement: "CacheMap".to_owned(),
+                },
+            ],
+        }))
+    );
+}
+
+#[test]
 fn rename_queries_follow_opaque_type_symbols() {
     let source = r#"
 opaque type UserId = Int

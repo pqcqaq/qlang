@@ -360,9 +360,9 @@ impl QueryIndex {
         let mut edits = self
             .occurrences_for_key(&entry.key)
             .into_iter()
-            .map(|entry| RenameEdit {
-                span: entry.span,
-                replacement: replacement.clone(),
+            .map(|occurrence| RenameEdit {
+                span: occurrence.span,
+                replacement: import_rename_replacement(&entry.key, occurrence.span, &replacement),
             })
             .collect::<Vec<_>>();
 
@@ -507,6 +507,19 @@ impl QueryIndex {
             .filter(|site| completion_span_contains(site.span, offset))
             .min_by_key(|site| (site.span.len(), site.span.start, site.span.end))
     }
+}
+
+fn import_rename_replacement(key: &SymbolKey, span: Span, replacement: &str) -> String {
+    let SymbolKey::Import(binding) = key else {
+        return replacement.to_owned();
+    };
+    let Some(imported_name) = binding.path.segments.last() else {
+        return replacement.to_owned();
+    };
+    if binding.definition_span == span && binding.local_name == *imported_name {
+        return format!("{imported_name} as {replacement}");
+    }
+    replacement.to_owned()
 }
 
 #[derive(Clone, Debug)]
