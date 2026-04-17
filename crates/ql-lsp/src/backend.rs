@@ -1710,6 +1710,100 @@ fn dependency_occurrence_span_at(
         })
 }
 
+fn same_dependency_definition_target(
+    lhs: &DependencyDefinitionTarget,
+    rhs: &DependencyDefinitionTarget,
+) -> bool {
+    lhs.package_name == rhs.package_name
+        && lhs.source_path == rhs.source_path
+        && lhs.kind == rhs.kind
+        && lhs.name == rhs.name
+        && lhs.span == rhs.span
+}
+
+fn extend_workspace_dependency_reference_locations(
+    package: &ql_analysis::PackageAnalysis,
+    current_path: Option<&Path>,
+    target: &DependencyDefinitionTarget,
+    locations: &mut Vec<Location>,
+) {
+    for module in package.modules() {
+        if current_path
+            .is_some_and(|path| canonicalize_or_clone(path) == canonicalize_or_clone(module.path()))
+        {
+            continue;
+        }
+        let Ok(source) = fs::read_to_string(module.path()) else {
+            continue;
+        };
+        let source = source.replace("\r\n", "\n");
+        let Ok(uri) = Url::from_file_path(module.path()) else {
+            continue;
+        };
+        let mut module_locations = lex(&source)
+            .0
+            .iter()
+            .filter(|token| token.kind == TokenKind::Ident)
+            .filter_map(|token| {
+                let position = span_to_range(&source, token.span).start;
+                let occurrence_span = dependency_occurrence_span_at(&source, package, position)?;
+                let occurrence_target = dependency_definition_target_at(
+                    &source,
+                    Some(module.analysis()),
+                    package,
+                    position,
+                )?;
+                (occurrence_span == token.span
+                    && same_dependency_definition_target(&occurrence_target, target))
+                .then(|| Location::new(uri.clone(), span_to_range(&source, occurrence_span)))
+            })
+            .collect::<Vec<_>>();
+        module_locations.sort_by_key(|location| {
+            (
+                location.range.start.line,
+                location.range.start.character,
+                location.range.end.line,
+                location.range.end.character,
+            )
+        });
+        module_locations.dedup_by(|left, right| same_location_anchor(left, right));
+        locations.extend(module_locations);
+    }
+}
+
+fn workspace_dependency_reference_locations(
+    package: &ql_analysis::PackageAnalysis,
+    current_path: Option<&Path>,
+    target: &DependencyDefinitionTarget,
+) -> Vec<Location> {
+    let mut locations = Vec::new();
+    extend_workspace_dependency_reference_locations(package, current_path, target, &mut locations);
+    for member_manifest_path in
+        workspace_member_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(member_package) = package_analysis_for_path(&member_manifest_path) else {
+            continue;
+        };
+        extend_workspace_dependency_reference_locations(
+            &member_package,
+            None,
+            target,
+            &mut locations,
+        );
+    }
+    locations.sort_by_key(|location| {
+        (
+            location.uri.to_string(),
+            location.range.start.line,
+            location.range.start.character,
+            location.range.end.line,
+            location.range.end.character,
+        )
+    });
+    locations.dedup_by(|left, right| same_location_anchor(left, right));
+    locations
+}
+
 fn workspace_source_location_for_dependency_target(
     uri: &Url,
     source: &str,
@@ -2246,22 +2340,32 @@ fn workspace_source_references_for_dependency(
     position: tower_lsp::lsp_types::Position,
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
-    if !include_declaration {
-        return None;
+    let target = dependency_definition_target_at(source, analysis, package, position)?;
+    let source_definition =
+        workspace_source_location_for_dependency_target(uri, source, analysis, package, &target)?;
+    let mut locations = dependency_references_for_position(
+        uri,
+        source,
+        analysis,
+        package,
+        position,
+        include_declaration,
+    )?;
+    if include_declaration {
+        normalize_reference_locations_with_definition(&mut locations, &source_definition);
     }
-
-    let GotoDefinitionResponse::Scalar(source_definition) =
-        workspace_source_definition_for_dependency(uri, source, analysis, package, position)?
-    else {
-        return None;
-    };
-
-    let mut locations =
-        dependency_references_for_position(uri, source, analysis, package, position, true)?;
-    normalize_reference_locations_with_definition(&mut locations, &source_definition);
-    if let Some(source_locations) = same_file_references_for_source_location(&source_definition) {
+    if let Some(mut source_locations) = same_file_references_for_source_location(&source_definition)
+    {
+        if !include_declaration {
+            source_locations.retain(|location| !same_location_anchor(location, &source_definition));
+        }
         merge_unique_reference_locations(&mut locations, source_locations);
     }
+    let current_path = uri.to_file_path().ok();
+    merge_unique_reference_locations(
+        &mut locations,
+        workspace_dependency_reference_locations(package, current_path.as_deref(), &target),
+    );
 
     Some(locations)
 }
@@ -8017,6 +8121,22 @@ pub fn main(config: Cfg) -> Int {
 }
 "#,
         );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.Command as OtherCmd
+use demo.core.Config as OtherCfg
+use demo.core.exported as call
+
+pub fn task(config: OtherCfg) -> Int {
+    let command = OtherCmd.Retry(2)
+    let result = config.ping()
+    return call(result) + config.value + command.unwrap_or(0)
+}
+"#,
+        );
         let core_source_path = temp.write(
             "workspace/packages/core/src/lib.ql",
             r#"
@@ -8119,6 +8239,8 @@ pub fn exported(value: Int) -> Int
         let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
         let core_source =
             fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
 
         for (
             needle,
@@ -8128,42 +8250,52 @@ pub fn exported(value: Int) -> Int
             expected_count,
             local_occurrences,
             source_occurrence,
+            task_needle,
+            task_occurrences,
         ) in [
             (
                 "Retry",
                 1usize,
                 "Retry",
                 1usize,
-                3usize,
+                4usize,
                 vec![1usize],
                 Some(2usize),
+                "Retry",
+                vec![1usize],
             ),
             (
                 "ping",
                 1usize,
                 "ping",
                 1usize,
-                3usize,
+                4usize,
                 vec![1usize],
                 Some(3usize),
+                "ping",
+                vec![1usize],
             ),
             (
                 "value",
                 2usize,
                 "value",
                 3usize,
-                4usize,
+                5usize,
                 vec![1usize, 2usize],
                 Some(4usize),
+                "value",
+                vec![1usize],
             ),
             (
                 "run",
                 2usize,
                 "exported",
                 1usize,
-                4usize,
+                6usize,
                 vec![1usize, 2usize],
                 Some(2usize),
+                "call",
+                vec![1usize, 2usize],
             ),
         ] {
             let references = workspace_source_references_for_dependency(
@@ -8207,29 +8339,177 @@ pub fn exported(value: Int) -> Int
             }
 
             if let Some(source_occurrence) = source_occurrence {
-                let source_reference = references
-                    .last()
-                    .expect("source-preferred references should include source occurrence");
-                assert_eq!(
-                    source_reference
-                        .uri
-                        .to_file_path()
-                        .expect("source reference URI should convert to a file path")
-                        .canonicalize()
-                        .expect("source reference path should canonicalize"),
-                    core_source_path
-                        .canonicalize()
-                        .expect("core source path should canonicalize"),
+                assert!(
+                    references.iter().any(|reference| {
+                        reference
+                            .uri
+                            .to_file_path()
+                            .ok()
+                            .and_then(|path| path.canonicalize().ok())
+                            == core_source_path.canonicalize().ok()
+                            && reference.range.start
+                                == offset_to_position(
+                                    &core_source,
+                                    nth_offset(&core_source, expected_symbol, source_occurrence),
+                                )
+                    }),
+                    "{needle} should include workspace source occurrence",
                 );
-                assert_eq!(
-                    source_reference.range.start,
-                    offset_to_position(
-                        &core_source,
-                        nth_offset(&core_source, expected_symbol, source_occurrence)
-                    ),
+            }
+
+            for task_occurrence in task_occurrences {
+                assert!(
+                    references.iter().any(|reference| {
+                        reference.uri == task_uri
+                            && reference.range.start
+                                == offset_to_position(
+                                    &task_source,
+                                    nth_offset(&task_source, task_needle, task_occurrence),
+                                )
+                    }),
+                    "{needle} should include task file occurrence",
                 );
             }
         }
+    }
+
+    #[test]
+    fn workspace_dependency_references_without_declaration_include_other_workspace_uses() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-source-references-no-decl");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    return config.ping()
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as OtherCfg
+
+pub fn task(config: OtherCfg) -> Int {
+    return config.ping()
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+
+    pub fn use_ping(self) -> Int {
+        return self.ping()
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+        let references = workspace_source_references_for_dependency(
+            &uri,
+            &source,
+            Some(&analysis),
+            &package,
+            offset_to_position(&source, nth_offset(&source, "ping", 1)),
+            false,
+        )
+        .expect("workspace dependency references without declaration should exist");
+
+        assert_eq!(references.len(), 3);
+        assert_eq!(references[0].uri, uri);
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&source, nth_offset(&source, "ping", 1)),
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.canonicalize().ok())
+                    == core_source_path.canonicalize().ok()
+                    && reference.range.start
+                        == offset_to_position(&core_source, nth_offset(&core_source, "ping", 3))
+            }),
+            "references should include workspace source method use",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == task_uri
+                    && reference.range.start
+                        == offset_to_position(&task_source, nth_offset(&task_source, "ping", 1))
+            }),
+            "references should include other workspace file method use",
+        );
     }
 
     #[test]
