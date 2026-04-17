@@ -69,13 +69,17 @@ fn dependency_qi() -> &'static str {
 // source: src/lib.ql
 package demo.dep
 
-pub struct Leaf {{
+pub struct Leaf {
     value: Int,
-}}
+}
 
-pub struct Child {{
-    leaf: Leaf,
-}}
+pub struct Child {
+    id: Int,
+}
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
 
 pub fn maybe_children() -> Option[[Child; 2]]
 "#
