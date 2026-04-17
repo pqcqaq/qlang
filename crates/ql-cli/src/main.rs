@@ -267,6 +267,57 @@ fn run() -> Result<(), u8> {
                         .unwrap_or_else(|| PathBuf::from("."));
                     project_emit_interface_path(&path, output.as_deref(), changed_only, check_only)
                 }
+                "init" => {
+                    let remaining = args.collect::<Vec<_>>();
+                    let mut path = None;
+                    let mut workspace = false;
+                    let mut package_name = None;
+                    let mut index = 0;
+
+                    while index < remaining.len() {
+                        match remaining[index].as_str() {
+                            "--workspace" => {
+                                workspace = true;
+                            }
+                            "--name" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project init --name` expects a package name"
+                                    );
+                                    return Err(1);
+                                };
+                                if package_name.is_some() {
+                                    eprintln!(
+                                        "error: `ql project init` received `--name` more than once"
+                                    );
+                                    return Err(1);
+                                }
+                                package_name = Some(value.clone());
+                            }
+                            other if other.starts_with('-') => {
+                                eprintln!("error: unknown `ql project init` option `{other}`");
+                                return Err(1);
+                            }
+                            other => {
+                                if path.is_some() {
+                                    eprintln!(
+                                        "error: unknown `ql project init` argument `{other}`"
+                                    );
+                                    return Err(1);
+                                }
+                                path = Some(PathBuf::from(other));
+                            }
+                        }
+
+                        index += 1;
+                    }
+
+                    let path = path
+                        .or_else(|| env::current_dir().ok())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    project_init_path(&path, workspace, package_name.as_deref())
+                }
                 other => {
                     eprintln!("error: unknown `ql project` subcommand `{other}`");
                     print_usage();
@@ -1836,6 +1887,150 @@ fn emit_c_header_path(path: &Path, options: &CHeaderOptions) -> Result<(), u8> {
             Err(1)
         }
     }
+}
+
+fn project_init_path(path: &Path, workspace: bool, package_name: Option<&str>) -> Result<(), u8> {
+    let target_root = path.to_path_buf();
+    let package_name = match project_init_package_name(&target_root, workspace, package_name) {
+        Ok(package_name) => package_name,
+        Err(message) => {
+            eprintln!("error: `ql project init` {message}");
+            return Err(1);
+        }
+    };
+
+    let created_paths = if workspace {
+        init_workspace_project(&target_root, &package_name)
+    } else {
+        init_package_project(&target_root, &package_name)
+    }
+    .map_err(|message| {
+        eprintln!("error: `ql project init` {message}");
+        1
+    })?;
+
+    for path in created_paths {
+        println!("created: {}", normalize_path(&path));
+    }
+
+    Ok(())
+}
+
+fn project_init_package_name(
+    target_root: &Path,
+    workspace: bool,
+    package_name: Option<&str>,
+) -> Result<String, String> {
+    let package_name = match package_name {
+        Some(package_name) => package_name.to_owned(),
+        None if workspace => "app".to_owned(),
+        None => target_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                format!(
+                    "could not derive a package name from `{}`; rerun with `--name <package>`",
+                    normalize_path(target_root)
+                )
+            })?,
+    };
+
+    validate_project_init_package_name(&package_name)?;
+    Ok(package_name)
+}
+
+fn validate_project_init_package_name(package_name: &str) -> Result<(), String> {
+    if package_name.trim().is_empty() {
+        return Err("requires a non-empty package name".to_owned());
+    }
+    if package_name == "." || package_name == ".." {
+        return Err(format!(
+            "does not accept reserved package name `{package_name}`"
+        ));
+    }
+    if package_name.contains(['/', '\\']) {
+        return Err(format!(
+            "does not accept package name `{package_name}` because it contains a path separator"
+        ));
+    }
+    Ok(())
+}
+
+fn init_package_project(target_root: &Path, package_name: &str) -> Result<Vec<PathBuf>, String> {
+    ensure_project_init_target_root(target_root)?;
+
+    let manifest_path = target_root.join("qlang.toml");
+    let source_path = target_root.join("src").join("lib.ql");
+    let manifest = render_package_manifest(package_name);
+
+    write_new_project_file(&manifest_path, &manifest)?;
+    write_new_project_file(&source_path, default_package_source())?;
+
+    Ok(vec![manifest_path, source_path])
+}
+
+fn init_workspace_project(target_root: &Path, package_name: &str) -> Result<Vec<PathBuf>, String> {
+    ensure_project_init_target_root(target_root)?;
+
+    let workspace_manifest_path = target_root.join("qlang.toml");
+    let member_dir = target_root.join("packages").join(package_name);
+    let member_manifest_path = member_dir.join("qlang.toml");
+    let member_source_path = member_dir.join("src").join("lib.ql");
+    let workspace_manifest = render_workspace_manifest(package_name);
+    let member_manifest = render_package_manifest(package_name);
+
+    write_new_project_file(&workspace_manifest_path, &workspace_manifest)?;
+    write_new_project_file(&member_manifest_path, &member_manifest)?;
+    write_new_project_file(&member_source_path, default_package_source())?;
+
+    Ok(vec![
+        workspace_manifest_path,
+        member_manifest_path,
+        member_source_path,
+    ])
+}
+
+fn ensure_project_init_target_root(target_root: &Path) -> Result<(), String> {
+    if target_root.exists() && !target_root.is_dir() {
+        return Err(format!(
+            "target path `{}` already exists and is not a directory",
+            normalize_path(target_root)
+        ));
+    }
+    Ok(())
+}
+
+fn write_new_project_file(path: &Path, contents: &str) -> Result<(), String> {
+    if path.exists() {
+        return Err(format!(
+            "would overwrite existing path `{}`",
+            normalize_path(path)
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create directory `{}`: {error}",
+                normalize_path(parent)
+            )
+        })?;
+    }
+    fs::write(path, contents)
+        .map_err(|error| format!("failed to write `{}`: {error}", normalize_path(path)))
+}
+
+fn render_package_manifest(package_name: &str) -> String {
+    format!("[package]\nname = \"{package_name}\"\n")
+}
+
+fn render_workspace_manifest(package_name: &str) -> String {
+    format!("[workspace]\nmembers = [\"packages/{package_name}\"]\n")
+}
+
+fn default_package_source() -> &'static str {
+    "pub fn run() -> Int {\n    return 0\n}\n"
 }
 
 fn project_graph_path(path: &Path) -> Result<(), u8> {
@@ -3558,6 +3753,7 @@ fn print_usage() {
         "  ql build <file> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--release] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>]"
     );
     eprintln!("  ql project graph [file-or-dir]");
+    eprintln!("  ql project init [dir] [--workspace] [--name <package>]");
     eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]");
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
