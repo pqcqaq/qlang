@@ -10,7 +10,7 @@
 - Phase 7 已有可用子集：`async fn`、`await`、`spawn`、`for await`、最小 `ql-runtime`、task-handle lowering、保守的 program/library async build surface。
 - Phase 8 已进入真实交付面：`qlang.toml` package/workspace loader、`ql project graph`、`.qi` emit/load、`ql build --emit-interface`、`ql check --sync-interfaces`、首批 dependency-backed cross-file tooling。
 - 当前主线是沿既有边界扩面，不是回头重写前六阶段。
-- 近期优先级顺序按开发计划执行：先恢复可信的绿色基线，再稳住 Phase 8，之后才继续扩大 Phase 7 公开支持面。
+- 近期优先级顺序按开发计划执行：先止住会推翻当前支持基线的全局回归；与此同时继续推进不扩大 async 公开面、且不依赖未收口 Phase 7 红族的 Phase 8 独立稳定化切片；新的 Phase 7 公开扩面仍后置到 async/codegen 红族重新受控之后。
 - 真相源以 `crates/*`、`crates/ql-cli/tests/*`、`crates/ql-lsp/tests/*`、`crates/ql-analysis/tests/*` 和 [当前支持基线](/roadmap/current-supported-surface) 为准。
 
 ## 阶段状态

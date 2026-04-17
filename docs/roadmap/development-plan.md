@@ -2,119 +2,211 @@
 
 关联文档：
 
-- [当前支持基线](/roadmap/current-supported-surface)：当前实现边界
+- [当前支持基线](/roadmap/current-supported-surface)：今天真实可依赖的实现边界
 - [P1-P8 阶段总览](/roadmap/phase-progress)：阶段状态
-- [`/plans/`](/plans/)：分阶段设计与切片记录
+- [`/plans/`](/plans/)：阶段设计稿与切片记录
+- [工具链设计](/architecture/toolchain)：build / codegen / toolchain 细节
 
-本页只回答三件事：当前判断、最近主线、交付原则。
+本页只回答四件事：当前判断、优先级顺序、当前 checkpoint、交付规则。
 
 ## 当前判断
 
-- Phase 1 到 Phase 6 已经形成稳定地基，不再是“随时可能推倒重来”的探索阶段。
-- 当前并行主线有两条：Phase 7 继续扩 async/runtime/task-handle/build/interop，Phase 8 继续扩 package/workspace、`.qi` 和 dependency-backed cross-file tooling。
-- 当前优先级是把已存在的分析与 lowering 边界继续推到用户可见能力，而不是回头重写基础设施。
-- 文档、测试和实现必须保持同一事实面；入口页保留短版，详细增量放到计划文档和归档。
+- Phase 1 到 Phase 6 已经形成稳定地基，不应再回到“边做边改架构”的状态。
+- Phase 8 的 package / workspace / `.qi` / dependency-backed tooling 已经进入真实交付面，而且目前比 Phase 7 更接近可持续维护的用户面。
+- Phase 7 的 async/runtime/build 仍有一批实质性 codegen 回归没有收口；在这批回归清掉之前，继续扩大公开支持面只会让文档、测试和实现再次失真。
+- 因此当前更合理的开发顺序不是“两个主线平均扩面”，也不是“所有事情严格串行”，而是：
+  1. 先止住会推翻当前支持基线的全局回归
+  2. 同时继续推进不扩大 async 公开面、且不依赖未收口 Phase 7 红族的 Phase 8 独立稳定化切片
+  3. 等 async/codegen 红族重新回到可控范围后，再按竖切片恢复新的 Phase 7 公开扩面
+- 计划页只保留方向、优先级和退出标准；逐轮变更明细放到测试、设计稿和 archive，不再写成长流水账。
 
-## 总体原则
+## 优先级顺序
 
-### 1. 尽早形成真实闭环
+| 优先级 | 主题 | 当前策略 |
+| --- | --- | --- |
+| P0 | 绿色基线恢复 | 先止住会让当前支持基线失真的全局回归 |
+| P1 | Phase 8 稳定化 | 并行推进不扩大 async 公开面、且不依赖未收口 Phase 7 红族的独立稳定化切片 |
+| P2 | Phase 7 选择性扩面 | 一次只开一条已被端到端证明的 async/runtime/build slice |
+| P3 | 新工作流与更远主题 | `ql new` / `ql init` / `ql test` / `ql doc`、publish workflow、cross-file edits 等后置 |
 
-- 一个功能至少要有 CLI 路径、diagnostics、回归测试和文档入口。
-- “能解析”不等于“可交付”；用户可见 build/tooling surface 才算闭环。
+## 计划模型
 
-### 2. 一层只维护一份真相源
+### 1. 以 checkpoint 为单位推进
 
-- AST、HIR、resolve、typeck、MIR、codegen、runtime、LSP 各自维护自己的事实。
-- CLI、LSP、FFI 和文档不重复实现语义，只消费共享结果。
+- 每个 checkpoint 只解决一种类型的问题；不同 checkpoint 可以并行推进，但单个 checkpoint 内不混合“修回归”和“开新面”。
+- 每个 checkpoint 都必须写清：目标、真相源、退出标准、明确不做什么。
+- 只有在退出标准满足后，对应能力才允许进入“当前支持基线”。
 
-### 3. 先把失败模型做对，再扩公开能力
+### 2. 主计划只保留能指导取舍的信息
 
-- 保守拒绝优于错误支持。
-- 只有已经被语义、borrowck、codegen、黑盒回归共同证明的 surface 才进入“当前支持”。
+- 计划页负责回答“下一阶段先做什么，为什么”。
+- 计划页不再枚举上百条具体错误文案、路径格式和单测变体。
+- 这类细节继续由测试、切片设计稿和提交历史承载。
 
-### 4. 只补必要测试
+## 当前 Checkpoints
 
-- 新能力至少补一条 blocker 回归和一条用户可见路径回归。
-- coverage-only 的相邻变体不再作为主线目标，除非它直接保护新功能或刚修掉的回归。
+### Checkpoint A：恢复可信的绿色基线
+
+**目标**
+
+把当前实现、测试和文档重新拉回同一事实面，先解决已经暴露出来的 Phase 7 async/codegen 回归和合同分叉。
+
+**为什么先做这个**
+
+- 当前仓库里最危险的不是“少了一个功能”，而是“文档说已支持，但对应回归并不稳定”。
+- Phase 7 继续扩面之前，必须先把已经宣称存在的 async/build 子集重新做实。
+
+**当前关注点**
+
+- 以失败家族而不是单个测试名为单位清理 `ql-codegen-llvm` 回归：
+  - cleanup / guard lowering
+  - async main task-handle forwarding / queued / forwarded families
+  - callable guard control-flow roots
+  - projected task-handle path lowering
+  - match lowering 中的 aggregate / allocation 形状断言
+- 收口 analysis / LSP / CLI 之间已经分叉的合同，避免同一能力在不同层有不同 truth surface。
+- 在这一步完成前，暂停新增 async 公开能力，只接受“修回归、收口合同、修文档”类型改动。
+- Checkpoint A 阻塞的是新的 Phase 7 公开扩面，不阻塞那些严格停留在已支持边界内、且不依赖当前 async/codegen 红族的 Phase 8 独立稳定化工作。
+
+**真相源**
+
+- `crates/ql-codegen-llvm/src/tests/*`
+- `crates/ql-cli/tests/codegen.rs`
+- `crates/ql-cli/tests/executable_examples.rs`
+- `crates/ql-analysis/tests/*`
+- `crates/ql-lsp/tests/*`
+
+**退出标准**
+
+- 当前文档已经写成“已进入支持面”的 Phase 7 子集，都能在对应 targeted regression 中稳定通过。
+- `ql-analysis`、`ql-lsp`、`ql-project`、`ql-cli` 的关键 package/project 测试维持绿色。
+- 文档中的 Phase 7 描述全部回收到“测试证明过的子集”，不再出现测试仍红但文档先放开的情况。
+
+**当前不做**
+
+- 新 async 语法
+- 更宽的 Rust 专用 ABI
+- 新的高层 CLI 工作流
+
+### Checkpoint B：把 Phase 8 做成无惊喜的稳定边界
+
+**目标**
+
+把 package / workspace / `.qi` / dependency-backed tooling 从“已经可用”推进到“可以放心依赖，且维护成本可控”。
+
+**为什么是 P1 而不是串行后置**
+
+- 这条线已经有比较完整的 CLI、LSP、测试和文档闭环。
+- 相比继续在 Phase 7 上加新面，先把 Phase 8 稳住，更容易形成真正可交付的用户面。
+- 这条线优先级低于 P0，但不是全局串行阻塞；只要工作不扩大 async 公开面、也不依赖未收口的 Phase 7 红族，就允许继续推进。
+
+**当前关注点**
+
+- 继续收紧 `qlang.toml`、workspace member、references 和 `.qi` 生命周期，让 `ql project graph`、`ql project emit-interface`、`ql build --emit-interface`、`ql check --sync-interfaces` 共享同一套事实与失败模型。
+- 继续保持 package-aware tooling 的 resilience：一个坏 dependency `.qi` 或坏 manifest 不应把其余健康依赖的能力整包打空。
+- dependency-backed tooling 只在共享 analysis truth surface 已经稳定时再扩面；一次只新增一个 receiver slice，不把“测试变体扩张”误当成真实进展。
+- `workspace/symbol`、hover / definition / references / completion 的 package-aware 路径继续以“健康依赖保留、坏依赖隔离”为原则推进。
+
+**真相源**
+
+- `crates/ql-project/src/*`
+- `crates/ql-cli/tests/project_graph.rs`
+- `crates/ql-cli/tests/project_interface.rs`
+- `crates/ql-cli/tests/project_check.rs`
+- `crates/ql-analysis/tests/package_*`
+- `crates/ql-lsp/tests/package_*`
+
+**退出标准**
+
+- project / workspace / `.qi` 相关 CLI 回归保持绿色。
+- 当前支持页对 Phase 8 的描述只保留 contract 级能力，不再混入提交流水账。
+- package-aware LSP/analysis 在“健康依赖存在、坏依赖并存”的情况下仍能稳定保留健康部分结果。
+
+**当前不做**
+
+- 真实 dependency publish / registry / lockfile workflow
+- cross-file rename / workspace edits
+- 更广义的 workspace-wide IDE 语义
+
+### Checkpoint C：按竖切片恢复 Phase 7 扩面
+
+**目标**
+
+在 Checkpoint A 完成后，恢复 Phase 7 的能力推进，但改为“一次一条竖切片”，不再同时拉很多 async 形态。
+
+**建议顺序**
+
+1. 先补“文档已写、但回归仍不稳定”的 async executable / cleanup / guard 缺口。
+2. 再补 program-mode 与 library-mode 对同一 task-handle / projection 家族的 parity。
+3. 最后才补 Rust host 互操作上的增量，而且仍通过稳定 C ABI 进场，不直接把 Rust 专用 ABI 变成主线。
+
+**每条竖切片都必须同时经过**
+
+- analysis / typeck / MIR
+- borrowck / cleanup-aware facts
+- codegen / driver / runtime hooks
+- CLI 或 LSP 的用户可见入口
+- 文档同步
+
+**退出标准**
+
+- 每新增一条公开 slice，至少有一条 targeted regression 和一条用户可见回归保护它。
+- 如果能力会进入 build surface，还要有至少一条 CLI build 或 executable smoke 证明。
+- 当前支持页必须在同一轮修改里同步更新。
+
+**当前不做**
+
+- “完整 async 语义”承诺
+- 将 Rust 专用互操作抬升为主边界
+- 未经证明的大跨度 surface jump
+
+### Checkpoint D：后置主题
+
+以下主题明确后置，不进入当前主线争抢优先级：
+
+- `ql new` / `ql init` / `ql test` / `ql doc`
+- 真实 dependency build graph / publish workflow
+- cross-file rename / workspace edits
+- 更宽的 workspace-wide LSP 语义
+- 设计稿中尚未进入实现闭环的语言能力
+
+## 每个 Checkpoint 都必须遵守的交付规则
+
+### 1. 一层只维护一份真相源
+
+- AST、HIR、resolve、typeck、MIR、borrowck、codegen、runtime、LSP 各自维护自己的事实。
+- CLI、LSP、FFI 和文档只消费共享结果，不重复发明语义。
+
+### 2. 先修回归，再开新面
+
+- 任何已经把工作区拉红的回归，优先级都高于同层的新能力。
+- 文档只记录已经通过当前门槛的能力，不提前帮实现“预约支持”。
+
+### 3. 新能力必须形成真实闭环
+
+- 至少要有一个真实入口：CLI、LSP、FFI 或 executable smoke。
+- 至少要有 diagnostics / failure model。
+- 至少要有回归测试和文档入口。
+
+### 4. 测试保护“家族”，不保护“噪音”
+
+- 新增测试优先覆盖新的 failure family 或新的用户可见 slice。
+- 相邻的 coverage-only 变体不是主线目标，除非它直接保护刚修掉的回归。
 
 ### 5. C ABI 仍是当前稳定互操作边界
 
 - Rust host 继续走 `Rust <-> C ABI <-> Qlang`。
-- 更深的 Rust/C++ 互操作后置，不在当前主线里抢优先级。
+- 更深的 Rust / C++ 专用 ABI 设计后置。
 
-### 6. 文档跟着实现走
+### 6. 文档必须短而准
 
-- README、roadmap、plans、示例和测试结果必须同步。
-- 当前支持页写事实，计划页写方向，旧状态进 archive。
-
-## 已完成阶段（P0-P6）
-
-| 阶段 | 状态 | 已形成的稳定边界 |
-| --- | --- | --- |
-| Phase 0 | 已完成 | 语言定位、设计原则、仓库结构、阶段划分 |
-| Phase 1 | 已完成 | lexer / parser / formatter / CLI 前端闭环 |
-| Phase 2 | 已完成 | HIR / resolve / typeck / diagnostics / 最小 query / 最小 LSP |
-| Phase 3 | 已完成 | 结构化 MIR / ownership facts / cleanup-aware 分析 |
-| Phase 4 | 已完成 | `ql build`、LLVM IR、`obj` / `exe` / `staticlib` / `dylib` |
-| Phase 5 | 已完成 | C ABI、header projection、host 集成 |
-| Phase 6 | 已完成 | same-file query / rename / completion / semantic tokens / LSP parity |
-
-## 当前主线
-
-### Phase 7：并发、异步与 Rust 互操作
-
-当前重点：
-
-- 扩 async/runtime/task-handle/build 子集，但保持 borrowck、lowering、黑盒回归一致。
-- 继续补 program-mode 与 library-mode 的 build parity；当前 program-mode artifact 已覆盖 `llvm-ir`、`asm`、`obj`、`exe`。
-- 保持 runtime hook、executor、task handle 与 C ABI 的边界清晰。
-
-当前不做：
-
-- 不承诺完整 async 语义。
-- 不把 Rust 专用 ABI 当成当前互操作主线。
-- 不用文档描述代替真实 build 支持。
-
-### Phase 8：package / workspace / `.qi` / dependency-backed tooling
-
-当前重点：
-
-- 继续收紧 `qlang.toml`、workspace member、references 和 `.qi` 生命周期；`ql project emit-interface --changed-only --check` 已落实为对已 `valid` artifact 报 `up-to-date interface` 且不写文件，失败时的局部重建 hint 也会保留 `--changed-only`，避免把“只修坏接口”的维护路径退回全量重发；普通 `ql project emit-interface --changed-only` 的 emit 失败局部 hint 现在也会保留 `--changed-only`，不再退回全量重发；package 级和 workspace member 级的 `ql project emit-interface --check` 失败现在也会补 `failing package manifest`，workspace 根 `ql check` 已改成聚合 failing members，并在局部失败块里补 `failing workspace member manifest`，只在多失败场景的最终汇总里补 `first failing member manifest`；这些 workspace `ql check` / `ql check --sync-interfaces` 的最终 failing-members 汇总现在也会保留真实命令标签；其中 workspace member 缺 `[package].name` 的两条 `ql check` 路径现在都已收敛成同一失败面：无论 manifest 已加载还是在加载阶段就失败，局部错误块都会补 `failing package manifest`、`failing workspace member manifest` 和“先修 package manifest 再重跑”，而且命令标签会保留 `--sync-interfaces` 等真实选项；workspace member 的 package source diagnostics 和 reference failures 现在也会补同样的 `failing package manifest` 上下文，不再只回指 workspace member manifest；如果 workspace member manifest 在 `ql check` / `ql check --sync-interfaces` 路径的加载阶段是因为 manifest 自身语法损坏或不可读而失败，局部错误块现在也会统一补 `failing package manifest`、`failing workspace member manifest` 和“先修 package manifest 再重跑”，而不再只停在 workspace-member-manifest 级别；package 级 `ql check` 也已改成聚合多个 direct / transitive failing references，并且只在多失败场景的最终汇总里补 `first failing reference manifest`；这些 failing-referenced-package 汇总现在也会保留真实 `ql check` / `ql check --sync-interfaces` 标签；坏 reference manifest 的首行 `error:` 现在也会保留真实 `ql check` / `ql check --sync-interfaces` 标签，不再退回无标签的泛化报错；普通 `ql check` 对坏 dependency `.qi` 的首行 `error:` 现在也会保留真实 `ql check` 标签，不再退回无标签的 artifact 报错；package / workspace `ql project emit-interface --check` 对坏默认 `.qi` 的首行 `error:` 现在也会保留真实 `ql project emit-interface --check` / `--changed-only --check` 标签，不再退回无标签的 `interface artifact ...`，最终 failing-members 汇总也会保留真实命令标签；workspace 根 `ql project graph` 已改成容忍坏 member，`reference_interfaces` 的 unresolved 状态也已补上 detail，并且每条 reference 现在都会显式带出 manifest 路径；当 direct dependency 自己看起来可用但其更深层仍有坏引用时，graph 现在也会补 `transitive_reference_failures` 计数和 `first_transitive_failure_manifest`；普通 `ql check` 对坏 dependency `.qi` 现在也会在局部错误块里补 `failing referenced package manifest`，再补 owner manifest + reference 文本上下文，`invalid` / `unreadable` / `stale` 这几类 dependency `.qi` 失败块现在也已和 package/workspace 统一成 `error -> detail/reason -> manifest/context -> hint` 顺序；如果 direct package emit、`ql build --emit-interface` 或 `ql check --sync-interfaces` 是因为默认 `.qi` 输出路径本身写不进去而失败，stderr 现在也会补 `failing interface output path`，并把重跑 hint 改成先修输出路径；其中 build-side `ql build --emit-interface` 失败现在也会保留原始 build 命令选项，不再退回 `ql project emit-interface ...`；如果 direct package `ql project emit-interface --output <path>` 失败，stderr 里的重跑 hint 现在也会保留同一个 `--output <path>`，不再退回默认 `.qi` 路径；`ql build --emit-interface` 在 build 阶段就因为目标 package 源码 diagnostics、toolchain、build 输入路径本身无效或不可读、主 build 输出路径、`dylib` 导出面不满足要求，或 build-side header 配置本身失败（header 输出路径不可写、与主 artifact 路径冲突，header 选项搭到了非 `dylib|staticlib` 上，或请求了 `imports|both` 但源码里没有 imported `extern \"c\"` 声明）而失败时，现在也会补 `failing package manifest` 并按最终 build 选项重建直接重跑 hint；输入路径不是文件或读不到时都会额外补 `failing build input path` 并改成先修 `build input path`，主输出路径失败时会额外补 `failing build output path`，而且现在连输出目录创建阶段卡在父路径上也会继续归到最终 artifact 路径上；如果 toolchain stderr 已明确指向最终输出文件打不开，包括归档器/`lib.exe` 这类 staticlib 归档失败，也会改成先修 `build output path`，同时继续保留 intermediate artifact 提示；`dylib` 缺少公开 `extern \"c\"` 导出时会改成先修 `dylib export surface`，header 输出失败或 collision 时会额外补 `failing build header output path`，而且现在连 header 输出目录创建阶段卡在父路径上也会继续归到最终 header artifact 路径上；header/emit 不兼容时会改成先修 `build header configuration`，header import 面为空时会改成先修 `build header import surface`；其余 toolchain 失败仍按 `build toolchain` 处理，但不会误报最终 build artifact 已保留；`ql build --emit-interface` 在 build 已成功但 package 级接口发射失败时，现在也会保留原始 `ql build ... --emit-interface` 选项，而不是退回 project-only rerun；这条规则现在对 single / multi-source build-side interface failure 都已经对齐，而且如果真正失败点是 package manifest 缺 `[package].name`、manifest 自身语法损坏或不可读、package `src/` 根目录缺失、`src/` 存在但没有任何 `.ql` 文件，或 build 输入源文件根本不在任何 package 里，也会分别改成更具体的 `package manifest` / `package source root` / 缺少 package 上下文修复提示；direct package `ql project emit-interface` 在 manifest 缺 `[package].name`、manifest 自身语法损坏或不可读，或 package `src/` 根目录缺失时，现在也会改成对应的 `package manifest` / `package source root` 修复提示，不再统称为 `package interface error`；direct package `ql project emit-interface --check` 在同一类 manifest-load 失败上现在也会保留真实命令标签，并补 `failing package manifest` 与直接 rerun hint；如果 direct `ql project emit-interface` / `ql project emit-interface --check` 的目标路径根本不在任何 package/workspace manifest 下，现在也会保留真实命令标签，说明这条命令只接受可由 `qlang.toml` 发现的 package/workspace 上下文，并给出针对原路径的直接 rerun hint；workspace member `ql project emit-interface` 在 manifest 能加载但没有 `[package].name`，或 member package `src/` 根目录缺失时，现在也会改成对应的 `package manifest` / `package source root` 修复提示，而不再掉回 generic interface-error hint；如果 workspace member 在 `ql project emit-interface` 路径的加载阶段就是因为 `[package]` 缺 `name` 而失败，局部错误块现在也会收敛成 `failing package manifest` + `failing workspace member manifest` + “先修 package manifest 再重跑”，而不再只给 workspace-member-manifest hint；如果 workspace member 在 `ql project emit-interface` / `ql project emit-interface --check` 路径的加载阶段是因为 manifest 自身语法损坏或不可读而失败，局部错误块现在也会改成同一套 `failing package manifest` + `failing workspace member manifest` + “先修 package manifest 再重跑”，并保留真实命令标签；workspace member `ql project emit-interface --check` 在 member manifest 能加载但没有 `[package].name`，或 member manifest 在加载阶段就是因为缺 `[package].name` 而失败时，现在也会统一改成 `failing package manifest` + `failing workspace member manifest` + “先修 package manifest 再重跑”的局部提示，而不再只给 workspace-member-manifest hint；`ql check` / `ql check --sync-interfaces` 对坏引用 manifest 也已补上 `detail`、`failing reference manifest` 和 owner/reference hint，`ql check --sync-interfaces` 在部分引用可同步时也会保留成功写出的 `.qi` 输出，并且当中间依赖缺失 `.qi` 但更深层仍有坏引用时也会先补可同步的上游 `.qi`，并且只在多失败场景的最终汇总里补 `first failing reference manifest`；当依赖同步阶段因为自身源码错误、缺失 package `src/` 根目录，或默认输出路径失败而无法发射 `.qi` 时，stderr 现在会先补 failing package manifest、局部原因和 owner manifest / reference 指向，再给统一的 `ql project emit-interface <manifest>` 修复提示，避免 source diagnostics 或 output-path diagnostics 脱离引用上下文，也不再把 hint 提前到 owner/reference 上下文前面；这条 `.qi` 维护失败链路里的 source/member/reference/stale/hint 路径显示也已统一规范化，避免同一轮输出里混入 `../` 形式和直达路径；workspace 根 `ql project emit-interface` 和 workspace 根 `ql project emit-interface --check` 现在也都已改成容忍单个坏 member 并汇总，但只有多失败场景的最终汇总才会补 `first failing member manifest`；这些 workspace failing-members 汇总和 package source 汇总的最终 `error:` 行现在也会保留真实命令标签，不再退回 `interface emission/check found ...`；如果 workspace member 是因为 package 源码错误而发射失败，workspace emit 现在也会当场先补该 member 的 failing package manifest、`failing workspace member manifest`，再给直接重跑 hint；如果 workspace member manifest 自身无法加载，workspace emit 和 workspace `emit-interface --check` 现在也会在局部错误块里立即补 `failing workspace member manifest` 和针对该 member manifest 的直接 rerun hint；如果 workspace member manifest 能加载但没有 `[package].name`，workspace emit / workspace `emit-interface --check` 的局部 error line 现在也会保留真实命令标签，而 workspace `emit-interface --check` 也不会在这里提前退出；如果 workspace member 的默认 `.qi` 自身 `missing` / `invalid` / `unreadable` / `stale`，workspace `emit-interface --check` 现在也会在局部错误块里先补 `failing package manifest` 和 `failing workspace member manifest`，再给修复 hint；package 级 `ql project emit-interface` 和 `ql build --emit-interface` 现在也都把 package source failure 统一成同一规则：只在多失败场景的最终汇总里补 `first failing source file`，单失败则依赖局部 diagnostics 给出源码路径；两条路径继续共享 `failing package manifest` 和直接重跑 hint。source-level rerun hint 已收口成 `after fixing the package sources`，不再把源码问题继续写成 generic interface-error。
-- 继续扩 `ql project graph`、`ql project emit-interface`、`ql build --emit-interface`、`ql check --sync-interfaces` 的一致性；这几轮已经补齐 direct package `ql check` / `ql check --sync-interfaces` 在目标 manifest 自身无效、manifest 缺 `[package].name`、package `src/` 目录缺失、空 `src/`、package source diagnostics、package reference failures，以及 workspace member manifest 加载/解析失败、member `src/` 目录缺失、空 `src/`、member source diagnostics、member reference failures 时的命令标签或直接 rerun hint；`ql project graph` 现在也把 direct manifest 缺 `[package].name` 和 workspace member 缺 `[package].name` 收敛到同一 `does not declare [package].name` 失败面，把 `detail` / `member_error` 里的 manifest 路径统一成 graph-relative 形式，并给 unresolved workspace members 补了结构化 `member_status`；如果 direct `ql project graph` 的目标 manifest 自身语法损坏、不可读或缺 `[package].name`，局部错误块现在也会统一补 `failing package manifest` 和 `ql project graph <manifest>` 直接 rerun hint；如果 direct `ql project graph` 的目标路径根本不在任何 package/workspace manifest 下，现在也会明确说明这条命令只接受可由 `qlang.toml` 发现的 package/workspace 上下文，并给出针对原路径的直接 rerun hint；transitive reference 摘要也会补第一个坏点的 `.qi` path / status / detail；如果第一个坏点是 stale，还会带出对应的 stale reason。下一步继续收尾 direct package / workspace / build / sync 四条路径上剩余的 reference hint 与 failure surface 对齐。
-- 继续扩 dependency-backed completion / query / `typeDefinition` 的最小 receiver slice，并在已打通的 direct dependency struct literal value-root、同构 tuple / array destructured dependency locals、direct dependency iterable call destructured locals 基础上继续扩面。
-- dependency struct import roots 这轮把更深层 struct-like 显式字段标签也接回了 completion / query / `typeDefinition`；范围先收在字段标签本身，不顺手扩大到更深层 dependency struct literal value-root。
-- dependency struct import roots 这轮也把更深层 dependency struct literal value-root 本身接回了 hover / definition / declaration / references / `typeDefinition`；`Cfg.Scope.Config` 这类更深层 struct-like root 现在和字段标签路径保持同轴可达。
-- package-aware dependency rename 现在也开始覆盖当前文件内的 dependency-backed local value roots；其中 struct destructuring shorthand 定义会在 rename 时自动扩成显式字段绑定，而不是错误地改掉 dependency field 名；这条线仍只做 same-file edits，不提前开放 cross-file rename / workspace edits。
-- same-file tooling 这轮把更深层 struct-like 显式字段标签、字段标签补全和字段 `typeDefinition` 都接回了正常 field surface；简写绑定 rename 继续只改 binding，不会错误改掉字段标签。
-- package-aware dependency tooling 的 fallback 也继续收紧：当某个包里同时存在健康和损坏的 dependency `.qi`，或某个 referenced package manifest 自身损坏时，后端现在都会保留其余健康依赖的 import hover / completion / definition 基础能力，而不是因为一个坏依赖或坏 manifest 把整包 dependency-backed 入口直接退成 `None`。
-- 继续补 `workspace/symbol` 的 package/workspace 搜索保真度；当前包可正常加载时，这条路径现在不仅会保留 sibling workspace member 自身模块，也会继续纳入 sibling member 依赖 `.qi` 的 public symbols；而在当前包或 sibling member 落入 broken-source / broken-interface fallback 时，后端现在也会保留仍然可用的 dependency `.qi` public symbols，不再因为一个坏依赖就把其余健康依赖的搜索结果一起清空。
-
-当前不做：
-
-- 不承诺真实 dependency build graph / publish workflow。
-- 不提前开放 cross-file rename / workspace edits。
-- 不把 broader dependency semantics 写成“已支持”。
-
-## 后续阶段
-
-P8 之后的工作仍以当前两条主线收口结果为前提，暂不单独拆新阶段承诺。可以明确排在后面的主题包括：
-
-- 更完整的 dependency/workspace 编辑语义
-- 更宽的 runtime 与 async build surface
-- `ql new` / `ql init` / `ql test` / `ql doc` 等项目级工作流
-- 设计稿中尚未实现的语言能力
-
-## 每个阶段都必须交付的横向事项
-
-- 回归测试：最小但足够保护用户面
-- 文档同步：当前支持页、开发计划和相关设计页同轮更新
-- CLI 行为：错误信息、默认输出路径、帮助文本与源码一致
-- 示例与 smoke：必要时补到 `ramdon_tests/` 或 CLI 黑盒矩阵
+- `README`、`当前支持基线`、`开发计划`、阶段设计稿必须同步。
+- 当前支持页写事实，开发计划写取舍，详细增量写设计稿和 archive。
 
 ## 当前最推荐的阅读顺序
 
 1. [当前支持基线](/roadmap/current-supported-surface)
 2. [P1-P8 阶段总览](/roadmap/phase-progress)
-3. [Phase 7 并发、异步与 Rust 互操作](/plans/phase-7-concurrency-and-rust-interop)
-4. [实现算法与分层边界](/architecture/implementation-algorithms)
-5. [工具链设计](/architecture/toolchain)
+3. 做 package / workspace / `.qi` / dependency-backed tooling 时，先读 [Phase 8 入口文档](/plans/2026-04-05-phase8-interface-artifacts-and-cross-file-lsp)
+4. 做 async/runtime/build/interop 时，先读 [Phase 7 文档](/plans/phase-7-concurrency-and-rust-interop)
+5. 做 build / codegen / toolchain 问题时，再读 [工具链设计](/architecture/toolchain)
