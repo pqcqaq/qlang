@@ -40,6 +40,7 @@
 - `ql project graph` / `ql project targets` / `ql project lock` 直接指向 workspace member 源码文件时，会解析外层 workspace，而不是退化成单 package 视图。
 - `ql project emit-interface` 在不带 `--output` 时，直接指向 workspace member `.ql` 文件也会解析外层 workspace，并按 workspace member 集合执行发射/检查。
 - `ql check` / `ql build` / `ql run` / `ql test` 都已有第一版 `--json` 输出；其中 `ql run --json` 当前稳定导出 `ql.run.v1`，包含 built target、程序参数、捕获到的 stdout/stderr 和子进程退出码。更早的 selector / project preflight 失败仍保留既有 stderr failure surface。
+- `ql project lock --json` 当前稳定导出 `ql.project.lock.result.v1`，覆盖写锁文件成功、`--check` 命中 up-to-date，以及 stale / missing / read / write 失败；最早的 package-context / manifest preflight 失败仍保留既有 stderr surface。
 - 当前真正打通的跨包执行路径仍然很窄：只稳定覆盖 direct local dependency 的 public `extern "c"` 符号。
 - root target 的 dependency extern 预处理现在只会注入当前源码实际导入的直依赖 `extern "c"` 符号；未导入 sibling dependency 的同名符号不会再提前打断 `ql build/run/test`。
 

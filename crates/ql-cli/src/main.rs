@@ -504,12 +504,16 @@ fn run() -> Result<(), u8> {
                     let remaining = args.collect::<Vec<_>>();
                     let mut path = None;
                     let mut check_only = false;
+                    let mut json = false;
                     let mut index = 0;
 
                     while index < remaining.len() {
                         match remaining[index].as_str() {
                             "--check" => {
                                 check_only = true;
+                            }
+                            "--json" => {
+                                json = true;
                             }
                             other if other.starts_with('-') => {
                                 eprintln!("error: unknown `ql project lock` option `{other}`");
@@ -532,7 +536,7 @@ fn run() -> Result<(), u8> {
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_lock_path(&path, check_only)
+                    project_lock_path(&path, check_only, json)
                 }
                 "emit-interface" => {
                     let remaining = args.collect::<Vec<_>>();
@@ -7372,7 +7376,94 @@ fn project_graph_path(path: &Path, json: bool) -> Result<(), u8> {
     Ok(())
 }
 
-fn project_lock_path(path: &Path, check_only: bool) -> Result<(), u8> {
+#[derive(Debug)]
+struct ProjectLockJsonReport {
+    path: String,
+    project_manifest_path: String,
+    lockfile_path: String,
+    check_only: bool,
+    status: &'static str,
+    lockfile: JsonValue,
+    failure: Option<JsonValue>,
+}
+
+impl ProjectLockJsonReport {
+    fn new(
+        path: &Path,
+        manifest: &ql_project::ProjectManifest,
+        lockfile_path: &Path,
+        check_only: bool,
+        rendered_lockfile: &str,
+    ) -> Self {
+        Self {
+            path: normalize_path(path),
+            project_manifest_path: normalize_path(&manifest.manifest_path),
+            lockfile_path: normalize_path(lockfile_path),
+            check_only,
+            status: if check_only { "up-to-date" } else { "wrote" },
+            lockfile: serde_json::from_str(rendered_lockfile)
+                .expect("project lockfile should serialize as valid json"),
+            failure: None,
+        }
+    }
+
+    fn record_failure(
+        &mut self,
+        kind: &'static str,
+        message: String,
+        rerun_command: Option<String>,
+    ) {
+        let mut failure = json!({
+            "kind": kind,
+            "message": message,
+        });
+        if let Some(command) = rerun_command {
+            failure["rerun_command"] = json!(command);
+        }
+        self.status = "failed";
+        self.failure = Some(failure);
+    }
+
+    fn into_json(self) -> String {
+        let rendered = serde_json::to_string_pretty(&json!({
+            "schema": "ql.project.lock.result.v1",
+            "path": self.path,
+            "project_manifest_path": self.project_manifest_path,
+            "lockfile_path": self.lockfile_path,
+            "check_only": self.check_only,
+            "status": self.status,
+            "lockfile": self.lockfile,
+            "failure": self.failure,
+        }))
+        .expect("project lock json report should serialize");
+        format!("{rendered}\n")
+    }
+}
+
+enum ProjectLockCheckStatus {
+    UpToDate,
+    Stale,
+    Missing,
+    ReadError(String),
+}
+
+fn project_lockfile_check_status(lockfile_path: &Path, expected: &str) -> ProjectLockCheckStatus {
+    match fs::read_to_string(lockfile_path) {
+        Ok(actual) => {
+            if normalize_line_endings(&actual) == normalize_line_endings(expected) {
+                ProjectLockCheckStatus::UpToDate
+            } else {
+                ProjectLockCheckStatus::Stale
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            ProjectLockCheckStatus::Missing
+        }
+        Err(error) => ProjectLockCheckStatus::ReadError(error.to_string()),
+    }
+}
+
+fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Result<(), u8> {
     let command_label = if check_only {
         "`ql project lock --check`"
     } else {
@@ -7435,6 +7526,67 @@ fn project_lock_path(path: &Path, check_only: bool) -> Result<(), u8> {
         1
     })?;
 
+    if json {
+        let mut report =
+            ProjectLockJsonReport::new(path, &manifest, &lockfile_path, check_only, &rendered);
+        let rerun_command = format_project_lock_command(&manifest.manifest_path, false);
+
+        if check_only {
+            match project_lockfile_check_status(&lockfile_path, &rendered) {
+                ProjectLockCheckStatus::UpToDate => {
+                    print!("{}", report.into_json());
+                    return Ok(());
+                }
+                ProjectLockCheckStatus::Stale => {
+                    report.record_failure(
+                        "stale",
+                        format!("lockfile `{}` is stale", normalize_path(&lockfile_path)),
+                        Some(rerun_command),
+                    );
+                    print!("{}", report.into_json());
+                    return Err(1);
+                }
+                ProjectLockCheckStatus::Missing => {
+                    report.record_failure(
+                        "missing",
+                        format!("lockfile `{}` is missing", normalize_path(&lockfile_path)),
+                        Some(rerun_command),
+                    );
+                    print!("{}", report.into_json());
+                    return Err(1);
+                }
+                ProjectLockCheckStatus::ReadError(error) => {
+                    report.record_failure(
+                        "read",
+                        format!(
+                            "failed to read lockfile `{}`: {error}",
+                            normalize_path(&lockfile_path)
+                        ),
+                        Some(rerun_command),
+                    );
+                    print!("{}", report.into_json());
+                    return Err(1);
+                }
+            }
+        }
+
+        if let Err(error) = fs::write(&lockfile_path, rendered) {
+            report.record_failure(
+                "write",
+                format!(
+                    "failed to write lockfile `{}`: {error}",
+                    normalize_path(&lockfile_path)
+                ),
+                Some(format_project_lock_command(&manifest.manifest_path, false)),
+            );
+            print!("{}", report.into_json());
+            return Err(1);
+        }
+
+        print!("{}", report.into_json());
+        return Ok(());
+    }
+
     if check_only {
         return check_project_lockfile(&manifest, &lockfile_path, &rendered);
     }
@@ -7470,21 +7622,19 @@ fn check_project_lockfile(
         normalize_path(&manifest.manifest_path)
     );
 
-    match fs::read_to_string(lockfile_path) {
-        Ok(actual) => {
-            if normalize_line_endings(&actual) == normalize_line_endings(expected) {
-                return Ok(());
-            }
+    match project_lockfile_check_status(lockfile_path, expected) {
+        ProjectLockCheckStatus::UpToDate => return Ok(()),
+        ProjectLockCheckStatus::Stale => {
             eprintln!(
                 "error: `ql project lock --check` lockfile `{normalized_lockfile_path}` is stale"
             );
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        ProjectLockCheckStatus::Missing => {
             eprintln!(
                 "error: `ql project lock --check` lockfile `{normalized_lockfile_path}` is missing"
             );
         }
-        Err(error) => {
+        ProjectLockCheckStatus::ReadError(error) => {
             eprintln!(
                 "error: `ql project lock --check` failed to read lockfile `{normalized_lockfile_path}`: {error}"
             );
@@ -9887,7 +10037,7 @@ fn print_usage() {
     );
     eprintln!("  ql project targets [file-or-dir] [--json]");
     eprintln!("  ql project graph [file-or-dir] [--json]");
-    eprintln!("  ql project lock [file-or-dir] [--check]");
+    eprintln!("  ql project lock [file-or-dir] [--check] [--json]");
     eprintln!("  ql project init [dir] [--workspace] [--name <package>]");
     eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]");
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
