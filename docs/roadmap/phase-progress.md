@@ -28,9 +28,9 @@
 - `ql project emit-interface` 现在也支持从 workspace member `.ql` 路径恢复外层 workspace 视角；当前保守边界是不带 `--output`。
 - `qlang.toml` 已支持最小本地依赖、target path 和默认 profile。
 - 第一版 `qlang.lock`、`ql.check --json`、`ql.build --json`、`ql.test --json` 已落地。
-- healthy workspace 下的 dependency-backed LSP 已有一批可依赖能力：workspace symbol、source-preferred navigation、semantic tokens、保守 same-file rename；source-preferred navigation 现在同时覆盖 workspace members 和 workspace 外本地路径依赖。
+- healthy workspace 下的 dependency-backed LSP 已有一批可依赖能力：workspace symbol、source-preferred navigation、semantic tokens、保守 same-file rename；source-preferred navigation 现在同时覆盖 workspace members 和 workspace 外本地路径依赖，`workspace/symbol` 对本地依赖源码里的 methods / trait methods / extend methods 也已有源码优先回归保护。
 - `workspace` 外本地路径依赖的 import references 现在也走源码优先路径；broken-source fallback 已补齐到这一条路径。
-- `workspace/symbol` 现在也会对 workspace 外本地路径依赖做源码优先返回，并保留 `.qi` 回退；这条能力已补到 `workspace_roots` / 无打开文档入口。
+- `workspace/symbol` 现在也会对 workspace 外本地路径依赖做源码优先返回，并保留 `.qi` 回退；这条能力已补到 `workspace_roots` / 无打开文档入口，当前已锁住 value / method / trait / extend symbol。
 - parse-error 下的 current-document rename 也已有保守回归保护；最近新增的一条是 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field。
 
 ## 当前主线
