@@ -1107,10 +1107,10 @@ fn workspace_import_reference_locations(
         include_declaration,
         &mut locations,
     );
-    for member_manifest_path in
-        workspace_member_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    for candidate_manifest_path in
+        source_preferred_manifest_paths_for_package(package.manifest().manifest_path.as_path())
     {
-        let Some(member_package) = package_analysis_for_path(&member_manifest_path) else {
+        let Some(member_package) = package_analysis_for_path(&candidate_manifest_path) else {
             continue;
         };
         extend_workspace_import_reference_locations(
@@ -7611,6 +7611,156 @@ pub fn exported(value: Int) -> Int
     }
 
     #[test]
+    fn local_dependency_import_references_prefer_dependency_source_over_interface_artifact() {
+        let temp = TempDir::new("ql-lsp-local-dependency-import-source-references");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as call
+
+pub fn task() -> Int {
+    return call(2)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/vendor/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+core = { path = "../../vendor/core" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+        let references = workspace_source_references_for_import(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            true,
+        )
+        .expect("local dependency import references should exist");
+        assert_eq!(references.len(), 6);
+        assert_eq!(
+            references[0]
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 1)),
+        );
+        assert_eq!(references[1].uri, uri);
+        assert_eq!(
+            references[1].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 1)),
+        );
+        assert_eq!(references[2].uri, uri);
+        assert_eq!(
+            references[2].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        );
+        assert_eq!(
+            references[3]
+                .uri
+                .to_file_path()
+                .expect("source reference URI should convert to a file path")
+                .canonicalize()
+                .expect("source reference path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+        assert_eq!(
+            references[3].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 2)),
+        );
+        assert_eq!(references[4].uri, task_uri);
+        assert_eq!(
+            references[4].range.start,
+            offset_to_position(&task_source, nth_offset(&task_source, "call", 1)),
+        );
+        assert_eq!(references[5].uri, task_uri);
+        assert_eq!(
+            references[5].range.start,
+            offset_to_position(&task_source, nth_offset(&task_source, "call", 2)),
+        );
+    }
+
+    #[test]
     fn workspace_import_references_without_declaration_include_other_workspace_uses() {
         let temp = TempDir::new("ql-lsp-workspace-import-source-references-no-decl");
         let app_path = temp.write(
@@ -7831,6 +7981,133 @@ pub fn exported(value: Int) -> Int
             true,
         )
         .expect("broken-source workspace import references should exist");
+
+        assert_eq!(references.len(), 4);
+        assert_eq!(
+            references[0]
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 1)),
+        );
+        assert_eq!(references[1].uri, uri);
+        assert_eq!(
+            references[1].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        );
+        assert_eq!(references[2].uri, uri);
+        assert_eq!(
+            references[2].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 3)),
+        );
+        assert_eq!(
+            references[3]
+                .uri
+                .to_file_path()
+                .expect("source reference URI should convert to a file path")
+                .canonicalize()
+                .expect("source reference path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+        assert_eq!(
+            references[3].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 2)),
+        );
+    }
+
+    #[test]
+    fn local_dependency_import_references_survive_parse_errors_and_prefer_dependency_source() {
+        let temp = TempDir::new("ql-lsp-local-dependency-import-source-references-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    let first = run(1)
+    let second = run(first)
+    return second
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/vendor/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+core = { path = "../../vendor/core" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let references = workspace_source_references_for_import_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            true,
+        )
+        .expect("broken-source local dependency import references should exist");
 
         assert_eq!(references.len(), 4);
         assert_eq!(
