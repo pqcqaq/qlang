@@ -570,6 +570,148 @@ pub fn read(flag: Bool) -> Int {
 }
 
 #[test]
+fn package_analysis_preserves_dependency_direct_question_unwrapped_member_rename_in_broken_source()
+{
+    let temp = TempDir::new("ql-analysis-package-direct-question-member-rename");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    leaf: Leaf,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let first = config.child()?.leaf.value
+    let second = config.child()?.leaf.value
+    let third = config.child()?.leaf()
+    let fourth = config.child()?.leaf()
+    let broken = config.child(
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+
+    let field_use = nth_offset(source, "leaf", 1);
+    assert_eq!(
+        package.dependency_prepare_rename_in_source_at(source, field_use),
+        Some(RenameTarget {
+            kind: SymbolKind::Field,
+            name: "leaf".to_owned(),
+            span: Span::new(field_use, field_use + "leaf".len()),
+        })
+    );
+    assert_eq!(
+        package.dependency_rename_in_source_at(source, nth_offset(source, "leaf", 2), "branch"),
+        Ok(Some(RenameResult {
+            kind: SymbolKind::Field,
+            old_name: "leaf".to_owned(),
+            new_name: "branch".to_owned(),
+            edits: vec![
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "leaf", 1),
+                        nth_offset(source, "leaf", 1) + "leaf".len(),
+                    ),
+                    replacement: "branch".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "leaf", 2),
+                        nth_offset(source, "leaf", 2) + "leaf".len(),
+                    ),
+                    replacement: "branch".to_owned(),
+                },
+            ],
+        }))
+    );
+
+    let method_use = nth_offset(source, "leaf", 3);
+    assert_eq!(
+        package.dependency_prepare_rename_in_source_at(source, method_use),
+        Some(RenameTarget {
+            kind: SymbolKind::Method,
+            name: "leaf".to_owned(),
+            span: Span::new(method_use, method_use + "leaf".len()),
+        })
+    );
+    assert_eq!(
+        package.dependency_rename_in_source_at(source, nth_offset(source, "leaf", 4), "tip"),
+        Ok(Some(RenameResult {
+            kind: SymbolKind::Method,
+            old_name: "leaf".to_owned(),
+            new_name: "tip".to_owned(),
+            edits: vec![
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "leaf", 3),
+                        nth_offset(source, "leaf", 3) + "leaf".len(),
+                    ),
+                    replacement: "tip".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "leaf", 4),
+                        nth_offset(source, "leaf", 4) + "leaf".len(),
+                    ),
+                    replacement: "tip".to_owned(),
+                },
+            ],
+        }))
+    );
+}
+
+#[test]
 fn package_analysis_preserves_dependency_local_method_result_value_root_rename_in_broken_source() {
     let temp = TempDir::new("ql-analysis-package-local-method-result-value-root-rename");
     let app_root = temp.path().join("workspace").join("app");
