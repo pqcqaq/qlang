@@ -1803,6 +1803,22 @@ impl PackageAnalysis {
                             span: occurrence.reference_span,
                         },
                     )
+                })
+                .or_else(|| {
+                    self.dependency_method_target_in_source_at(source, offset)
+                        .map(|target| RenameTarget {
+                            kind: SymbolKind::Method,
+                            name: target.name,
+                            span: target.reference_span,
+                        })
+                })
+                .or_else(|| {
+                    self.dependency_struct_field_target_in_source_at(source, offset)
+                        .map(|target| RenameTarget {
+                            kind: SymbolKind::Field,
+                            name: target.name,
+                            span: target.reference_span,
+                        })
                 });
         };
         if let Some(occurrence) = dependency_import_occurrence_in_module(&module, offset) {
@@ -1818,12 +1834,30 @@ impl PackageAnalysis {
             }
         }
 
-        let occurrence = self.dependency_value_occurrence_in_module(&module, offset)?;
-        dependency_value_occurrence_supports_same_file_rename(&occurrence).then(|| RenameTarget {
-            kind: occurrence.kind,
-            name: occurrence.local_name,
-            span: occurrence.reference_span,
-        })
+        if let Some(occurrence) = self.dependency_value_occurrence_in_module(&module, offset)
+            && dependency_value_occurrence_supports_same_file_rename(&occurrence)
+        {
+            return Some(RenameTarget {
+                kind: occurrence.kind,
+                name: occurrence.local_name,
+                span: occurrence.reference_span,
+            });
+        }
+
+        self.dependency_method_target_in_source_at(source, offset)
+            .map(|target| RenameTarget {
+                kind: SymbolKind::Method,
+                name: target.name,
+                span: target.reference_span,
+            })
+            .or_else(|| {
+                self.dependency_struct_field_target_in_source_at(source, offset)
+                    .map(|target| RenameTarget {
+                        kind: SymbolKind::Field,
+                        name: target.name,
+                        span: target.reference_span,
+                    })
+            })
     }
 
     pub fn dependency_rename_in_source_at(
@@ -1841,6 +1875,10 @@ impl PackageAnalysis {
                     .dependency_import_rename_in_broken_source(source, offset, new_name)
                     .or_else(|| {
                         self.dependency_value_rename_in_broken_source(source, offset, new_name)
+                    })
+                    .or_else(|| self.dependency_method_rename_in_source(source, offset, new_name))
+                    .or_else(|| {
+                        self.dependency_struct_field_rename_in_source(source, offset, new_name)
                     }));
             }
         };
@@ -1910,7 +1948,11 @@ impl PackageAnalysis {
 
         let Some(target_occurrence) = self.dependency_value_occurrence_in_module(&module, offset)
         else {
-            return Ok(None);
+            return Ok(self
+                .dependency_method_rename_in_source(source, offset, new_name)
+                .or_else(|| {
+                    self.dependency_struct_field_rename_in_source(source, offset, new_name)
+                }));
         };
         if !dependency_value_occurrence_supports_same_file_rename(&target_occurrence) {
             return Ok(None);
@@ -2022,6 +2064,64 @@ impl PackageAnalysis {
         Some(RenameResult {
             kind: target_occurrence.kind,
             old_name: target_occurrence.local_name,
+            new_name: new_name.to_owned(),
+            edits,
+        })
+    }
+
+    fn dependency_method_rename_in_source(
+        &self,
+        source: &str,
+        offset: usize,
+        new_name: &str,
+    ) -> Option<RenameResult> {
+        let target = self.dependency_method_target_in_source_at(source, offset)?;
+        let replacement = new_name.to_owned();
+        let mut edits = self
+            .dependency_method_references_in_source_at(source, offset)?
+            .into_iter()
+            .map(|reference| RenameEdit {
+                span: reference.span,
+                replacement: replacement.clone(),
+            })
+            .collect::<Vec<_>>();
+        if edits.is_empty() {
+            return None;
+        }
+        edits.sort_by_key(|edit| (edit.span.start, edit.span.end));
+
+        Some(RenameResult {
+            kind: SymbolKind::Method,
+            old_name: target.name,
+            new_name: new_name.to_owned(),
+            edits,
+        })
+    }
+
+    fn dependency_struct_field_rename_in_source(
+        &self,
+        source: &str,
+        offset: usize,
+        new_name: &str,
+    ) -> Option<RenameResult> {
+        let target = self.dependency_struct_field_target_in_source_at(source, offset)?;
+        let replacement = new_name.to_owned();
+        let mut edits = self
+            .dependency_struct_field_references_in_source_at(source, offset)?
+            .into_iter()
+            .map(|reference| RenameEdit {
+                span: reference.span,
+                replacement: replacement.clone(),
+            })
+            .collect::<Vec<_>>();
+        if edits.is_empty() {
+            return None;
+        }
+        edits.sort_by_key(|edit| (edit.span.start, edit.span.end));
+
+        Some(RenameResult {
+            kind: SymbolKind::Field,
+            old_name: target.name,
             new_name: new_name.to_owned(),
             edits,
         })

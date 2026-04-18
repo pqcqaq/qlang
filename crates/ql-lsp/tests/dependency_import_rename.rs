@@ -571,6 +571,146 @@ pub fn read(config: Cfg) -> Int {
 }
 
 #[test]
+fn dependency_structured_root_indexed_member_rename_bridge_survives_parse_errors() {
+    let temp = TempDir::new("ql-lsp-dependency-structured-root-indexed-member-rename");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    leaf: Leaf,
+}
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.maybe_children
+
+pub fn read(flag: Bool) -> Int {
+    let first = (if flag { maybe_children()? } else { maybe_children()? })[0].leaf.value
+    let second = (match flag { true => maybe_children()?, false => maybe_children()? })[1].leaf.value
+    let third = (if flag { maybe_children()? } else { maybe_children()? })[1].leaf()
+    let fourth = (match flag { true => maybe_children()?, false => maybe_children()? })[0].leaf()
+    let broken = maybe_children(
+"#;
+    let app_source = temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+    let uri = Url::from_file_path(&app_source).expect("source path should convert to file uri");
+
+    let field_offset = nth_offset(source, "leaf", 1);
+    let field_position = offset_to_position(source, field_offset);
+    assert_eq!(
+        prepare_rename_for_dependency_imports(source, &package, field_position),
+        Some(PrepareRenameResponse::RangeWithPlaceholder {
+            range: span_to_range(source, Span::new(field_offset, field_offset + "leaf".len())),
+            placeholder: "leaf".to_owned(),
+        })
+    );
+
+    let field_edit =
+        rename_for_dependency_imports(&uri, source, &package, field_position, "branch")
+            .expect("rename should validate")
+            .expect("broken-source dependency field rename should produce edits");
+    assert_workspace_edit(
+        field_edit,
+        &uri,
+        source,
+        &[
+            (
+                Span::new(
+                    nth_offset(source, "leaf", 1),
+                    nth_offset(source, "leaf", 1) + "leaf".len(),
+                ),
+                "branch",
+            ),
+            (
+                Span::new(
+                    nth_offset(source, "leaf", 2),
+                    nth_offset(source, "leaf", 2) + "leaf".len(),
+                ),
+                "branch",
+            ),
+        ],
+    );
+
+    let method_offset = nth_offset(source, "leaf", 3);
+    let method_position = offset_to_position(source, method_offset);
+    assert_eq!(
+        prepare_rename_for_dependency_imports(source, &package, method_position),
+        Some(PrepareRenameResponse::RangeWithPlaceholder {
+            range: span_to_range(
+                source,
+                Span::new(method_offset, method_offset + "leaf".len()),
+            ),
+            placeholder: "leaf".to_owned(),
+        })
+    );
+
+    let method_edit = rename_for_dependency_imports(&uri, source, &package, method_position, "tip")
+        .expect("rename should validate")
+        .expect("broken-source dependency method rename should produce edits");
+    assert_workspace_edit(
+        method_edit,
+        &uri,
+        source,
+        &[
+            (
+                Span::new(
+                    nth_offset(source, "leaf", 3),
+                    nth_offset(source, "leaf", 3) + "leaf".len(),
+                ),
+                "tip",
+            ),
+            (
+                Span::new(
+                    nth_offset(source, "leaf", 4),
+                    nth_offset(source, "leaf", 4) + "leaf".len(),
+                ),
+                "tip",
+            ),
+        ],
+    );
+}
+
+#[test]
 fn dependency_destructured_value_root_rename_rewrites_shorthand_definitions() {
     let temp = TempDir::new("ql-lsp-dependency-destructured-value-root-rename");
     let app_root = temp.path().join("workspace").join("app");
