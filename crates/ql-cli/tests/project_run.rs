@@ -824,3 +824,90 @@ dep = "../dep"
     )
     .expect("dependency-sync run should still emit the executable artifact");
 }
+
+#[test]
+fn run_package_path_supports_direct_dependency_public_functions() {
+    if !toolchain_available("`ql run` dependency public function test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-dependency-public-function");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub fn add(left: Int, right: Int) -> Int { return left + right }\n",
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        "use dep.add as sum\n\nfn main() -> Int { return sum(9, 4) }\n",
+    );
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let executable_output = executable_output_path(&project_root.join("target/ql/debug"), "main");
+    assert!(
+        !interface_output.exists(),
+        "dependency interface should start missing for direct dependency public function test"
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql run` dependency public function");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-dependency-public-function",
+        "package path run with dependency public function",
+        &output,
+        13,
+    )
+    .expect("package-path `ql run` should support direct dependency public functions");
+    expect_silent_output(
+        "project-run-dependency-public-function",
+        "package path run with dependency public function",
+        &stdout,
+        &stderr,
+    )
+    .expect("dependency public function run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-dependency-public-function",
+        &interface_output,
+        "synced dependency interface",
+        "package path run with dependency public function",
+    )
+    .expect("dependency public function run should emit the dependency interface");
+    expect_file_exists(
+        "project-run-dependency-public-function",
+        &dependency_output,
+        "dependency package artifact",
+        "package path run with dependency public function",
+    )
+    .expect("dependency public function run should also build the dependency package artifact");
+    expect_file_exists(
+        "project-run-dependency-public-function",
+        &executable_output,
+        "package executable",
+        "package path run with dependency public function",
+    )
+    .expect("dependency public function run should still emit the executable artifact");
+}

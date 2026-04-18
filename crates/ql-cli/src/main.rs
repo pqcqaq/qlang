@@ -9,7 +9,7 @@ use ql_analysis::{
     PackageAnalysisError, analyze_package, analyze_source as analyze_semantics,
     parse_errors_to_diagnostics,
 };
-use ql_ast::{ItemKind, Module, Visibility};
+use ql_ast::{FunctionDecl, ItemKind, Module, Param, Visibility};
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
     BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile,
@@ -2521,6 +2521,44 @@ fn build_json_target_prep_failure(
             json!(normalize_path(conflicting_manifest_path)),
             JsonValue::Null,
         ),
+        PrepareProjectTargetBuildFailureKind::DependencyFunctionConflict {
+            symbol,
+            first_package,
+            first_manifest_path,
+            conflicting_package,
+            conflicting_manifest_path,
+        } => (
+            "dependency-function-conflict",
+            format!("found conflicting direct dependency public function imports for `{symbol}`"),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            json!(symbol),
+            json!(first_package),
+            json!(normalize_path(first_manifest_path)),
+            json!(conflicting_package),
+            json!(normalize_path(conflicting_manifest_path)),
+            JsonValue::Null,
+        ),
+        PrepareProjectTargetBuildFailureKind::DependencyFunctionLocalConflict {
+            symbol,
+            dependency_package,
+            dependency_manifest_path,
+        } => (
+            "dependency-function-local-conflict",
+            format!(
+                "cannot synthesize direct dependency public function bridge for `{symbol}` because the root source already defines the same top-level name"
+            ),
+            json!(normalize_path(dependency_manifest_path)),
+            json!(dependency_package),
+            JsonValue::Null,
+            json!(symbol),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+        ),
         PrepareProjectTargetBuildFailureKind::SourceRead { path, message } => (
             "io",
             message.clone(),
@@ -3194,6 +3232,7 @@ fn run_project_path_json(
         &target_options,
         options,
         profile_overridden,
+        false,
     ) {
         Ok(artifact) => {
             report.record_project_target(&report_member, &runnable.target, &artifact);
@@ -3269,6 +3308,7 @@ fn run_project_path(
         &target_options,
         options,
         profile_overridden,
+        false,
         false,
     )?;
     run_built_executable(&artifact.path, program_args)
@@ -4171,6 +4211,7 @@ fn execute_test_targets(
                         options,
                         profile_overridden,
                         false,
+                        false,
                     )
                 } else {
                     build_project_source_target_silent(
@@ -4181,6 +4222,7 @@ fn execute_test_targets(
                         build_options,
                         options,
                         profile_overridden,
+                        false,
                         false,
                     )
                 }
@@ -4772,6 +4814,7 @@ fn build_project_path(
                 &first_options,
                 options,
                 profile_overridden,
+                !plan_member.require_targets && first_target.kind == BuildTargetKind::Library,
             ) {
                 Ok(artifact) => artifact,
                 Err(BuildTargetJsonError::Early(error)) => {
@@ -4809,6 +4852,7 @@ fn build_project_path(
                 options,
                 profile_overridden,
                 emit_interface,
+                !plan_member.require_targets && first_target.kind == BuildTargetKind::Library,
             )?
         };
         if let Some(report) = json_report.as_mut() {
@@ -4846,6 +4890,7 @@ fn build_project_path(
                     &target_options,
                     options,
                     profile_overridden,
+                    !plan_member.require_targets && target.kind == BuildTargetKind::Library,
                 ) {
                     Ok(artifact) => artifact,
                     Err(BuildTargetJsonError::Early(error)) => {
@@ -4883,6 +4928,7 @@ fn build_project_path(
                     options,
                     profile_overridden,
                     emit_interface,
+                    !plan_member.require_targets && target.kind == BuildTargetKind::Library,
                 )?
             };
             if let Some(report) = json_report.as_mut() {
@@ -4975,6 +5021,18 @@ enum PrepareProjectTargetBuildFailureKind {
         first_manifest_path: PathBuf,
         conflicting_package: String,
         conflicting_manifest_path: PathBuf,
+    },
+    DependencyFunctionConflict {
+        symbol: String,
+        first_package: String,
+        first_manifest_path: PathBuf,
+        conflicting_package: String,
+        conflicting_manifest_path: PathBuf,
+    },
+    DependencyFunctionLocalConflict {
+        symbol: String,
+        dependency_package: String,
+        dependency_manifest_path: PathBuf,
     },
     SourceRead {
         path: PathBuf,
@@ -5128,6 +5186,7 @@ fn prepare_project_dependency_builds(
                 options,
                 profile_overridden,
                 false,
+                target.kind == BuildTargetKind::Library,
             )?;
         }
     }
@@ -5477,6 +5536,7 @@ fn build_project_source_target(
     dependency_options: &BuildOptions,
     profile_overridden: bool,
     emit_interface: bool,
+    include_public_function_exports: bool,
 ) -> Result<BuildArtifact, u8> {
     build_project_source_target_impl(
         workspace_members,
@@ -5487,6 +5547,7 @@ fn build_project_source_target(
         dependency_options,
         profile_overridden,
         emit_interface,
+        include_public_function_exports,
         true,
         true,
     )
@@ -5501,6 +5562,7 @@ fn build_project_source_target_silent(
     dependency_options: &BuildOptions,
     profile_overridden: bool,
     emit_interface: bool,
+    include_public_function_exports: bool,
 ) -> Result<BuildArtifact, u8> {
     build_project_source_target_impl(
         workspace_members,
@@ -5511,6 +5573,7 @@ fn build_project_source_target_silent(
         dependency_options,
         profile_overridden,
         emit_interface,
+        include_public_function_exports,
         false,
         true,
     )
@@ -5523,6 +5586,7 @@ fn build_project_source_target_result(
     options: &BuildOptions,
     dependency_options: &BuildOptions,
     profile_overridden: bool,
+    include_public_function_exports: bool,
 ) -> Result<BuildArtifact, BuildTargetJsonError> {
     let prepared = prepare_project_target_build_quiet(
         build_plan,
@@ -5530,6 +5594,7 @@ fn build_project_source_target_result(
         path,
         dependency_options,
         profile_overridden,
+        include_public_function_exports,
     )
     .map_err(BuildTargetJsonError::Early)?;
     build_single_source_target_with_inputs_result(
@@ -5550,6 +5615,7 @@ fn build_project_source_target_quiet(
     dependency_options: &BuildOptions,
     profile_overridden: bool,
     emit_interface: bool,
+    include_public_function_exports: bool,
 ) -> Result<BuildArtifact, u8> {
     build_project_source_target_impl(
         workspace_members,
@@ -5560,6 +5626,7 @@ fn build_project_source_target_quiet(
         dependency_options,
         profile_overridden,
         emit_interface,
+        include_public_function_exports,
         false,
         false,
     )
@@ -5571,6 +5638,7 @@ fn prepare_project_target_build_quiet(
     path: &Path,
     dependency_options: &BuildOptions,
     profile_overridden: bool,
+    include_public_function_exports: bool,
 ) -> Result<PreparedProjectTargetBuild, PrepareProjectTargetBuildError> {
     let additional_link_inputs =
         project_dependency_link_inputs(build_plan, dependency_options, profile_overridden);
@@ -5580,16 +5648,20 @@ fn prepare_project_target_build_quiet(
             message: format!("failed to access `{}`: {error}", normalize_path(path)),
         },
     })?;
-    let dependency_declarations =
-        render_direct_dependency_extern_declarations_quiet(manifest_path, &source)?;
+    let dependency_bridge_items =
+        render_direct_dependency_bridge_items_quiet(manifest_path, &source)?;
+    let public_function_exports = if include_public_function_exports {
+        render_public_dependency_function_export_wrappers_quiet(manifest_path, &source)?
+    } else {
+        String::new()
+    };
+    let bridge_code =
+        join_dependency_bridge_sections(&dependency_bridge_items, &public_function_exports);
 
-    let source_override = if dependency_declarations.is_empty() {
+    let source_override = if bridge_code.is_empty() {
         None
     } else {
-        Some(append_dependency_declarations(
-            &source,
-            &dependency_declarations,
-        ))
+        Some(append_dependency_declarations(&source, &bridge_code))
     };
 
     Ok(PreparedProjectTargetBuild {
@@ -5608,6 +5680,7 @@ fn build_project_source_target_impl(
     dependency_options: &BuildOptions,
     profile_overridden: bool,
     emit_interface: bool,
+    include_public_function_exports: bool,
     report_success: bool,
     report_failure: bool,
 ) -> Result<BuildArtifact, u8> {
@@ -5618,6 +5691,7 @@ fn build_project_source_target_impl(
         path,
         dependency_options,
         profile_overridden,
+        include_public_function_exports,
         report_failure,
     )?;
     build_single_source_target_with_inputs_impl(
@@ -5638,6 +5712,7 @@ fn prepare_project_target_build(
     path: &Path,
     dependency_options: &BuildOptions,
     profile_overridden: bool,
+    include_public_function_exports: bool,
     report_failure: bool,
 ) -> Result<PreparedProjectTargetBuild, u8> {
     let selected_members =
@@ -5655,23 +5730,35 @@ fn prepare_project_target_build(
         }
         1
     })?;
-    let dependency_declarations = match render_direct_dependency_extern_declarations(
+    let dependency_bridge_items = match render_direct_dependency_bridge_items(
         command_label,
         manifest_path,
         &source,
         report_failure,
     ) {
-        Ok(declarations) => declarations,
+        Ok(items) => items,
         Err(code) => return Err(code),
     };
+    let public_function_exports = match if include_public_function_exports {
+        render_public_dependency_function_export_wrappers(
+            command_label,
+            manifest_path,
+            &source,
+            report_failure,
+        )
+    } else {
+        Ok(String::new())
+    } {
+        Ok(items) => items,
+        Err(code) => return Err(code),
+    };
+    let bridge_code =
+        join_dependency_bridge_sections(&dependency_bridge_items, &public_function_exports);
 
-    let source_override = if dependency_declarations.is_empty() {
+    let source_override = if bridge_code.is_empty() {
         None
     } else {
-        Some(append_dependency_declarations(
-            &source,
-            &dependency_declarations,
-        ))
+        Some(append_dependency_declarations(&source, &bridge_code))
     };
 
     Ok(PreparedProjectTargetBuild {
@@ -5688,6 +5775,17 @@ fn append_dependency_declarations(source: &str, dependency_declarations: &str) -
         combined.push('\n');
     }
     combined
+}
+
+fn join_dependency_bridge_sections(primary: &str, secondary: &str) -> String {
+    let mut sections = Vec::new();
+    if !primary.trim().is_empty() {
+        sections.push(primary.trim().to_owned());
+    }
+    if !secondary.trim().is_empty() {
+        sections.push(secondary.trim().to_owned());
+    }
+    sections.join("\n\n")
 }
 
 fn project_dependency_link_inputs(
@@ -5723,6 +5821,39 @@ fn project_dependency_link_inputs(
 struct ImportedDependencyExterns {
     whole_paths: BTreeSet<Vec<String>>,
     symbols_by_module_path: BTreeMap<Vec<String>, BTreeSet<String>>,
+}
+
+fn collect_top_level_definition_names(module: &Module) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for item in &module.items {
+        match &item.kind {
+            ItemKind::Function(function) => {
+                names.insert(function.name.clone());
+            }
+            ItemKind::Const(global) | ItemKind::Static(global) => {
+                names.insert(global.name.clone());
+            }
+            ItemKind::Struct(struct_decl) => {
+                names.insert(struct_decl.name.clone());
+            }
+            ItemKind::Enum(enum_decl) => {
+                names.insert(enum_decl.name.clone());
+            }
+            ItemKind::Trait(trait_decl) => {
+                names.insert(trait_decl.name.clone());
+            }
+            ItemKind::TypeAlias(alias) => {
+                names.insert(alias.name.clone());
+            }
+            ItemKind::ExternBlock(extern_block) => {
+                for function in &extern_block.functions {
+                    names.insert(function.name.clone());
+                }
+            }
+            ItemKind::Impl(_) | ItemKind::Extend(_) => {}
+        }
+    }
+    names
 }
 
 fn dependency_interface_module_import_paths(
@@ -5814,6 +5945,44 @@ fn dependency_extern_is_imported(
             .is_some_and(|symbols| symbols.contains(symbol_name))
 }
 
+fn render_direct_dependency_bridge_items(
+    command_label: &str,
+    manifest_path: &Path,
+    source: &str,
+    report_failure: bool,
+) -> Result<String, u8> {
+    let extern_declarations = render_direct_dependency_extern_declarations(
+        command_label,
+        manifest_path,
+        source,
+        report_failure,
+    )?;
+    let function_forwarders = render_direct_dependency_public_function_forwarders(
+        command_label,
+        manifest_path,
+        source,
+        report_failure,
+    )?;
+    Ok(join_dependency_bridge_sections(
+        &extern_declarations,
+        &function_forwarders,
+    ))
+}
+
+fn render_direct_dependency_bridge_items_quiet(
+    manifest_path: &Path,
+    source: &str,
+) -> Result<String, PrepareProjectTargetBuildError> {
+    let extern_declarations =
+        render_direct_dependency_extern_declarations_quiet(manifest_path, source)?;
+    let function_forwarders =
+        render_direct_dependency_public_function_forwarders_quiet(manifest_path, source)?;
+    Ok(join_dependency_bridge_sections(
+        &extern_declarations,
+        &function_forwarders,
+    ))
+}
+
 fn render_direct_dependency_extern_declarations(
     command_label: &str,
     manifest_path: &Path,
@@ -5832,7 +6001,10 @@ fn render_direct_dependency_extern_declarations(
         }
         1
     })?;
-    let root_source_module = parse_source(source).ok();
+    let root_source_module = match parse_source(source) {
+        Ok(module) => module,
+        Err(_) => return Ok(String::new()),
+    };
 
     let mut declarations = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
@@ -5872,9 +6044,8 @@ fn render_direct_dependency_extern_declarations(
         })?;
         let module_import_paths =
             dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
-        let imported_externs = root_source_module
-            .as_ref()
-            .map(|module| collect_imported_dependency_externs(module, &module_import_paths));
+        let imported_externs =
+            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
 
         for module in &artifact.modules {
             collect_dependency_module_extern_declarations(
@@ -5883,7 +6054,7 @@ fn render_direct_dependency_extern_declarations(
                 module.source_path.as_str(),
                 &module.syntax,
                 &module.contents,
-                imported_externs.as_ref(),
+                Some(&imported_externs),
                 &mut owners_by_symbol,
                 &mut declarations,
             )
@@ -5913,7 +6084,10 @@ fn render_direct_dependency_extern_declarations_quiet(
     let manifest = load_project_manifest(manifest_path)
         .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
-    let root_source_module = parse_source(source).ok();
+    let root_source_module = match parse_source(source) {
+        Ok(module) => module,
+        Err(_) => return Ok(String::new()),
+    };
     let direct_dependencies = manifest
         .references
         .packages
@@ -5961,9 +6135,8 @@ fn render_direct_dependency_extern_declarations_quiet(
         })?;
         let module_import_paths =
             dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
-        let imported_externs = root_source_module
-            .as_ref()
-            .map(|module| collect_imported_dependency_externs(module, &module_import_paths));
+        let imported_externs =
+            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
 
         for module in &artifact.modules {
             collect_dependency_module_extern_declarations(
@@ -5972,7 +6145,7 @@ fn render_direct_dependency_extern_declarations_quiet(
                 module.source_path.as_str(),
                 &module.syntax,
                 &module.contents,
-                imported_externs.as_ref(),
+                Some(&imported_externs),
                 &mut owners_by_symbol,
                 &mut declarations,
             )
@@ -5989,6 +6162,278 @@ fn render_direct_dependency_extern_declarations_quiet(
     }
 
     Ok(declarations.join("\n\n"))
+}
+
+fn render_direct_dependency_public_function_forwarders(
+    command_label: &str,
+    manifest_path: &Path,
+    source: &str,
+    report_failure: bool,
+) -> Result<String, u8> {
+    let manifest = load_project_manifest(manifest_path).map_err(|error| {
+        if report_failure {
+            report_project_build_dependency_error(command_label, None, &error);
+        }
+        1
+    })?;
+    let direct_dependencies = load_reference_manifests(&manifest).map_err(|error| {
+        if report_failure {
+            report_project_build_dependency_error(command_label, Some(manifest_path), &error);
+        }
+        1
+    })?;
+    let root_source_module = match parse_source(source) {
+        Ok(module) => module,
+        Err(_) => return Ok(String::new()),
+    };
+    let occupied_root_names = collect_top_level_definition_names(&root_source_module);
+
+    let mut forwarders = Vec::new();
+    let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
+
+    for dependency in direct_dependencies {
+        let dependency_package = match package_name(&dependency) {
+            Ok(name) => name.to_owned(),
+            Err(error) => {
+                if report_failure {
+                    report_project_build_dependency_error(
+                        command_label,
+                        Some(manifest_path),
+                        &error,
+                    );
+                }
+                return Err(1);
+            }
+        };
+        let interface_path = default_interface_path(&dependency).map_err(|error| {
+            if report_failure {
+                report_project_build_dependency_error(command_label, Some(manifest_path), &error);
+            }
+            1
+        })?;
+        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+            if report_failure {
+                eprintln!(
+                    "error: {command_label} failed to load referenced package interface `{}`: {error}",
+                    normalize_path(&interface_path)
+                );
+                eprintln!(
+                    "note: while preparing dependency public function wrappers for `{}`",
+                    normalize_path(manifest_path)
+                );
+            }
+            1
+        })?;
+        let module_import_paths =
+            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
+        let imported_externs =
+            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
+
+        for module in &artifact.modules {
+            collect_dependency_module_public_function_forwarders(
+                &dependency_package,
+                &dependency.manifest_path,
+                &module.syntax,
+                &module.contents,
+                Some(&imported_externs),
+                &occupied_root_names,
+                &mut owners_by_symbol,
+                &mut forwarders,
+            )
+            .map_err(|error| {
+                if report_failure {
+                    match error {
+                        DependencyPublicFunctionForwarderError::DependencyConflict {
+                            symbol,
+                            owner,
+                        } => {
+                            eprintln!(
+                                "error: {command_label} found conflicting direct dependency public function imports for `{symbol}`"
+                            );
+                            eprintln!("note: first package: `{}`", owner.package_name);
+                            eprintln!("note: conflicting package: `{dependency_package}`");
+                            eprintln!(
+                                "hint: keep direct dependency public function names unique until package-qualified dependency call lowering lands"
+                            );
+                        }
+                        DependencyPublicFunctionForwarderError::LocalConflict { symbol } => {
+                            eprintln!(
+                                "error: {command_label} cannot synthesize direct dependency public function bridge for `{symbol}` because the root source already defines the same top-level name"
+                            );
+                            eprintln!("note: conflicting direct dependency package: `{dependency_package}`");
+                            eprintln!(
+                                "hint: rename the local top-level item or avoid importing a direct dependency public function with the same original symbol name"
+                            );
+                        }
+                    }
+                }
+                1
+            })?;
+        }
+    }
+
+    Ok(forwarders.join("\n\n"))
+}
+
+fn render_direct_dependency_public_function_forwarders_quiet(
+    manifest_path: &Path,
+    source: &str,
+) -> Result<String, PrepareProjectTargetBuildError> {
+    let manifest = load_project_manifest(manifest_path)
+        .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
+    let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let root_source_module = match parse_source(source) {
+        Ok(module) => module,
+        Err(_) => return Ok(String::new()),
+    };
+    let occupied_root_names = collect_top_level_definition_names(&root_source_module);
+    let direct_dependencies = manifest
+        .references
+        .packages
+        .iter()
+        .map(|reference| {
+            let reference_manifest_path = reference_manifest_path(&manifest, reference);
+            let dependency_manifest = load_project_manifest(&manifest_dir.join(reference))
+                .map_err(|error| {
+                    target_prep_dependency_manifest_failure(Some(&reference_manifest_path), &error)
+                })?;
+            Ok::<_, PrepareProjectTargetBuildError>(dependency_manifest)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut forwarders = Vec::new();
+    let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
+
+    for dependency_manifest in direct_dependencies {
+        let dependency_package = package_name(&dependency_manifest)
+            .map(str::to_owned)
+            .map_err(|error| {
+                target_prep_dependency_manifest_failure(
+                    Some(&dependency_manifest.manifest_path),
+                    &error,
+                )
+            })?;
+        let interface_path = default_interface_path(&dependency_manifest).map_err(|error| {
+            target_prep_dependency_manifest_failure(
+                Some(&dependency_manifest.manifest_path),
+                &error,
+            )
+        })?;
+        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+            PrepareProjectTargetBuildError {
+                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
+                    dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                    dependency_package: dependency_package.clone(),
+                    interface_path: interface_path.clone(),
+                    message: format!(
+                        "failed to load referenced package interface `{}`: {error}",
+                        normalize_path(&interface_path)
+                    ),
+                },
+            }
+        })?;
+        let module_import_paths =
+            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
+        let imported_externs =
+            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
+
+        for module in &artifact.modules {
+            collect_dependency_module_public_function_forwarders(
+                &dependency_package,
+                &dependency_manifest.manifest_path,
+                &module.syntax,
+                &module.contents,
+                Some(&imported_externs),
+                &occupied_root_names,
+                &mut owners_by_symbol,
+                &mut forwarders,
+            )
+            .map_err(|error| match error {
+                DependencyPublicFunctionForwarderError::DependencyConflict { symbol, owner } => {
+                    PrepareProjectTargetBuildError {
+                        failure_kind:
+                            PrepareProjectTargetBuildFailureKind::DependencyFunctionConflict {
+                                symbol,
+                                first_package: owner.package_name,
+                                first_manifest_path: owner.manifest_path,
+                                conflicting_package: dependency_package.clone(),
+                                conflicting_manifest_path: dependency_manifest
+                                    .manifest_path
+                                    .clone(),
+                            },
+                    }
+                }
+                DependencyPublicFunctionForwarderError::LocalConflict { symbol } => {
+                    PrepareProjectTargetBuildError {
+                        failure_kind:
+                            PrepareProjectTargetBuildFailureKind::DependencyFunctionLocalConflict {
+                                symbol,
+                                dependency_package: dependency_package.clone(),
+                                dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                            },
+                    }
+                }
+            })?;
+        }
+    }
+
+    Ok(forwarders.join("\n\n"))
+}
+
+fn render_public_dependency_function_export_wrappers(
+    command_label: &str,
+    manifest_path: &Path,
+    source: &str,
+    report_failure: bool,
+) -> Result<String, u8> {
+    let manifest = load_project_manifest(manifest_path).map_err(|error| {
+        if report_failure {
+            eprintln!("error: {command_label} {error}");
+        }
+        1
+    })?;
+    let package_name = package_name(&manifest).map_err(|error| {
+        if report_failure {
+            eprintln!("error: {command_label} {error}");
+        }
+        1
+    })?;
+    Ok(render_public_dependency_function_export_wrappers_for_package(package_name, source))
+}
+
+fn render_public_dependency_function_export_wrappers_quiet(
+    manifest_path: &Path,
+    source: &str,
+) -> Result<String, PrepareProjectTargetBuildError> {
+    let manifest = load_project_manifest(manifest_path)
+        .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
+    let package_name = package_name(&manifest)
+        .map_err(|error| target_prep_dependency_manifest_failure(Some(manifest_path), &error))?;
+    Ok(render_public_dependency_function_export_wrappers_for_package(package_name, source))
+}
+
+fn render_public_dependency_function_export_wrappers_for_package(
+    package_name: &str,
+    source: &str,
+) -> String {
+    let Ok(module) = parse_source(source) else {
+        return String::new();
+    };
+
+    let mut wrappers = Vec::new();
+    let module_import_path = dependency_interface_module_import_path(package_name, &module);
+    for item in &module.items {
+        let ItemKind::Function(function) = &item.kind else {
+            continue;
+        };
+        if let Some(wrapper) =
+            render_dependency_public_function_export_wrapper(&module_import_path, function, source)
+        {
+            wrappers.push(wrapper);
+        }
+    }
+
+    wrappers.join("\n\n")
 }
 
 fn collect_dependency_module_extern_declarations(
@@ -6046,6 +6491,197 @@ fn collect_dependency_module_extern_declarations(
         }
     }
     Ok(())
+}
+
+fn collect_dependency_module_public_function_forwarders(
+    dependency_package: &str,
+    dependency_manifest_path: &Path,
+    module: &Module,
+    contents: &str,
+    imported_externs: Option<&ImportedDependencyExterns>,
+    occupied_root_names: &BTreeSet<String>,
+    owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
+    forwarders: &mut Vec<String>,
+) -> Result<(), DependencyPublicFunctionForwarderError> {
+    let module_import_path = dependency_interface_module_import_path(dependency_package, module);
+
+    for item in &module.items {
+        let ItemKind::Function(function) = &item.kind else {
+            continue;
+        };
+        if !supports_dependency_public_function_import_bridge(function) {
+            continue;
+        }
+        if imported_externs.is_some_and(|imports| {
+            !dependency_extern_is_imported(imports, &module_import_path, &function.name)
+        }) {
+            continue;
+        }
+        if occupied_root_names.contains(&function.name) {
+            return Err(DependencyPublicFunctionForwarderError::LocalConflict {
+                symbol: function.name.clone(),
+            });
+        }
+        let Some(forwarder) = render_imported_dependency_public_function_forwarder(
+            &module_import_path,
+            function,
+            contents,
+        ) else {
+            continue;
+        };
+        record_dependency_extern_declaration(
+            dependency_package,
+            dependency_manifest_path,
+            &function.name,
+            forwarder,
+            owners_by_symbol,
+            forwarders,
+        )
+        .map_err(|(symbol, owner)| {
+            DependencyPublicFunctionForwarderError::DependencyConflict { symbol, owner }
+        })?;
+    }
+
+    Ok(())
+}
+
+enum DependencyPublicFunctionForwarderError {
+    DependencyConflict {
+        symbol: String,
+        owner: DependencyExternOwner,
+    },
+    LocalConflict {
+        symbol: String,
+    },
+}
+
+fn supports_dependency_public_function_import_bridge(function: &FunctionDecl) -> bool {
+    function.visibility == Visibility::Public
+        && function.abi.is_none()
+        && !function.is_async
+        && !function.is_unsafe
+        && function.generics.is_empty()
+        && function.where_clause.is_empty()
+        && function
+            .params
+            .iter()
+            .all(|param| matches!(param, Param::Regular { .. }))
+}
+
+fn supports_dependency_public_function_export_bridge(function: &FunctionDecl) -> bool {
+    supports_dependency_public_function_import_bridge(function) && function.body.is_some()
+}
+
+fn render_imported_dependency_public_function_forwarder(
+    module_import_path: &[String],
+    function: &FunctionDecl,
+    contents: &str,
+) -> Option<String> {
+    if !supports_dependency_public_function_import_bridge(function) {
+        return None;
+    }
+    let params = render_dependency_bridge_param_list(function, contents);
+    let args = render_dependency_bridge_arg_list(function);
+    let return_suffix = render_dependency_bridge_return_suffix(function, contents);
+    let export_name =
+        dependency_public_function_export_name(module_import_path, function.name.as_str());
+    let mut rendered = format!("extern \"c\" fn {export_name}({params}){return_suffix}\n\n");
+    rendered.push_str(&format!(
+        "fn {}({params}){return_suffix} {{\n",
+        function.name
+    ));
+    if function.return_type.is_some() {
+        rendered.push_str(&format!("    return {export_name}({args})\n"));
+    } else {
+        rendered.push_str(&format!("    {export_name}({args})\n"));
+    }
+    rendered.push('}');
+    Some(rendered)
+}
+
+fn render_dependency_public_function_export_wrapper(
+    module_import_path: &[String],
+    function: &FunctionDecl,
+    contents: &str,
+) -> Option<String> {
+    if !supports_dependency_public_function_export_bridge(function) {
+        return None;
+    }
+    let params = render_dependency_bridge_param_list(function, contents);
+    let args = render_dependency_bridge_arg_list(function);
+    let return_suffix = render_dependency_bridge_return_suffix(function, contents);
+    let export_name =
+        dependency_public_function_export_name(module_import_path, function.name.as_str());
+    let mut rendered = format!("extern \"c\" pub fn {export_name}({params}){return_suffix} {{\n");
+    if function.return_type.is_some() {
+        rendered.push_str(&format!("    return {}({args})\n", function.name));
+    } else {
+        rendered.push_str(&format!("    {}({args})\n", function.name));
+    }
+    rendered.push('}');
+    Some(rendered)
+}
+
+fn render_dependency_bridge_param_list(function: &FunctionDecl, contents: &str) -> String {
+    function
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            Param::Regular { name, ty, .. } => {
+                Some(format!("{name}: {}", span_text(contents, ty.span).trim()))
+            }
+            Param::Receiver { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_dependency_bridge_arg_list(function: &FunctionDecl) -> String {
+    function
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            Param::Regular { name, .. } => Some(name.clone()),
+            Param::Receiver { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_dependency_bridge_return_suffix(function: &FunctionDecl, contents: &str) -> String {
+    function
+        .return_type
+        .as_ref()
+        .map(|ty| format!(" -> {}", span_text(contents, ty.span).trim()))
+        .unwrap_or_default()
+}
+
+fn dependency_public_function_export_name(
+    module_import_path: &[String],
+    symbol_name: &str,
+) -> String {
+    let mut rendered = String::from("__ql_bridge_");
+    for segment in module_import_path {
+        rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(segment));
+        rendered.push('_');
+    }
+    rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(symbol_name));
+    rendered
+}
+
+fn sanitize_dependency_bridge_identifier_fragment(fragment: &str) -> String {
+    let mut rendered = String::new();
+    for ch in fragment.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            rendered.push(ch);
+        } else {
+            rendered.push('_');
+        }
+    }
+    if rendered.is_empty() {
+        rendered.push('_');
+    }
+    rendered
 }
 
 fn record_dependency_extern_declaration(

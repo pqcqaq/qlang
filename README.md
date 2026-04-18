@@ -7,8 +7,8 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - Phase 1 到 Phase 6 的编译器和 same-file tooling 已落地。
 - Phase 7 正在收口 async/runtime/build 的最小可用子集。
 - Phase 8 正在推进 package/workspace、`.qi`、本地依赖、project-aware `build/run/test` 和 dependency-backed LSP。
-- 当前跨包执行路径仍然很窄：只稳定支持 direct local dependency 的 public `extern "c"` 符号。
-- root target 的 dependency extern 预处理现在只会注入当前源码实际 `use` 到的直依赖 `extern "c"` 符号；未导入 sibling dependency 的同名符号不再提前卡住 `ql build/run/test`。
+- 当前跨包执行路径仍然很窄：只稳定支持 direct local dependency 的受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）与 public `extern "c"` 符号。
+- root target 的 dependency bridge 现在只会为当前源码实际导入的直依赖受限 public free function / `extern "c"` 符号注入 wrapper；未导入 sibling dependency 的同名符号不再提前卡住 `ql build/run/test`，但实际导入的同名直依赖函数 / extern 仍会分别触发 `dependency-function-conflict` / `dependency-extern-conflict`。
 - 当前 rename 仍以 same-file 为边界；cross-file rename / workspace edits 尚未开放。
 - `ql build` / `ql run` 已支持从 package 根目录和已声明 target 的源码路径进入 project-aware 流程；workspace member 源码路径会继承外层 workspace profile 和输出目录语义。
 - `ql check` / `ql build` / `ql run` / `ql test` 与 `ql project targets` / `graph` / `lock` 已提供第一版 `--json` 机器输出；`ql run --json` 当前输出 `ql.run.v1`，`ql project lock --json` 当前输出 `ql.project.lock.result.v1`。
