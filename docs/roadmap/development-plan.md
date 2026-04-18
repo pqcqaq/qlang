@@ -36,6 +36,7 @@
 完成标准：
 
 - 新脚手架能开箱进入 `graph/check/build/run/test`。
+- 已创建的 workspace 能继续用 `ql project add` 扩成员，而不是只能一次性 `init`。
 - target 发现、profile 规则、默认输出目录和测试入口都有明确文档和回归保护。
 
 ### B. manifest 与 dependency-aware build

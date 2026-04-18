@@ -461,6 +461,7 @@ dependencies = [
  "ql-runtime",
  "ql-span",
  "serde_json",
+ "toml",
 ]
 
 [[package]]

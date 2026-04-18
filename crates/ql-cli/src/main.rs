@@ -30,6 +30,7 @@ use ql_project::{
 use ql_runtime::{collect_runtime_hook_signatures, collect_runtime_hooks};
 use ql_span::locate;
 use serde_json::{Value as JsonValue, json};
+use toml::Value as TomlValue;
 
 fn main() -> ExitCode {
     match run() {
@@ -653,6 +654,56 @@ fn run() -> Result<(), u8> {
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
                     project_init_path(&path, workspace, package_name.as_deref())
+                }
+                "add" => {
+                    let remaining = args.collect::<Vec<_>>();
+                    let mut path = None;
+                    let mut package_name = None;
+                    let mut index = 0;
+
+                    while index < remaining.len() {
+                        match remaining[index].as_str() {
+                            "--name" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project add --name` expects a package name"
+                                    );
+                                    return Err(1);
+                                };
+                                if package_name.is_some() {
+                                    eprintln!(
+                                        "error: `ql project add` received `--name` more than once"
+                                    );
+                                    return Err(1);
+                                }
+                                package_name = Some(value.clone());
+                            }
+                            other if other.starts_with('-') => {
+                                eprintln!("error: unknown `ql project add` option `{other}`");
+                                return Err(1);
+                            }
+                            other => {
+                                if path.is_some() {
+                                    eprintln!("error: unknown `ql project add` argument `{other}`");
+                                    return Err(1);
+                                }
+                                path = Some(PathBuf::from(other));
+                            }
+                        }
+
+                        index += 1;
+                    }
+
+                    let Some(package_name) = package_name else {
+                        eprintln!("error: `ql project add` requires `--name <package>`");
+                        return Err(1);
+                    };
+
+                    let path = path
+                        .or_else(|| env::current_dir().ok())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    project_add_path(&path, &package_name)
                 }
                 other => {
                     eprintln!("error: unknown `ql project` subcommand `{other}`");
@@ -7965,6 +8016,30 @@ fn project_init_path(path: &Path, workspace: bool, package_name: Option<&str>) -
     Ok(())
 }
 
+fn project_add_path(path: &Path, package_name: &str) -> Result<(), u8> {
+    if let Err(message) = validate_project_package_name(package_name) {
+        eprintln!("error: `ql project add` {message}");
+        return Err(1);
+    }
+
+    let workspace_manifest = resolve_project_add_workspace_manifest(path).map_err(|message| {
+        eprintln!("error: `ql project add` {message}");
+        1
+    })?;
+    let (updated_manifest_path, created_paths) =
+        add_workspace_project_member(&workspace_manifest, package_name).map_err(|message| {
+            eprintln!("error: `ql project add` {message}");
+            1
+        })?;
+
+    println!("updated: {}", normalize_path(&updated_manifest_path));
+    for path in created_paths {
+        println!("created: {}", normalize_path(&path));
+    }
+
+    Ok(())
+}
+
 fn project_init_package_name(
     target_root: &Path,
     workspace: bool,
@@ -7986,11 +8061,11 @@ fn project_init_package_name(
             })?,
     };
 
-    validate_project_init_package_name(&package_name)?;
+    validate_project_package_name(&package_name)?;
     Ok(package_name)
 }
 
-fn validate_project_init_package_name(package_name: &str) -> Result<(), String> {
+fn validate_project_package_name(package_name: &str) -> Result<(), String> {
     if package_name.trim().is_empty() {
         return Err("requires a non-empty package name".to_owned());
     }
@@ -8009,7 +8084,192 @@ fn validate_project_init_package_name(package_name: &str) -> Result<(), String> 
 
 fn init_package_project(target_root: &Path, package_name: &str) -> Result<Vec<PathBuf>, String> {
     ensure_project_init_target_root(target_root)?;
+    create_package_scaffold(target_root, package_name)
+}
 
+fn init_workspace_project(target_root: &Path, package_name: &str) -> Result<Vec<PathBuf>, String> {
+    ensure_project_init_target_root(target_root)?;
+
+    let workspace_manifest_path = target_root.join("qlang.toml");
+    let member_dir = target_root.join("packages").join(package_name);
+    let workspace_manifest = render_workspace_manifest(package_name);
+
+    write_new_project_file(&workspace_manifest_path, &workspace_manifest)?;
+    let mut created_paths = vec![workspace_manifest_path];
+    created_paths.extend(create_package_scaffold(&member_dir, package_name)?);
+    Ok(created_paths)
+}
+
+fn resolve_project_add_workspace_manifest(
+    path: &Path,
+) -> Result<ql_project::ProjectManifest, String> {
+    let manifest =
+        load_project_manifest(path).map_err(|error| project_add_manifest_error(path, &error))?;
+    let workspace_manifest_path = if manifest.workspace.is_some() {
+        manifest.manifest_path.clone()
+    } else {
+        resolve_project_member_request_root(&manifest.manifest_path)
+    };
+    let workspace_manifest = load_project_manifest(&workspace_manifest_path)
+        .map_err(|error| project_add_manifest_error(path, &error))?;
+
+    if workspace_manifest.workspace.is_none() {
+        return Err(format!(
+            "requires an existing workspace manifest; `{}` resolves to package manifest `{}`",
+            normalize_path(path),
+            normalize_path(&workspace_manifest.manifest_path)
+        ));
+    }
+
+    Ok(workspace_manifest)
+}
+
+fn project_add_manifest_error(path: &Path, error: &ql_project::ProjectError) -> String {
+    match error {
+        ql_project::ProjectError::ManifestNotFound { start } => format!(
+            "requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+            normalize_path(start)
+        ),
+        ql_project::ProjectError::PackageSourceRootNotFound {
+            path: manifest_path,
+        } => format!(
+            "manifest `{}` does not have a project source root discoverable from `{}`",
+            normalize_path(manifest_path),
+            normalize_path(path)
+        ),
+        other => other.to_string(),
+    }
+}
+
+fn add_workspace_project_member(
+    workspace_manifest: &ql_project::ProjectManifest,
+    package_name: &str,
+) -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let Some(workspace) = workspace_manifest.workspace.as_ref() else {
+        return Err(format!(
+            "manifest `{}` is not a workspace",
+            normalize_path(&workspace_manifest.manifest_path)
+        ));
+    };
+
+    let workspace_root = workspace_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    let packages_dir = workspace_root.join("packages");
+    let member_relative_path = format!("packages/{package_name}");
+    let member_root = packages_dir.join(package_name);
+
+    if workspace
+        .members
+        .iter()
+        .any(|member| normalize_path(Path::new(member)) == member_relative_path)
+    {
+        return Err(format!(
+            "workspace manifest `{}` already declares member `{member_relative_path}`",
+            normalize_path(&workspace_manifest.manifest_path)
+        ));
+    }
+    if let Some(existing_package_manifest) =
+        find_workspace_member_with_package_name(workspace_manifest, package_name)
+    {
+        return Err(format!(
+            "workspace manifest `{}` already contains package `{package_name}` at `{}`",
+            normalize_path(&workspace_manifest.manifest_path),
+            normalize_path(&existing_package_manifest)
+        ));
+    }
+    if packages_dir.exists() && !packages_dir.is_dir() {
+        return Err(format!(
+            "would overwrite existing path `{}`",
+            normalize_path(&packages_dir)
+        ));
+    }
+    if member_root.exists() {
+        return Err(format!(
+            "would overwrite existing path `{}`",
+            normalize_path(&member_root)
+        ));
+    }
+
+    let workspace_manifest_source =
+        fs::read_to_string(&workspace_manifest.manifest_path).map_err(|error| {
+            format!(
+                "failed to read `{}`: {error}",
+                normalize_path(&workspace_manifest.manifest_path)
+            )
+        })?;
+    let updated_workspace_manifest =
+        append_workspace_manifest_member(&workspace_manifest_source, &member_relative_path)?;
+
+    fs::write(
+        &workspace_manifest.manifest_path,
+        updated_workspace_manifest,
+    )
+    .map_err(|error| {
+        format!(
+            "failed to write `{}`: {error}",
+            normalize_path(&workspace_manifest.manifest_path)
+        )
+    })?;
+    let created_paths = create_package_scaffold(&member_root, package_name)?;
+
+    Ok((workspace_manifest.manifest_path.clone(), created_paths))
+}
+
+fn find_workspace_member_with_package_name(
+    workspace_manifest: &ql_project::ProjectManifest,
+    wanted_package_name: &str,
+) -> Option<PathBuf> {
+    if workspace_manifest
+        .package
+        .as_ref()
+        .is_some_and(|package| package.name == wanted_package_name)
+    {
+        return Some(workspace_manifest.manifest_path.clone());
+    }
+
+    let workspace_root = workspace_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    workspace_manifest
+        .workspace
+        .as_ref()?
+        .members
+        .iter()
+        .find_map(|member| {
+            let member_manifest = load_project_manifest(&workspace_root.join(member)).ok()?;
+            let existing_package_name = package_name(&member_manifest).ok()?;
+            (existing_package_name == wanted_package_name).then_some(member_manifest.manifest_path)
+        })
+}
+
+fn append_workspace_manifest_member(source: &str, member: &str) -> Result<String, String> {
+    let mut value = toml::from_str::<TomlValue>(source)
+        .map_err(|error| format!("failed to parse workspace manifest: {error}"))?;
+    let Some(root) = value.as_table_mut() else {
+        return Err("workspace manifest must be a TOML table".to_owned());
+    };
+    let Some(workspace) = root.get_mut("workspace").and_then(TomlValue::as_table_mut) else {
+        return Err("workspace manifest must declare `[workspace]`".to_owned());
+    };
+    let members = workspace
+        .entry("members")
+        .or_insert_with(|| TomlValue::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| "workspace manifest must declare `[workspace].members`".to_owned())?;
+    members.push(TomlValue::String(member.to_owned()));
+
+    let mut rendered = toml::to_string(&value)
+        .map_err(|error| format!("failed to render workspace manifest: {error}"))?;
+    if !rendered.ends_with('\n') {
+        rendered.push('\n');
+    }
+    Ok(rendered)
+}
+
+fn create_package_scaffold(target_root: &Path, package_name: &str) -> Result<Vec<PathBuf>, String> {
     let manifest_path = target_root.join("qlang.toml");
     let source_path = target_root.join("src").join("lib.ql");
     let main_path = target_root.join("src").join("main.ql");
@@ -8022,33 +8282,6 @@ fn init_package_project(target_root: &Path, package_name: &str) -> Result<Vec<Pa
     write_new_project_file(&test_path, default_package_test_source())?;
 
     Ok(vec![manifest_path, source_path, main_path, test_path])
-}
-
-fn init_workspace_project(target_root: &Path, package_name: &str) -> Result<Vec<PathBuf>, String> {
-    ensure_project_init_target_root(target_root)?;
-
-    let workspace_manifest_path = target_root.join("qlang.toml");
-    let member_dir = target_root.join("packages").join(package_name);
-    let member_manifest_path = member_dir.join("qlang.toml");
-    let member_source_path = member_dir.join("src").join("lib.ql");
-    let member_main_path = member_dir.join("src").join("main.ql");
-    let member_test_path = member_dir.join("tests").join("smoke.ql");
-    let workspace_manifest = render_workspace_manifest(package_name);
-    let member_manifest = render_package_manifest(package_name);
-
-    write_new_project_file(&workspace_manifest_path, &workspace_manifest)?;
-    write_new_project_file(&member_manifest_path, &member_manifest)?;
-    write_new_project_file(&member_source_path, default_package_source())?;
-    write_new_project_file(&member_main_path, default_package_main_source())?;
-    write_new_project_file(&member_test_path, default_package_test_source())?;
-
-    Ok(vec![
-        workspace_manifest_path,
-        member_manifest_path,
-        member_source_path,
-        member_main_path,
-        member_test_path,
-    ])
 }
 
 fn ensure_project_init_target_root(target_root: &Path) -> Result<(), String> {
@@ -10787,6 +11020,7 @@ fn print_usage() {
     eprintln!("  ql project graph [file-or-dir] [--json]");
     eprintln!("  ql project lock [file-or-dir] [--check] [--json]");
     eprintln!("  ql project init [dir] [--workspace] [--name <package>]");
+    eprintln!("  ql project add [file-or-dir] --name <package>");
     eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]");
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");

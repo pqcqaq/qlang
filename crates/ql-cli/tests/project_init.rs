@@ -320,3 +320,262 @@ fn project_init_refuses_to_overwrite_existing_manifest() {
     )
     .unwrap();
 }
+
+#[test]
+fn project_add_creates_workspace_member_from_member_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-success");
+    let project_root = temp.path().join("workspace");
+    let request_path = project_root.join("packages/app/src/main.ql");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(&mut init, "`ql project init` workspace for add");
+    let (_stdout, stderr) =
+        expect_success("project-add-success", "workspace init for add", &output).unwrap();
+    expect_empty_stderr("project-add-success", "workspace init for add", &stderr).unwrap();
+
+    let mut add = ql_command(&workspace_root);
+    add.args([
+        "project",
+        "add",
+        &request_path.to_string_lossy(),
+        "--name",
+        "tools",
+    ]);
+    let output = run_command_capture(&mut add, "`ql project add` workspace member source path");
+    let (stdout, stderr) =
+        expect_success("project-add-success", "add workspace member", &output).unwrap();
+    expect_empty_stderr("project-add-success", "add workspace member", &stderr).unwrap();
+    expect_stdout_contains_all(
+        "project-add-success",
+        &stdout,
+        &[
+            &format!(
+                "updated: {}",
+                project_root
+                    .join("qlang.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "created: {}",
+                project_root
+                    .join("packages/tools/qlang.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "created: {}",
+                project_root
+                    .join("packages/tools/src/lib.ql")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "created: {}",
+                project_root
+                    .join("packages/tools/src/main.ql")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "created: {}",
+                project_root
+                    .join("packages/tools/tests/smoke.ql")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+        ],
+    )
+    .unwrap();
+
+    let workspace_manifest = read_normalized_file(
+        &project_root.join("qlang.toml"),
+        "workspace manifest after add",
+    );
+    assert!(
+        workspace_manifest.contains("packages/app"),
+        "workspace manifest should keep existing member entry"
+    );
+    assert!(
+        workspace_manifest.contains("packages/tools"),
+        "workspace manifest should add the new member entry"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/tools/qlang.toml"),
+            "added workspace member manifest"
+        ),
+        "[package]\nname = \"tools\"\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/tools/src/lib.ql"),
+            "added workspace member lib"
+        ),
+        "pub fn run() -> Int {\n    return 0\n}\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/tools/tests/smoke.ql"),
+            "added workspace member smoke test"
+        ),
+        "fn main() -> Int {\n    return 0\n}\n"
+    );
+
+    let mut graph = ql_command(&workspace_root);
+    graph.args(["project", "graph", &project_root.to_string_lossy()]);
+    let output = run_command_capture(&mut graph, "`ql project graph` after add");
+    let (stdout, stderr) =
+        expect_success("project-add-success", "graph workspace after add", &output).unwrap();
+    expect_empty_stderr("project-add-success", "graph workspace after add", &stderr).unwrap();
+    expect_stdout_contains_all(
+        "project-add-success",
+        &stdout,
+        &[
+            "workspace_members:",
+            "  - packages/app",
+            "  - packages/tools",
+            "  - member: packages/tools",
+            "    package: tools",
+            "    status: missing",
+        ],
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_add_refuses_duplicate_workspace_package_name() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-duplicate");
+    let project_root = temp.path().join("workspace");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(&mut init, "`ql project init` workspace for duplicate add");
+    let (_stdout, stderr) = expect_success(
+        "project-add-duplicate",
+        "workspace init for duplicate add",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-duplicate",
+        "workspace init for duplicate add",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut add = ql_command(&workspace_root);
+    add.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(&mut add, "`ql project add` duplicate package");
+    let (stdout, stderr) = expect_exit_code(
+        "project-add-duplicate",
+        "duplicate workspace package add",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-add-duplicate",
+        "duplicate workspace package add",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-add-duplicate",
+        "duplicate workspace package add",
+        &stderr,
+        "already declares member `packages/app`",
+    )
+    .unwrap();
+}
+
+#[test]
+fn project_add_refuses_to_overwrite_existing_member_directory() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-conflict");
+    let project_root = temp.path().join("workspace");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(&mut init, "`ql project init` workspace for conflict add");
+    let (_stdout, stderr) = expect_success(
+        "project-add-conflict",
+        "workspace init for conflict add",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-conflict",
+        "workspace init for conflict add",
+        &stderr,
+    )
+    .unwrap();
+
+    temp.write("workspace/packages/tools/placeholder.txt", "already-here");
+
+    let mut add = ql_command(&workspace_root);
+    add.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "tools",
+    ]);
+    let output = run_command_capture(&mut add, "`ql project add` conflicting member directory");
+    let (stdout, stderr) = expect_exit_code(
+        "project-add-conflict",
+        "conflicting workspace member add",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-add-conflict",
+        "conflicting workspace member add",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-add-conflict",
+        "conflicting workspace member add",
+        &stderr,
+        &format!(
+            "error: `ql project add` would overwrite existing path `{}`",
+            project_root
+                .join("packages/tools")
+                .to_string_lossy()
+                .replace('\\', "/")
+        ),
+    )
+    .unwrap();
+}
