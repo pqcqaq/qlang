@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{SymbolKind, analyze_package, analyze_source};
+use ql_analysis::{SymbolKind, analyze_package, analyze_package_dependencies, analyze_source};
 use ql_span::Span;
 
 struct TempDir {
@@ -470,4 +470,79 @@ pub fn read(config: Cfg) -> Int {
         references[2].span,
         Span::new(member_field, member_field + "value".len())
     );
+}
+
+#[test]
+fn package_analysis_exposes_dependency_value_queries_in_broken_source() {
+    let temp = TempDir::new("ql-analysis-package-value-queries-parse-errors");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config
+    return current.value
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+    let use_offset = nth_offset(source, "current", 2);
+
+    let hover = package
+        .dependency_value_hover_in_source_at(source, use_offset)
+        .expect("dependency value hover should survive parse errors");
+    assert_eq!(hover.kind, SymbolKind::Struct);
+    assert_eq!(hover.name, "Config");
+    assert!(hover.detail.starts_with("struct Config {"));
+
+    let definition = package
+        .dependency_value_definition_in_source_at(source, use_offset)
+        .expect("dependency value definition should survive parse errors");
+    assert_eq!(definition.kind, SymbolKind::Struct);
+    assert_eq!(definition.name, "Config");
+    assert!(definition.path.ends_with("dep.qi"));
+
+    let type_definition = package
+        .dependency_value_type_definition_in_source_at(source, use_offset)
+        .expect("dependency value type definition should survive parse errors");
+    assert_eq!(type_definition.kind, SymbolKind::Struct);
+    assert_eq!(type_definition.name, "Config");
+    assert_eq!(type_definition.path, definition.path);
+    assert_eq!(type_definition.span, definition.span);
 }

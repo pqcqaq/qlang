@@ -2320,7 +2320,14 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyValueTarget> {
-        let module = parse_source(source).ok()?;
+        let module = match parse_source(source) {
+            Ok(module) => module,
+            Err(_) => {
+                let occurrence =
+                    dependency_value_occurrence_in_broken_source(self, source, offset)?;
+                return dependency_value_target_for_occurrence(self, &occurrence);
+            }
+        };
         if let Some(occurrence) = self.dependency_value_occurrence_in_module(&module, offset) {
             return dependency_value_target_for_occurrence(self, &occurrence);
         }

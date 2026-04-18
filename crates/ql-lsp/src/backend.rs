@@ -3187,7 +3187,8 @@ mod tests {
         semantic_tokens_for_workspace_dependency_fallback,
         semantic_tokens_for_workspace_package_analysis, workspace_source_definition_for_dependency,
         workspace_source_definition_for_import,
-        workspace_source_definition_for_import_in_broken_source, workspace_source_hover_for_import,
+        workspace_source_definition_for_import_in_broken_source,
+        workspace_source_hover_for_dependency, workspace_source_hover_for_import,
         workspace_source_hover_for_import_in_broken_source,
         workspace_source_references_for_dependency,
         workspace_source_references_for_dependency_in_broken_source,
@@ -8063,6 +8064,134 @@ pub fn exported(value: Int) -> Int
                 ),
             );
         }
+    }
+
+    #[test]
+    fn workspace_dependency_value_queries_survive_parse_errors_and_prefer_workspace_member_source()
+    {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-value-source-queries-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let current = config
+    return current.value
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+    extra: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let current_position = offset_to_position(&source, nth_offset(&source, "current", 2));
+
+        let hover =
+            workspace_source_hover_for_dependency(&uri, &source, None, &package, current_position)
+                .expect("broken-source workspace dependency hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("struct Config"));
+
+        let definition = workspace_source_definition_for_dependency(
+            &uri,
+            &source,
+            None,
+            &package,
+            current_position,
+        )
+        .expect("broken-source workspace dependency definition should exist");
+        let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+            panic!("workspace dependency definition should resolve to one location")
+        };
+        assert_eq!(
+            definition_location
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+
+        let type_definition = workspace_source_type_definition_for_dependency(
+            &uri,
+            &source,
+            None,
+            &package,
+            current_position,
+        )
+        .expect("broken-source workspace dependency type definition should exist");
+        let GotoTypeDefinitionResponse::Scalar(type_location) = type_definition else {
+            panic!("workspace dependency type definition should resolve to one location")
+        };
+        assert_eq!(
+            type_location
+                .uri
+                .to_file_path()
+                .expect("type definition URI should convert to a file path")
+                .canonicalize()
+                .expect("type definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
     }
 
     #[test]
