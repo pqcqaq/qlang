@@ -709,3 +709,131 @@ pub fn read(config: Cfg) -> Int {
     assert!(method.iter().all(|item| item.kind == SymbolKind::Method));
     assert_eq!(method[0].detail, "fn get(self) -> Int");
 }
+
+#[test]
+fn package_analysis_surfaces_dependency_import_call_result_member_completions_in_parse_error_source()
+ {
+    let temp = TempDir::new("ql-analysis-package-import-call-member-completion-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+
+pub fn load() -> Child
+pub fn maybe_load() -> Option[Child]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.load
+use demo.dep.maybe_load
+
+pub fn read() -> Int {
+    let first = load().va
+    let second = load().ge(
+    let third = maybe_load()?.va
+    let fourth = maybe_load()?.ge(
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+
+    let load_field = package
+        .dependency_member_field_completions_at(source, nth_offset(source, ".va", 1) + ".va".len())
+        .expect("dependency import call-result field completions should survive parse errors");
+    assert_eq!(
+        load_field
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["value"]
+    );
+    assert!(load_field.iter().all(|item| item.kind == SymbolKind::Field));
+    assert_eq!(load_field[0].detail, "field value: Int");
+
+    let load_method = package
+        .dependency_method_completions_at(source, nth_offset(source, ".ge", 1) + ".ge".len())
+        .expect("dependency import call-result method completions should survive parse errors");
+    assert_eq!(
+        load_method
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["get"]
+    );
+    assert!(
+        load_method
+            .iter()
+            .all(|item| item.kind == SymbolKind::Method)
+    );
+    assert_eq!(load_method[0].detail, "fn get(self) -> Int");
+
+    let maybe_field = package
+        .dependency_member_field_completions_at(source, nth_offset(source, ".va", 2) + ".va".len())
+        .expect("dependency import question-call field completions should survive parse errors");
+    assert_eq!(
+        maybe_field
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["value"]
+    );
+    assert!(
+        maybe_field
+            .iter()
+            .all(|item| item.kind == SymbolKind::Field)
+    );
+    assert_eq!(maybe_field[0].detail, "field value: Int");
+
+    let maybe_method = package
+        .dependency_method_completions_at(source, nth_offset(source, ".ge", 2) + ".ge".len())
+        .expect("dependency import question-call method completions should survive parse errors");
+    assert_eq!(
+        maybe_method
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["get"]
+    );
+    assert!(
+        maybe_method
+            .iter()
+            .all(|item| item.kind == SymbolKind::Method)
+    );
+    assert_eq!(maybe_method[0].detail, "fn get(self) -> Int");
+}

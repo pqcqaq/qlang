@@ -2977,6 +2977,143 @@ packages = ["../dep"]
 }
 
 #[test]
+fn package_bridge_completes_dependency_import_call_result_members_in_parse_error_source() {
+    let temp = TempDir::new("ql-lsp-package-import-call-member-completion-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+    let source = r#"
+package demo.app
+
+use demo.dep.load
+use demo.dep.maybe_load
+
+pub fn read() -> Int {
+    let first = load().va
+    let second = load().ge(
+    let third = maybe_load()?.va
+    let fourth = maybe_load()?.ge(
+}
+"#;
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+
+pub fn load() -> Child
+pub fn maybe_load() -> Option[Child]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    assert!(analyze_source(source).is_err());
+
+    let Some(CompletionResponse::Array(load_field_items)) = completion_for_dependency_member_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
+    ) else {
+        panic!("dependency import call-result field completion should exist in parse-error source");
+    };
+    assert_eq!(load_field_items.len(), 1);
+    assert_eq!(load_field_items[0].label, "value");
+    assert_eq!(load_field_items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(
+        load_field_items[0].detail.as_deref(),
+        Some("field value: Int")
+    );
+
+    let Some(CompletionResponse::Array(load_method_items)) = completion_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".ge", 1) + ".ge".len()),
+    ) else {
+        panic!(
+            "dependency import call-result method completion should exist in parse-error source"
+        );
+    };
+    assert_eq!(load_method_items.len(), 1);
+    assert_eq!(load_method_items[0].label, "get");
+    assert_eq!(
+        load_method_items[0].kind,
+        Some(CompletionItemKind::FUNCTION)
+    );
+    assert_eq!(
+        load_method_items[0].detail.as_deref(),
+        Some("fn get(self) -> Int")
+    );
+
+    let Some(CompletionResponse::Array(maybe_field_items)) =
+        completion_for_dependency_member_fields(
+            source,
+            &package,
+            offset_to_position(source, nth_offset(source, ".va", 2) + ".va".len()),
+        )
+    else {
+        panic!(
+            "dependency import question-call field completion should exist in parse-error source"
+        );
+    };
+    assert_eq!(maybe_field_items.len(), 1);
+    assert_eq!(maybe_field_items[0].label, "value");
+    assert_eq!(maybe_field_items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(
+        maybe_field_items[0].detail.as_deref(),
+        Some("field value: Int")
+    );
+
+    let Some(CompletionResponse::Array(maybe_method_items)) = completion_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".ge", 2) + ".ge".len()),
+    ) else {
+        panic!(
+            "dependency import question-call method completion should exist in parse-error source"
+        );
+    };
+    assert_eq!(maybe_method_items.len(), 1);
+    assert_eq!(maybe_method_items[0].label, "get");
+    assert_eq!(
+        maybe_method_items[0].kind,
+        Some(CompletionItemKind::FUNCTION)
+    );
+    assert_eq!(
+        maybe_method_items[0].detail.as_deref(),
+        Some("fn get(self) -> Int")
+    );
+}
+
+#[test]
 fn package_bridge_completes_dependency_struct_member_fields_for_closure_parameters() {
     let temp = TempDir::new("ql-lsp-package-struct-member-field-closure-param");
     let app_root = temp.path().join("workspace").join("app");

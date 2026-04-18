@@ -4064,59 +4064,6 @@ fn broken_source_value_candidate_in_tokens(
         .map(|(candidate, _)| candidate)
 }
 
-fn broken_source_value_candidate_with_stop_in_tokens(
-    tokens: &[Token],
-    start_index: usize,
-    stop_index: usize,
-) -> Option<BrokenSourceValueCandidate> {
-    let root = tokens.get(start_index)?;
-    if root.kind != TokenKind::Ident || stop_index < start_index + 1 {
-        return None;
-    }
-
-    let mut segments = Vec::new();
-    let mut cursor = start_index + 1;
-    loop {
-        if cursor == stop_index {
-            return Some(BrokenSourceValueCandidate {
-                root_name: root.text.clone(),
-                segments,
-            });
-        }
-        if tokens.get(cursor).map(|token| token.kind) != Some(TokenKind::Dot) {
-            return None;
-        }
-
-        let name_token = tokens.get(cursor + 1)?;
-        if name_token.kind != TokenKind::Ident {
-            return None;
-        }
-        cursor += 2;
-
-        let kind = if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LParen) {
-            cursor = token_index_after_balanced_parens(tokens, cursor)?;
-            BrokenSourceValueSegmentKind::Method
-        } else {
-            BrokenSourceValueSegmentKind::Field
-        };
-        let question_unwrap =
-            if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Question) {
-                cursor += 1;
-                true
-            } else {
-                false
-            };
-        if cursor > stop_index {
-            return None;
-        }
-        segments.push(BrokenSourceValueSegment {
-            name: name_token.text.clone(),
-            kind,
-            question_unwrap,
-        });
-    }
-}
-
 fn broken_source_value_candidate_with_end_in_tokens(
     tokens: &[Token],
     start_index: usize,
@@ -4165,6 +4112,51 @@ fn broken_source_value_candidate_with_end_in_tokens(
         },
         cursor,
     ))
+}
+
+fn broken_source_segments_with_stop_in_tokens(
+    tokens: &[Token],
+    mut cursor: usize,
+    stop_index: usize,
+) -> Option<Vec<BrokenSourceValueSegment>> {
+    let mut segments = Vec::new();
+    loop {
+        if cursor == stop_index {
+            return Some(segments);
+        }
+        if cursor > stop_index || tokens.get(cursor).map(|token| token.kind) != Some(TokenKind::Dot)
+        {
+            return None;
+        }
+
+        let name_token = tokens.get(cursor + 1)?;
+        if name_token.kind != TokenKind::Ident {
+            return None;
+        }
+        cursor += 2;
+
+        let kind = if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LParen) {
+            cursor = token_index_after_balanced_parens(tokens, cursor)?;
+            BrokenSourceValueSegmentKind::Method
+        } else {
+            BrokenSourceValueSegmentKind::Field
+        };
+        let question_unwrap =
+            if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Question) {
+                cursor += 1;
+                true
+            } else {
+                false
+            };
+        if cursor > stop_index {
+            return None;
+        }
+        segments.push(BrokenSourceValueSegment {
+            name: name_token.text.clone(),
+            kind,
+            question_unwrap,
+        });
+    }
 }
 
 fn token_index_after_balanced_parens(tokens: &[Token], open_index: usize) -> Option<usize> {
@@ -4233,6 +4225,71 @@ fn dependency_struct_import_bindings_in_tokens(
             Some((local_name, binding))
         })
         .collect()
+}
+
+fn dependency_symbol_for_broken_source_target<'a>(
+    package: &'a PackageAnalysis,
+    target: &DependencyResolvedTarget,
+) -> Option<(&'a DependencyInterface, &'a DependencySymbol)> {
+    let mut exact_matches = package
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.artifact.package_name == target.package_name)
+        .flat_map(|dependency| {
+            dependency
+                .symbols()
+                .iter()
+                .filter(move |symbol| {
+                    symbol.kind == target.kind
+                        && symbol.name == target.name
+                        && symbol.source_path == target.source_path
+                })
+                .map(move |symbol| (dependency, symbol))
+        })
+        .collect::<Vec<_>>();
+    if exact_matches.len() == 1 {
+        return exact_matches.pop();
+    }
+
+    let mut loose_matches = package
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.artifact.package_name == target.package_name)
+        .flat_map(|dependency| {
+            dependency
+                .symbols()
+                .iter()
+                .filter(move |symbol| symbol.kind == target.kind && symbol.name == target.name)
+                .map(move |symbol| (dependency, symbol))
+        })
+        .collect::<Vec<_>>();
+    if loose_matches.len() != 1 {
+        return None;
+    }
+    loose_matches.pop()
+}
+
+fn dependency_struct_binding_for_broken_source_import_target(
+    package: &PackageAnalysis,
+    target: &DependencyResolvedTarget,
+    root_called: bool,
+    root_question_unwrap: bool,
+) -> Option<DependencyStructBinding> {
+    let (dependency, symbol) = dependency_symbol_for_broken_source_target(package, target)?;
+    let target = match (target.kind, root_called, root_question_unwrap) {
+        (SymbolKind::Function, true, false) => dependency.function_return_type_target(symbol)?,
+        (SymbolKind::Function, true, true) => {
+            dependency.function_question_return_type_target(symbol)?
+        }
+        (SymbolKind::Const | SymbolKind::Static, false, false) => {
+            dependency.global_type_target(symbol)?
+        }
+        (SymbolKind::Const | SymbolKind::Static, false, true) => {
+            dependency.global_question_type_target(symbol)?
+        }
+        _ => return None,
+    };
+    dependency_struct_binding_for_definition_target(package, &target)
 }
 
 fn dependency_resolved_import_targets_in_tokens(
@@ -4993,23 +5050,40 @@ fn dependency_member_completion_binding_in_broken_source(
     offset: usize,
     kind: DependencyMemberCompletionKind,
 ) -> Option<DependencyStructBinding> {
-    let (root_span, receiver_segments, member_span, member_name) =
+    let (root_span, root_called, root_question_unwrap, receiver_segments, member_span, member_name) =
         dependency_member_completion_site_in_broken_source(source, offset)?;
-    let occurrence = dependency_value_occurrences_in_broken_source(package, source)
+    let root_binding = dependency_value_occurrences_in_broken_source(package, source)
         .into_iter()
-        .find(|occurrence| occurrence.reference_span == root_span)?;
-    let target = dependency_value_target_for_occurrence(package, &occurrence)?;
-    let root_binding = dependency_struct_binding_for_definition_target(
-        package,
-        &DependencyDefinitionTarget {
-            package_name: target.package_name,
-            source_path: target.source_path,
-            kind: SymbolKind::Struct,
-            name: target.struct_name,
-            path: target.path,
-            span: target.definition_span,
-        },
-    )?;
+        .find(|occurrence| {
+            !root_called && !root_question_unwrap && occurrence.reference_span == root_span
+        })
+        .and_then(|occurrence| dependency_value_target_for_occurrence(package, &occurrence))
+        .and_then(|target| {
+            dependency_struct_binding_for_definition_target(
+                package,
+                &DependencyDefinitionTarget {
+                    package_name: target.package_name,
+                    source_path: target.source_path,
+                    kind: SymbolKind::Struct,
+                    name: target.struct_name,
+                    path: target.path,
+                    span: target.definition_span,
+                },
+            )
+        })
+        .or_else(|| {
+            dependency_import_occurrences_in_broken_source(package, source)
+                .into_iter()
+                .find(|occurrence| occurrence.span == root_span)
+                .and_then(|occurrence| {
+                    dependency_struct_binding_for_broken_source_import_target(
+                        package,
+                        &occurrence.target,
+                        root_called,
+                        root_question_unwrap,
+                    )
+                })
+        })?;
     let binding = dependency_struct_binding_for_broken_source_segments(
         package,
         root_binding,
@@ -5029,7 +5103,14 @@ fn dependency_member_completion_binding_in_broken_source(
 fn dependency_member_completion_site_in_broken_source(
     source: &str,
     offset: usize,
-) -> Option<(Span, Vec<BrokenSourceValueSegment>, Span, String)> {
+) -> Option<(
+    Span,
+    bool,
+    bool,
+    Vec<BrokenSourceValueSegment>,
+    Span,
+    String,
+)> {
     let (tokens, _) = lex(source);
     let (member_index, member_token) = tokens.iter().enumerate().find(|(_, token)| {
         token.kind == TokenKind::Ident
@@ -5052,15 +5133,31 @@ fn dependency_member_completion_site_in_broken_source(
             continue;
         }
 
-        let Some(candidate) =
-            broken_source_value_candidate_with_stop_in_tokens(&tokens, start_index, stop_index)
+        let mut cursor = start_index + 1;
+        let root_called = if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LParen) {
+            cursor = token_index_after_balanced_parens(&tokens, cursor)?;
+            true
+        } else {
+            false
+        };
+        let root_question_unwrap =
+            if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Question) {
+                cursor += 1;
+                true
+            } else {
+                false
+            };
+        let Some(receiver_segments) =
+            broken_source_segments_with_stop_in_tokens(&tokens, cursor, stop_index)
         else {
             continue;
         };
 
         return Some((
             root_token.span,
-            candidate.segments,
+            root_called,
+            root_question_unwrap,
+            receiver_segments,
             member_token.span,
             member_token.text.clone(),
         ));
