@@ -53,7 +53,7 @@
 - `workspace/symbol` 已落地。
 - healthy package/workspace 下，dependency-backed navigation 已能提供一批可依赖能力：
   - import root / dependency value / enum variant / struct field / method member 的 hover / definition / declaration / references / typeDefinition
-  - source-preferred navigation：能唯一回溯到 workspace 源码时，优先跳源码而不是 `.qi`
+  - source-preferred navigation：对 workspace members 和 workspace 外本地路径依赖，能唯一回溯到源码时优先跳源码而不是 `.qi`
   - package-aware semantic tokens
 - broken-source / parse-error 下，当前只保留保守子集，不等于完整恢复。
 - current-document rename 在 parse-error 下也保留了一批保守合同；当前已锁住的窄 slice 包括 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field。
