@@ -1520,6 +1520,7 @@ fn build_path(
             emit_overridden,
             profile_overridden,
             json,
+            None,
         );
     }
 
@@ -1536,13 +1537,14 @@ fn build_path(
             emit_overridden,
             profile_overridden,
             json,
+            Some(&request.request_root_manifest_path),
         );
     }
 
     if selector.is_active() {
         if json {
             let mut report =
-                BuildJsonReport::new(path, options, profile_overridden, emit_interface);
+                BuildJsonReport::new(path, None, options, profile_overridden, emit_interface);
             report.record_preflight_failure(build_json_preflight_failure(
                 path,
                 None,
@@ -1563,7 +1565,8 @@ fn build_path(
     }
 
     if json {
-        let mut report = BuildJsonReport::new(path, options, profile_overridden, emit_interface);
+        let mut report =
+            BuildJsonReport::new(path, None, options, profile_overridden, emit_interface);
         let artifact = match build_single_source_target_result(path, options) {
             Ok(artifact) => artifact,
             Err(error) => {
@@ -1615,14 +1618,21 @@ struct BuildJsonReport {
 impl BuildJsonReport {
     fn new(
         path: &Path,
+        project_request_root: Option<&Path>,
         options: &BuildOptions,
         profile_overridden: bool,
         emit_interface: bool,
     ) -> Self {
         let direct_source_request = resolve_project_source_build_target_request(path);
-        let project_scope = should_use_project_build(path) || direct_source_request.is_some();
-        let project_manifest_path = if let Some(request) = direct_source_request.as_ref() {
-            Some(normalize_path(&request.manifest_path))
+        let project_scope = project_request_root.is_some()
+            || should_use_project_build(path)
+            || direct_source_request.is_some();
+        let project_manifest_path = if let Some(request_root) = project_request_root {
+            load_project_manifest(request_root)
+                .ok()
+                .map(|manifest| normalize_path(&manifest.manifest_path))
+        } else if let Some(request) = direct_source_request.as_ref() {
+            Some(normalize_path(&request.request_root_manifest_path))
         } else if project_scope {
             load_project_manifest(path)
                 .ok()
@@ -2386,13 +2396,14 @@ fn emit_build_json_failure(
     Err(1)
 }
 
-fn load_workspace_build_targets_for_build_json(
-    path: &Path,
+fn load_workspace_build_targets_for_build_json_from_request_root(
+    request_path: &Path,
+    request_root: &Path,
 ) -> Result<Vec<WorkspaceBuildTargets>, JsonValue> {
-    let manifest = load_project_manifest(path)
-        .map_err(|error| build_json_project_error(path, &error, "manifest-load"))?;
+    let manifest = load_project_manifest(request_root)
+        .map_err(|error| build_json_project_error(request_path, &error, "manifest-load"))?;
     discover_workspace_build_targets(&manifest)
-        .map_err(|error| build_json_project_error(path, &error, "target-discovery"))
+        .map_err(|error| build_json_project_error(request_path, &error, "target-discovery"))
 }
 
 fn select_workspace_build_targets_for_build_json(
@@ -2852,7 +2863,14 @@ fn run_path(
 ) -> Result<(), u8> {
     let options = run_build_options(profile);
     if should_use_project_build(path) {
-        return run_project_path(path, &options, profile_overridden, selector, program_args);
+        return run_project_path(
+            path,
+            &options,
+            profile_overridden,
+            selector,
+            program_args,
+            None,
+        );
     }
 
     if let Some(request) = resolve_project_source_build_target_request(path) {
@@ -2866,6 +2884,7 @@ fn run_path(
             profile_overridden,
             &request.selector,
             program_args,
+            Some(&request.request_root_manifest_path),
         );
     }
 
@@ -2893,8 +2912,11 @@ fn run_project_path(
     profile_overridden: bool,
     selector: &ProjectTargetSelector,
     program_args: &[String],
+    project_request_root: Option<&Path>,
 ) -> Result<(), u8> {
-    let all_members = load_workspace_build_targets_for_command(path, "`ql run`")?;
+    let request_root = project_request_root.unwrap_or(path);
+    let all_members =
+        load_workspace_build_targets_for_command_from_request_root(path, request_root, "`ql run`")?;
     let members =
         select_workspace_build_targets(path, &all_members, selector, "`ql run`", "build targets")?;
     let runnable = select_runnable_project_target(path, &members, selector)?;
@@ -3373,7 +3395,7 @@ struct ProjectFileTestRequest {
 
 #[derive(Clone, Debug)]
 struct ProjectSourceBuildTargetRequest {
-    manifest_path: PathBuf,
+    request_root_manifest_path: PathBuf,
     selector: ProjectTargetSelector,
 }
 
@@ -3563,12 +3585,59 @@ fn resolve_project_source_build_target_request(
         return None;
     }
 
+    let request_root_manifest_path = resolve_project_source_request_root(&manifest.manifest_path);
+
     Some(ProjectSourceBuildTargetRequest {
-        manifest_path: manifest.manifest_path,
+        request_root_manifest_path,
         selector: ProjectTargetSelector {
             package_name: Some(package_name),
             target: Some(ProjectTargetSelectorKind::DisplayPath(display_path)),
         },
+    })
+}
+
+fn resolve_project_source_request_root(package_manifest_path: &Path) -> PathBuf {
+    find_enclosing_workspace_manifest_for_member(package_manifest_path)
+        .unwrap_or_else(|| package_manifest_path.to_path_buf())
+}
+
+fn find_enclosing_workspace_manifest_for_member(package_manifest_path: &Path) -> Option<PathBuf> {
+    let package_root = package_manifest_path.parent()?;
+    let mut current = package_root.parent().map(Path::to_path_buf);
+
+    while let Some(directory) = current {
+        let candidate = directory.join("qlang.toml");
+        if candidate.is_file()
+            && let Ok(manifest) = load_project_manifest(&candidate)
+            && workspace_manifest_contains_member(&manifest, package_manifest_path)
+        {
+            return Some(manifest.manifest_path);
+        }
+        current = directory.parent().map(Path::to_path_buf);
+    }
+
+    None
+}
+
+fn workspace_manifest_contains_member(
+    workspace_manifest: &ql_project::ProjectManifest,
+    package_manifest_path: &Path,
+) -> bool {
+    let Some(workspace) = workspace_manifest.workspace.as_ref() else {
+        return false;
+    };
+
+    let expected_manifest_path = normalize_path(package_manifest_path);
+    let workspace_root = workspace_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    workspace.members.iter().any(|member| {
+        load_project_manifest(&workspace_root.join(member))
+            .ok()
+            .is_some_and(|member_manifest| {
+                normalize_path(&member_manifest.manifest_path) == expected_manifest_path
+            })
     })
 }
 
@@ -4001,17 +4070,30 @@ fn build_project_path(
     emit_overridden: bool,
     profile_overridden: bool,
     json: bool,
+    project_request_root: Option<&Path>,
 ) -> Result<(), u8> {
-    let mut json_report =
-        json.then(|| BuildJsonReport::new(path, options, profile_overridden, emit_interface));
+    let mut json_report = json.then(|| {
+        BuildJsonReport::new(
+            path,
+            project_request_root,
+            options,
+            profile_overridden,
+            emit_interface,
+        )
+    });
+    let request_root = project_request_root.unwrap_or(path);
 
     let members = if json {
-        match load_workspace_build_targets_for_build_json(path) {
+        match load_workspace_build_targets_for_build_json_from_request_root(path, request_root) {
             Ok(members) => members,
             Err(failure) => return emit_build_json_failure(&mut json_report, failure),
         }
     } else {
-        load_workspace_build_targets_for_command(path, "`ql build`")?
+        load_workspace_build_targets_for_command_from_request_root(
+            path,
+            request_root,
+            "`ql build`",
+        )?
     };
     let selected_members = if json {
         match select_workspace_build_targets_for_build_json(
@@ -6877,7 +6959,15 @@ fn load_workspace_build_targets_for_command(
     path: &Path,
     command_label: &str,
 ) -> Result<Vec<WorkspaceBuildTargets>, u8> {
-    let manifest = load_project_manifest(path).map_err(|error| {
+    load_workspace_build_targets_for_command_from_request_root(path, path, command_label)
+}
+
+fn load_workspace_build_targets_for_command_from_request_root(
+    _request_path: &Path,
+    request_root: &Path,
+    command_label: &str,
+) -> Result<Vec<WorkspaceBuildTargets>, u8> {
+    let manifest = load_project_manifest(request_root).map_err(|error| {
         if let ql_project::ProjectError::ManifestNotFound { start } = &error {
             eprintln!(
                 "error: {command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",

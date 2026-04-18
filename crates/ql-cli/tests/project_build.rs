@@ -2135,6 +2135,116 @@ name = "app"
 }
 
 #[test]
+fn build_workspace_member_source_file_uses_workspace_default_profile() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-workspace-source-profile");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create workspace package source tree for workspace source profile build test");
+
+    let workspace_manifest = temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+
+[profile]
+default = "release"
+"#,
+    );
+    let app_manifest = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let lib_path = temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn util() -> Int { return 1 }\n",
+    );
+
+    let output_path =
+        static_library_output_path(&project_root.join("packages/app/target/ql/release"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&lib_path).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` workspace member source default profile",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-workspace-source-profile",
+        "workspace member source default profile build",
+        &output,
+    )
+    .expect(
+        "workspace member source path `ql build --json` should honor the workspace default profile",
+    );
+    expect_empty_stderr(
+        "project-build-workspace-source-profile",
+        "workspace member source default profile build",
+        &stderr,
+    )
+    .expect("workspace member source default profile build should not print stderr");
+
+    let json = parse_json_output("project-build-workspace-source-profile", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        lib_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        workspace_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["requested_emit"], "llvm-ir");
+    assert_eq!(json["requested_profile"], "debug");
+    assert_eq!(json["profile_overridden"], false);
+    assert_eq!(json["emit_interface"], false);
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["failure"], JsonValue::Null);
+    assert_eq!(
+        json["interfaces"],
+        serde_json::json!([
+            {
+                "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "selected": true,
+                "status": "wrote",
+                "path": project_root.join("packages/app/app.qi").display().to_string().replace('\\', "/"),
+            }
+        ])
+    );
+    assert_eq!(
+        json["built_targets"],
+        serde_json::json!([
+            {
+                "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "selected": true,
+                "dependency_only": false,
+                "kind": "lib",
+                "path": "src/lib.ql",
+                "emit": "staticlib",
+                "profile": "release",
+                "artifact_path": output_path.display().to_string().replace('\\', "/"),
+                "c_header_path": JsonValue::Null,
+            }
+        ])
+    );
+    expect_file_exists(
+        "project-build-workspace-source-profile",
+        &output_path,
+        "workspace member source default profile artifact",
+        "workspace member source default profile build",
+    )
+    .expect("workspace member source default profile build should emit the release artifact");
+}
+
+#[test]
 fn build_workspace_path_builds_each_member_target() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-workspace");

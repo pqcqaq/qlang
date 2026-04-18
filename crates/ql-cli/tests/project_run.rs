@@ -254,6 +254,79 @@ name = "app"
 }
 
 #[test]
+fn run_workspace_member_source_file_uses_workspace_default_profile() {
+    if !toolchain_available("`ql run` workspace source profile test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-workspace-source-profile");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create workspace package source tree for workspace source profile run test");
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+
+[profile]
+default = "release"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let main_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int { return 17 }\n",
+    );
+    let output_path =
+        executable_output_path(&project_root.join("packages/app/target/ql/release"), "main");
+    let debug_output_path =
+        executable_output_path(&project_root.join("packages/app/target/ql/debug"), "main");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&main_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run` workspace member source default profile",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-workspace-source-profile",
+        "workspace member source default profile run",
+        &output,
+        17,
+    )
+    .expect("workspace member source path `ql run` should honor the workspace default profile");
+    expect_silent_output(
+        "project-run-workspace-source-profile",
+        "workspace member source default profile run",
+        &stdout,
+        &stderr,
+    )
+    .expect(
+        "workspace member source default profile run should leave stdout/stderr to the program",
+    );
+    expect_file_exists(
+        "project-run-workspace-source-profile",
+        &output_path,
+        "workspace member source default profile executable",
+        "workspace member source default profile run",
+    )
+    .expect("workspace member source default profile run should emit the release executable");
+    assert!(
+        !debug_output_path.exists(),
+        "workspace member source default profile run should not silently fall back to the debug profile"
+    );
+}
+
+#[test]
 fn run_workspace_path_executes_the_only_runnable_target() {
     if !toolchain_available("`ql run` workspace test") {
         return;
