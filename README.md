@@ -12,7 +12,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - `ql build` / `ql run` 已支持从 package 根目录和已声明 target 的源码路径进入 project-aware 流程；workspace member 源码路径会继承外层 workspace profile 和输出目录语义。
 - `ql test` 直接执行 project `tests/*.ql` 文件时会保留 package/workspace-aware smoke 或 UI test 语义；`ql project graph` / `ql project targets` / `ql project lock` 指向 workspace member 源码文件时会回到外层 workspace 上下文；`ql project emit-interface` 在不带 `--output` 时也沿用这一视角。
 - healthy package/workspace 下，LSP 的 source-preferred navigation 已覆盖 workspace members 和 workspace 外本地路径依赖；definition、typeDefinition、references、`workspace/symbol` 会按 manifest 身份区分同名本地依赖，且 `workspace/symbol` 在源码可用时优先返回源码符号。
-- broken-source / parse-error 下，import references fallback、direct imported-result member 查询、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight`，以及 dependency value/member semantic tokens fallback 都会继续走源码优先路径；同名本地依赖仍按 manifest 身份区分。
+- broken-source / parse-error 下，import references fallback、direct imported-result member 查询、dependency struct field label completion、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight`，以及 dependency value/member semantic tokens fallback 都会继续走源码优先路径；同名本地依赖仍按 manifest 身份区分。
 
 ## 先看哪些文档
 

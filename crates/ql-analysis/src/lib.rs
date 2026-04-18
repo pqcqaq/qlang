@@ -907,37 +907,37 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<Vec<CompletionItem>> {
-        let module = parse_source(source).ok()?;
-        let site = dependency_struct_field_completion_site(&module, offset)?;
-        let (dependency, symbol) =
-            dependency_struct_import_binding_for_local_name(self, &module, &site.root_name)?;
-        let mut items = dependency
-            .struct_decl_for(symbol)?
-            .fields
-            .iter()
-            .filter(|field| {
-                !site
-                    .excluded_field_names
-                    .iter()
-                    .any(|name| name == &field.name)
-            })
-            .map(|field| CompletionItem {
-                label: field.name.clone(),
-                insert_text: field.name.clone(),
-                kind: SymbolKind::Field,
-                detail: dependency_struct_field_detail(field),
-                ty: Some(render_dependency_type_expr(&field.ty)),
-            })
-            .collect::<Vec<_>>();
-        if items.is_empty() {
-            return None;
+        match parse_source(source) {
+            Ok(module) => {
+                let site = dependency_struct_field_completion_site(&module, offset)?;
+                let (dependency, symbol) =
+                    dependency_struct_import_binding_for_local_name(self, &module, &site.root_name)?;
+                dependency_struct_field_completion_items(
+                    dependency,
+                    symbol,
+                    &site.excluded_field_names,
+                )
+            }
+            Err(_) => {
+                let (tokens, _) = lex(source);
+                let site =
+                    dependency_struct_field_completion_site_in_broken_source_tokens(&tokens, offset)?;
+                let (_, target) = dependency_resolved_import_targets_in_tokens(self, &tokens)
+                    .get(site.root_name.as_str())?
+                    .clone();
+                let (dependency, symbol) =
+                    dependency_symbol_for_broken_source_target(self, &target)?;
+                if symbol.kind != SymbolKind::Struct {
+                    return None;
+                }
+
+                dependency_struct_field_completion_items(
+                    dependency,
+                    symbol,
+                    &site.excluded_field_names,
+                )
+            }
         }
-        items.sort_by(|left, right| {
-            left.label
-                .cmp(&right.label)
-                .then_with(|| left.detail.cmp(&right.detail))
-        });
-        Some(items)
     }
 
     pub fn dependency_method_completions_at(
@@ -3868,6 +3868,39 @@ fn dependency_struct_field_detail(field: &ql_ast::FieldDecl) -> String {
     )
 }
 
+fn dependency_struct_field_completion_items(
+    dependency: &DependencyInterface,
+    symbol: &DependencySymbol,
+    excluded_field_names: &[String],
+) -> Option<Vec<CompletionItem>> {
+    let mut items = dependency
+        .struct_decl_for(symbol)?
+        .fields
+        .iter()
+        .filter(|field| {
+            !excluded_field_names
+                .iter()
+                .any(|name| name == &field.name)
+        })
+        .map(|field| CompletionItem {
+            label: field.name.clone(),
+            insert_text: field.name.clone(),
+            kind: SymbolKind::Field,
+            detail: dependency_struct_field_detail(field),
+            ty: Some(render_dependency_type_expr(&field.ty)),
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        return None;
+    }
+    items.sort_by(|left, right| {
+        left.label
+            .cmp(&right.label)
+            .then_with(|| left.detail.cmp(&right.detail))
+    });
+    Some(items)
+}
+
 const fn semantic_token_kind_sort_rank(kind: SymbolKind) -> u8 {
     match kind {
         SymbolKind::Function => 0,
@@ -5970,6 +6003,174 @@ fn dependency_struct_literal_field_completion_site(
 
 fn dependency_struct_field_completion_span_contains(span: Span, offset: usize) -> bool {
     span.start <= offset && offset <= span.end
+}
+
+fn dependency_struct_field_completion_site_in_broken_source_tokens(
+    tokens: &[Token],
+    offset: usize,
+) -> Option<DependencyStructFieldCompletionSite> {
+    let field_index = tokens.iter().enumerate().find_map(|(index, token)| {
+        (token.kind == TokenKind::Ident
+            && dependency_struct_field_completion_span_contains(token.span, offset))
+        .then_some(index)
+    })?;
+    dependency_struct_field_completion_site_from_broken_source_tokens(tokens, field_index)
+}
+
+fn dependency_struct_field_completion_site_from_broken_source_tokens(
+    tokens: &[Token],
+    field_index: usize,
+) -> Option<DependencyStructFieldCompletionSite> {
+    let field_token = tokens.get(field_index)?;
+    if field_token.kind != TokenKind::Ident {
+        return None;
+    }
+
+    let lbrace_index =
+        dependency_struct_field_completion_lbrace_index_in_broken_source(tokens, field_index)?;
+    if !dependency_struct_field_completion_is_current_field_in_broken_source(
+        tokens,
+        lbrace_index,
+        field_index,
+    ) {
+        return None;
+    }
+
+    let mut excluded_field_names =
+        dependency_struct_field_completion_excluded_names_in_broken_source(
+            tokens,
+            lbrace_index,
+            field_index,
+        );
+    excluded_field_names.retain(|name| name != &field_token.text);
+    excluded_field_names.sort();
+    excluded_field_names.dedup();
+    Some(DependencyStructFieldCompletionSite {
+        root_name: dependency_struct_field_completion_root_name_in_broken_source(
+            tokens,
+            lbrace_index,
+        )?,
+        excluded_field_names,
+    })
+}
+
+fn dependency_struct_field_completion_lbrace_index_in_broken_source(
+    tokens: &[Token],
+    field_index: usize,
+) -> Option<usize> {
+    let mut brace_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    for index in (0..field_index).rev() {
+        match tokens.get(index)?.kind {
+            TokenKind::RBrace => brace_depth += 1,
+            TokenKind::RParen => paren_depth += 1,
+            TokenKind::RBracket => bracket_depth += 1,
+            TokenKind::LBrace => {
+                if brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 {
+                    return Some(index);
+                }
+                brace_depth = brace_depth.saturating_sub(1);
+            }
+            TokenKind::LParen => paren_depth = paren_depth.saturating_sub(1),
+            TokenKind::LBracket => bracket_depth = bracket_depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn dependency_struct_field_completion_root_name_in_broken_source(
+    tokens: &[Token],
+    lbrace_index: usize,
+) -> Option<String> {
+    let mut path_index = lbrace_index.checked_sub(1)?;
+    while tokens.get(path_index)?.kind == TokenKind::Question {
+        path_index = path_index.checked_sub(1)?;
+    }
+    if tokens.get(path_index)?.kind != TokenKind::Ident {
+        return None;
+    }
+
+    let mut root_index = path_index;
+    while root_index >= 2
+        && tokens.get(root_index - 1).map(|token| token.kind) == Some(TokenKind::Dot)
+        && tokens.get(root_index - 2).map(|token| token.kind) == Some(TokenKind::Ident)
+    {
+        root_index -= 2;
+    }
+    Some(tokens.get(root_index)?.text.clone())
+}
+
+fn dependency_struct_field_completion_is_current_field_in_broken_source(
+    tokens: &[Token],
+    lbrace_index: usize,
+    field_index: usize,
+) -> bool {
+    let mut brace_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut previous_top_level = TokenKind::LBrace;
+    for index in lbrace_index + 1..=field_index {
+        let Some(token) = tokens.get(index) else {
+            return false;
+        };
+        if index == field_index {
+            return brace_depth == 0
+                && paren_depth == 0
+                && bracket_depth == 0
+                && matches!(previous_top_level, TokenKind::LBrace | TokenKind::Comma);
+        }
+
+        match token.kind {
+            TokenKind::LBrace => brace_depth += 1,
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::LParen => paren_depth += 1,
+            TokenKind::RParen => paren_depth = paren_depth.saturating_sub(1),
+            TokenKind::LBracket => bracket_depth += 1,
+            TokenKind::RBracket => bracket_depth = bracket_depth.saturating_sub(1),
+            _ if brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 => {
+                previous_top_level = token.kind;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn dependency_struct_field_completion_excluded_names_in_broken_source(
+    tokens: &[Token],
+    lbrace_index: usize,
+    field_index: usize,
+) -> Vec<String> {
+    let mut brace_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut previous_top_level = TokenKind::LBrace;
+    let mut names = Vec::new();
+    for index in lbrace_index + 1..field_index {
+        let Some(token) = tokens.get(index) else {
+            break;
+        };
+        match token.kind {
+            TokenKind::LBrace => brace_depth += 1,
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::LParen => paren_depth += 1,
+            TokenKind::RParen => paren_depth = paren_depth.saturating_sub(1),
+            TokenKind::LBracket => bracket_depth += 1,
+            TokenKind::RBracket => bracket_depth = bracket_depth.saturating_sub(1),
+            _ if brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 => {
+                if token.kind == TokenKind::Ident
+                    && matches!(previous_top_level, TokenKind::LBrace | TokenKind::Comma)
+                {
+                    names.push(token.text.clone());
+                }
+                previous_top_level = token.kind;
+            }
+            _ => {}
+        }
+    }
+    names
 }
 
 fn dependency_member_site_in_broken_source(

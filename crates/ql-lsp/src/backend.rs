@@ -3430,7 +3430,8 @@ impl LanguageServer for Backend {
 #[cfg(test)]
 mod tests {
     use super::{
-        GotoTypeDefinitionResponse, completion_for_dependency_variants,
+        GotoTypeDefinitionResponse, completion_for_dependency_struct_fields,
+        completion_for_dependency_variants,
         document_highlights_for_analysis_at, document_highlights_for_package_analysis_at,
         fallback_document_highlights_for_package_at, package_analysis_for_path,
         prepare_rename_for_dependency_imports,
@@ -11850,6 +11851,129 @@ pub enum Command {
             items[0].detail.as_deref(),
             Some("variant Command.Backoff(Int)")
         );
+    }
+
+    #[test]
+    fn same_named_local_dependency_broken_source_struct_field_completion_prefers_matching_dependency_source(
+    ) {
+        let temp = TempDir::new(
+            "ql-lsp-same-named-local-dependency-broken-source-struct-field-completion",
+        );
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.Settings as Settings
+use demo.shared.beta.Settings as OtherSettings
+
+pub fn main() -> Int {
+    let value = Settings { po
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Settings {
+    host: String,
+    port: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/src/lib.ql",
+            r#"
+package demo.shared.beta
+
+pub struct Settings {
+    host: String,
+    block: Bool,
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Settings {
+    host: String,
+    port: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Settings {
+    host: String,
+    block: Bool,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let completion = completion_for_dependency_struct_fields(
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "po", 1) + 2),
+        )
+        .expect("broken-source same-named dependency struct field completion should exist");
+
+        let CompletionResponse::Array(items) = completion else {
+            panic!("struct field completion should resolve to a plain item array")
+        };
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "port");
+        assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
+        assert_eq!(items[0].detail.as_deref(), Some("field port: Int"));
     }
 
     #[test]
