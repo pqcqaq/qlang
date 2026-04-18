@@ -55,6 +55,7 @@
   - import root / dependency value / enum variant / struct field / method member 的 hover / definition / declaration / references / typeDefinition
   - source-preferred navigation：对 workspace members 和 workspace 外本地路径依赖，能唯一回溯到源码时优先跳源码而不是 `.qi`
   - package-aware semantic tokens
+- `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时也会优先返回源码符号；源码不可用时仍回退到 `.qi`。
 - broken-source / parse-error 下，当前只保留保守子集，不等于完整恢复；workspace 外本地路径依赖的 import references fallback 已覆盖到源码优先路径。
 - current-document rename 在 parse-error 下也保留了一批保守合同；当前已锁住的窄 slice 包括 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field。
 - rename 仍然只做 same-file；cross-file rename / workspace edits 尚未开放。

@@ -304,7 +304,8 @@ fn append_package_workspace_symbols(
             continue;
         }
 
-        let Ok(module_uri) = Url::from_file_path(&module_path) else {
+        let module_location_path = fs::canonicalize(&module_path).unwrap_or(module_path.clone());
+        let Ok(module_uri) = Url::from_file_path(&module_location_path) else {
             continue;
         };
         let Ok(module_source) = fs::read_to_string(&module_path) else {
@@ -353,7 +354,8 @@ fn append_manifest_source_workspace_symbols(
             continue;
         }
 
-        let Ok(source_uri) = Url::from_file_path(&source_path) else {
+        let source_location_path = fs::canonicalize(&source_path).unwrap_or(source_path.clone());
+        let Ok(source_uri) = Url::from_file_path(&source_location_path) else {
             continue;
         };
         let Ok(source) = fs::read_to_string(&source_path) else {
@@ -377,9 +379,94 @@ fn append_dependency_workspace_symbols(
     symbols: &mut Vec<SymbolInformation>,
     query: &str,
 ) {
+    append_dependency_workspace_symbols_excluding(package_path, &HashSet::new(), symbols, query);
+}
+
+fn append_dependency_workspace_symbols_excluding(
+    package_path: &Path,
+    excluded_package_names: &HashSet<String>,
+    symbols: &mut Vec<SymbolInformation>,
+    query: &str,
+) {
     if let Ok(dependencies) = analyze_available_package_dependencies(package_path) {
-        symbols.extend(workspace_symbols_for_dependencies(&dependencies, query));
+        let filtered_dependencies = dependencies
+            .into_iter()
+            .filter(|dependency| {
+                dependency
+                    .manifest()
+                    .package
+                    .as_ref()
+                    .is_none_or(|package| !excluded_package_names.contains(&package.name))
+            })
+            .collect::<Vec<_>>();
+        symbols.extend(workspace_symbols_for_dependencies(
+            &filtered_dependencies,
+            query,
+        ));
     }
+}
+
+fn manifest_has_workspace_symbol_source(
+    manifest_path: &Path,
+    open_docs: &HashMap<PathBuf, (Url, String)>,
+) -> bool {
+    let Ok(manifest) = load_project_manifest(manifest_path) else {
+        return false;
+    };
+    let Ok(source_paths) = collect_package_sources(&manifest) else {
+        return false;
+    };
+
+    source_paths.into_iter().any(|source_path| {
+        if let Some((_, open_source)) = open_docs.get(&source_path) {
+            return analyze_source(open_source).is_ok();
+        }
+
+        let Ok(source) = fs::read_to_string(&source_path) else {
+            return false;
+        };
+        analyze_source(&source).is_ok()
+    })
+}
+
+fn append_local_dependency_workspace_symbols(
+    package_manifest_path: &Path,
+    open_docs: &HashMap<PathBuf, (Url, String)>,
+    searched_packages: &mut HashSet<PathBuf>,
+    covered_files: &mut HashSet<PathBuf>,
+    symbols: &mut Vec<SymbolInformation>,
+    query: &str,
+) -> HashSet<String> {
+    let mut preferred_package_names = HashSet::new();
+
+    for local_dependency_manifest_path in
+        local_dependency_manifest_paths_for_package(package_manifest_path)
+    {
+        if !manifest_has_workspace_symbol_source(&local_dependency_manifest_path, open_docs) {
+            continue;
+        }
+
+        if let Ok(local_dependency_manifest) =
+            load_project_manifest(&local_dependency_manifest_path)
+            && let Some(package) = local_dependency_manifest.package.as_ref()
+        {
+            preferred_package_names.insert(package.name.clone());
+        }
+
+        if !searched_packages.insert(local_dependency_manifest_path.clone()) {
+            continue;
+        }
+
+        append_workspace_member_symbols(
+            &local_dependency_manifest_path,
+            open_docs,
+            covered_files,
+            symbols,
+            query,
+        );
+    }
+
+    preferred_package_names
 }
 
 #[allow(deprecated)]
@@ -508,7 +595,22 @@ fn workspace_symbols_for_documents_and_roots(
                     &mut covered_files,
                     &mut symbols,
                     &normalized_query,
-                    true,
+                    false,
+                );
+                let preferred_local_dependency_package_names =
+                    append_local_dependency_workspace_symbols(
+                        package.manifest().manifest_path.as_path(),
+                        &open_docs,
+                        &mut searched_packages,
+                        &mut covered_files,
+                        &mut symbols,
+                        &normalized_query,
+                    );
+                append_dependency_workspace_symbols_excluding(
+                    package.manifest().manifest_path.as_path(),
+                    &preferred_local_dependency_package_names,
+                    &mut symbols,
+                    &normalized_query,
                 );
 
                 for member_manifest_path in workspace_member_manifest_paths_for_package(
@@ -552,11 +654,25 @@ fn workspace_symbols_for_documents_and_roots(
                     &mut symbols,
                     &normalized_query,
                 );
+                let preferred_local_dependency_package_names =
+                    append_local_dependency_workspace_symbols(
+                        manifest.manifest_path.as_path(),
+                        &open_docs,
+                        &mut searched_packages,
+                        &mut covered_files,
+                        &mut symbols,
+                        &normalized_query,
+                    );
 
                 let workspace_member_manifests =
                     workspace_member_manifest_paths_for_package(manifest.manifest_path.as_path());
 
-                append_dependency_workspace_symbols(&path, &mut symbols, &normalized_query);
+                append_dependency_workspace_symbols_excluding(
+                    manifest.manifest_path.as_path(),
+                    &preferred_local_dependency_package_names,
+                    &mut symbols,
+                    &normalized_query,
+                );
 
                 for member_manifest_path in workspace_member_manifests {
                     if !searched_packages.insert(member_manifest_path.clone()) {
@@ -597,11 +713,25 @@ fn workspace_symbols_for_documents_and_roots(
                     &mut symbols,
                     &normalized_query,
                 );
+                let preferred_local_dependency_package_names =
+                    append_local_dependency_workspace_symbols(
+                        manifest.manifest_path.as_path(),
+                        &open_docs,
+                        &mut searched_packages,
+                        &mut covered_files,
+                        &mut symbols,
+                        &normalized_query,
+                    );
 
                 let workspace_member_manifests =
                     workspace_member_manifest_paths_for_package(manifest.manifest_path.as_path());
 
-                append_dependency_workspace_symbols(&path, &mut symbols, &normalized_query);
+                append_dependency_workspace_symbols_excluding(
+                    manifest.manifest_path.as_path(),
+                    &preferred_local_dependency_package_names,
+                    &mut symbols,
+                    &normalized_query,
+                );
 
                 for member_manifest_path in workspace_member_manifests {
                     if !searched_packages.insert(member_manifest_path.clone()) {
@@ -642,7 +772,21 @@ fn workspace_symbols_for_documents_and_roots(
                     &mut symbols,
                     &normalized_query,
                 );
-                append_dependency_workspace_symbols(&path, &mut symbols, &normalized_query);
+                let preferred_local_dependency_package_names =
+                    append_local_dependency_workspace_symbols(
+                        manifest.manifest_path.as_path(),
+                        &open_docs,
+                        &mut searched_packages,
+                        &mut covered_files,
+                        &mut symbols,
+                        &normalized_query,
+                    );
+                append_dependency_workspace_symbols_excluding(
+                    manifest.manifest_path.as_path(),
+                    &preferred_local_dependency_package_names,
+                    &mut symbols,
+                    &normalized_query,
+                );
 
                 for member_manifest_path in
                     workspace_member_manifest_paths_for_package(manifest.manifest_path.as_path())
@@ -3748,6 +3892,96 @@ fn main() -> Int {
 
     #[allow(deprecated)]
     #[test]
+    fn workspace_symbol_search_prefers_local_dependency_source_symbols_for_broken_open_packages() {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-broken-local-dependency-source");
+
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_source_path = temp.write(
+            "workspace/dep/src/lib.ql",
+            r#"
+package demo.dep
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.dep.exported as run
+
+fn main() -> Int {
+    let broken: Int = "oops"
+    return run(1)
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+        let dependency_source =
+            fs::read_to_string(&dependency_source_path).expect("dependency source should read");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "exported");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "exported".to_owned(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(&dependency_source_path)
+                        .expect("dependency source path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        offset_to_position(
+                            &dependency_source,
+                            nth_offset(&dependency_source, "exported", 1),
+                        ),
+                        offset_to_position(
+                            &dependency_source,
+                            nth_offset(&dependency_source, "exported", 1) + "exported".len(),
+                        ),
+                    ),
+                ),
+                container_name: None,
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
     fn workspace_symbol_search_keeps_dependency_methods_for_broken_open_packages() {
         let temp = TempDir::new("ql-lsp-workspace-symbol-broken-dependency-method");
 
@@ -4260,6 +4494,95 @@ fn main() -> Int {
                     ),
                 ),
                 container_name: Some("dep".to_owned()),
+            }]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_prefers_local_dependency_source_symbols_for_open_packages() {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-local-dependency-source");
+
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_source_path = temp.write(
+            "workspace/dep/src/lib.ql",
+            r#"
+package demo.dep
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        let open_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.dep.exported as run
+
+fn main() -> Int {
+    return run(1)
+}
+"#,
+        );
+        let open_source = fs::read_to_string(&open_path).expect("open file should read");
+        let open_uri = Url::from_file_path(&open_path).expect("open path should convert to URI");
+        let dependency_source =
+            fs::read_to_string(&dependency_source_path).expect("dependency source should read");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "exported");
+
+        assert_eq!(
+            symbols,
+            vec![SymbolInformation {
+                name: "exported".to_owned(),
+                kind: SymbolKind::FUNCTION,
+                tags: None,
+                deprecated: None,
+                location: Location::new(
+                    Url::from_file_path(&dependency_source_path)
+                        .expect("dependency source path should convert to URI"),
+                    tower_lsp::lsp_types::Range::new(
+                        offset_to_position(
+                            &dependency_source,
+                            nth_offset(&dependency_source, "exported", 1),
+                        ),
+                        offset_to_position(
+                            &dependency_source,
+                            nth_offset(&dependency_source, "exported", 1) + "exported".len(),
+                        ),
+                    ),
+                ),
+                container_name: None,
             }]
         );
     }

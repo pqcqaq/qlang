@@ -30,6 +30,7 @@
 - 第一版 `qlang.lock`、`ql.check --json`、`ql.build --json`、`ql.test --json` 已落地。
 - healthy workspace 下的 dependency-backed LSP 已有一批可依赖能力：workspace symbol、source-preferred navigation、semantic tokens、保守 same-file rename；source-preferred navigation 现在同时覆盖 workspace members 和 workspace 外本地路径依赖。
 - `workspace` 外本地路径依赖的 import references 现在也走源码优先路径；broken-source fallback 已补齐到这一条路径。
+- `workspace/symbol` 现在也会对 workspace 外本地路径依赖做源码优先返回，并保留 `.qi` 回退。
 - parse-error 下的 current-document rename 也已有保守回归保护；最近新增的一条是 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field。
 
 ## 当前主线
