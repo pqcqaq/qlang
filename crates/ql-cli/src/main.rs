@@ -17,10 +17,11 @@ use ql_driver::{
     build_file_with_link_inputs, build_source_with_link_inputs, default_output_path, emit_c_header,
 };
 use ql_fmt::format_source;
+use ql_parser::parse_source;
 use ql_project::{
     BuildTarget, BuildTargetKind, InterfaceArtifactStaleReason, InterfaceArtifactStatus,
-    ManifestBuildProfile, WorkspaceBuildTargets, collect_package_sources, default_interface_path,
-    discover_package_build_targets, discover_workspace_build_targets,
+    ManifestBuildProfile, WorkspaceBuildTargets, collect_package_sources,
+    default_interface_path, discover_package_build_targets, discover_workspace_build_targets,
     interface_artifact_stale_reasons, interface_artifact_status, interface_artifact_status_detail,
     load_interface_artifact, load_project_manifest, load_reference_manifests, package_name,
     package_source_root, project_lockfile_path, render_module_interface,
@@ -5195,18 +5196,18 @@ fn prepare_project_target_build_quiet(
 ) -> Result<PreparedProjectTargetBuild, PrepareProjectTargetBuildError> {
     let additional_link_inputs =
         project_dependency_link_inputs(build_plan, dependency_options, profile_overridden);
+    let source = fs::read_to_string(path).map_err(|error| PrepareProjectTargetBuildError {
+        failure_kind: PrepareProjectTargetBuildFailureKind::SourceRead {
+            path: path.to_path_buf(),
+            message: format!("failed to access `{}`: {error}", normalize_path(path)),
+        },
+    })?;
     let dependency_declarations =
-        render_direct_dependency_extern_declarations_quiet(manifest_path)?;
+        render_direct_dependency_extern_declarations_quiet(manifest_path, &source)?;
 
     let source_override = if dependency_declarations.is_empty() {
         None
     } else {
-        let source = fs::read_to_string(path).map_err(|error| PrepareProjectTargetBuildError {
-            failure_kind: PrepareProjectTargetBuildFailureKind::SourceRead {
-                path: path.to_path_buf(),
-                message: format!("failed to access `{}`: {error}", normalize_path(path)),
-            },
-        })?;
         Some(append_dependency_declarations(
             &source,
             &dependency_declarations,
@@ -5267,9 +5268,19 @@ fn prepare_project_target_build(
         resolve_project_build_plan_members(workspace_members, &selected_members, command_label)?;
     let additional_link_inputs =
         project_dependency_link_inputs(&build_plan, dependency_options, profile_overridden);
+    let source = fs::read_to_string(path).map_err(|error| {
+        if report_failure {
+            eprintln!(
+                "error: failed to access `{}`: {error}",
+                normalize_path(path)
+            );
+        }
+        1
+    })?;
     let dependency_declarations = match render_direct_dependency_extern_declarations(
         command_label,
         manifest_path,
+        &source,
         report_failure,
     ) {
         Ok(declarations) => declarations,
@@ -5279,15 +5290,6 @@ fn prepare_project_target_build(
     let source_override = if dependency_declarations.is_empty() {
         None
     } else {
-        let source = fs::read_to_string(path).map_err(|error| {
-            if report_failure {
-                eprintln!(
-                    "error: failed to access `{}`: {error}",
-                    normalize_path(path)
-                );
-            }
-            1
-        })?;
         Some(append_dependency_declarations(
             &source,
             &dependency_declarations,
@@ -5339,9 +5341,103 @@ fn project_dependency_link_inputs(
     outputs
 }
 
+#[derive(Clone, Debug, Default)]
+struct ImportedDependencyExterns {
+    whole_paths: BTreeSet<Vec<String>>,
+    symbols_by_module_path: BTreeMap<Vec<String>, BTreeSet<String>>,
+}
+
+fn dependency_interface_module_import_paths(
+    dependency_package: &str,
+    modules: &[ql_project::InterfaceModule],
+) -> BTreeSet<Vec<String>> {
+    modules
+        .iter()
+        .map(|module| dependency_interface_module_import_path(dependency_package, &module.syntax))
+        .collect()
+}
+
+fn dependency_interface_module_import_path(
+    dependency_package: &str,
+    module: &Module,
+) -> Vec<String> {
+    module
+        .package
+        .as_ref()
+        .map(|package| package.path.segments.clone())
+        .unwrap_or_else(|| dependency_package.split('.').map(str::to_owned).collect())
+}
+
+fn collect_imported_dependency_externs(
+    root_module: &Module,
+    module_paths: &BTreeSet<Vec<String>>,
+) -> ImportedDependencyExterns {
+    let mut imported = ImportedDependencyExterns::default();
+
+    for use_decl in &root_module.uses {
+        if let Some(group) = &use_decl.group {
+            if !module_paths.contains(&use_decl.prefix.segments) {
+                continue;
+            }
+            let symbols = imported
+                .symbols_by_module_path
+                .entry(use_decl.prefix.segments.clone())
+                .or_default();
+            for item in group {
+                symbols.insert(item.name.clone());
+            }
+            continue;
+        }
+
+        if module_paths.contains(&use_decl.prefix.segments)
+            || module_paths
+                .iter()
+                .any(|module_path| module_path.starts_with(&use_decl.prefix.segments))
+        {
+            imported.whole_paths.insert(use_decl.prefix.segments.clone());
+            continue;
+        }
+
+        if use_decl.prefix.segments.len() < 2 {
+            continue;
+        }
+
+        let module_path = use_decl.prefix.segments[..use_decl.prefix.segments.len() - 1].to_vec();
+        if !module_paths.contains(&module_path) {
+            continue;
+        }
+
+        if let Some(symbol_name) = use_decl.prefix.segments.last() {
+            imported
+                .symbols_by_module_path
+                .entry(module_path)
+                .or_default()
+                .insert(symbol_name.clone());
+        }
+    }
+
+    imported
+}
+
+fn dependency_extern_is_imported(
+    imported_externs: &ImportedDependencyExterns,
+    module_path: &[String],
+    symbol_name: &str,
+) -> bool {
+    imported_externs
+        .whole_paths
+        .iter()
+        .any(|whole_path| module_path.starts_with(whole_path))
+        || imported_externs
+            .symbols_by_module_path
+            .get(module_path)
+            .is_some_and(|symbols| symbols.contains(symbol_name))
+}
+
 fn render_direct_dependency_extern_declarations(
     command_label: &str,
     manifest_path: &Path,
+    source: &str,
     report_failure: bool,
 ) -> Result<String, u8> {
     let manifest = load_project_manifest(manifest_path).map_err(|error| {
@@ -5356,6 +5452,7 @@ fn render_direct_dependency_extern_declarations(
         }
         1
     })?;
+    let root_source_module = parse_source(source).ok();
 
     let mut declarations = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
@@ -5393,6 +5490,11 @@ fn render_direct_dependency_extern_declarations(
             }
             1
         })?;
+        let module_import_paths =
+            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
+        let imported_externs = root_source_module
+            .as_ref()
+            .map(|module| collect_imported_dependency_externs(module, &module_import_paths));
 
         for module in &artifact.modules {
             collect_dependency_module_extern_declarations(
@@ -5401,6 +5503,7 @@ fn render_direct_dependency_extern_declarations(
                 module.source_path.as_str(),
                 &module.syntax,
                 &module.contents,
+                imported_externs.as_ref(),
                 &mut owners_by_symbol,
                 &mut declarations,
             )
@@ -5425,20 +5528,30 @@ fn render_direct_dependency_extern_declarations(
 
 fn render_direct_dependency_extern_declarations_quiet(
     manifest_path: &Path,
+    source: &str,
 ) -> Result<String, PrepareProjectTargetBuildError> {
     let manifest = load_project_manifest(manifest_path)
         .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let root_source_module = parse_source(source).ok();
+    let direct_dependencies = manifest
+        .references
+        .packages
+        .iter()
+        .map(|reference| {
+            let reference_manifest_path = reference_manifest_path(&manifest, reference);
+            let dependency_manifest = load_project_manifest(&manifest_dir.join(reference))
+                .map_err(|error| {
+                    target_prep_dependency_manifest_failure(Some(&reference_manifest_path), &error)
+                })?;
+            Ok::<_, PrepareProjectTargetBuildError>(dependency_manifest)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     let mut declarations = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
 
-    for reference in &manifest.references.packages {
-        let reference_manifest_path = reference_manifest_path(&manifest, reference);
-        let dependency_manifest =
-            load_project_manifest(&manifest_dir.join(reference)).map_err(|error| {
-                target_prep_dependency_manifest_failure(Some(&reference_manifest_path), &error)
-            })?;
+    for dependency_manifest in direct_dependencies {
         let dependency_package = package_name(&dependency_manifest)
             .map(str::to_owned)
             .map_err(|error| {
@@ -5466,6 +5579,11 @@ fn render_direct_dependency_extern_declarations_quiet(
                 },
             }
         })?;
+        let module_import_paths =
+            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
+        let imported_externs = root_source_module
+            .as_ref()
+            .map(|module| collect_imported_dependency_externs(module, &module_import_paths));
 
         for module in &artifact.modules {
             collect_dependency_module_extern_declarations(
@@ -5474,6 +5592,7 @@ fn render_direct_dependency_extern_declarations_quiet(
                 module.source_path.as_str(),
                 &module.syntax,
                 &module.contents,
+                imported_externs.as_ref(),
                 &mut owners_by_symbol,
                 &mut declarations,
             )
@@ -5498,14 +5617,20 @@ fn collect_dependency_module_extern_declarations(
     _module_source_path: &str,
     module: &Module,
     contents: &str,
+    imported_externs: Option<&ImportedDependencyExterns>,
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     declarations: &mut Vec<String>,
 ) -> Result<(), (String, DependencyExternOwner)> {
+    let module_import_path = dependency_interface_module_import_path(dependency_package, module);
+
     for item in &module.items {
         match &item.kind {
             ItemKind::Function(function)
                 if function.visibility == Visibility::Public
-                    && function.abi.as_deref() == Some("c") =>
+                    && function.abi.as_deref() == Some("c")
+                    && imported_externs.is_none_or(|imports| {
+                        dependency_extern_is_imported(imports, &module_import_path, &function.name)
+                    }) =>
             {
                 record_dependency_extern_declaration(
                     dependency_package,
@@ -5520,6 +5645,11 @@ fn collect_dependency_module_extern_declarations(
                 if extern_block.visibility == Visibility::Public && extern_block.abi == "c" =>
             {
                 for function in &extern_block.functions {
+                    if imported_externs.is_some_and(|imports| {
+                        !dependency_extern_is_imported(imports, &module_import_path, &function.name)
+                    }) {
+                        continue;
+                    }
                     let mut declaration = String::from("extern \"c\" pub ");
                     declaration.push_str(span_text(contents, function.span).trim());
                     record_dependency_extern_declaration(

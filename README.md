@@ -8,6 +8,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - Phase 7 正在收口 async/runtime/build 的最小可用子集。
 - Phase 8 正在推进 package/workspace、`.qi`、本地依赖、project-aware `build/run/test` 和 dependency-backed LSP。
 - 当前跨包执行路径仍然很窄：只稳定支持 direct local dependency 的 public `extern "c"` 符号。
+- root target 的 dependency extern 预处理现在只会注入当前源码实际 `use` 到的直依赖 `extern "c"` 符号；未导入 sibling dependency 的同名符号不再提前卡住 `ql build/run/test`。
 - 当前 rename 仍以 same-file 为边界；cross-file rename / workspace edits 尚未开放。
 - `ql build` / `ql run` 已支持从 package 根目录和已声明 target 的源码路径进入 project-aware 流程；workspace member 源码路径会继承外层 workspace profile 和输出目录语义。
 - `ql test` 直接执行 project `tests/*.ql` 文件时会保留 package/workspace-aware smoke 或 UI test 语义；`ql project graph` / `ql project targets` / `ql project lock` 指向 workspace member 源码文件时会回到外层 workspace 上下文；`ql project emit-interface` 在不带 `--output` 时也沿用这一视角。

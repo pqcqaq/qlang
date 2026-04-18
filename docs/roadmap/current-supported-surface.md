@@ -40,6 +40,7 @@
 - `ql project graph` / `ql project targets` / `ql project lock` 直接指向 workspace member 源码文件时，会解析外层 workspace，而不是退化成单 package 视图。
 - `ql project emit-interface` 在不带 `--output` 时，直接指向 workspace member `.ql` 文件也会解析外层 workspace，并按 workspace member 集合执行发射/检查。
 - 当前真正打通的跨包执行路径仍然很窄：只稳定覆盖 direct local dependency 的 public `extern "c"` 符号。
+- root target 的 dependency extern 预处理现在只会注入当前源码实际导入的直依赖 `extern "c"` 符号；未导入 sibling dependency 的同名符号不会再提前打断 `ql build/run/test`。
 
 ### async / runtime
 

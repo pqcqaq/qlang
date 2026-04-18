@@ -1685,7 +1685,7 @@ fn build_package_path_json_reports_target_prep_dependency_extern_conflict() {
         "dep-a/qlang.toml",
         r#"
 [package]
-name = "dep_a"
+name = "demo.shared.alpha"
 "#,
     );
     temp.write(
@@ -1696,7 +1696,7 @@ name = "dep_a"
         "dep-b/qlang.toml",
         r#"
 [package]
-name = "dep_b"
+name = "demo.shared.beta"
 "#,
     );
     temp.write(
@@ -1710,11 +1710,14 @@ name = "dep_b"
 name = "app"
 
 [dependencies]
-dep_a = "../dep-a"
-dep_b = "../dep-b"
+alpha = "../dep-a"
+beta = "../dep-b"
 "#,
     );
-    temp.write("app/src/main.ql", "fn main() -> Int { return 0 }\n");
+    temp.write(
+        "app/src/main.ql",
+        "use demo.shared.alpha.q_shared as alpha_shared\nuse demo.shared.beta.q_shared as beta_shared\n\nfn main() -> Int { return alpha_shared() + beta_shared() }\n",
+    );
 
     let dep_a_output = static_library_output_path(&dep_a_root.join("target/ql/debug"), "lib");
     let dep_b_output = static_library_output_path(&dep_b_root.join("target/ql/debug"), "lib");
@@ -1766,7 +1769,7 @@ dep_b = "../dep-b"
         built_targets[0]["manifest_path"],
         dep_a_manifest.display().to_string().replace('\\', "/")
     );
-    assert_eq!(built_targets[0]["package_name"], "dep_a");
+    assert_eq!(built_targets[0]["package_name"], "demo.shared.alpha");
     assert_eq!(built_targets[0]["selected"], false);
     assert_eq!(built_targets[0]["dependency_only"], true);
     assert_eq!(built_targets[0]["kind"], "lib");
@@ -1778,7 +1781,7 @@ dep_b = "../dep-b"
         built_targets[1]["manifest_path"],
         dep_b_manifest.display().to_string().replace('\\', "/")
     );
-    assert_eq!(built_targets[1]["package_name"], "dep_b");
+    assert_eq!(built_targets[1]["package_name"], "demo.shared.beta");
     assert_eq!(built_targets[1]["selected"], false);
     assert_eq!(built_targets[1]["dependency_only"], true);
     assert_eq!(built_targets[1]["kind"], "lib");
@@ -1800,12 +1803,18 @@ dep_b = "../dep-b"
     assert_eq!(json["failure"]["stage"], "target-prep");
     assert_eq!(json["failure"]["error_kind"], "dependency-extern-conflict");
     assert_eq!(json["failure"]["symbol"], "q_shared");
-    assert_eq!(json["failure"]["first_dependency_package"], "dep_a");
+    assert_eq!(
+        json["failure"]["first_dependency_package"],
+        "demo.shared.alpha"
+    );
     assert_eq!(
         json["failure"]["first_dependency_manifest_path"],
         dep_a_manifest.display().to_string().replace('\\', "/")
     );
-    assert_eq!(json["failure"]["conflicting_dependency_package"], "dep_b");
+    assert_eq!(
+        json["failure"]["conflicting_dependency_package"],
+        "demo.shared.beta"
+    );
     assert_eq!(
         json["failure"]["conflicting_dependency_manifest_path"],
         dep_b_manifest.display().to_string().replace('\\', "/")
@@ -1832,6 +1841,168 @@ dep_b = "../dep-b"
         "package build json target-prep dependency extern conflict",
     )
     .expect("target-prep conflict should preserve dep-b artifact");
+}
+
+#[test]
+fn build_package_path_json_ignores_unused_dependency_extern_conflicts() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-unused-extern-conflict");
+    let dep_a_root = temp.path().join("dep-a");
+    let dep_b_root = temp.path().join("dep-b");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_a_root.join("src"))
+        .expect("create dep-a source tree for unused extern conflict");
+    std::fs::create_dir_all(dep_b_root.join("src"))
+        .expect("create dep-b source tree for unused extern conflict");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for unused extern conflict");
+
+    let dep_a_manifest = temp.write(
+        "dep-a/qlang.toml",
+        r#"
+[package]
+name = "demo.shared.alpha"
+"#,
+    );
+    temp.write(
+        "dep-a/src/lib.ql",
+        "extern \"c\" pub fn q_shared() -> Int { return 1 }\n",
+    );
+    let dep_b_manifest = temp.write(
+        "dep-b/qlang.toml",
+        r#"
+[package]
+name = "demo.shared.beta"
+"#,
+    );
+    temp.write(
+        "dep-b/src/lib.ql",
+        "extern \"c\" pub fn q_shared() -> Int { return 2 }\n",
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = "../dep-a"
+beta = "../dep-b"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        "use demo.shared.alpha.q_shared as shared\n\nfn main() -> Int { return shared() }\n",
+    );
+
+    let dep_a_output = static_library_output_path(&dep_a_root.join("target/ql/debug"), "lib");
+    let dep_b_output = static_library_output_path(&dep_b_root.join("target/ql/debug"), "lib");
+    let app_output = project_root.join("target/ql/debug/main.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` ignores unused dependency extern conflicts",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-package-json-unused-extern-conflict",
+        "package build json unused dependency extern conflict",
+        &output,
+    )
+    .expect("package-path `ql build --json` should ignore unused dependency extern conflicts");
+    expect_empty_stderr(
+        "project-build-package-json-unused-extern-conflict",
+        "package build json unused dependency extern conflict",
+        &stderr,
+    )
+    .expect("unused dependency extern conflict build should not print stderr");
+
+    let json = parse_json_output("project-build-package-json-unused-extern-conflict", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["failure"], JsonValue::Null);
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("unused dependency extern conflict json should expose built_targets");
+    assert_eq!(built_targets.len(), 3);
+    assert_eq!(
+        built_targets[0],
+        serde_json::json!({
+            "manifest_path": dep_a_manifest.display().to_string().replace('\\', "/"),
+            "package_name": "demo.shared.alpha",
+            "selected": false,
+            "dependency_only": true,
+            "kind": "lib",
+            "path": "src/lib.ql",
+            "emit": "staticlib",
+            "profile": "debug",
+            "artifact_path": dep_a_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
+    );
+    assert_eq!(
+        built_targets[1],
+        serde_json::json!({
+            "manifest_path": dep_b_manifest.display().to_string().replace('\\', "/"),
+            "package_name": "demo.shared.beta",
+            "selected": false,
+            "dependency_only": true,
+            "kind": "lib",
+            "path": "src/lib.ql",
+            "emit": "staticlib",
+            "profile": "debug",
+            "artifact_path": dep_b_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
+    );
+    assert_eq!(
+        built_targets[2],
+        serde_json::json!({
+            "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+            "package_name": "app",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "bin",
+            "path": "src/main.ql",
+            "emit": "llvm-ir",
+            "profile": "debug",
+            "artifact_path": app_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
+    );
+
+    expect_file_exists(
+        "project-build-package-json-unused-extern-conflict",
+        &dep_a_output,
+        "dep-a artifact",
+        "package build json unused dependency extern conflict",
+    )
+    .expect("unused dependency extern conflict build should preserve dep-a artifact");
+    expect_file_exists(
+        "project-build-package-json-unused-extern-conflict",
+        &dep_b_output,
+        "dep-b artifact",
+        "package build json unused dependency extern conflict",
+    )
+    .expect("unused dependency extern conflict build should preserve dep-b artifact");
+    expect_file_exists(
+        "project-build-package-json-unused-extern-conflict",
+        &app_output,
+        "app artifact",
+        "package build json unused dependency extern conflict",
+    )
+    .expect("unused dependency extern conflict build should emit the selected artifact");
 }
 
 #[test]
