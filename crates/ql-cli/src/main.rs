@@ -382,6 +382,18 @@ fn run() -> Result<(), u8> {
                         };
                         options.filter = Some(value.to_owned());
                     }
+                    "--target" => {
+                        index += 1;
+                        let Some(value) = remaining.get(index) else {
+                            eprintln!("error: `ql test --target` expects a test path");
+                            return Err(1);
+                        };
+                        if options.target_path.is_some() {
+                            eprintln!("error: `ql test` received multiple `--target` selectors");
+                            return Err(1);
+                        }
+                        options.target_path = Some(normalize_path(Path::new(value)));
+                    }
                     other if other.starts_with('-') => {
                         eprintln!("error: unknown `ql test` option `{other}`");
                         return Err(1);
@@ -3025,6 +3037,7 @@ struct TestCommandOptions {
     json: bool,
     filter: Option<String>,
     package_name: Option<String>,
+    target_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -3171,7 +3184,36 @@ fn test_path(path: &Path, command_options: &TestCommandOptions) -> Result<(), u8
         return Err(1);
     }
 
-    let targets = filter_test_targets(discovered_targets, command_options.filter.as_deref());
+    let targets = if let Some(target_path) = command_options.target_path.as_deref() {
+        let selected = select_test_targets_by_path(discovered_targets, target_path);
+        if selected.is_empty() {
+            if command_options.json {
+                print!(
+                    "{}",
+                    render_test_json_report(
+                        path,
+                        command_options,
+                        "no-match",
+                        discovered_total,
+                        &[],
+                        None,
+                    )
+                );
+            } else {
+                report_no_matching_test_target(
+                    path,
+                    target_path,
+                    command_options.package_name.as_deref(),
+                );
+            }
+            return Err(1);
+        }
+        selected
+    } else {
+        discovered_targets
+    };
+
+    let targets = filter_test_targets(targets, command_options.filter.as_deref());
     if targets.is_empty() {
         if command_options.json {
             print!(
@@ -3254,13 +3296,34 @@ fn discover_test_targets(
             command_options.package_name.as_deref(),
             command_options.profile_overridden,
         )
+    } else if let Some(request) = resolve_project_file_test_request(path) {
+        let discovered = discover_project_test_targets(
+            &request.manifest_path,
+            options,
+            command_options.package_name.as_deref(),
+            command_options.profile_overridden,
+        )?;
+        Ok(select_test_targets_by_path(
+            discovered,
+            &request.display_path,
+        ))
     } else {
         if let Some(package_name) = command_options.package_name.as_deref() {
             report_test_package_selector_requires_project_context(package_name);
             return Err(1);
         }
+        if let Some(target_path) = command_options.target_path.as_deref() {
+            report_test_target_selector_requires_project_context(target_path);
+            return Err(1);
+        }
         Ok(vec![direct_test_target(path, options)?])
     }
+}
+
+#[derive(Clone, Debug)]
+struct ProjectFileTestRequest {
+    manifest_path: PathBuf,
+    display_path: String,
 }
 
 fn test_build_options(profile: BuildProfile) -> BuildOptions {
@@ -3411,6 +3474,27 @@ fn project_request_root(path: &Path) -> PathBuf {
     }
 }
 
+fn resolve_project_file_test_request(path: &Path) -> Option<ProjectFileTestRequest> {
+    if !is_ql_source_file(path) {
+        return None;
+    }
+
+    let manifest = load_project_manifest(path).ok()?;
+    let _ = package_name(&manifest).ok()?;
+    let manifest_path = manifest.manifest_path.clone();
+    let package_root = manifest_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    let tests_root = package_root.join("tests");
+    path.strip_prefix(&tests_root).ok()?;
+
+    Some(ProjectFileTestRequest {
+        manifest_path,
+        display_path: display_relative_to_root(&package_root, path),
+    })
+}
+
 fn display_relative_to_root(root: &Path, path: &Path) -> String {
     if let Ok(relative) = path.strip_prefix(root) {
         normalize_path(relative)
@@ -3454,6 +3538,25 @@ fn filter_test_targets(targets: Vec<TestTarget>, filter: Option<&str>) -> Vec<Te
         .into_iter()
         .filter(|target| target.display_path.contains(filter))
         .collect()
+}
+
+fn select_test_targets_by_path(targets: Vec<TestTarget>, target_path: &str) -> Vec<TestTarget> {
+    targets
+        .into_iter()
+        .filter(|target| test_target_matches_path(target, target_path))
+        .collect()
+}
+
+fn test_target_matches_path(target: &TestTarget, target_path: &str) -> bool {
+    if target.display_path == target_path {
+        return true;
+    }
+
+    match &target.kind {
+        TestTargetKind::Smoke { source_path, .. } | TestTargetKind::Ui { source_path, .. } => {
+            normalize_path(source_path) == target_path
+        }
+    }
 }
 
 fn list_test_targets(targets: &[TestTarget]) {
@@ -3737,6 +3840,11 @@ fn report_test_package_selector_requires_project_context(package_name: &str) {
     eprintln!("note: selector: package `{package_name}`");
 }
 
+fn report_test_target_selector_requires_project_context(target_path: &str) {
+    eprintln!("error: `ql test` target selectors require a package or workspace path");
+    eprintln!("note: selector: target `{target_path}`");
+}
+
 fn report_no_tests_discovered(path: &Path, package_name: Option<&str>) {
     let normalized_path = normalize_path(path);
     if let Some(package_name) = package_name {
@@ -3768,6 +3876,24 @@ fn report_no_matching_tests(path: &Path, filter: &str, package_name: Option<&str
     eprintln!("error: `ql test` found no test files matching `{filter}` under `{normalized_path}`");
     eprintln!(
         "hint: rerun `ql test {normalized_path} --list` to inspect the discovered tests, or adjust `--filter`"
+    );
+}
+
+fn report_no_matching_test_target(path: &Path, target_path: &str, package_name: Option<&str>) {
+    let normalized_path = normalize_path(path);
+    if let Some(package_name) = package_name {
+        eprintln!(
+            "error: `ql test` found no test target `{target_path}` for package `{package_name}` under `{normalized_path}`"
+        );
+        eprintln!(
+            "hint: rerun `ql test {normalized_path} --package {package_name} --list` to inspect the discovered tests, or adjust `--target` / `--package`"
+        );
+        return;
+    }
+
+    eprintln!("error: `ql test` found no test target `{target_path}` under `{normalized_path}`");
+    eprintln!(
+        "hint: rerun `ql test {normalized_path} --list` to inspect the discovered tests, or adjust `--target`"
     );
 }
 
@@ -9043,7 +9169,7 @@ fn print_usage() {
         "  ql run <file-or-dir> [--profile debug|release|--release] [--package <name>] [--bin <name>|--target <path>] [-- <args...>]"
     );
     eprintln!(
-        "  ql test <file-or-dir> [--profile debug|release|--release] [--package <name>] [--list] [--filter <substring>]"
+        "  ql test <file-or-dir> [--profile debug|release|--release] [--package <name>] [--target <tests/...ql>] [--list] [--filter <substring>]"
     );
     eprintln!("  ql project targets [file-or-dir] [--json]");
     eprintln!("  ql project graph [file-or-dir] [--json]");

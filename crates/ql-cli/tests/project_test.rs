@@ -116,6 +116,69 @@ name = "app"
 }
 
 #[test]
+fn test_package_path_selects_requested_target() {
+    if !toolchain_available("`ql test --target` package test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-target");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source root");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write("app/tests/smoke.ql", "fn main() -> Int { return 0 }\n");
+    temp.write("app/tests/ignored.ql", "fn main() -> Int { return 1 }\n");
+
+    let selected_output =
+        executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+    let ignored_output =
+        executable_output_path(&project_root.join("target/ql/debug/tests"), "ignored");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["test"])
+        .arg(&project_root)
+        .args(["--target", "tests/smoke.ql"]);
+    let output = run_command_capture(&mut command, "`ql test --target` package path");
+    let (stdout, stderr) = expect_success("project-test-target", "package target test", &output)
+        .expect("package-path `ql test --target` should run the selected test");
+    expect_empty_stderr("project-test-target", "package target test", &stderr)
+        .expect("package-path `ql test --target` should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-target",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("package-path `ql test --target` should report the selected test only");
+    assert!(
+        !stdout.contains("ignored.ql"),
+        "package-path `ql test --target` should not run unselected tests, got:\n{stdout}"
+    );
+    expect_file_exists(
+        "project-test-target",
+        &selected_output,
+        "selected smoke test executable",
+        "package target test",
+    )
+    .expect("package-path `ql test --target` should emit the selected test artifact");
+    assert!(
+        !ignored_output.exists(),
+        "package-path `ql test --target` should not build unselected test artifacts"
+    );
+}
+
+#[test]
 fn test_package_path_uses_manifest_default_release_profile() {
     if !toolchain_available("`ql test` manifest profile test") {
         return;
@@ -920,6 +983,55 @@ name = "app"
         ],
     )
     .expect("package-path `ql test` should pass matching ui snapshot tests");
+}
+
+#[test]
+fn test_direct_project_ui_file_uses_ui_snapshot_semantics() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-ui-direct-file");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source root");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    let source = "fn main() -> Int { return nope }\n";
+    let fixture_path = temp.write("app/tests/ui/type_error.ql", source);
+    fs::write(
+        fixture_path.with_extension("stderr"),
+        ui_snapshot("tests/ui/type_error.ql", source),
+    )
+    .expect("write expected ui stderr snapshot");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&fixture_path);
+    let output = run_command_capture(&mut command, "`ql test` direct project ui file");
+    let (stdout, stderr) = expect_success(
+        "project-test-ui-direct-file",
+        "direct project ui file test",
+        &output,
+    )
+    .expect("direct project ui files should keep package-aware ui test semantics");
+    expect_empty_stderr(
+        "project-test-ui-direct-file",
+        "direct project ui file test",
+        &stderr,
+    )
+    .expect("direct project ui file test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-ui-direct-file",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/ui/type_error.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("direct project ui file test should execute the ui snapshot workflow");
 }
 
 #[test]

@@ -35,6 +35,7 @@
   - `[profile].default = "debug" | "release"`
 - `qlang.lock` 第一版已落地，当前锁定本地 package graph、默认 profile 和 target 输入面。
 - package/workspace 根目录已经可以直接进入 project-aware `ql build` / `ql run` / `ql test`。
+- `ql test` 已支持对已发现测试使用 `--target` 做精确 rerun；直接执行 package `tests/` 下的单个 `.ql` 文件时，也会保留 package-aware smoke / UI test 语义。
 - 当前真正打通的跨包执行路径仍然很窄：只稳定覆盖 direct local dependency 的 public `extern "c"` 符号。
 
 ### async / runtime

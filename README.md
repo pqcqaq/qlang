@@ -41,6 +41,7 @@ cargo run -p ql-cli -- project graph demo-workspace
 cargo run -p ql-cli -- build demo-workspace
 cargo run -p ql-cli -- run demo-workspace
 cargo run -p ql-cli -- test demo-workspace
+cargo run -p ql-cli -- test demo-workspace --target packages/app/tests/smoke.ql
 ```
 
 ## VSCode
