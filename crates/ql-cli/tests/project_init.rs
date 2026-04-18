@@ -342,6 +342,19 @@ fn project_add_creates_workspace_member_from_member_source_path() {
         expect_success("project-add-success", "workspace init for add", &output).unwrap();
     expect_empty_stderr("project-add-success", "workspace init for add", &stderr).unwrap();
 
+    let mut add_core = ql_command(&workspace_root);
+    add_core.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(&mut add_core, "`ql project add` workspace core member");
+    let (_stdout, stderr) =
+        expect_success("project-add-success", "add workspace core member", &output).unwrap();
+    expect_empty_stderr("project-add-success", "add workspace core member", &stderr).unwrap();
+
     let mut add = ql_command(&workspace_root);
     add.args([
         "project",
@@ -349,6 +362,10 @@ fn project_add_creates_workspace_member_from_member_source_path() {
         &request_path.to_string_lossy(),
         "--name",
         "tools",
+        "--dependency",
+        "app",
+        "--dependency",
+        "core",
     ]);
     let output = run_command_capture(&mut add, "`ql project add` workspace member source path");
     let (stdout, stderr) =
@@ -414,7 +431,7 @@ fn project_add_creates_workspace_member_from_member_source_path() {
             &project_root.join("packages/tools/qlang.toml"),
             "added workspace member manifest"
         ),
-        "[package]\nname = \"tools\"\n"
+        "[package]\nname = \"tools\"\n\n[dependencies]\napp = \"../app\"\ncore = \"../core\"\n"
     );
     assert_eq!(
         read_normalized_file(
@@ -443,10 +460,16 @@ fn project_add_creates_workspace_member_from_member_source_path() {
         &[
             "workspace_members:",
             "  - packages/app",
+            "  - packages/core",
             "  - packages/tools",
+            "  - member: packages/core",
+            "    package: core",
             "  - member: packages/tools",
             "    package: tools",
             "    status: missing",
+            "    references:",
+            "      - ../app",
+            "      - ../core",
         ],
     )
     .unwrap();
@@ -578,4 +601,79 @@ fn project_add_refuses_to_overwrite_existing_member_directory() {
         ),
     )
     .unwrap();
+}
+
+#[test]
+fn project_add_refuses_unknown_workspace_dependency() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-missing-dependency");
+    let project_root = temp.path().join("workspace");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut init,
+        "`ql project init` workspace for missing dependency add",
+    );
+    let (_stdout, stderr) = expect_success(
+        "project-add-missing-dependency",
+        "workspace init for missing dependency add",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-missing-dependency",
+        "workspace init for missing dependency add",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut add = ql_command(&workspace_root);
+    add.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "tools",
+        "--dependency",
+        "missing",
+    ]);
+    let output = run_command_capture(&mut add, "`ql project add` missing dependency");
+    let (stdout, stderr) = expect_exit_code(
+        "project-add-missing-dependency",
+        "workspace member add with missing dependency",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-add-missing-dependency",
+        "workspace member add with missing dependency",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-add-missing-dependency",
+        "workspace member add with missing dependency",
+        &stderr,
+        &format!(
+            "error: `ql project add` workspace manifest `{}` does not contain package `missing`",
+            project_root
+                .join("qlang.toml")
+                .to_string_lossy()
+                .replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    assert!(
+        !project_root.join("packages/tools").exists(),
+        "missing dependency add should not create the new workspace member directory"
+    );
 }

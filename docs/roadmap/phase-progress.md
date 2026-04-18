@@ -21,6 +21,7 @@
 
 - 编译器主路径已经稳定为 AST -> HIR -> resolve -> typeck -> MIR -> LLVM。
 - package/workspace 基础能力已落地：`ql project init`、`add`、`targets`、`graph`、`lock`、`emit-interface`。
+- `ql project add` 现在也可在创建 member 时直接写入 workspace 内本地依赖；真实 workspace 已不再只能“先手写 manifest 再接依赖图”。
 - project-aware `ql build` / `ql run` / `ql test` 已可在 package/workspace 根目录工作。
 - `ql build` / `ql run` 现在也可直接从 project 源码 target 路径进入 project-aware 流程；package 内源码路径和 workspace member 源码路径都不再掉回裸单文件输出语义。
 - `ql build --list` / `ql run --list` 已落地，真实 workspace 里现在可以直接在命令内查看 discovered build targets；`ql run --list` 只展示 runnable targets，`--json` 复用 `ql.project.targets.v1`。

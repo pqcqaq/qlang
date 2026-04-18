@@ -659,6 +659,7 @@ fn run() -> Result<(), u8> {
                     let remaining = args.collect::<Vec<_>>();
                     let mut path = None;
                     let mut package_name = None;
+                    let mut dependencies = Vec::new();
                     let mut index = 0;
 
                     while index < remaining.len() {
@@ -678,6 +679,16 @@ fn run() -> Result<(), u8> {
                                     return Err(1);
                                 }
                                 package_name = Some(value.clone());
+                            }
+                            "--dependency" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project add --dependency` expects a package name"
+                                    );
+                                    return Err(1);
+                                };
+                                dependencies.push(value.clone());
                             }
                             other if other.starts_with('-') => {
                                 eprintln!("error: unknown `ql project add` option `{other}`");
@@ -703,7 +714,7 @@ fn run() -> Result<(), u8> {
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_add_path(&path, &package_name)
+                    project_add_path(&path, &package_name, &dependencies)
                 }
                 other => {
                     eprintln!("error: unknown `ql project` subcommand `{other}`");
@@ -8016,7 +8027,7 @@ fn project_init_path(path: &Path, workspace: bool, package_name: Option<&str>) -
     Ok(())
 }
 
-fn project_add_path(path: &Path, package_name: &str) -> Result<(), u8> {
+fn project_add_path(path: &Path, package_name: &str, dependencies: &[String]) -> Result<(), u8> {
     if let Err(message) = validate_project_package_name(package_name) {
         eprintln!("error: `ql project add` {message}");
         return Err(1);
@@ -8026,11 +8037,18 @@ fn project_add_path(path: &Path, package_name: &str) -> Result<(), u8> {
         eprintln!("error: `ql project add` {message}");
         1
     })?;
+    let dependency_entries =
+        resolve_project_add_dependency_entries(&workspace_manifest, package_name, dependencies)
+            .map_err(|message| {
+                eprintln!("error: `ql project add` {message}");
+                1
+            })?;
     let (updated_manifest_path, created_paths) =
-        add_workspace_project_member(&workspace_manifest, package_name).map_err(|message| {
-            eprintln!("error: `ql project add` {message}");
-            1
-        })?;
+        add_workspace_project_member(&workspace_manifest, package_name, &dependency_entries)
+            .map_err(|message| {
+                eprintln!("error: `ql project add` {message}");
+                1
+            })?;
 
     println!("updated: {}", normalize_path(&updated_manifest_path));
     for path in created_paths {
@@ -8084,7 +8102,7 @@ fn validate_project_package_name(package_name: &str) -> Result<(), String> {
 
 fn init_package_project(target_root: &Path, package_name: &str) -> Result<Vec<PathBuf>, String> {
     ensure_project_init_target_root(target_root)?;
-    create_package_scaffold(target_root, package_name)
+    create_package_scaffold(target_root, package_name, &[])
 }
 
 fn init_workspace_project(target_root: &Path, package_name: &str) -> Result<Vec<PathBuf>, String> {
@@ -8096,7 +8114,7 @@ fn init_workspace_project(target_root: &Path, package_name: &str) -> Result<Vec<
 
     write_new_project_file(&workspace_manifest_path, &workspace_manifest)?;
     let mut created_paths = vec![workspace_manifest_path];
-    created_paths.extend(create_package_scaffold(&member_dir, package_name)?);
+    created_paths.extend(create_package_scaffold(&member_dir, package_name, &[])?);
     Ok(created_paths)
 }
 
@@ -8144,6 +8162,7 @@ fn project_add_manifest_error(path: &Path, error: &ql_project::ProjectError) -> 
 fn add_workspace_project_member(
     workspace_manifest: &ql_project::ProjectManifest,
     package_name: &str,
+    dependencies: &[(String, String)],
 ) -> Result<(PathBuf, Vec<PathBuf>), String> {
     let Some(workspace) = workspace_manifest.workspace.as_ref() else {
         return Err(format!(
@@ -8212,7 +8231,7 @@ fn add_workspace_project_member(
             normalize_path(&workspace_manifest.manifest_path)
         )
     })?;
-    let created_paths = create_package_scaffold(&member_root, package_name)?;
+    let created_paths = create_package_scaffold(&member_root, package_name, dependencies)?;
 
     Ok((workspace_manifest.manifest_path.clone(), created_paths))
 }
@@ -8269,12 +8288,98 @@ fn append_workspace_manifest_member(source: &str, member: &str) -> Result<String
     Ok(rendered)
 }
 
-fn create_package_scaffold(target_root: &Path, package_name: &str) -> Result<Vec<PathBuf>, String> {
+fn resolve_project_add_dependency_entries(
+    workspace_manifest: &ql_project::ProjectManifest,
+    package_name: &str,
+    dependency_names: &[String],
+) -> Result<Vec<(String, String)>, String> {
+    let workspace_root = workspace_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    let member_root = workspace_root.join("packages").join(package_name);
+    let mut seen = BTreeSet::new();
+    let mut dependencies = Vec::with_capacity(dependency_names.len());
+
+    for dependency_name in dependency_names {
+        validate_project_package_name(dependency_name)?;
+        if dependency_name == package_name {
+            return Err(format!(
+                "does not accept self dependency `{dependency_name}` for new package `{package_name}`"
+            ));
+        }
+        if !seen.insert(dependency_name.clone()) {
+            return Err(format!(
+                "received duplicate `--dependency {dependency_name}`"
+            ));
+        }
+
+        let Some(dependency_manifest_path) =
+            find_workspace_member_with_package_name(workspace_manifest, dependency_name)
+        else {
+            return Err(format!(
+                "workspace manifest `{}` does not contain package `{dependency_name}`",
+                normalize_path(&workspace_manifest.manifest_path)
+            ));
+        };
+        let dependency_root = dependency_manifest_path.parent().unwrap_or(Path::new("."));
+        dependencies.push((
+            dependency_name.clone(),
+            relative_path_from(&member_root, dependency_root),
+        ));
+    }
+
+    Ok(dependencies)
+}
+
+fn relative_path_from(from: &Path, to: &Path) -> String {
+    let from = normalize_path(from);
+    let to = normalize_path(to);
+    let from_parts = from
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>();
+    let to_parts = to
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>();
+
+    let mut common = 0;
+    while common < from_parts.len()
+        && common < to_parts.len()
+        && from_parts[common] == to_parts[common]
+    {
+        common += 1;
+    }
+
+    if common == 0 && !from_parts.is_empty() && !to_parts.is_empty() && from_parts[0] != to_parts[0]
+    {
+        return to;
+    }
+
+    let mut relative = Vec::new();
+    relative.extend(std::iter::repeat_n(
+        "..",
+        from_parts.len().saturating_sub(common),
+    ));
+    relative.extend_from_slice(&to_parts[common..]);
+    if relative.is_empty() {
+        ".".to_owned()
+    } else {
+        relative.join("/")
+    }
+}
+
+fn create_package_scaffold(
+    target_root: &Path,
+    package_name: &str,
+    dependencies: &[(String, String)],
+) -> Result<Vec<PathBuf>, String> {
     let manifest_path = target_root.join("qlang.toml");
     let source_path = target_root.join("src").join("lib.ql");
     let main_path = target_root.join("src").join("main.ql");
     let test_path = target_root.join("tests").join("smoke.ql");
-    let manifest = render_package_manifest(package_name);
+    let manifest = render_package_manifest(package_name, dependencies);
 
     write_new_project_file(&manifest_path, &manifest)?;
     write_new_project_file(&source_path, default_package_source())?;
@@ -8313,8 +8418,15 @@ fn write_new_project_file(path: &Path, contents: &str) -> Result<(), String> {
         .map_err(|error| format!("failed to write `{}`: {error}", normalize_path(path)))
 }
 
-fn render_package_manifest(package_name: &str) -> String {
-    format!("[package]\nname = \"{package_name}\"\n")
+fn render_package_manifest(package_name: &str, dependencies: &[(String, String)]) -> String {
+    let mut manifest = format!("[package]\nname = \"{package_name}\"\n");
+    if !dependencies.is_empty() {
+        manifest.push_str("\n[dependencies]\n");
+        for (dependency_name, dependency_path) in dependencies {
+            manifest.push_str(&format!("{dependency_name} = \"{dependency_path}\"\n"));
+        }
+    }
+    manifest
 }
 
 fn render_workspace_manifest(package_name: &str) -> String {
@@ -11020,7 +11132,7 @@ fn print_usage() {
     eprintln!("  ql project graph [file-or-dir] [--json]");
     eprintln!("  ql project lock [file-or-dir] [--check] [--json]");
     eprintln!("  ql project init [dir] [--workspace] [--name <package>]");
-    eprintln!("  ql project add [file-or-dir] --name <package>");
+    eprintln!("  ql project add [file-or-dir] --name <package> [--dependency <package> ...]");
     eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]");
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
