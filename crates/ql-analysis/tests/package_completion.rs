@@ -520,3 +520,97 @@ pub fn read(config: Cfg) -> Int {
     assert!(method.iter().all(|item| item.kind == SymbolKind::Method));
     assert_eq!(method[0].detail, "fn get(self) -> Int");
 }
+
+#[test]
+fn package_analysis_surfaces_dependency_local_method_result_member_completions_in_parse_error_source()
+ {
+    let temp =
+        TempDir::new("ql-analysis-package-local-method-result-member-completion-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config.child()?
+    return current.va + current.ge(
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+
+    let field = package
+        .dependency_member_field_completions_at(source, nth_offset(source, ".va", 1) + ".va".len())
+        .expect("dependency local method-result field completions should survive parse errors");
+    assert_eq!(
+        field
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["value"]
+    );
+    assert!(field.iter().all(|item| item.kind == SymbolKind::Field));
+    assert_eq!(field[0].detail, "field value: Int");
+
+    let method = package
+        .dependency_method_completions_at(source, nth_offset(source, ".ge", 1) + ".ge".len())
+        .expect("dependency local method-result method completions should survive parse errors");
+    assert_eq!(
+        method
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["get"]
+    );
+    assert!(method.iter().all(|item| item.kind == SymbolKind::Method));
+    assert_eq!(method[0].detail, "fn get(self) -> Int");
+}

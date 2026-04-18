@@ -133,7 +133,26 @@ struct BrokenSourceParameterCandidate {
 struct BrokenSourceLocalCandidate {
     name: String,
     span: Span,
-    rhs_root: Option<String>,
+    rhs_value: Option<BrokenSourceValueCandidate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BrokenSourceValueCandidate {
+    root_name: String,
+    segments: Vec<BrokenSourceValueSegment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BrokenSourceValueSegment {
+    name: String,
+    kind: BrokenSourceValueSegmentKind,
+    question_unwrap: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BrokenSourceValueSegmentKind {
+    Field,
+    Method,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1990,19 +2009,101 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<Vec<ReferenceTarget>> {
-        let module = parse_source(source).ok()?;
-        let mut references = if let Some(target_occurrence) =
-            self.dependency_value_occurrence_in_module(&module, offset)
-        {
-            self.dependency_value_occurrences(&module)
+        let mut references = if let Ok(module) = parse_source(source) {
+            if let Some(target_occurrence) =
+                self.dependency_value_occurrence_in_module(&module, offset)
+            {
+                self.dependency_value_occurrences(&module)
+                    .into_iter()
+                    .filter(|occurrence| {
+                        occurrence.local_name == target_occurrence.local_name
+                            && occurrence.definition_span == target_occurrence.definition_span
+                            && occurrence.package_name == target_occurrence.package_name
+                            && occurrence.source_path == target_occurrence.source_path
+                            && occurrence.struct_name == target_occurrence.struct_name
+                            && occurrence.path == target_occurrence.path
+                    })
+                    .map(|occurrence| ReferenceTarget {
+                        kind: occurrence.kind,
+                        name: occurrence.local_name,
+                        span: occurrence.reference_span,
+                        is_definition: occurrence.is_definition,
+                    })
+                    .collect::<Vec<_>>()
+            } else if let Some(target_occurrence) =
+                dependency_import_occurrence_in_module(&module, offset)
+            {
+                let target_binding =
+                    dependency_value_root_binding_in_module(self, &module, offset)?;
+                source
+                    .match_indices(&target_occurrence.local_name)
+                    .filter_map(|(start, _)| {
+                        let occurrence = dependency_import_occurrence_in_module(&module, start)?;
+                        if occurrence.span.start != start
+                            || occurrence.local_name != target_occurrence.local_name
+                        {
+                            return None;
+                        }
+
+                        if occurrence.is_definition {
+                            if !dependency_value_root_import_binding_matches(
+                                self,
+                                &module,
+                                &occurrence.local_name,
+                                &target_binding,
+                            ) {
+                                return None;
+                            }
+                        } else {
+                            let occurrence_binding =
+                                dependency_value_root_binding_in_module(self, &module, start)?;
+                            if !dependency_struct_bindings_match(
+                                &occurrence_binding,
+                                &target_binding,
+                            ) {
+                                return None;
+                            }
+                        }
+
+                        Some(ReferenceTarget {
+                            kind: SymbolKind::Struct,
+                            name: target_occurrence.local_name.clone(),
+                            span: occurrence.span,
+                            is_definition: occurrence.is_definition,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Self::dependency_value_references_in_broken_source(self, source, offset)?
+            }
+        } else {
+            Self::dependency_value_references_in_broken_source(self, source, offset)?
+        };
+        if references.is_empty() {
+            return None;
+        }
+        references.sort_by_key(|reference| (reference.span.start, reference.span.end));
+        Some(references)
+    }
+
+    fn dependency_value_references_in_broken_source(
+        package: &PackageAnalysis,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<ReferenceTarget>> {
+        let occurrences = dependency_value_occurrences_in_broken_source(package, source);
+        let target_occurrence = occurrences
+            .iter()
+            .find(|occurrence| occurrence.reference_span.contains(offset))?
+            .clone();
+        Some(
+            occurrences
                 .into_iter()
                 .filter(|occurrence| {
-                    occurrence.local_name == target_occurrence.local_name
-                        && occurrence.definition_span == target_occurrence.definition_span
-                        && occurrence.package_name == target_occurrence.package_name
-                        && occurrence.source_path == target_occurrence.source_path
-                        && occurrence.struct_name == target_occurrence.struct_name
-                        && occurrence.path == target_occurrence.path
+                    dependency_value_occurrence_matches_rename_target(
+                        occurrence,
+                        &target_occurrence,
+                    )
                 })
                 .map(|occurrence| ReferenceTarget {
                     kind: occurrence.kind,
@@ -2010,51 +2111,8 @@ impl PackageAnalysis {
                     span: occurrence.reference_span,
                     is_definition: occurrence.is_definition,
                 })
-                .collect::<Vec<_>>()
-        } else {
-            let target_occurrence = dependency_import_occurrence_in_module(&module, offset)?;
-            let target_binding = dependency_value_root_binding_in_module(self, &module, offset)?;
-            source
-                .match_indices(&target_occurrence.local_name)
-                .filter_map(|(start, _)| {
-                    let occurrence = dependency_import_occurrence_in_module(&module, start)?;
-                    if occurrence.span.start != start
-                        || occurrence.local_name != target_occurrence.local_name
-                    {
-                        return None;
-                    }
-
-                    if occurrence.is_definition {
-                        if !dependency_value_root_import_binding_matches(
-                            self,
-                            &module,
-                            &occurrence.local_name,
-                            &target_binding,
-                        ) {
-                            return None;
-                        }
-                    } else {
-                        let occurrence_binding =
-                            dependency_value_root_binding_in_module(self, &module, start)?;
-                        if !dependency_struct_bindings_match(&occurrence_binding, &target_binding) {
-                            return None;
-                        }
-                    }
-
-                    Some(ReferenceTarget {
-                        kind: SymbolKind::Struct,
-                        name: target_occurrence.local_name.clone(),
-                        span: occurrence.span,
-                        is_definition: occurrence.is_definition,
-                    })
-                })
-                .collect::<Vec<_>>()
-        };
-        if references.is_empty() {
-            return None;
-        }
-        references.sort_by_key(|reference| (reference.span.start, reference.span.end));
-        Some(references)
+                .collect(),
+        )
     }
 
     pub fn dependency_target_at(
@@ -3759,13 +3817,15 @@ fn dependency_value_occurrences_in_broken_source(
             continue;
         }
 
-        let Some(rhs_root) = candidate.rhs_root else {
+        let Some(rhs_value) = candidate.rhs_value.as_ref() else {
             continue;
         };
-        let dependency = known_bindings
-            .get(rhs_root.as_str())
-            .cloned()
-            .or_else(|| import_struct_bindings.get(rhs_root.as_str()).cloned());
+        let dependency = dependency_struct_binding_for_broken_source_value_candidate(
+            package,
+            &known_bindings,
+            &import_struct_bindings,
+            rhs_value,
+        );
         let Some(dependency) = dependency else {
             continue;
         };
@@ -3826,6 +3886,53 @@ fn dependency_value_occurrences_in_broken_source(
             && left.kind == right.kind
     });
     occurrences
+}
+
+fn dependency_struct_binding_for_broken_source_value_candidate(
+    package: &PackageAnalysis,
+    known_bindings: &HashMap<String, DependencyStructBinding>,
+    import_struct_bindings: &HashMap<String, DependencyStructBinding>,
+    candidate: &BrokenSourceValueCandidate,
+) -> Option<DependencyStructBinding> {
+    let mut binding = known_bindings
+        .get(candidate.root_name.as_str())
+        .cloned()
+        .or_else(|| {
+            import_struct_bindings
+                .get(candidate.root_name.as_str())
+                .cloned()
+        })?;
+
+    for segment in &candidate.segments {
+        binding = match segment.kind {
+            BrokenSourceValueSegmentKind::Field => {
+                let field = binding.fields.get(&segment.name)?;
+                let target = if segment.question_unwrap {
+                    field
+                        .question_type_definition
+                        .as_ref()
+                        .or(field.type_definition.as_ref())?
+                } else {
+                    field.type_definition.as_ref()?
+                };
+                dependency_struct_binding_for_definition_target(package, target)?
+            }
+            BrokenSourceValueSegmentKind::Method => {
+                let method = binding.methods.get(&segment.name)?;
+                let target = if segment.question_unwrap {
+                    method
+                        .question_return_type_definition
+                        .as_ref()
+                        .or(method.return_type_definition.as_ref())?
+                } else {
+                    method.return_type_definition.as_ref()?
+                };
+                dependency_struct_binding_for_definition_target(package, target)?
+            }
+        };
+    }
+
+    Some(binding)
 }
 
 fn broken_source_definition_counts_in_tokens(tokens: &[Token]) -> HashMap<String, usize> {
@@ -3923,10 +4030,7 @@ fn broken_source_local_candidates_in_tokens(tokens: &[Token]) -> Vec<BrokenSourc
         while cursor < tokens.len() {
             match tokens[cursor].kind {
                 TokenKind::Eq => {
-                    rhs_root = tokens[cursor + 1..]
-                        .iter()
-                        .find(|token| token.kind == TokenKind::Ident)
-                        .map(|token| token.text.clone());
+                    rhs_root = broken_source_value_candidate_in_tokens(tokens, cursor + 1);
                     break;
                 }
                 TokenKind::Eof | TokenKind::RBrace => break,
@@ -3937,11 +4041,81 @@ fn broken_source_local_candidates_in_tokens(tokens: &[Token]) -> Vec<BrokenSourc
         candidates.push(BrokenSourceLocalCandidate {
             name: name_token.text.clone(),
             span: name_token.span,
-            rhs_root,
+            rhs_value: rhs_root,
         });
         index += 1;
     }
     candidates
+}
+
+fn broken_source_value_candidate_in_tokens(
+    tokens: &[Token],
+    start_index: usize,
+) -> Option<BrokenSourceValueCandidate> {
+    let root = tokens.get(start_index)?;
+    if root.kind != TokenKind::Ident {
+        return None;
+    }
+
+    let mut segments = Vec::new();
+    let mut cursor = start_index + 1;
+    loop {
+        if tokens.get(cursor).map(|token| token.kind) != Some(TokenKind::Dot) {
+            break;
+        }
+        let name_token = tokens.get(cursor + 1)?;
+        if name_token.kind != TokenKind::Ident {
+            break;
+        }
+        cursor += 2;
+
+        let kind = if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LParen) {
+            cursor = token_index_after_balanced_parens(tokens, cursor)?;
+            BrokenSourceValueSegmentKind::Method
+        } else {
+            BrokenSourceValueSegmentKind::Field
+        };
+        let question_unwrap =
+            if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Question) {
+                cursor += 1;
+                true
+            } else {
+                false
+            };
+        segments.push(BrokenSourceValueSegment {
+            name: name_token.text.clone(),
+            kind,
+            question_unwrap,
+        });
+    }
+
+    Some(BrokenSourceValueCandidate {
+        root_name: root.text.clone(),
+        segments,
+    })
+}
+
+fn token_index_after_balanced_parens(tokens: &[Token], open_index: usize) -> Option<usize> {
+    if tokens.get(open_index).map(|token| token.kind) != Some(TokenKind::LParen) {
+        return None;
+    }
+
+    let mut depth = 1usize;
+    let mut index = open_index + 1;
+    while index < tokens.len() {
+        match tokens[index].kind {
+            TokenKind::LParen => depth += 1,
+            TokenKind::RParen => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index + 1);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
 }
 
 fn broken_source_item_definition_names_in_tokens(tokens: &[Token]) -> Vec<String> {

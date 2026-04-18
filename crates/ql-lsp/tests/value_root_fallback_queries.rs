@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, analyze_package_dependencies};
+use ql_analysis::{analyze_package, analyze_package_dependencies, analyze_source};
 use ql_lsp::bridge::{
     declaration_for_dependency_values, definition_for_dependency_values,
     hover_for_dependency_values, references_for_dependency_values, span_to_range,
@@ -556,6 +556,144 @@ extend Cfg {
                     Span::new(
                         nth_offset(source, "self", 3),
                         nth_offset(source, "self", 3) + "self".len()
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn broken_source_queries_fall_back_to_dependency_local_method_result_value_root_in_parse_error_source()
+ {
+    let temp = TempDir::new("ql-lsp-value-root-local-method-result-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config.child()?
+    return current.value + current.ge(
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    assert!(analyze_source(source).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = app_uri(&app_path);
+    let current_usage = nth_offset(source, "current", 2);
+
+    let hover = hover_for_dependency_values(
+        source,
+        &package,
+        offset_to_position(source, current_usage),
+    )
+    .expect("dependency local method-result value root hover should exist in parse-error source");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**struct** `Child`"));
+    assert!(markup.value.contains("struct Child"));
+
+    let definition = definition_for_dependency_values(
+        source,
+        &package,
+        offset_to_position(source, current_usage),
+    )
+    .expect(
+        "dependency local method-result value root definition should exist in parse-error source",
+    );
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_targets_dependency_struct(location, &dep_qi, "pub struct Child {\n    value: Int,\n}");
+
+    let references = references_for_dependency_values(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "current", 1)),
+        false,
+    )
+    .expect(
+        "dependency local method-result value root references should exist in parse-error source",
+    );
+    assert_eq!(
+        references,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "current", 2),
+                        nth_offset(source, "current", 2) + "current".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "current", 3),
+                        nth_offset(source, "current", 3) + "current".len(),
                     ),
                 ),
             ),
