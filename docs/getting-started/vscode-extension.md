@@ -1,40 +1,36 @@
 # VSCode 插件 `qlang`
 
-这份仓库现在已经内置了一个最小 VSCode 插件项目：`editors/vscode/qlang`。
+仓库内置了一个最小 VSCode 插件工程：`editors/vscode/qlang`。
 
-它不是新的语义实现，只是现有 `qlsp` 的 thin client，负责两件事：
+它只是 `qlsp` 的 thin client，职责只有两件事：
 
-- 把 `.ql` 文件注册成 `qlang` 语言
-- 在 VSCode 里启动 `qlsp` 并接通语言服务
+- 注册 `.ql` 语言
+- 在 VSCode 里启动 `qlsp`
 
-## 当前范围
+真正的语义边界仍以 `crates/ql-lsp` 和 [当前支持基线](/roadmap/current-supported-surface) 为准。
 
-这个插件当前只做最小可用集，不额外复制语义逻辑：
+## 当前支持
 
 - diagnostics
 - hover
-- definition / declaration / type definition
+- definition / declaration / typeDefinition
 - references
-- document highlight
+- documentHighlight
 - completion
-- document symbol / workspace symbol
-- semantic tokens
+- documentSymbol / workspaceSymbol
+- semanticTokens
 - conservative rename
 
-真正的语义边界仍以 `crates/ql-lsp` 和 `docs/roadmap/current-supported-surface.md` 为准。
+## 当前边界
 
-但这里要明确一件事：
+- 当前最可靠的仍是 same-file 语义，以及 healthy package/workspace 下已经接通的 dependency-backed 导航与高亮。
+- workspace/source-preferred navigation 已经落地，但还不是完整的 workspace-wide index。
+- rename 仍然只做 same-file。
+- parse-error 下只保留保守子集；当前已锁住的 rename slice 包括 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field。
+- 插件内置了最小 TextMate grammar fallback，但更细粒度高亮仍主要依赖 `qlsp` 的 semantic tokens。
+- 还不提供 Marketplace 发布流，只提供本地 VSIX 打包。
 
-- 插件声明了这些 LSP 能力，不等于它们已经在真实项目里做到了稳定可依赖。
-- 当前最可靠的仍然是 diagnostics、same-file 语义，以及 healthy package/workspace 下已经接通的那部分 dependency-backed 导航/高亮。
-- 这轮开始已经补上两条更接近真实项目的路径：workspace roots 驱动的保守 `workspace symbol` 搜索，以及 healthy package/workspace 下的 package/workspace import `hover` / `definition` / `declaration`；其中 `hover` 会优先取 workspace 内唯一可定位的源码定义内容，而 `definition` / `declaration` 会优先跳到对应源码定义，找不到唯一源码目标时再回退 `.qi`。如果命中的是 struct / enum / trait / type alias 这类 workspace/package import root，`typeDefinition` 现在也会优先跳到同一份 workspace 源码定义，而 `references` 也会在当前文件 import occurrences 之外，额外带上 workspace 其他源码文件里的同路径 import occurrences，以及 workspace source 文件里的同文件 occurrences。当前文件里命中的 dependency value / enum variant / struct field / method member 的 `definition` / `declaration` / `references` / `typeDefinition` 也会优先跳到 workspace 内唯一可定位的源码定义；其中 dependency-backed current-document `references` 在 healthy package/workspace 且能唯一回溯到 workspace 源码目标时，会以当前文件 occurrence 为起点：include declaration 时把声明位点替换成对应 workspace 源码定义，并额外并入 workspace source 文件里的同文件 occurrences，以及 workspace 其他源码文件里解析到同一 dependency definition target 的 dependency-backed occurrences；include declaration 关闭时也会保留这类源码优先合并，只是不把源码定义本身并回结果。当前回归已锁定 source function / source method / source enum variant / source struct field 四类，仍不等于完整 workspace-wide reference index；而 parse-error 文件里，除了 workspace/package import root 那条 source-preferred `hover` / `references` / `typeDefinition` 之外，dependency import-backed current-document value root 现在也会继续保留源码优先 `hover` / `definition` / `declaration` / `typeDefinition` 与 `references`，也会保留 direct `.field` / `.method()` member completion，以及同轴的 `hover` / `definition` / `declaration` / `references`（现在也覆盖 `load().value` / `load().get(`、`load_children()[0].value` 这类 import-root 直接调用结果，以及 `maybe_load()?.value` / `maybe_load()?.get(`、`maybe_children()?[0].value` 这类 question-call / root indexed receiver），并额外覆盖 `let current = load_children()[0]` / `let current = maybe_children()?[0]` 这类 root import-call indexed value-root、`(if ...)[0].leaf` / `(match ...)[0].leaf` 这类 root structured question-indexed bracket-target field member query、`(if ...)[0].leaf()` / `(match ...)[0].leaf()` 这类 method member query 的 `hover` / `definition` / `references`，以及这些 field / method member 自身的 current-document `prepareRename` / `rename`，和 `let current = (if flag { maybe_children()? } else { maybe_children()? })[0]` / `let current = (match flag { true => maybe_children()?, false => maybe_children()? })[0]` 这类 root structured question-indexed value-root 的 `hover` / `definition` / `typeDefinition` / `references`，以及 current-document `documentHighlight` / `prepareRename` / `rename`；而 direct question-unwrapped receiver 现在也已沿同一条 fallback 保留 member completion 与同轴的 `hover` / `definition` / `declaration` / `references` / `typeDefinition`，以及 current-document `prepareRename` / `rename`（如 `config.child?.leaf -> Leaf`、`config.child()?.leaf() -> Leaf`），true parse-error 下的 indexed receiver-field query 也已沿同一条 fallback 保留 `config.children[0].value`、`load_children()[0].value` 与 `maybe_children()?[0].value` 这类 `hover` / `definition` / `declaration` / `references`，并继续带出 workspace 源码定义与其他 workspace 文件里的同目标 dependency-backed occurrences；同一条 broken-source fallback 现在也已显式锁住这类 value root 的 current-document `documentHighlight` / `prepareRename` / `rename`。`let current = config.child()?` 这类 local method-result alias root，以及 `let current = config.child()?.leaf()` 这类 question-unwrapped method-result value-root 的 `hover` / `definition` / `references`、alias/member completion，以及 current-document `prepareRename` / `rename` 也继续沿用同一条 fallback。当前这条 parse-error 合同仍只覆盖已有独立回归锁定的 syntax-local receiver slice，以及 root import-call indexed receiver-field / value-root slices，以及 root structured question-indexed member / value-root slices，不等于任意 indexed/structured receiver，或更宽的 method-result member surface；rename 仍只在当前文档内生效，更不等于跨文件 rename。
-- parse-error 文件里，`config.child()?.leaf().value` 这类 question-unwrapped method-result member field 现在也已进入同一条 current-document rename 合同，所以这一级 field 在文件临时写坏时也不会立刻失去 `prepareRename` / `rename`。
-- 当前文件内的 symbol occurrence highlighting 也已经接上 `textDocument/documentHighlight`，会复用 same-file / package-aware references 面高亮当前文件里的定义和使用位；这轮也把 parse-error 文件里的 workspace/package import root，以及 dependency import-backed current-document value root 的 current-document 高亮接进了同一类 broken-source fallback，因此 sibling package import 或 `run(result)` 这类 dependency-backed value root 在文件暂时写坏时也不会立刻失去当前文档内的 occurrence highlighting。
-- package-aware `semantic tokens` 现在也已经开始覆盖 resolved dependency import roots、dependency value roots、imported dependency enum variant、显式 struct field label 与唯一 method member；其中 healthy package path 下的 dependency import roots 现在也会优先覆盖 generic import token 并提升成解析后的真实 symbol kind。即使当前文件本身有 parse errors 或 source diagnostics，只要 package/dependency 上下文还能 best-effort 恢复，这条 dependency-backed 高亮也会继续保留，因此真实项目里不再是一有错误就整份掉回 TextMate fallback；另外，broken-source fallback 下的 dependency import roots 现在也会按 resolved dependency symbol kind 继续保留，所以 `Cfg` / `Cmd` 这类 alias root 不会只剩 TextMate/namespace fallback；同一条 best-effort fallback 现在也开始保留 dependency import-root 的常用 hover / definition / declaration / references / `typeDefinition` / `prepareRename` / `rename`，因此 import root 不会在 parse-error 文件里完全失去查询与重命名能力；这轮也把 workspace/package import root 的源码优先 `hover` / `definition` / `declaration` / `references` / `typeDefinition`，以及 current-document `documentHighlight` / `prepareRename` / `rename` 接进了同一类 broken-source fallback，因此 sibling package import 在文件暂时写坏时也不会立刻掉回接口 artifact。
-- 但 project-scale 跳转、跨包导航、以及“像成熟语言插件那样稳定”的更完整高级高亮，仍然没有完全做实。
-- 当前已经内置最小 TextMate grammar fallback；当 `qlsp` 没有返回足够的 semantic tokens 时，编辑器至少还有基础语法着色，但高亮质量仍然偏保守。
-
-## 先决条件
+## 构建与打包
 
 先在仓库根目录构建 language server：
 
@@ -42,7 +38,7 @@
 cargo build -p ql-lsp
 ```
 
-然后安装并编译 VSCode 插件：
+再构建插件：
 
 ```powershell
 cd editors/vscode/qlang
@@ -50,57 +46,40 @@ npm install
 npm run compile
 ```
 
-如果要直接打成可分发的 VSIX：
+打包 VSIX：
 
 ```powershell
-cd editors/vscode/qlang
-npm install
 npm run package:vsix
 ```
 
-产物会输出到：
+产物位置：
 
 ```text
 editors/vscode/qlang/dist/qlang.vsix
 ```
 
-安装方式：
-
-1. VSCode 命令面板执行 `Extensions: Install from VSIX...`
-2. 或命令行执行：
+安装：
 
 ```powershell
 code --install-extension editors/vscode/qlang/dist/qlang.vsix
 ```
 
-## 在 VSCode 里跑起来
-
-最直接的开发方式：
+## 运行方式
 
 1. 用 VSCode 打开 `editors/vscode/qlang`
 2. 运行 `Run qlang` launch configuration
 3. 在新的 Extension Development Host 里打开 Qlang 仓库或任意 `.ql` 工作区
 
-插件会按这个顺序寻找 `qlsp`：
+插件按这个顺序寻找 `qlsp`：
 
 1. `qlang.server.path`
 2. `<repo>/target/debug/qlsp`
 3. `<repo>/target/release/qlsp`
-4. `PATH` 里的 `qlsp`
+4. `PATH` 中的 `qlsp`
 
-## 可配置项
+## 配置项
 
 - `qlang.server.path`
-  用绝对路径或相对当前 workspace 的路径显式指定 `qlsp`
 - `qlang.server.args`
-  给 `qlsp` 追加额外命令行参数
 
-改动这些设置后，插件会自动重启 language server；也可以手动执行命令 `Qlang: Restart Language Server`。
-
-## 当前不做
-
-- 不内置 `qlsp` 二进制
-- 已提供本地 VSIX 打包流，但还不提供 Marketplace 发布流
-- 已提供最小 TextMate grammar；更细粒度的高亮仍主要依赖 `qlsp` 的 semantic tokens
-- 不扩大 `qlsp` 现有支持边界
-- 不承诺当前已经具备成熟语言插件级别的跳转、高亮和重构体验
+修改后插件会自动重启 language server；也可以手动执行 `Qlang: Restart Language Server`。
