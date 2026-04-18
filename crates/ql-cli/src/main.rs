@@ -6821,8 +6821,18 @@ fn default_package_test_source() -> &'static str {
     "fn main() -> Int {\n    return 0\n}\n"
 }
 
+fn resolve_project_command_request_root(path: &Path) -> Option<PathBuf> {
+    if !is_ql_source_file(path) {
+        return None;
+    }
+
+    let manifest = load_project_manifest(path).ok()?;
+    Some(resolve_project_member_request_root(&manifest.manifest_path))
+}
+
 fn project_graph_path(path: &Path, json: bool) -> Result<(), u8> {
-    let manifest = load_project_manifest(path).map_err(|error| {
+    let request_root = resolve_project_command_request_root(path);
+    let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path)).map_err(|error| {
         if let ql_project::ProjectError::ManifestNotFound { start } = &error {
             eprintln!(
                 "error: `ql project graph` requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
@@ -6863,7 +6873,8 @@ fn project_lock_path(path: &Path, check_only: bool) -> Result<(), u8> {
         "`ql project lock`"
     };
 
-    let manifest = load_project_manifest(path).map_err(|error| {
+    let request_root = resolve_project_command_request_root(path);
+    let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path)).map_err(|error| {
         if let ql_project::ProjectError::ManifestNotFound { start } = &error {
             eprintln!(
                 "error: {command_label} requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
@@ -6982,13 +6993,6 @@ fn check_project_lockfile(
     Err(1)
 }
 
-fn load_workspace_build_targets_for_command(
-    path: &Path,
-    command_label: &str,
-) -> Result<Vec<WorkspaceBuildTargets>, u8> {
-    load_workspace_build_targets_for_command_from_request_root(path, path, command_label)
-}
-
 fn load_workspace_build_targets_for_command_from_request_root(
     _request_path: &Path,
     request_root: &Path,
@@ -7042,7 +7046,12 @@ fn load_workspace_build_targets_for_command_from_request_root(
 }
 
 fn project_targets_path(path: &Path, json: bool) -> Result<(), u8> {
-    let members = load_workspace_build_targets_for_command(path, "`ql project targets`")?;
+    let request_root = resolve_project_command_request_root(path);
+    let members = load_workspace_build_targets_for_command_from_request_root(
+        path,
+        request_root.as_deref().unwrap_or(path),
+        "`ql project targets`",
+    )?;
 
     if json {
         print!("{}", render_project_targets_json(&members));

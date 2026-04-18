@@ -271,6 +271,99 @@ members = ["packages/app", "packages/worker"]
 }
 
 #[test]
+fn project_targets_source_file_uses_workspace_root_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-targets-workspace-source");
+    let source_path = temp
+        .path()
+        .join("workspace")
+        .join("packages")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+    std::fs::create_dir_all(
+        source_path
+            .parent()
+            .expect("workspace app source parent should exist"),
+    )
+    .expect("create app package source tree");
+    std::fs::create_dir_all(
+        temp.path()
+            .join("workspace")
+            .join("packages")
+            .join("worker")
+            .join("src"),
+    )
+    .expect("create worker package source tree");
+
+    let app_manifest = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let worker_manifest = temp.write(
+        "workspace/packages/worker/qlang.toml",
+        r#"
+[package]
+name = "worker"
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/worker"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn run() -> Int { return 0 }\n",
+    );
+    temp.write(
+        "workspace/packages/worker/src/job.ql",
+        "pub fn run() -> Int { return 1 }\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "targets"]).arg(&source_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project targets` workspace member source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-targets-workspace-source",
+        "workspace member source target discovery",
+        &output,
+    )
+    .expect("workspace member source target discovery should succeed");
+    expect_empty_stderr(
+        "project-targets-workspace-source",
+        "workspace member source target discovery",
+        &stderr,
+    )
+    .expect("workspace member source target discovery should not print stderr");
+
+    let normalized_stdout = stdout.replace('\\', "/");
+    let app_manifest_display = app_manifest.to_string_lossy().replace('\\', "/");
+    let worker_manifest_display = worker_manifest.to_string_lossy().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-targets-workspace-source",
+        &normalized_stdout,
+        &[
+            &format!("manifest: {app_manifest_display}"),
+            "package: app",
+            "  - lib: src/lib.ql",
+            &format!("manifest: {worker_manifest_display}"),
+            "package: worker",
+            "  - source: src/job.ql",
+        ],
+    )
+    .expect("workspace member source target discovery output should include workspace targets");
+}
+
+#[test]
 fn project_targets_lists_workspace_members_in_dependency_order() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-targets-workspace-dependency-order");

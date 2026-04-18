@@ -167,6 +167,155 @@ default = "debug"
 }
 
 #[test]
+fn project_lock_source_file_uses_workspace_root_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-lock-workspace-source");
+    let source_path = temp
+        .path()
+        .join("workspace")
+        .join("packages")
+        .join("app")
+        .join("src")
+        .join("tools")
+        .join("app.ql");
+    std::fs::create_dir_all(
+        source_path
+            .parent()
+            .expect("workspace app source parent should exist"),
+    )
+    .expect("create app source tree for workspace source lock test");
+    std::fs::create_dir_all(
+        temp.path()
+            .join("workspace")
+            .join("packages")
+            .join("core")
+            .join("src")
+            .join("runtime"),
+    )
+    .expect("create core source tree for workspace source lock test");
+    std::fs::create_dir_all(
+        temp.path()
+            .join("workspace")
+            .join("vendor")
+            .join("runtime")
+            .join("src"),
+    )
+    .expect("create runtime source tree for workspace source lock test");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+
+[profile]
+default = "release"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+
+[lib]
+path = "src/runtime/core.ql"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+core = { path = "../core" }
+runtime = { path = "../../vendor/runtime" }
+
+[[bin]]
+path = "src/tools/app.ql"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/runtime/qlang.toml",
+        r#"
+[package]
+name = "runtime"
+
+[profile]
+default = "debug"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/src/runtime/core.ql",
+        "pub fn core() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/app/src/tools/app.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+    temp.write(
+        "workspace/vendor/runtime/src/lib.ql",
+        "pub fn runtime() -> Int { return 2 }\n",
+    );
+
+    let workspace_lockfile_path = temp.path().join("workspace").join("qlang.lock");
+    let package_lockfile_path = temp
+        .path()
+        .join("workspace")
+        .join("packages")
+        .join("app")
+        .join("qlang.lock");
+    let workspace_lockfile_display = workspace_lockfile_path.to_string_lossy().replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "lock"]).arg(&source_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project lock` workspace member source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-lock-workspace-source",
+        "workspace member source lockfile generation",
+        &output,
+    )
+    .expect("workspace member source lockfile generation should succeed");
+    expect_empty_stderr(
+        "project-lock-workspace-source",
+        "workspace member source lockfile generation",
+        &stderr,
+    )
+    .expect("workspace member source lockfile generation should not print stderr");
+    expect_stdout_contains_all(
+        "project-lock-workspace-source",
+        &stdout.replace('\\', "/"),
+        &[&format!("wrote lockfile: {workspace_lockfile_display}")],
+    )
+    .expect(
+        "workspace member source lockfile generation should report the workspace lockfile path",
+    );
+
+    assert!(
+        !package_lockfile_path.exists(),
+        "workspace member source lockfile generation should not create a package-local lockfile at `{}`",
+        package_lockfile_path.display()
+    );
+
+    let actual = read_normalized_file(&workspace_lockfile_path, "workspace member source lockfile");
+    expect_stdout_contains_all(
+        "project-lock-workspace-source",
+        &actual,
+        &[
+            "\"kind\": \"workspace\"",
+            "\"manifest_path\": \"qlang.toml\"",
+            "\"packages/app/qlang.toml\"",
+            "\"packages/core/qlang.toml\"",
+        ],
+    )
+    .expect("workspace member source lockfile should preserve workspace root metadata");
+}
+
+#[test]
 fn project_lock_check_fails_when_lockfile_is_stale() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-lock-stale");
