@@ -139,6 +139,7 @@ struct BrokenSourceLocalCandidate {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BrokenSourceValueCandidate {
     root_name: String,
+    root_span: Span,
     root_called: bool,
     root_question_unwrap: bool,
     root_indexed_iterable: bool,
@@ -161,11 +162,7 @@ enum BrokenSourceValueSegmentKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BrokenSourceDependencyMemberSite {
-    root_span: Span,
-    root_called: bool,
-    root_question_unwrap: bool,
-    root_indexed_iterable: bool,
-    receiver_segments: Vec<BrokenSourceValueSegment>,
+    receiver_candidate: BrokenSourceValueCandidate,
     member_span: Span,
     member_name: String,
     member_kind: BrokenSourceValueSegmentKind,
@@ -4280,6 +4277,7 @@ fn broken_source_ident_value_candidate_with_end_in_tokens(
     Some((
         BrokenSourceValueCandidate {
             root_name: root.text.clone(),
+            root_span: root.span,
             root_called,
             root_question_unwrap,
             root_indexed_iterable,
@@ -4392,7 +4390,8 @@ fn broken_source_if_value_candidate_in_tokens(
         _ => broken_source_value_candidate_ending_at_in_tokens(tokens, else_start, end_index)?,
     };
 
-    (then_candidate == else_candidate).then_some(then_candidate)
+    broken_source_value_candidate_matches_shape(&then_candidate, &else_candidate)
+        .then_some(then_candidate)
 }
 
 fn broken_source_match_value_candidate_in_tokens(
@@ -4441,7 +4440,11 @@ fn broken_source_match_value_candidate_in_tokens(
         };
 
         match common.as_ref() {
-            Some(existing) if existing != &candidate => return None,
+            Some(existing)
+                if !broken_source_value_candidate_matches_shape(existing, &candidate) =>
+            {
+                return None;
+            }
             Some(_) => {}
             None => common = Some(candidate),
         }
@@ -4596,6 +4599,40 @@ fn broken_source_value_candidate_ending_at_in_tokens(
         broken_source_value_candidate_with_end_in_tokens(tokens, index)
             .and_then(|(candidate, cursor)| (cursor == end_index).then_some(candidate))
     })
+}
+
+fn broken_source_value_candidate_with_stop_in_tokens(
+    tokens: &[Token],
+    start_index: usize,
+    stop_index: usize,
+) -> Option<BrokenSourceValueCandidate> {
+    let (mut candidate, mut cursor) = match tokens.get(start_index)?.kind {
+        TokenKind::Ident => {
+            broken_source_ident_value_candidate_with_end_in_tokens(tokens, start_index)?
+        }
+        TokenKind::LParen => {
+            broken_source_parenthesized_value_candidate_with_end_in_tokens(tokens, start_index)?
+        }
+        _ => return None,
+    };
+    if cursor > stop_index {
+        return None;
+    }
+    let segments = broken_source_segments_with_stop_in_tokens(tokens, cursor, stop_index)?;
+    candidate.segments.extend(segments);
+    cursor = stop_index;
+    (cursor == stop_index).then_some(candidate)
+}
+
+fn broken_source_value_candidate_matches_shape(
+    left: &BrokenSourceValueCandidate,
+    right: &BrokenSourceValueCandidate,
+) -> bool {
+    left.root_name == right.root_name
+        && left.root_called == right.root_called
+        && left.root_question_unwrap == right.root_question_unwrap
+        && left.root_indexed_iterable == right.root_indexed_iterable
+        && left.segments == right.segments
 }
 
 fn token_index_of_top_level_kind(
@@ -4803,12 +4840,13 @@ fn dependency_member_receiver_binding_in_broken_source(
     source: &str,
     site: &BrokenSourceDependencyMemberSite,
 ) -> Option<DependencyStructBinding> {
+    let candidate = &site.receiver_candidate;
     let root_binding = dependency_value_occurrences_in_broken_source(package, source)
         .into_iter()
         .find(|occurrence| {
-            !site.root_called
-                && !site.root_question_unwrap
-                && occurrence.reference_span == site.root_span
+            !candidate.root_called
+                && !candidate.root_question_unwrap
+                && occurrence.reference_span == candidate.root_span
         })
         .and_then(|occurrence| dependency_value_target_for_occurrence(package, &occurrence))
         .and_then(|target| {
@@ -4827,22 +4865,18 @@ fn dependency_member_receiver_binding_in_broken_source(
         .or_else(|| {
             dependency_import_occurrences_in_broken_source(package, source)
                 .into_iter()
-                .find(|occurrence| occurrence.span == site.root_span)
+                .find(|occurrence| occurrence.span == candidate.root_span)
                 .and_then(|occurrence| {
                     dependency_struct_binding_for_broken_source_import_target(
                         package,
                         &occurrence.target,
-                        site.root_called,
-                        site.root_question_unwrap,
-                        site.root_indexed_iterable,
+                        candidate.root_called,
+                        candidate.root_question_unwrap,
+                        candidate.root_indexed_iterable,
                     )
                 })
         })?;
-    dependency_struct_binding_for_broken_source_segments(
-        package,
-        root_binding,
-        &site.receiver_segments,
-    )
+    dependency_struct_binding_for_broken_source_segments(package, root_binding, &candidate.segments)
 }
 
 fn dependency_struct_field_target_in_broken_source(
@@ -5617,44 +5651,24 @@ fn dependency_member_site_in_broken_source_tokens(
         let Some(root_token) = tokens.get(start_index) else {
             continue;
         };
-        if root_token.kind != TokenKind::Ident {
+        if !matches!(root_token.kind, TokenKind::Ident | TokenKind::LParen) {
             continue;
         }
-        if start_index > 0
+        if root_token.kind == TokenKind::Ident
+            && start_index > 0
             && tokens.get(start_index - 1).map(|token| token.kind) == Some(TokenKind::Dot)
         {
             continue;
         }
 
-        let mut cursor = start_index + 1;
-        let root_called = if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LParen) {
-            cursor = token_index_after_balanced_parens(tokens, cursor)?;
-            true
-        } else {
-            false
-        };
-        let root_question_unwrap =
-            if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Question) {
-                cursor += 1;
-                true
-            } else {
-                false
-            };
-        let (next_cursor, root_indexed_iterable) =
-            token_index_after_bracket_chain(tokens, cursor).unwrap_or((cursor, false));
-        cursor = next_cursor;
-        let Some(receiver_segments) =
-            broken_source_segments_with_stop_in_tokens(tokens, cursor, stop_index)
+        let Some(receiver_candidate) =
+            broken_source_value_candidate_with_stop_in_tokens(tokens, start_index, stop_index)
         else {
             continue;
         };
 
         return Some(BrokenSourceDependencyMemberSite {
-            root_span: root_token.span,
-            root_called,
-            root_question_unwrap,
-            root_indexed_iterable,
-            receiver_segments,
+            receiver_candidate,
             member_span: member_token.span,
             member_name: member_token.text.clone(),
             member_kind,
@@ -6686,10 +6700,11 @@ fn dependency_question_wrapped_method_reference_in_broken_source(
 fn dependency_immediate_member_receiver_is_question_unwrapped(
     site: &BrokenSourceDependencyMemberSite,
 ) -> bool {
-    site.receiver_segments
+    site.receiver_candidate
+        .segments
         .last()
         .map(|segment| segment.question_unwrap)
-        .unwrap_or(site.root_question_unwrap)
+        .unwrap_or(site.receiver_candidate.root_question_unwrap)
 }
 
 fn dependency_broken_source_field_reference_has_trailing_question(

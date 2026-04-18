@@ -1356,3 +1356,136 @@ pub fn read(flag: Bool) -> Int {
         ]
     );
 }
+
+#[test]
+fn package_analysis_exposes_dependency_structured_root_indexed_member_queries_in_broken_source() {
+    let temp =
+        TempDir::new("ql-analysis-package-structured-root-indexed-member-queries-parse-errors");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    leaf: Leaf,
+}
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.maybe_children
+
+pub fn read(flag: Bool) -> Int {
+    let first = (if flag { maybe_children()? } else { maybe_children()? })[0].leaf.value
+    let second = (match flag { true => maybe_children()?, false => maybe_children()? })[1].leaf()
+    let third = (if flag { maybe_children()? } else { maybe_children()? })[1].leaf.value
+    let broken = (match flag { true => maybe_children()?, false => maybe_children()? })[0].leaf(
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+
+    let field_hover = package
+        .dependency_struct_field_hover_in_source_at(source, nth_offset(source, "leaf", 1))
+        .expect("dependency structured root-indexed field hover should survive parse errors");
+    assert_eq!(field_hover.kind, SymbolKind::Field);
+    assert_eq!(field_hover.name, "leaf");
+    assert_eq!(field_hover.detail, "field leaf: Leaf");
+
+    let field_definition = package
+        .dependency_struct_field_definition_in_source_at(source, nth_offset(source, "leaf", 3))
+        .expect("dependency structured root-indexed field definition should survive parse errors");
+    assert_eq!(field_definition.kind, SymbolKind::Field);
+    assert_eq!(field_definition.name, "leaf");
+    assert!(field_definition.path.ends_with("dep.qi"));
+
+    let method_hover = package
+        .dependency_method_hover_in_source_at(source, nth_offset(source, "leaf", 2))
+        .expect("dependency structured root-indexed method hover should survive parse errors");
+    assert_eq!(method_hover.kind, SymbolKind::Method);
+    assert_eq!(method_hover.name, "leaf");
+    assert_eq!(method_hover.detail, "fn leaf(self) -> Leaf");
+
+    let method_definition = package
+        .dependency_method_definition_in_source_at(source, nth_offset(source, "leaf", 4))
+        .expect("dependency structured root-indexed method definition should survive parse errors");
+    assert_eq!(method_definition.kind, SymbolKind::Method);
+    assert_eq!(method_definition.name, "leaf");
+    assert!(method_definition.path.ends_with("dep.qi"));
+
+    let field_references = package
+        .dependency_struct_field_references_in_source_at(source, nth_offset(source, "leaf", 1))
+        .expect("dependency structured root-indexed field references should survive parse errors");
+    assert_eq!(
+        field_references
+            .iter()
+            .map(|reference| reference.span)
+            .collect::<Vec<_>>(),
+        vec![
+            Span::new(
+                nth_offset(source, "leaf", 1),
+                nth_offset(source, "leaf", 1) + "leaf".len(),
+            ),
+            Span::new(
+                nth_offset(source, "leaf", 3),
+                nth_offset(source, "leaf", 3) + "leaf".len(),
+            ),
+        ]
+    );
+
+    let method_references = package
+        .dependency_method_references_in_source_at(source, nth_offset(source, "leaf", 2))
+        .expect("dependency structured root-indexed method references should survive parse errors");
+    assert_eq!(
+        method_references
+            .iter()
+            .map(|reference| reference.span)
+            .collect::<Vec<_>>(),
+        vec![
+            Span::new(
+                nth_offset(source, "leaf", 2),
+                nth_offset(source, "leaf", 2) + "leaf".len(),
+            ),
+            Span::new(
+                nth_offset(source, "leaf", 4),
+                nth_offset(source, "leaf", 4) + "leaf".len(),
+            ),
+        ]
+    );
+}

@@ -4473,6 +4473,246 @@ packages = ["../dep"]
 }
 
 #[test]
+fn package_bridge_surfaces_dependency_structured_root_indexed_member_queries_in_parse_error_source()
+{
+    let temp = TempDir::new("ql-lsp-package-structured-root-indexed-member-query-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+    let source = r#"
+package demo.app
+
+use demo.dep.maybe_children
+
+pub fn read(flag: Bool) -> Int {
+    let first = (if flag { maybe_children()? } else { maybe_children()? })[0].leaf.value
+    let second = (match flag { true => maybe_children()?, false => maybe_children()? })[1].leaf()
+    let third = (if flag { maybe_children()? } else { maybe_children()? })[1].leaf.value
+    let broken = (match flag { true => maybe_children()?, false => maybe_children()? })[0].leaf(
+"#;
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    leaf: Leaf,
+}
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let field_hover = hover_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "leaf", 1)),
+    )
+    .expect("dependency structured root-indexed field hover should exist in parse-error source");
+    let HoverContents::Markup(field_markup) = field_hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(field_markup.value.contains("**field** `leaf`"));
+    assert!(field_markup.value.contains("field leaf: Leaf"));
+
+    let field_definition = definition_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "leaf", 3)),
+    )
+    .expect(
+        "dependency structured root-indexed field definition should exist in parse-error source",
+    );
+    let GotoDefinitionResponse::Scalar(field_location) = field_definition else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        field_location
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+
+    let method_hover = hover_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "leaf", 2)),
+    )
+    .expect("dependency structured root-indexed method hover should exist in parse-error source");
+    let HoverContents::Markup(method_markup) = method_hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(method_markup.value.contains("**method** `leaf`"));
+    assert!(method_markup.value.contains("fn leaf(self) -> Leaf"));
+
+    let method_definition = definition_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "leaf", 4)),
+    )
+    .expect(
+        "dependency structured root-indexed method definition should exist in parse-error source",
+    );
+    let GotoDefinitionResponse::Scalar(method_location) = method_definition else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        method_location
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let field_start = artifact
+        .find("leaf: Leaf")
+        .expect("field declaration should exist in dependency artifact");
+    let field_name_start = field_start;
+    assert_eq!(
+        field_location.range,
+        span_to_range(
+            &artifact,
+            Span::new(field_name_start, field_name_start + "leaf".len())
+        )
+    );
+    let method_start = artifact
+        .find("pub fn leaf(self) -> Leaf")
+        .map(|offset| offset + "pub fn ".len())
+        .expect("method signature should exist in dependency artifact");
+    assert_eq!(
+        method_location.range,
+        span_to_range(
+            &artifact,
+            Span::new(method_start, method_start + "leaf".len())
+        )
+    );
+
+    let field_references = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "leaf", 1)),
+        false,
+    )
+    .expect(
+        "dependency structured root-indexed field references should exist in parse-error source",
+    );
+    assert_eq!(
+        field_references,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "leaf", 1),
+                        nth_offset(source, "leaf", 1) + "leaf".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "leaf", 3),
+                        nth_offset(source, "leaf", 3) + "leaf".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+
+    let method_references = references_for_dependency_methods(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "leaf", 2)),
+        false,
+    )
+    .expect(
+        "dependency structured root-indexed method references should exist in parse-error source",
+    );
+    assert_eq!(
+        method_references,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "leaf", 2),
+                        nth_offset(source, "leaf", 2) + "leaf".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "leaf", 4),
+                        nth_offset(source, "leaf", 4) + "leaf".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn package_bridge_completes_dependency_struct_member_fields_for_closure_parameters() {
     let temp = TempDir::new("ql-lsp-package-struct-member-field-closure-param");
     let app_root = temp.path().join("workspace").join("app");
