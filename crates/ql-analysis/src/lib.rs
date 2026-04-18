@@ -1117,7 +1117,10 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<Vec<ReferenceTarget>> {
-        let module = parse_source(source).ok()?;
+        let module = match parse_source(source) {
+            Ok(module) => module,
+            Err(_) => return self.dependency_variant_references_in_broken_source(source, offset),
+        };
         let target = self.dependency_variant_target_in_source_at(source, offset)?;
         let mut references = source
             .match_indices(&target.name)
@@ -1140,6 +1143,58 @@ impl PackageAnalysis {
                 {
                     return None;
                 }
+
+                Some(ReferenceTarget {
+                    kind: SymbolKind::Variant,
+                    name: target.name.clone(),
+                    span,
+                    is_definition: false,
+                })
+            })
+            .collect::<Vec<_>>();
+        if references.is_empty() {
+            return None;
+        }
+        references.sort_by_key(|reference| (reference.span.start, reference.span.end));
+        Some(references)
+    }
+
+    fn dependency_variant_references_in_broken_source(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<ReferenceTarget>> {
+        let target = self.dependency_variant_target_in_broken_source(source, offset)?;
+        let (tokens, _) = lex(source);
+        let import_targets = dependency_resolved_import_targets_in_tokens(self, &tokens);
+        let mut references = source
+            .match_indices(&target.name)
+            .filter_map(|(start, _)| {
+                let (root_offset, span, variant_name) =
+                    dependency_variant_reference_at(source, start)?;
+                if span.start != start || variant_name != target.name {
+                    return None;
+                }
+
+                let root_end = dependency_identifier_end(source, root_offset);
+                let root_name = source.get(root_offset..root_end)?;
+                let (_, resolved_target) = import_targets.get(root_name)?;
+                if resolved_target.kind != SymbolKind::Enum {
+                    return None;
+                }
+
+                let (dependency, symbol) =
+                    dependency_symbol_for_broken_source_target(self, resolved_target)?;
+                if dependency.interface_path != target.path
+                    || dependency.manifest.manifest_path != target.manifest_path
+                    || symbol.kind != SymbolKind::Enum
+                    || symbol.source_path != target.source_path
+                    || symbol.name != target.enum_name
+                {
+                    return None;
+                }
+
+                dependency.variant_for(symbol, &variant_name)?;
 
                 Some(ReferenceTarget {
                     kind: SymbolKind::Variant,
@@ -1644,23 +1699,55 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
-        let module = parse_source(source).ok()?;
         let (root_offset, _, variant_name) = dependency_variant_reference_at(source, offset)?;
-        let root_end = dependency_identifier_end(source, root_offset);
-        let root_name = source.get(root_offset..root_end)?;
-        let (dependency, symbol) =
-            dependency_import_binding_for_local_name(self, &module, root_name)?;
-        dependency.variant_for(symbol, &variant_name)?;
-        let definition_span = dependency.artifact_span_for(symbol)?;
-        Some(DependencyDefinitionTarget {
-            package_name: dependency.artifact.package_name.clone(),
-            manifest_path: dependency.manifest.manifest_path.clone(),
-            source_path: symbol.source_path.clone(),
-            kind: SymbolKind::Enum,
-            name: symbol.name.clone(),
-            path: dependency.interface_path.clone(),
-            span: definition_span,
-        })
+        match parse_source(source) {
+            Ok(module) => {
+                let root_end = dependency_identifier_end(source, root_offset);
+                let root_name = source.get(root_offset..root_end)?;
+                let (dependency, symbol) =
+                    dependency_import_binding_for_local_name(self, &module, root_name)?;
+                dependency.variant_for(symbol, &variant_name)?;
+                let definition_span = dependency.artifact_span_for(symbol)?;
+                Some(DependencyDefinitionTarget {
+                    package_name: dependency.artifact.package_name.clone(),
+                    manifest_path: dependency.manifest.manifest_path.clone(),
+                    source_path: symbol.source_path.clone(),
+                    kind: SymbolKind::Enum,
+                    name: symbol.name.clone(),
+                    path: dependency.interface_path.clone(),
+                    span: definition_span,
+                })
+            }
+            Err(_) => {
+                let root_end = dependency_identifier_end(source, root_offset);
+                let root_name = source.get(root_offset..root_end)?;
+                let (tokens, _) = lex(source);
+                let (_, target) = dependency_resolved_import_targets_in_tokens(self, &tokens)
+                    .get(root_name)?
+                    .clone();
+                if target.kind != SymbolKind::Enum {
+                    return None;
+                }
+
+                let (dependency, symbol) =
+                    dependency_symbol_for_broken_source_target(self, &target)?;
+                if symbol.kind != SymbolKind::Enum {
+                    return None;
+                }
+
+                dependency.variant_for(symbol, &variant_name)?;
+                let definition_span = dependency.artifact_span_for(symbol)?;
+                Some(DependencyDefinitionTarget {
+                    package_name: dependency.artifact.package_name.clone(),
+                    manifest_path: dependency.manifest.manifest_path.clone(),
+                    source_path: symbol.source_path.clone(),
+                    kind: SymbolKind::Enum,
+                    name: symbol.name.clone(),
+                    path: dependency.interface_path.clone(),
+                    span: definition_span,
+                })
+            }
+        }
     }
 
     pub fn dependency_struct_field_type_definition_in_source_at(
@@ -2461,13 +2548,54 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyVariantTarget> {
-        let module = parse_source(source).ok()?;
+        let module = match parse_source(source) {
+            Ok(module) => module,
+            Err(_) => return self.dependency_variant_target_in_broken_source(source, offset),
+        };
         let (root_offset, reference_span, variant_name) =
             dependency_variant_reference_at(source, offset)?;
         let root_end = dependency_identifier_end(source, root_offset);
         let root_name = source.get(root_offset..root_end)?;
         let (dependency, symbol) =
             dependency_import_binding_for_local_name(self, &module, root_name)?;
+        let variant = dependency.variant_for(symbol, &variant_name)?;
+        let definition_span =
+            dependency.artifact_source_span(&symbol.source_path, variant.name_span)?;
+        Some(DependencyVariantTarget {
+            reference_span,
+            package_name: dependency.artifact.package_name.clone(),
+            manifest_path: dependency.manifest.manifest_path.clone(),
+            source_path: symbol.source_path.clone(),
+            enum_name: symbol.name.clone(),
+            name: variant.name.clone(),
+            detail: dependency_variant_detail(&symbol.name, variant),
+            path: dependency.interface_path.clone(),
+            definition_span,
+        })
+    }
+
+    fn dependency_variant_target_in_broken_source(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyVariantTarget> {
+        let (root_offset, reference_span, variant_name) =
+            dependency_variant_reference_at(source, offset)?;
+        let root_end = dependency_identifier_end(source, root_offset);
+        let root_name = source.get(root_offset..root_end)?;
+        let (tokens, _) = lex(source);
+        let (_, target) = dependency_resolved_import_targets_in_tokens(self, &tokens)
+            .get(root_name)?
+            .clone();
+        if target.kind != SymbolKind::Enum {
+            return None;
+        }
+
+        let (dependency, symbol) = dependency_symbol_for_broken_source_target(self, &target)?;
+        if symbol.kind != SymbolKind::Enum {
+            return None;
+        }
+
         let variant = dependency.variant_for(symbol, &variant_name)?;
         let definition_span =
             dependency.artifact_source_span(&symbol.source_path, variant.name_span)?;

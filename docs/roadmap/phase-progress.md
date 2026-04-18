@@ -35,6 +35,7 @@
 - source-preferred dependency definition / typeDefinition / references 现在也按 manifest 身份区分同名本地依赖；真实项目里不会再把 navigation 或 references 解析到另一个同名依赖实例。
 - broken-source 下 direct imported-result member query 现在也按 manifest 身份区分同名本地依赖；`build().ping()` / `build().value` 这类查询不会再串到兄弟依赖实例。
 - broken-source semantic tokens fallback 不再只保留 import root；dependency value / field / method，连同可判定的 enum variant，也会继续保留高亮。
+- broken-source dependency enum variant 现在也补上了 `definition/typeDefinition/references/documentHighlight` fallback；同名本地依赖场景也不会再串到兄弟依赖实例。
 - parse-error 下的 current-document rename 也已有保守回归保护；最近新增的一条是 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field。
 
 ## 当前主线

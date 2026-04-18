@@ -11505,6 +11505,228 @@ impl Config {
     }
 
     #[test]
+    fn same_named_local_dependency_broken_source_variant_queries_prefer_matching_dependency_source()
+    {
+        let temp = TempDir::new("ql-lsp-same-named-local-dependency-broken-source-variant-queries");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.Command as Cmd
+use demo.shared.beta.Command as OtherCmd
+
+pub fn main() -> Int {
+    let first = Cmd.Retry(1)
+    let second = Cmd.Retry(2)
+    let third = OtherCmd.Retry(
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+        );
+        let beta_source_path = temp.write(
+            "workspace/vendor/beta/src/lib.ql",
+            r#"
+package demo.shared.beta
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let alpha_source =
+            fs::read_to_string(&alpha_source_path).expect("alpha source should read");
+
+        let definition = workspace_source_definition_for_dependency(
+            &uri,
+            &source,
+            None,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "Retry", 2)),
+        )
+        .expect("broken-source same-named dependency variant definition should exist");
+        let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+            panic!("broken-source variant definition should resolve to one location")
+        };
+        assert_eq!(
+            definition_location
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            alpha_source_path
+                .canonicalize()
+                .expect("alpha source path should canonicalize"),
+        );
+        assert_eq!(
+            definition_location.range.start,
+            offset_to_position(&alpha_source, nth_offset(&alpha_source, "Retry", 1)),
+        );
+
+        let type_definition = workspace_source_type_definition_for_dependency(
+            &uri,
+            &source,
+            None,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "Retry", 2)),
+        )
+        .expect("broken-source same-named dependency variant type definition should exist");
+        let GotoTypeDefinitionResponse::Scalar(type_location) = type_definition else {
+            panic!("broken-source variant type definition should resolve to one location")
+        };
+        assert_eq!(
+            type_location
+                .uri
+                .to_file_path()
+                .expect("type definition URI should convert to a file path")
+                .canonicalize()
+                .expect("type definition path should canonicalize"),
+            alpha_source_path
+                .canonicalize()
+                .expect("alpha source path should canonicalize"),
+        );
+        assert_eq!(
+            type_location.range.start,
+            offset_to_position(&alpha_source, nth_offset(&alpha_source, "Command", 1)),
+        );
+
+        let references = workspace_source_references_for_dependency_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "Retry", 2)),
+            true,
+        )
+        .expect("broken-source same-named dependency variant references should exist");
+
+        assert_eq!(references.len(), 3);
+        assert!(
+            references.iter().any(|reference| {
+                reference
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.canonicalize().ok())
+                    == alpha_source_path.canonicalize().ok()
+                    && reference.range.start
+                        == offset_to_position(&alpha_source, nth_offset(&alpha_source, "Retry", 1))
+            }),
+            "references should include alpha dependency source variant definition",
+        );
+        assert!(
+            references
+                .iter()
+                .filter(|reference| reference.uri == uri)
+                .count()
+                == 2,
+            "references should keep only local alpha variant uses",
+        );
+        assert!(
+            references.iter().all(|reference| {
+                reference
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.canonicalize().ok())
+                    != beta_source_path.canonicalize().ok()
+            }),
+            "references should not include beta dependency source",
+        );
+
+        let highlights = fallback_document_highlights_for_package_at(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "Retry", 2)),
+        )
+        .expect("broken-source same-named dependency variant document highlight should exist");
+        let actual = highlights
+            .into_iter()
+            .map(|highlight| highlight.range.start)
+            .collect::<Vec<_>>();
+        let expected = vec![
+            offset_to_position(&source, nth_offset(&source, "Retry", 1)),
+            offset_to_position(&source, nth_offset(&source, "Retry", 2)),
+        ];
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn workspace_dependency_references_without_declaration_include_other_workspace_uses() {
         let temp = TempDir::new("ql-lsp-workspace-dependency-source-references-no-decl");
         let app_path = temp.write(
