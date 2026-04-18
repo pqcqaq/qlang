@@ -4898,7 +4898,10 @@ fn dependency_symbol_for_broken_source_target<'a>(
     let mut exact_matches = package
         .dependencies
         .iter()
-        .filter(|dependency| dependency.artifact.package_name == target.package_name)
+        .filter(|dependency| {
+            dependency.artifact.package_name == target.package_name
+                && dependency.manifest.manifest_path == target.manifest_path
+        })
         .flat_map(|dependency| {
             dependency
                 .symbols()
@@ -4918,7 +4921,10 @@ fn dependency_symbol_for_broken_source_target<'a>(
     let mut loose_matches = package
         .dependencies
         .iter()
-        .filter(|dependency| dependency.artifact.package_name == target.package_name)
+        .filter(|dependency| {
+            dependency.artifact.package_name == target.package_name
+                && dependency.manifest.manifest_path == target.manifest_path
+        })
         .flat_map(|dependency| {
             dependency
                 .symbols()

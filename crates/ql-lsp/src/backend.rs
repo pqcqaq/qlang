@@ -11065,6 +11065,257 @@ pub fn exported(value: Int) -> Int
     }
 
     #[test]
+    fn same_named_local_dependency_broken_source_member_queries_prefer_matching_dependency_source()
+    {
+        let temp = TempDir::new("ql-lsp-same-named-local-dependency-broken-source-member-queries");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    return build().ping() + build().value
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.shared.beta.build as other
+
+pub fn task() -> Int {
+    return other().ping() + other().value
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config {
+    return Config { value: 1 }
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+"#,
+        );
+        let beta_source_path = temp.write(
+            "workspace/vendor/beta/src/lib.ql",
+            r#"
+package demo.shared.beta
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config {
+    return Config { value: 2 }
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let alpha_source =
+            fs::read_to_string(&alpha_source_path).expect("alpha source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+        let method_definition = workspace_source_definition_for_dependency(
+            &uri,
+            &source,
+            None,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "ping", 1)),
+        )
+        .expect("broken-source same-named dependency method definition should exist");
+        let GotoDefinitionResponse::Scalar(method_location) = method_definition else {
+            panic!("broken-source method definition should resolve to one location")
+        };
+        assert_eq!(
+            method_location
+                .uri
+                .to_file_path()
+                .expect("method definition URI should convert to a file path")
+                .canonicalize()
+                .expect("method definition path should canonicalize"),
+            alpha_source_path
+                .canonicalize()
+                .expect("alpha source path should canonicalize"),
+        );
+        assert_eq!(
+            method_location.range.start,
+            offset_to_position(&alpha_source, nth_offset(&alpha_source, "ping", 1)),
+        );
+
+        let field_definition = workspace_source_definition_for_dependency(
+            &uri,
+            &source,
+            None,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "value", 1)),
+        )
+        .expect("broken-source same-named dependency field definition should exist");
+        let GotoDefinitionResponse::Scalar(field_location) = field_definition else {
+            panic!("broken-source field definition should resolve to one location")
+        };
+        assert_eq!(
+            field_location
+                .uri
+                .to_file_path()
+                .expect("field definition URI should convert to a file path")
+                .canonicalize()
+                .expect("field definition path should canonicalize"),
+            alpha_source_path
+                .canonicalize()
+                .expect("alpha source path should canonicalize"),
+        );
+        assert_eq!(
+            field_location.range.start,
+            offset_to_position(&alpha_source, nth_offset(&alpha_source, "value", 1)),
+        );
+
+        let references = workspace_source_references_for_dependency_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "ping", 1)),
+            true,
+        )
+        .expect("broken-source same-named dependency method references should exist");
+
+        assert_eq!(references.len(), 2);
+        assert!(
+            references.iter().any(|reference| {
+                reference
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.canonicalize().ok())
+                    == alpha_source_path.canonicalize().ok()
+                    && reference.range.start
+                        == offset_to_position(&alpha_source, nth_offset(&alpha_source, "ping", 1))
+            }),
+            "references should include alpha dependency source method definition",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == uri
+                    && reference.range.start
+                        == offset_to_position(&source, nth_offset(&source, "ping", 1))
+            }),
+            "references should include broken-source local method occurrence",
+        );
+        assert!(
+            references.iter().all(|reference| reference.uri != task_uri),
+            "references should not include same-named sibling dependency uses",
+        );
+        assert!(
+            references.iter().all(|reference| {
+                reference
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.canonicalize().ok())
+                    != beta_source_path.canonicalize().ok()
+            }),
+            "references should not include beta dependency source",
+        );
+    }
+
+    #[test]
     fn workspace_dependency_references_without_declaration_include_other_workspace_uses() {
         let temp = TempDir::new("ql-lsp-workspace-dependency-source-references-no-decl");
         let app_path = temp.write(
