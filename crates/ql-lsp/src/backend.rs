@@ -2072,6 +2072,18 @@ fn workspace_import_document_highlights_in_broken_source(
     Some(highlights)
 }
 
+fn workspace_dependency_document_highlights_in_broken_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Vec<DocumentHighlight>> {
+    let locations = workspace_source_references_for_dependency_in_broken_source(
+        uri, source, package, position, true,
+    )?;
+    document_highlights_from_locations(uri, locations)
+}
+
 fn validate_rename_text(text: &str) -> std::result::Result<(), RenameError> {
     let escaped = text
         .strip_prefix('`')
@@ -2506,6 +2518,11 @@ fn fallback_document_highlights_for_package_at(
 ) -> Option<Vec<DocumentHighlight>> {
     if let Some(highlights) =
         workspace_import_document_highlights_in_broken_source(uri, source, package, position)
+    {
+        return Some(highlights);
+    }
+    if let Some(highlights) =
+        workspace_dependency_document_highlights_in_broken_source(uri, source, package, position)
     {
         return Some(highlights);
     }
@@ -9090,6 +9107,107 @@ pub fn exported(value: Int) -> Int
             offset_to_position(&source, nth_offset(&source, "run", 2)),
         )
         .expect("broken-source workspace import document highlight should exist");
+
+        let actual = highlights
+            .into_iter()
+            .map(|highlight| highlight.range.start)
+            .collect::<Vec<_>>();
+        let expected = vec![
+            offset_to_position(&source, nth_offset(&source, "run", 1)),
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            offset_to_position(&source, nth_offset(&source, "run", 3)),
+        ];
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn document_highlight_keeps_dependency_value_occurrences_in_broken_source() {
+        let temp = TempDir::new("ql-lsp-document-highlight-dependency-value-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    let first = run(1)
+    return run(first)
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as call
+
+pub fn task(value: Int) -> Int {
+    return call(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let highlights = fallback_document_highlights_for_package_at(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 3)),
+        )
+        .expect("broken-source dependency value document highlight should exist");
 
         let actual = highlights
             .into_iter()
