@@ -1143,3 +1143,109 @@ pub fn read() -> Int {
         ]
     );
 }
+
+#[test]
+fn package_analysis_exposes_dependency_root_indexed_value_queries_in_broken_source() {
+    let temp = TempDir::new("ql-analysis-package-root-indexed-value-queries-parse-errors");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn load_children() -> [Child; 2]
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.load_children
+use demo.dep.maybe_children
+
+pub fn read() -> Int {
+    let first = load_children()[0]
+    let second = maybe_children()?[1]
+    return first.value + second.value + first.value
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+
+    let direct_hover = package
+        .dependency_value_hover_in_source_at(source, nth_offset(source, "first", 2))
+        .expect("dependency root-indexed value hover should survive parse errors");
+    assert_eq!(direct_hover.kind, SymbolKind::Struct);
+    assert_eq!(direct_hover.name, "Child");
+    assert!(direct_hover.detail.starts_with("struct Child {"));
+
+    let question_definition = package
+        .dependency_value_definition_in_source_at(source, nth_offset(source, "second", 2))
+        .expect("dependency root-indexed question value definition should survive parse errors");
+    assert_eq!(question_definition.kind, SymbolKind::Struct);
+    assert_eq!(question_definition.name, "Child");
+    assert!(question_definition.path.ends_with("dep.qi"));
+
+    let question_type_definition = package
+        .dependency_value_type_definition_in_source_at(source, nth_offset(source, "second", 2))
+        .expect(
+            "dependency root-indexed question value type definition should survive parse errors",
+        );
+    assert_eq!(question_type_definition.kind, SymbolKind::Struct);
+    assert_eq!(question_type_definition.name, "Child");
+    assert_eq!(question_type_definition.path, question_definition.path);
+    assert_eq!(question_type_definition.span, question_definition.span);
+
+    let references = package
+        .dependency_value_references_in_source_at(source, nth_offset(source, "first", 1))
+        .expect("dependency root-indexed value references should survive parse errors");
+    assert_eq!(references.len(), 3);
+    assert_eq!(
+        references
+            .iter()
+            .map(|reference| reference.span)
+            .collect::<Vec<_>>(),
+        vec![
+            Span::new(
+                nth_offset(source, "first", 1),
+                nth_offset(source, "first", 1) + "first".len(),
+            ),
+            Span::new(
+                nth_offset(source, "first", 2),
+                nth_offset(source, "first", 2) + "first".len(),
+            ),
+            Span::new(
+                nth_offset(source, "first", 3),
+                nth_offset(source, "first", 3) + "first".len(),
+            ),
+        ]
+    );
+}

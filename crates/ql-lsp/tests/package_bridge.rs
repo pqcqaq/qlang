@@ -11,14 +11,16 @@ use ql_lsp::bridge::{
     declaration_for_dependency_methods, declaration_for_dependency_struct_fields,
     declaration_for_package_analysis, definition_for_dependency_imports,
     definition_for_dependency_methods, definition_for_dependency_struct_fields,
-    definition_for_dependency_variants, definition_for_package_analysis,
-    hover_for_dependency_imports, hover_for_dependency_methods, hover_for_dependency_struct_fields,
-    hover_for_dependency_variants, hover_for_package_analysis, references_for_dependency_imports,
+    definition_for_dependency_values, definition_for_dependency_variants,
+    definition_for_package_analysis, hover_for_dependency_imports, hover_for_dependency_methods,
+    hover_for_dependency_struct_fields, hover_for_dependency_values, hover_for_dependency_variants,
+    hover_for_package_analysis, references_for_dependency_imports,
     references_for_dependency_methods, references_for_dependency_struct_fields,
-    references_for_dependency_variants, references_for_package_analysis,
-    semantic_tokens_for_dependency_fallback, semantic_tokens_for_package_analysis,
-    semantic_tokens_legend, span_to_range, type_definition_for_dependency_imports,
-    type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
+    references_for_dependency_values, references_for_dependency_variants,
+    references_for_package_analysis, semantic_tokens_for_dependency_fallback,
+    semantic_tokens_for_package_analysis, semantic_tokens_legend, span_to_range,
+    type_definition_for_dependency_imports, type_definition_for_dependency_method_types,
+    type_definition_for_dependency_struct_field_types, type_definition_for_dependency_values,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::request::{GotoDeclarationResponse, GotoTypeDefinitionResponse};
@@ -4140,6 +4142,166 @@ packages = ["../dep"]
                     Span::new(
                         nth_offset(source, "value", 5),
                         nth_offset(source, "value", 5) + "value".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_root_indexed_value_queries_in_parse_error_source() {
+    let temp = TempDir::new("ql-lsp-package-root-indexed-value-query-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+    let source = r#"
+package demo.app
+
+use demo.dep.load_children
+use demo.dep.maybe_children
+
+pub fn read() -> Int {
+    let first = load_children()[0]
+    let second = maybe_children()?[1]
+    return first.value + second.value + first.value
+"#;
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn load_children() -> [Child; 2]
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let direct_hover = hover_for_dependency_values(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "first", 2)),
+    )
+    .expect("dependency root-indexed value hover should exist in parse-error source");
+    let HoverContents::Markup(direct_markup) = direct_hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(direct_markup.value.contains("**struct** `Child`"));
+    assert!(direct_markup.value.contains("struct Child"));
+
+    let question_definition = definition_for_dependency_values(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "second", 2)),
+    )
+    .expect("dependency root-indexed question value definition should exist in parse-error source");
+    let GotoDefinitionResponse::Scalar(question_location) = question_definition else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        question_location
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let struct_start = artifact
+        .find("pub struct Child {\n    value: Int,\n}")
+        .expect("struct declaration should exist in dependency artifact");
+    assert_eq!(
+        question_location.range,
+        span_to_range(
+            &artifact,
+            Span::new(
+                struct_start,
+                struct_start + "pub struct Child {\n    value: Int,\n}".len(),
+            )
+        )
+    );
+
+    let question_type_definition = type_definition_for_dependency_values(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "second", 2)),
+    )
+    .expect(
+        "dependency root-indexed question value type definition should exist in parse-error source",
+    );
+    let GotoTypeDefinitionResponse::Scalar(type_location) = question_type_definition else {
+        panic!("type definition should be one location")
+    };
+    assert_eq!(type_location, question_location);
+
+    let references = references_for_dependency_values(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "first", 1)),
+        false,
+    )
+    .expect("dependency root-indexed value references should exist in parse-error source");
+    assert_eq!(
+        references,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "first", 2),
+                        nth_offset(source, "first", 2) + "first".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "first", 3),
+                        nth_offset(source, "first", 3) + "first".len(),
                     ),
                 ),
             ),

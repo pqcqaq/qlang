@@ -139,6 +139,9 @@ struct BrokenSourceLocalCandidate {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BrokenSourceValueCandidate {
     root_name: String,
+    root_called: bool,
+    root_question_unwrap: bool,
+    root_indexed_iterable: bool,
     segments: Vec<BrokenSourceValueSegment>,
 }
 
@@ -3879,6 +3882,7 @@ fn dependency_value_occurrences_in_broken_source(
         .map(|occurrence| occurrence.span)
         .collect::<HashSet<_>>();
     let definition_counts = broken_source_definition_counts_in_tokens(&tokens);
+    let import_targets = dependency_resolved_import_targets_in_tokens(package, &tokens);
     let import_struct_bindings = dependency_struct_import_bindings_in_tokens(package, &tokens);
 
     let mut bindings = broken_source_parameter_candidates_in_tokens(&tokens)
@@ -3913,6 +3917,7 @@ fn dependency_value_occurrences_in_broken_source(
             package,
             &known_bindings,
             &import_struct_bindings,
+            &import_targets,
             rhs_value,
         );
         let Some(dependency) = dependency else {
@@ -3981,15 +3986,39 @@ fn dependency_struct_binding_for_broken_source_value_candidate(
     package: &PackageAnalysis,
     known_bindings: &HashMap<String, DependencyStructBinding>,
     import_struct_bindings: &HashMap<String, DependencyStructBinding>,
+    import_targets: &HashMap<String, (ImportBinding, DependencyResolvedTarget)>,
     candidate: &BrokenSourceValueCandidate,
 ) -> Option<DependencyStructBinding> {
     let binding = known_bindings
         .get(candidate.root_name.as_str())
+        .filter(|_| {
+            !candidate.root_called
+                && !candidate.root_question_unwrap
+                && !candidate.root_indexed_iterable
+        })
         .cloned()
         .or_else(|| {
             import_struct_bindings
                 .get(candidate.root_name.as_str())
+                .filter(|_| {
+                    !candidate.root_called
+                        && !candidate.root_question_unwrap
+                        && !candidate.root_indexed_iterable
+                })
                 .cloned()
+        })
+        .or_else(|| {
+            import_targets
+                .get(candidate.root_name.as_str())
+                .and_then(|(_, target)| {
+                    dependency_struct_binding_for_broken_source_import_target(
+                        package,
+                        target,
+                        candidate.root_called,
+                        candidate.root_question_unwrap,
+                        candidate.root_indexed_iterable,
+                    )
+                })
         })?;
 
     dependency_struct_binding_for_broken_source_segments(package, binding, &candidate.segments)
@@ -4182,6 +4211,22 @@ fn broken_source_value_candidate_with_end_in_tokens(
 
     let mut segments = Vec::new();
     let mut cursor = start_index + 1;
+    let root_called = if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LParen) {
+        cursor = token_index_after_balanced_parens(tokens, cursor)?;
+        true
+    } else {
+        false
+    };
+    let root_question_unwrap =
+        if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Question) {
+            cursor += 1;
+            true
+        } else {
+            false
+        };
+    let (next_cursor, root_indexed_iterable) =
+        token_index_after_bracket_chain(tokens, cursor).unwrap_or((cursor, false));
+    cursor = next_cursor;
     loop {
         if tokens.get(cursor).map(|token| token.kind) != Some(TokenKind::Dot) {
             break;
@@ -4219,6 +4264,9 @@ fn broken_source_value_candidate_with_end_in_tokens(
     Some((
         BrokenSourceValueCandidate {
             root_name: root.text.clone(),
+            root_called,
+            root_question_unwrap,
+            root_indexed_iterable,
             segments,
         },
         cursor,
