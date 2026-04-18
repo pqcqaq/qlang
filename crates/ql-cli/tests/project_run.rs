@@ -4,7 +4,7 @@ use ql_driver::{ToolchainOptions, discover_toolchain};
 use serde_json::Value as JsonValue;
 use support::{
     TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
-    expect_file_exists, expect_silent_output, expect_stderr_contains, ql_command,
+    expect_file_exists, expect_silent_output, expect_stderr_contains, expect_success, ql_command,
     run_command_capture, static_library_output_path, workspace_root,
 };
 
@@ -545,6 +545,112 @@ name = "tool"
         "workspace path run",
     )
     .expect("workspace-path `ql run` should leave the built executable in the member target dir");
+}
+
+#[test]
+fn run_project_source_file_list_uses_workspace_context_and_only_reports_runnable_targets() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-list-workspace-source");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app source tree for run list test");
+    std::fs::create_dir_all(project_root.join("packages/tool/src"))
+        .expect("create tool source tree for run list test");
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    let app_manifest = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let app_main = temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int { return 1 }\n",
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn helper() -> Int { return 2 }\n",
+    );
+    let tool_manifest = temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/src/main.ql",
+        "fn main() -> Int { return 3 }\n",
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        "pub fn helper() -> Int { return 4 }\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command
+        .args(["run"])
+        .arg(&app_main)
+        .args(["--list", "--json"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run --list --json` workspace member source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-run-list-workspace-source",
+        "workspace member source runnable target listing",
+        &output,
+    )
+    .expect("workspace member source `ql run --list --json` should succeed");
+    expect_empty_stderr(
+        "project-run-list-workspace-source",
+        "workspace member source runnable target listing",
+        &stderr,
+    )
+    .expect("workspace member source `ql run --list --json` should not print stderr");
+
+    let json = parse_json_output("project-run-list-workspace-source", &stdout);
+    let expected = serde_json::json!({
+        "schema": "ql.project.targets.v1",
+        "members": [
+            {
+                "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "app",
+                "targets": [
+                    {
+                        "kind": "bin",
+                        "path": "src/main.ql",
+                    }
+                ],
+            },
+            {
+                "manifest_path": tool_manifest.display().to_string().replace('\\', "/"),
+                "package_name": "tool",
+                "targets": [
+                    {
+                        "kind": "bin",
+                        "path": "src/main.ql",
+                    }
+                ],
+            }
+        ],
+    });
+    assert_eq!(
+        json, expected,
+        "workspace member source `ql run --list --json` should resolve the outer workspace and only report runnable targets"
+    );
+    assert!(
+        !project_root.join("packages/app/target").exists(),
+        "`ql run --list --json` should not build the selected source"
+    );
 }
 
 #[test]

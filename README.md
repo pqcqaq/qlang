@@ -11,10 +11,12 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - root target 的 dependency bridge 现在只会为当前源码实际导入的直依赖受限 public free function / `extern "c"` 符号注入 wrapper；未导入 sibling dependency 的同名符号不再提前卡住 `ql build/run/test`，但实际导入的同名直依赖函数 / extern 仍会分别触发 `dependency-function-conflict` / `dependency-extern-conflict`。
 - 当前 rename 仍以 same-file 为边界；cross-file rename / workspace edits 尚未开放。
 - `ql build` / `ql run` 已支持从 package 根目录和已声明 target 的源码路径进入 project-aware 流程；workspace member 源码路径会继承外层 workspace profile 和输出目录语义。
+- `ql build --list` / `ql run --list` 已可直接列出当前 package / workspace 下的 build targets；`--json` 复用 `ql.project.targets.v1`，`ql run --list` 只展示 runnable targets。
 - `ql check` / `ql build` / `ql run` / `ql test` 与 `ql project targets` / `graph` / `lock` 已提供第一版 `--json` 机器输出；`ql run --json` 当前输出 `ql.run.v1`，`ql project lock --json` 当前输出 `ql.project.lock.result.v1`。
 - `ql test` 直接执行 project `tests/*.ql` 文件时会保留 package/workspace-aware smoke 或 UI test 语义；`ql project graph` / `ql project targets` / `ql project lock` 指向 workspace member 源码文件时会回到外层 workspace 上下文；`ql project emit-interface` 在不带 `--output` 时也沿用这一视角。
 - healthy package/workspace 下，LSP 的 source-preferred navigation 已覆盖 workspace members 和 workspace 外本地路径依赖；definition、typeDefinition、references、`workspace/symbol` 会按 manifest 身份区分同名本地依赖，且 `workspace/symbol` 在源码可用时优先返回源码符号。
 - broken-source / parse-error 下，import references fallback、direct imported-result member hover / completion / 查询 / `documentHighlight`、dependency struct field label completion、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight`、dependency value/member semantic tokens fallback，以及 current-document dependency enum variant rename 都会继续走保守可用路径；同名本地依赖仍按 manifest 身份区分。
+- `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问或点分路径时可直接自动弹出补全。
 
 ## 先看哪些文档
 
@@ -45,7 +47,9 @@ cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-
 cargo run -p ql-cli -- project init demo-workspace --workspace --name app
 cargo run -p ql-cli -- project graph demo-workspace
 cargo run -p ql-cli -- project lock demo-workspace --json
+cargo run -p ql-cli -- build demo-workspace --list
 cargo run -p ql-cli -- build demo-workspace
+cargo run -p ql-cli -- run demo-workspace --list
 cargo run -p ql-cli -- run demo-workspace
 cargo run -p ql-cli -- build path/to/package/src/main.ql --json
 cargo run -p ql-cli -- run path/to/package/src/main.ql

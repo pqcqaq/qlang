@@ -2797,6 +2797,13 @@ fn fallback_document_highlights_for_package_at(
     document_highlights_from_locations(uri, locations)
 }
 
+fn completion_options() -> CompletionOptions {
+    CompletionOptions {
+        trigger_characters: Some(vec![".".to_owned()]),
+        ..CompletionOptions::default()
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
@@ -2822,7 +2829,7 @@ impl LanguageServer for Backend {
                 document_highlight_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
-                completion_provider: Some(CompletionOptions::default()),
+                completion_provider: Some(completion_options()),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
@@ -3432,9 +3439,10 @@ mod tests {
     use super::{
         GotoTypeDefinitionResponse, completion_for_dependency_member_fields,
         completion_for_dependency_methods, completion_for_dependency_struct_fields,
-        completion_for_dependency_variants, document_highlights_for_analysis_at,
-        document_highlights_for_package_analysis_at, fallback_document_highlights_for_package_at,
-        package_analysis_for_path, prepare_rename_for_dependency_imports,
+        completion_for_dependency_variants, completion_options,
+        document_highlights_for_analysis_at, document_highlights_for_package_analysis_at,
+        fallback_document_highlights_for_package_at, package_analysis_for_path,
+        prepare_rename_for_dependency_imports,
         prepare_rename_for_workspace_import_in_broken_source, rename_for_dependency_imports,
         rename_for_workspace_import_in_broken_source,
         semantic_tokens_for_workspace_dependency_fallback,
@@ -3533,6 +3541,12 @@ mod tests {
         }
 
         decoded
+    }
+
+    #[test]
+    fn completion_options_trigger_on_member_access_dot() {
+        let options = completion_options();
+        assert_eq!(options.trigger_characters, Some(vec![".".to_owned()]));
     }
 
     fn assert_workspace_edit(edit: WorkspaceEdit, uri: &Url, expected: Vec<TextEdit>) {

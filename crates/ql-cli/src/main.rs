@@ -131,6 +131,7 @@ fn run() -> Result<(), u8> {
             let mut emit_overridden = false;
             let mut emit_interface = false;
             let mut json = false;
+            let mut list = false;
             let mut selector = ProjectTargetSelector::default();
             let remaining = args.collect::<Vec<_>>();
             let mut index = 0;
@@ -202,6 +203,9 @@ fn run() -> Result<(), u8> {
                     "--json" => {
                         json = true;
                     }
+                    "--list" => {
+                        list = true;
+                    }
                     "--header-surface" => {
                         index += 1;
                         let Some(value) = remaining.get(index) else {
@@ -243,6 +247,9 @@ fn run() -> Result<(), u8> {
             if let Some(profile) = profile_override {
                 options.profile = profile;
             }
+            if list {
+                return list_build_targets_path(Path::new(&path), &selector, json);
+            }
             build_path(
                 Path::new(&path),
                 &options,
@@ -260,6 +267,7 @@ fn run() -> Result<(), u8> {
             let mut selector = ProjectTargetSelector::default();
             let mut program_args = Vec::new();
             let mut json = false;
+            let mut list = false;
             let mut passthrough = false;
             let mut index = 0;
 
@@ -287,6 +295,9 @@ fn run() -> Result<(), u8> {
                     }
                     "--json" => {
                         json = true;
+                    }
+                    "--list" => {
+                        list = true;
                     }
                     "--release" => {
                         set_cli_build_profile(
@@ -328,6 +339,9 @@ fn run() -> Result<(), u8> {
                 return Err(1);
             };
 
+            if list {
+                return list_runnable_targets_path(Path::new(&path), &selector, json);
+            }
             run_path(
                 Path::new(&path),
                 profile_override.unwrap_or_default(),
@@ -3064,6 +3078,125 @@ fn select_workspace_build_targets(
     }
 
     Ok(selected)
+}
+
+fn filter_workspace_build_targets(
+    members: &[WorkspaceBuildTargets],
+    keep_empty_members: bool,
+    predicate: impl Fn(&BuildTarget) -> bool,
+) -> Vec<WorkspaceBuildTargets> {
+    members
+        .iter()
+        .filter_map(|member| {
+            let targets = member
+                .targets
+                .iter()
+                .filter(|target| predicate(target))
+                .cloned()
+                .collect::<Vec<_>>();
+            if targets.is_empty() && !keep_empty_members {
+                return None;
+            }
+            Some(WorkspaceBuildTargets {
+                member_manifest_path: member.member_manifest_path.clone(),
+                package_name: member.package_name.clone(),
+                default_profile: member.default_profile,
+                targets,
+            })
+        })
+        .collect()
+}
+
+fn load_project_target_members_for_path(
+    path: &Path,
+    command_label: &str,
+) -> Result<Vec<WorkspaceBuildTargets>, u8> {
+    let request_root = resolve_project_command_request_root(path);
+    load_workspace_build_targets_for_command_from_request_root(
+        path,
+        request_root.as_deref().unwrap_or(path),
+        command_label,
+    )
+}
+
+fn print_project_target_members(members: &[WorkspaceBuildTargets]) {
+    for (index, member) in members.iter().enumerate() {
+        if index > 0 {
+            println!();
+        }
+        print_project_target_member(
+            member.member_manifest_path.as_path(),
+            &member.package_name,
+            &member.targets,
+        );
+    }
+}
+
+fn render_project_target_members(members: &[WorkspaceBuildTargets], json: bool) {
+    if json {
+        print!("{}", render_project_targets_json(members));
+    } else {
+        print_project_target_members(members);
+    }
+}
+
+fn list_build_targets_path(
+    path: &Path,
+    selector: &ProjectTargetSelector,
+    json: bool,
+) -> Result<(), u8> {
+    let members = load_project_target_members_for_path(path, "`ql build --list`")?;
+    let members = select_workspace_build_targets(
+        path,
+        &members,
+        selector,
+        "`ql build --list`",
+        "build targets",
+    )?;
+    render_project_target_members(&members, json);
+    Ok(())
+}
+
+fn list_runnable_targets_path(
+    path: &Path,
+    selector: &ProjectTargetSelector,
+    json: bool,
+) -> Result<(), u8> {
+    let members = load_project_target_members_for_path(path, "`ql run --list`")?;
+    let selected = if selector.is_active() {
+        select_workspace_build_targets(
+            path,
+            &members,
+            selector,
+            "`ql run --list`",
+            "build targets",
+        )?
+    } else {
+        members
+    };
+    let runnable_members =
+        filter_workspace_build_targets(&selected, !selector.is_active(), |target| {
+            is_runnable_project_target(target.kind)
+        });
+    if selector.is_active()
+        && runnable_members
+            .iter()
+            .map(|member| member.targets.len())
+            .sum::<usize>()
+            == 0
+    {
+        let normalized_path = normalize_path(path);
+        eprintln!(
+            "error: `ql run --list` target selector matched no runnable build targets under `{normalized_path}`"
+        );
+        eprintln!("note: selector: {}", selector.describe());
+        eprintln!(
+            "hint: rerun `ql project targets {normalized_path}` to inspect the discovered build targets"
+        );
+        return Err(1);
+    }
+    render_project_target_members(&runnable_members, json);
+    Ok(())
 }
 
 fn run_path(
@@ -8338,29 +8471,8 @@ fn load_workspace_build_targets_for_command_from_request_root(
 }
 
 fn project_targets_path(path: &Path, json: bool) -> Result<(), u8> {
-    let request_root = resolve_project_command_request_root(path);
-    let members = load_workspace_build_targets_for_command_from_request_root(
-        path,
-        request_root.as_deref().unwrap_or(path),
-        "`ql project targets`",
-    )?;
-
-    if json {
-        print!("{}", render_project_targets_json(&members));
-        return Ok(());
-    }
-
-    for (index, member) in members.iter().enumerate() {
-        if index > 0 {
-            println!();
-        }
-        print_project_target_member(
-            member.member_manifest_path.as_path(),
-            &member.package_name,
-            &member.targets,
-        );
-    }
-
+    let members = load_project_target_members_for_path(path, "`ql project targets`")?;
+    render_project_target_members(&members, json);
     Ok(())
 }
 
@@ -10663,10 +10775,10 @@ fn print_usage() {
     eprintln!("usage:");
     eprintln!("  ql check <file-or-dir> [--sync-interfaces] [--json]");
     eprintln!(
-        "  ql build <file-or-dir> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--profile debug|release|--release] [--package <name>] [--lib|--bin <name>|--target <path>] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>] [--json]"
+        "  ql build <file-or-dir> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--profile debug|release|--release] [--package <name>] [--lib|--bin <name>|--target <path>] [--list] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>] [--json]"
     );
     eprintln!(
-        "  ql run <file-or-dir> [--profile debug|release|--release] [--package <name>] [--bin <name>|--target <path>] [--json] [-- <args...>]"
+        "  ql run <file-or-dir> [--profile debug|release|--release] [--package <name>] [--bin <name>|--target <path>] [--list] [--json] [-- <args...>]"
     );
     eprintln!(
         "  ql test <file-or-dir> [--profile debug|release|--release] [--package <name>] [--target <tests/...ql>] [--list] [--filter <substring>]"

@@ -39,6 +39,7 @@
 - `ql test` 已支持对已发现测试使用 `--target` 做精确 rerun；直接执行 package `tests/` 下的单个 `.ql` 文件，或执行 workspace member 下对应测试文件时，也会保留 package/workspace-aware smoke / UI test 语义。
 - `ql project graph` / `ql project targets` / `ql project lock` 直接指向 workspace member 源码文件时，会解析外层 workspace，而不是退化成单 package 视图。
 - `ql project emit-interface` 在不带 `--output` 时，直接指向 workspace member `.ql` 文件也会解析外层 workspace，并按 workspace member 集合执行发射/检查。
+- `ql build --list` / `ql run --list` 已可直接列出当前 package / workspace 下的 discovered build targets；`--json` 复用 `ql.project.targets.v1`，`ql run --list` 只展示 runnable targets。
 - `ql check` / `ql build` / `ql run` / `ql test` 都已有第一版 `--json` 输出；其中 `ql run --json` 当前稳定导出 `ql.run.v1`，包含 built target、程序参数、捕获到的 stdout/stderr 和子进程退出码。更早的 selector / project preflight 失败仍保留既有 stderr failure surface。
 - `ql project lock --json` 当前稳定导出 `ql.project.lock.result.v1`，覆盖写锁文件成功、`--check` 命中 up-to-date，以及 stale / missing / read / write 失败；最早的 package-context / manifest preflight 失败仍保留既有 stderr surface。
 - 当前真正打通的跨包执行路径仍然很窄：只稳定覆盖 direct local dependency 的受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）与 public `extern "c"` 符号。
@@ -60,6 +61,7 @@
   - package-aware semantic tokens
 - source-preferred dependency navigation 现在按 manifest 身份区分同名本地依赖；definition / typeDefinition / references / `workspace/symbol` 不会再串到另一个依赖实例。
 - `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时会优先返回源码里的 value / method / trait / extend symbols；源码不可用时仍回退到 `.qi`。这条行为现在也覆盖 `workspace_roots` / 无打开文档入口；同名本地依赖也不会再因为 source-preferred 排除而误丢另一个依赖的 `.qi` 符号。
+- `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问和点分 dependency 路径时可直接自动触发补全。
 - broken-source / parse-error 下，当前只保留保守子集，不等于完整恢复；workspace 外本地路径依赖的 import references fallback、direct imported-result member hover / completion / query / `documentHighlight`（如 `build().ping()` / `build().value`）、dependency struct field label completion、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight`、dependency value/member semantic tokens fallback 都会继续走源码优先路径；同名本地依赖按 manifest 身份区分，不会串到兄弟依赖实例。
 - current-document rename 在 parse-error 下也保留了一批保守合同；当前已锁住的窄 slice 包括 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field，以及 dependency enum variant rename；同名本地依赖继续按 manifest 身份区分，不会串改兄弟依赖实例。
 - rename 仍然只做 same-file；cross-file rename / workspace edits 尚未开放。
