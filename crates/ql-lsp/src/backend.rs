@@ -3182,7 +3182,8 @@ mod tests {
     use super::{
         GotoTypeDefinitionResponse, document_highlights_for_analysis_at,
         document_highlights_for_package_analysis_at, fallback_document_highlights_for_package_at,
-        package_analysis_for_path, prepare_rename_for_workspace_import_in_broken_source,
+        package_analysis_for_path, prepare_rename_for_dependency_imports,
+        prepare_rename_for_workspace_import_in_broken_source, rename_for_dependency_imports,
         rename_for_workspace_import_in_broken_source,
         semantic_tokens_for_workspace_dependency_fallback,
         semantic_tokens_for_workspace_package_analysis, workspace_source_definition_for_dependency,
@@ -9349,6 +9350,210 @@ pub fn exported(value: Int) -> Int
         ];
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn document_highlight_keeps_dependency_structured_root_indexed_value_occurrences_in_broken_source()
+     {
+        let temp = TempDir::new(
+            "ql-lsp-document-highlight-dependency-structured-root-indexed-value-parse-errors",
+        );
+        let app_path = temp.write(
+            "workspace/app/src/lib.ql",
+            r#"
+package demo.app
+
+use demo.dep.maybe_children
+
+pub fn read(flag: Bool) -> Int {
+    let first = (if flag { maybe_children()? } else { maybe_children()? })[0]
+    let second = (match flag { true => maybe_children()?, false => maybe_children()? })[1]
+    return first.value + second.value + first.value
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let highlights = fallback_document_highlights_for_package_at(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "first", 3)),
+        )
+        .expect(
+            "broken-source dependency structured root-indexed value document highlight should exist",
+        );
+
+        let actual = highlights
+            .into_iter()
+            .map(|highlight| highlight.range.start)
+            .collect::<Vec<_>>();
+        let expected = vec![
+            offset_to_position(&source, nth_offset(&source, "first", 1)),
+            offset_to_position(&source, nth_offset(&source, "first", 2)),
+            offset_to_position(&source, nth_offset(&source, "first", 3)),
+        ];
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn dependency_value_prepare_rename_and_rename_survive_structured_root_indexed_parse_errors() {
+        let temp =
+            TempDir::new("ql-lsp-dependency-value-rename-structured-root-indexed-parse-errors");
+        let app_path = temp.write(
+            "workspace/app/src/lib.ql",
+            r#"
+package demo.app
+
+use demo.dep.maybe_children
+
+pub fn read(flag: Bool) -> Int {
+    let first = (if flag { maybe_children()? } else { maybe_children()? })[0]
+    let second = (match flag { true => maybe_children()?, false => maybe_children()? })[1]
+    return first.value + second.value + first.value
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+        );
+        temp.write(
+            "workspace/dep/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        temp.write(
+            "workspace/dep/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let use_offset = nth_offset(&source, "first", 2);
+
+        assert_eq!(
+            prepare_rename_for_dependency_imports(
+                &source,
+                &package,
+                offset_to_position(&source, use_offset),
+            ),
+            Some(PrepareRenameResponse::RangeWithPlaceholder {
+                range: span_to_range(&source, Span::new(use_offset, use_offset + "first".len())),
+                placeholder: "first".to_owned(),
+            }),
+        );
+
+        let edit = rename_for_dependency_imports(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, use_offset),
+            "current_child",
+        )
+        .expect("rename should succeed")
+        .expect("rename should return workspace edits");
+        let changes = edit
+            .changes
+            .expect("rename should use simple workspace changes");
+        let edits = changes
+            .get(&uri)
+            .expect("rename should edit current document");
+        assert_eq!(
+            edits,
+            &vec![
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "first", 1),
+                            nth_offset(&source, "first", 1) + "first".len(),
+                        ),
+                    ),
+                    "current_child".to_owned(),
+                ),
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "first", 2),
+                            nth_offset(&source, "first", 2) + "first".len(),
+                        ),
+                    ),
+                    "current_child".to_owned(),
+                ),
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "first", 3),
+                            nth_offset(&source, "first", 3) + "first".len(),
+                        ),
+                    ),
+                    "current_child".to_owned(),
+                ),
+            ],
+        );
     }
 
     #[test]
