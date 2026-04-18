@@ -40,8 +40,8 @@ cargo run -p ql-cli -- project init demo-workspace --workspace --name app
 cargo run -p ql-cli -- project graph demo-workspace
 cargo run -p ql-cli -- build demo-workspace
 cargo run -p ql-cli -- run demo-workspace
-cargo run -p ql-cli -- build demo-workspace/packages/app/src/main.ql --json
-cargo run -p ql-cli -- run demo-workspace/packages/app/src/main.ql
+cargo run -p ql-cli -- build path/to/package/src/main.ql --json
+cargo run -p ql-cli -- run path/to/package/src/main.ql
 cargo run -p ql-cli -- test demo-workspace
 cargo run -p ql-cli -- test demo-workspace --target packages/app/tests/smoke.ql
 ```
