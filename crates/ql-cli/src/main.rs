@@ -20,8 +20,8 @@ use ql_fmt::format_source;
 use ql_parser::parse_source;
 use ql_project::{
     BuildTarget, BuildTargetKind, InterfaceArtifactStaleReason, InterfaceArtifactStatus,
-    ManifestBuildProfile, WorkspaceBuildTargets, collect_package_sources,
-    default_interface_path, discover_package_build_targets, discover_workspace_build_targets,
+    ManifestBuildProfile, WorkspaceBuildTargets, collect_package_sources, default_interface_path,
+    discover_package_build_targets, discover_workspace_build_targets,
     interface_artifact_stale_reasons, interface_artifact_status, interface_artifact_status_detail,
     load_interface_artifact, load_project_manifest, load_reference_manifests, package_name,
     package_source_root, project_lockfile_path, render_module_interface,
@@ -259,6 +259,7 @@ fn run() -> Result<(), u8> {
             let mut profile_override = None;
             let mut selector = ProjectTargetSelector::default();
             let mut program_args = Vec::new();
+            let mut json = false;
             let mut passthrough = false;
             let mut index = 0;
 
@@ -283,6 +284,9 @@ fn run() -> Result<(), u8> {
                 match argument.as_str() {
                     "--" => {
                         passthrough = true;
+                    }
+                    "--json" => {
+                        json = true;
                     }
                     "--release" => {
                         set_cli_build_profile(
@@ -330,6 +334,7 @@ fn run() -> Result<(), u8> {
                 profile_override.is_some(),
                 &selector,
                 &program_args,
+                json,
             )
         }
         "test" => {
@@ -1755,6 +1760,170 @@ impl BuildJsonReport {
     }
 }
 
+#[derive(Debug)]
+struct RunJsonReport {
+    scope: &'static str,
+    path: String,
+    project_manifest_path: Option<String>,
+    requested_profile: &'static str,
+    profile_overridden: bool,
+    program_args: Vec<String>,
+    built_target: Option<JsonValue>,
+    execution: Option<JsonValue>,
+    failure: Option<JsonValue>,
+}
+
+impl RunJsonReport {
+    fn new(
+        path: &Path,
+        project_request_root: Option<&Path>,
+        options: &BuildOptions,
+        profile_overridden: bool,
+        program_args: &[String],
+    ) -> Self {
+        let build_report = BuildJsonReport::new(
+            path,
+            project_request_root,
+            options,
+            profile_overridden,
+            false,
+        );
+        Self {
+            scope: build_report.scope,
+            path: build_report.path,
+            project_manifest_path: build_report.project_manifest_path,
+            requested_profile: build_report.requested_profile,
+            profile_overridden: build_report.profile_overridden,
+            program_args: program_args.to_vec(),
+            built_target: None,
+            execution: None,
+            failure: None,
+        }
+    }
+
+    fn record_source_target(&mut self, path: &Path, artifact: &BuildArtifact) {
+        self.built_target = Some(build_json_target(
+            None,
+            None,
+            "source",
+            normalize_path(path),
+            artifact,
+            true,
+        ));
+    }
+
+    fn record_project_target(
+        &mut self,
+        member: &WorkspaceBuildTargets,
+        target: &BuildTarget,
+        artifact: &BuildArtifact,
+    ) {
+        self.built_target = Some(build_json_target(
+            Some(&member.member_manifest_path),
+            Some(member.package_name.as_str()),
+            target.kind.as_str(),
+            project_target_display_path(&member.member_manifest_path, &target.path),
+            artifact,
+            true,
+        ));
+    }
+
+    fn record_source_build_failure(&mut self, path: &Path, error: &BuildError) {
+        self.failure = Some(json!({
+            "kind": "build",
+            "build_failure": build_json_failure(
+                None,
+                None,
+                "source",
+                normalize_path(path),
+                true,
+                error,
+            ),
+        }));
+    }
+
+    fn record_project_build_failure(
+        &mut self,
+        member: &WorkspaceBuildTargets,
+        target: &BuildTarget,
+        error: &BuildError,
+    ) {
+        self.failure = Some(json!({
+            "kind": "build",
+            "build_failure": build_json_failure(
+                Some(&member.member_manifest_path),
+                Some(member.package_name.as_str()),
+                target.kind.as_str(),
+                project_target_display_path(&member.member_manifest_path, &target.path),
+                true,
+                error,
+            ),
+        }));
+    }
+
+    fn record_project_target_prep_failure(
+        &mut self,
+        member: &WorkspaceBuildTargets,
+        target: &BuildTarget,
+        failure: &PrepareProjectTargetBuildError,
+    ) {
+        self.failure = Some(json!({
+            "kind": "build",
+            "build_failure": build_json_target_prep_failure(member, target, true, failure),
+        }));
+    }
+
+    fn record_spawn_failure(&mut self, executable_path: &Path, message: String) {
+        self.failure = Some(json!({
+            "kind": "spawn",
+            "artifact_path": normalize_path(executable_path),
+            "message": message,
+        }));
+    }
+
+    fn record_run_failure(
+        &mut self,
+        executable_path: &Path,
+        message: &str,
+        stdout: &str,
+        stderr: &str,
+    ) {
+        self.failure = Some(json!({
+            "kind": "run",
+            "artifact_path": normalize_path(executable_path),
+            "message": message,
+            "stdout": stdout,
+            "stderr": stderr,
+        }));
+    }
+
+    fn record_execution(&mut self, exit_code: i32, stdout: &str, stderr: &str) {
+        self.execution = Some(json!({
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+        }));
+    }
+
+    fn into_json(self) -> String {
+        let rendered = serde_json::to_string_pretty(&json!({
+            "schema": "ql.run.v1",
+            "path": self.path,
+            "scope": self.scope,
+            "project_manifest_path": self.project_manifest_path,
+            "requested_profile": self.requested_profile,
+            "profile_overridden": self.profile_overridden,
+            "program_args": self.program_args,
+            "status": if self.failure.is_some() { "failed" } else { "completed" },
+            "built_target": self.built_target,
+            "execution": self.execution,
+            "failure": self.failure,
+        }))
+        .expect("run json report should serialize");
+        format!("{rendered}\n")
+    }
+}
+
 fn build_json_target(
     manifest_path: Option<&Path>,
     package_name: Option<&str>,
@@ -2861,8 +3030,44 @@ fn run_path(
     profile_overridden: bool,
     selector: &ProjectTargetSelector,
     program_args: &[String],
+    json: bool,
 ) -> Result<(), u8> {
     let options = run_build_options(profile);
+    if json {
+        if should_use_project_build(path) {
+            return run_project_path_json(
+                path,
+                path,
+                &options,
+                profile_overridden,
+                selector,
+                program_args,
+            );
+        }
+
+        if let Some(request) = resolve_project_source_build_target_request(path) {
+            if selector.is_active() {
+                report_project_source_path_rejects_target_selector("`ql run`", path, selector);
+                return Err(1);
+            }
+            return run_project_path_json(
+                path,
+                &request.request_root_manifest_path,
+                &options,
+                profile_overridden,
+                &request.selector,
+                program_args,
+            );
+        }
+
+        if selector.is_active() {
+            report_project_target_selector_requires_project_context("`ql run`", selector);
+            return Err(1);
+        }
+
+        return run_path_json(path, &options, profile_overridden, program_args);
+    }
+
     if should_use_project_build(path) {
         return run_project_path(
             path,
@@ -2896,6 +3101,111 @@ fn run_path(
 
     let artifact = build_single_source_target_silent(path, &options, false)?;
     run_built_executable(&artifact.path, program_args)
+}
+
+fn run_path_json(
+    path: &Path,
+    options: &BuildOptions,
+    profile_overridden: bool,
+    program_args: &[String],
+) -> Result<(), u8> {
+    let mut report = RunJsonReport::new(path, None, options, profile_overridden, program_args);
+    match build_single_source_target_result(path, options) {
+        Ok(artifact) => {
+            report.record_source_target(path, &artifact);
+            emit_run_json_execution(report, &artifact.path, program_args)
+        }
+        Err(error) => {
+            report.record_source_build_failure(path, &error);
+            print!("{}", report.into_json());
+            Err(1)
+        }
+    }
+}
+
+fn run_project_path_json(
+    path: &Path,
+    project_request_root: &Path,
+    options: &BuildOptions,
+    profile_overridden: bool,
+    selector: &ProjectTargetSelector,
+    program_args: &[String],
+) -> Result<(), u8> {
+    let mut report = RunJsonReport::new(
+        path,
+        Some(project_request_root),
+        options,
+        profile_overridden,
+        program_args,
+    );
+    let all_members = load_workspace_build_targets_for_command_from_request_root(
+        path,
+        project_request_root,
+        "`ql run`",
+    )?;
+    let members =
+        select_workspace_build_targets(path, &all_members, selector, "`ql run`", "build targets")?;
+    let runnable = select_runnable_project_target(path, &members, selector)?;
+    prepare_reference_interfaces_for_manifests(
+        std::slice::from_ref(&runnable.member_manifest_path),
+        "`ql run`",
+        false,
+    )?;
+    let runnable_members = select_project_build_plan_root_members(
+        &all_members,
+        std::slice::from_ref(&runnable.member_manifest_path),
+    );
+    prepare_project_dependency_builds(
+        &all_members,
+        &runnable_members,
+        "`ql run`",
+        options,
+        profile_overridden,
+    )?;
+    let build_plan =
+        resolve_project_build_plan_members(&all_members, &runnable_members, "`ql run`")?;
+
+    let mut target_options =
+        apply_manifest_default_profile(options, runnable.default_profile, profile_overridden);
+    if target_options.output.is_none() {
+        target_options.output = Some(project_target_output_path(
+            &runnable.member_manifest_path,
+            runnable.target.path.as_path(),
+            target_options.profile,
+            target_options.emit,
+        ));
+    }
+
+    let report_member = WorkspaceBuildTargets {
+        member_manifest_path: runnable.member_manifest_path.clone(),
+        package_name: runnable.package_name.clone(),
+        default_profile: runnable.default_profile,
+        targets: vec![runnable.target.clone()],
+    };
+
+    match build_project_source_target_result(
+        &build_plan,
+        &runnable.member_manifest_path,
+        &runnable.target.path,
+        &target_options,
+        options,
+        profile_overridden,
+    ) {
+        Ok(artifact) => {
+            report.record_project_target(&report_member, &runnable.target, &artifact);
+            emit_run_json_execution(report, &artifact.path, program_args)
+        }
+        Err(BuildTargetJsonError::Early(error)) => {
+            report.record_project_target_prep_failure(&report_member, &runnable.target, &error);
+            print!("{}", report.into_json());
+            Err(1)
+        }
+        Err(BuildTargetJsonError::Build(error)) => {
+            report.record_project_build_failure(&report_member, &runnable.target, &error);
+            print!("{}", report.into_json());
+            Err(1)
+        }
+    }
 }
 
 fn run_build_options(profile: BuildProfile) -> BuildOptions {
@@ -3071,6 +3381,70 @@ fn run_built_executable(executable_path: &Path, program_args: &[String]) -> Resu
                 "error: built executable `{}` terminated without an exit code",
                 normalize_path(executable_path)
             );
+            Err(1)
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CapturedExecutableRun {
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+fn run_built_executable_capture(
+    executable_path: &Path,
+    program_args: &[String],
+) -> Result<CapturedExecutableRun, String> {
+    let mut command = Command::new(executable_path);
+    command.args(program_args);
+    let output = command.output().map_err(|error| {
+        format!(
+            "failed to run built executable `{}`: {error}",
+            normalize_path(executable_path)
+        )
+    })?;
+
+    Ok(CapturedExecutableRun {
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+fn emit_run_json_execution(
+    mut report: RunJsonReport,
+    executable_path: &Path,
+    program_args: &[String],
+) -> Result<(), u8> {
+    match run_built_executable_capture(executable_path, program_args) {
+        Ok(captured) => {
+            if let Some(exit_code) = captured.exit_code {
+                report.record_execution(exit_code, &captured.stdout, &captured.stderr);
+                print!("{}", report.into_json());
+                if exit_code == 0 {
+                    Ok(())
+                } else {
+                    std::process::exit(exit_code);
+                }
+            } else {
+                report.record_run_failure(
+                    executable_path,
+                    &format!(
+                        "built executable `{}` terminated without an exit code",
+                        normalize_path(executable_path)
+                    ),
+                    &captured.stdout,
+                    &captured.stderr,
+                );
+                print!("{}", report.into_json());
+                Err(1)
+            }
+        }
+        Err(error) => {
+            report.record_spawn_failure(executable_path, error);
+            print!("{}", report.into_json());
             Err(1)
         }
     }
@@ -5394,7 +5768,9 @@ fn collect_imported_dependency_externs(
                 .iter()
                 .any(|module_path| module_path.starts_with(&use_decl.prefix.segments))
         {
-            imported.whole_paths.insert(use_decl.prefix.segments.clone());
+            imported
+                .whole_paths
+                .insert(use_decl.prefix.segments.clone());
             continue;
         }
 
@@ -9504,7 +9880,7 @@ fn print_usage() {
         "  ql build <file-or-dir> [--emit llvm-ir|asm|obj|exe|dylib|staticlib] [--profile debug|release|--release] [--package <name>] [--lib|--bin <name>|--target <path>] [-o <output>] [--emit-interface] [--header] [--header-surface exports|imports|both] [--header-output <output>] [--json]"
     );
     eprintln!(
-        "  ql run <file-or-dir> [--profile debug|release|--release] [--package <name>] [--bin <name>|--target <path>] [-- <args...>]"
+        "  ql run <file-or-dir> [--profile debug|release|--release] [--package <name>] [--bin <name>|--target <path>] [--json] [-- <args...>]"
     );
     eprintln!(
         "  ql test <file-or-dir> [--profile debug|release|--release] [--package <name>] [--target <tests/...ql>] [--list] [--filter <substring>]"

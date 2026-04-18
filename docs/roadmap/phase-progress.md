@@ -27,7 +27,7 @@
 - `ql project graph` / `ql project targets` / `ql project lock` 现在也会在 workspace member 源码路径入口上继承外层 workspace 上下文。
 - `ql project emit-interface` 现在也支持从 workspace member `.ql` 路径恢复外层 workspace 视角；当前保守边界是不带 `--output`。
 - `qlang.toml` 已支持最小本地依赖、target path 和默认 profile。
-- 第一版 `qlang.lock`、`ql.check --json`、`ql.build --json`、`ql.test --json` 已落地。
+- 第一版 `qlang.lock`、`ql.check --json`、`ql.build --json`、`ql.run --json`、`ql.test --json` 已落地。
 - root target 的 dependency extern 预处理已按当前源码实际导入收紧；真实项目里未导入 sibling dependency 的同名 `extern "c"` 不会再把 `ql build/run/test` 卡死在 target-prep。
 - healthy workspace 下的 dependency-backed LSP 已有一批可依赖能力：workspace symbol、source-preferred navigation、semantic tokens、保守 same-file rename；source-preferred navigation 现在同时覆盖 workspace members 和 workspace 外本地路径依赖，`workspace/symbol` 对本地依赖源码里的 methods / trait methods / extend methods 也已有源码优先回归保护。
 - `workspace` 外本地路径依赖的 import references 现在也走源码优先路径；broken-source fallback 已补齐到这一条路径。

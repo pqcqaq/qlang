@@ -216,6 +216,7 @@ P4/P5 地基已经落地；当前一边保守扩展 Phase 7 async library/progra
 - `ql run <file-or-dir> --release`
 - `ql run <workspace-dir> --package <name> --bin <name>`
 - `ql run <package-dir> --target <path>`
+- `ql run <file-or-dir> --json`
 - `ql run <file-or-dir> -- <args...>`
 
 当前实现边界：
@@ -228,6 +229,7 @@ P4/P5 地基已经落地；当前一边保守扩展 Phase 7 async library/progra
 - project-aware `ql run` 默认仍要求解析结果里恰好只有一个 runnable target；如果没有 runnable target，或有多个 runnable target，CLI 会显式失败并提示重跑 `ql project targets <path>` 检查发现结果。但现在也可以用 `--package <name>`、`--bin <name>` 或 `--target <path>` 在多 target 项目里稳定选中唯一 runnable target，而显式 `[[bin]].path` 也会直接进入这套 runnable target 选择面。
 - project-aware `ql run` 现在还会在真正构建 root executable 前，递归解析该 package 的本地 path dependency 闭包，并静默同步 root package 所需的 dependency `.qi`、静默预构建 dependency-only package；这些依赖包会落到各自默认 artifact 路径，不会复用 root executable 的输出参数，也不会把 interface/build 成功提示混进程序 stdout/stderr。当前真正能跨包执行的调用面仍然很窄，只稳定覆盖 direct dependency 的 public `extern "c"` 符号；普通跨包 Qlang 函数、method、const 仍不会因为有依赖预构建就自动可用。
 - `--profile <debug|release>` 与 `--release` 会显式选择 executable build profile；如果 project-aware `ql run` 没有传这些 CLI 选项，则会按 `package profile -> workspace profile -> debug` 的顺序解析默认 profile。
+- `--json` 现已导出第一版机器可消费运行结果，schema 为 `ql.run.v1`；成功时会稳定输出请求路径、scope、resolved manifest、requested profile、program args、built target，以及捕获到的程序 stdout/stderr 与 exit code。若程序本身返回非零退出码，CLI 会先输出 JSON，再保持相同退出码退出。当前 build/spawn/no-exit-code 失败也会落在这条 stdout JSON contract 内；selector / project preflight 这类更早失败仍保留既有 stderr surface。
 - `-- <args...>` 会原样转发给最终可执行文件。
 - 成功执行时，`ql run` 会直接复用 `ql build --emit exe` 的默认输出布局，然后执行解析出的二进制；stdout/stderr 归被执行程序本身所有，不额外混入 build 成功提示，并直接透传子进程退出码。
 

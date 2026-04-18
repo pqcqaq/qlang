@@ -1,10 +1,11 @@
 mod support;
 
 use ql_driver::{ToolchainOptions, discover_toolchain};
+use serde_json::Value as JsonValue;
 use support::{
-    TempDir, executable_output_path, expect_empty_stdout, expect_exit_code, expect_file_exists,
-    expect_silent_output, expect_stderr_contains, ql_command, run_command_capture,
-    static_library_output_path, workspace_root,
+    TempDir, executable_output_path, expect_empty_stderr, expect_empty_stdout, expect_exit_code,
+    expect_file_exists, expect_silent_output, expect_stderr_contains, ql_command,
+    run_command_capture, static_library_output_path, workspace_root,
 };
 
 fn toolchain_available(context: &str) -> bool {
@@ -15,6 +16,15 @@ fn toolchain_available(context: &str) -> bool {
         return false;
     };
     true
+}
+
+fn normalize_output_text(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
+fn parse_json_output(case_name: &str, stdout: &str) -> JsonValue {
+    serde_json::from_str(&normalize_output_text(stdout))
+        .unwrap_or_else(|error| panic!("[{case_name}] parse json stdout: {error}\n{stdout}"))
 }
 
 #[test]
@@ -43,6 +53,74 @@ fn run_single_file_builds_and_executes_program() {
         "single-file run",
     )
     .expect("single-file `ql run` should leave the built executable in the default path");
+}
+
+#[test]
+fn run_single_file_supports_json_output() {
+    if !toolchain_available("`ql run --json` single-file test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-file-json");
+    let source_path = temp.write("demo.ql", "fn main() -> Int { return 7 }\n");
+    let output_path = executable_output_path(&temp.path().join("target/ql/debug"), "demo");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&source_path).arg("--json");
+    let output = run_command_capture(&mut command, "`ql run --json` single file");
+    let (stdout, stderr) =
+        expect_exit_code("project-run-file-json", "single-file run json", &output, 7)
+            .expect("single-file `ql run --json` should preserve the program exit status");
+    expect_empty_stderr("project-run-file-json", "single-file run json", &stderr)
+        .expect("single-file `ql run --json` should keep stderr empty");
+
+    let json = parse_json_output("project-run-file-json", &stdout);
+    assert_eq!(json["schema"], "ql.run.v1");
+    assert_eq!(
+        json["path"],
+        source_path.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "file");
+    assert_eq!(json["project_manifest_path"], JsonValue::Null);
+    assert_eq!(json["requested_profile"], "debug");
+    assert_eq!(json["profile_overridden"], false);
+    assert_eq!(json["program_args"], serde_json::json!([]));
+    assert_eq!(json["status"], "completed");
+    assert_eq!(json["failure"], JsonValue::Null);
+    assert_eq!(
+        json["built_target"],
+        serde_json::json!({
+            "manifest_path": JsonValue::Null,
+            "package_name": JsonValue::Null,
+            "selected": true,
+            "dependency_only": false,
+            "kind": "source",
+            "path": source_path.display().to_string().replace('\\', "/"),
+            "emit": "exe",
+            "profile": "debug",
+            "artifact_path": output_path.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
+    );
+    assert_eq!(
+        json["execution"],
+        serde_json::json!({
+            "exit_code": 7,
+            "stdout": "",
+            "stderr": "",
+        })
+    );
+    expect_file_exists(
+        "project-run-file-json",
+        &output_path,
+        "single-file run json executable",
+        "single-file run json",
+    )
+    .expect(
+        "single-file `ql run --json` should still leave the built executable in the default path",
+    );
 }
 
 #[test]
@@ -138,6 +216,81 @@ default = "release"
         "direct project source file run",
     )
     .expect("direct project source file `ql run` should emit the executable under the package target dir");
+}
+
+#[test]
+fn run_project_path_json_reports_build_failure() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-project-json-build-failure");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create package source tree for run json build failure");
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let main_path = temp.write("app/src/main.ql", "fn main() -> Int { return \"oops\" }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(&mut command, "`ql run --json` project build failure");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-project-json-build-failure",
+        "project run json build failure",
+        &output,
+        1,
+    )
+    .expect("project-path `ql run --json` should exit with code 1 on build failure");
+    expect_empty_stderr(
+        "project-run-project-json-build-failure",
+        "project run json build failure",
+        &stderr,
+    )
+    .expect("project-path `ql run --json` build failure should stay on stdout");
+
+    let json = parse_json_output("project-run-project-json-build-failure", &stdout);
+    assert_eq!(json["schema"], "ql.run.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["requested_profile"], "debug");
+    assert_eq!(json["profile_overridden"], false);
+    assert_eq!(json["program_args"], serde_json::json!([]));
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["built_target"], JsonValue::Null);
+    assert_eq!(json["execution"], JsonValue::Null);
+    assert_eq!(json["failure"]["kind"], "build");
+    assert_eq!(
+        json["failure"]["build_failure"]["manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["build_failure"]["package_name"], "app");
+    assert_eq!(json["failure"]["build_failure"]["selected"], true);
+    assert_eq!(json["failure"]["build_failure"]["dependency_only"], false);
+    assert_eq!(json["failure"]["build_failure"]["kind"], "bin");
+    assert_eq!(json["failure"]["build_failure"]["path"], "src/main.ql");
+    assert_eq!(
+        json["failure"]["build_failure"]["error_kind"],
+        "diagnostics"
+    );
+    assert_eq!(
+        json["failure"]["build_failure"]["message"],
+        "build produced diagnostics"
+    );
+    assert_eq!(
+        json["failure"]["build_failure"]["diagnostic_file"]["path"],
+        main_path.display().to_string().replace('\\', "/")
+    );
 }
 
 #[test]
