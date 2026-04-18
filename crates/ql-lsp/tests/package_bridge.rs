@@ -8,17 +8,17 @@ use ql_lsp::bridge::{
     completion_for_dependency_imports, completion_for_dependency_member_fields,
     completion_for_dependency_methods, completion_for_dependency_struct_fields,
     completion_for_dependency_variants, completion_for_package_analysis,
-    declaration_for_dependency_methods, declaration_for_package_analysis,
-    definition_for_dependency_imports, definition_for_dependency_methods,
-    definition_for_dependency_struct_fields, definition_for_dependency_variants,
-    definition_for_package_analysis, hover_for_dependency_imports, hover_for_dependency_methods,
-    hover_for_dependency_struct_fields, hover_for_dependency_variants, hover_for_package_analysis,
-    references_for_dependency_imports, references_for_dependency_methods,
-    references_for_dependency_struct_fields, references_for_dependency_variants,
-    references_for_package_analysis, semantic_tokens_for_dependency_fallback,
-    semantic_tokens_for_package_analysis, semantic_tokens_legend, span_to_range,
-    type_definition_for_dependency_imports, type_definition_for_dependency_method_types,
-    type_definition_for_dependency_struct_field_types,
+    declaration_for_dependency_methods, declaration_for_dependency_struct_fields,
+    declaration_for_package_analysis, definition_for_dependency_imports,
+    definition_for_dependency_methods, definition_for_dependency_struct_fields,
+    definition_for_dependency_variants, definition_for_package_analysis,
+    hover_for_dependency_imports, hover_for_dependency_methods, hover_for_dependency_struct_fields,
+    hover_for_dependency_variants, hover_for_package_analysis, references_for_dependency_imports,
+    references_for_dependency_methods, references_for_dependency_struct_fields,
+    references_for_dependency_variants, references_for_package_analysis,
+    semantic_tokens_for_dependency_fallback, semantic_tokens_for_package_analysis,
+    semantic_tokens_legend, span_to_range, type_definition_for_dependency_imports,
+    type_definition_for_dependency_method_types, type_definition_for_dependency_struct_field_types,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::request::{GotoDeclarationResponse, GotoTypeDefinitionResponse};
@@ -3780,6 +3780,172 @@ packages = ["../dep"]
         panic!("type definition should be one location")
     };
     assert_eq!(method_location, field_location);
+}
+
+#[test]
+fn package_bridge_surfaces_dependency_direct_indexed_receiver_field_queries_in_parse_error_source()
+{
+    let temp = TempDir::new("ql-lsp-package-direct-indexed-receiver-field-query-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let first = config.children[0].value
+    let second = config.children[1].value
+    let broken = config.children[0].value
+"#;
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    children: [Child; 2],
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let hover = hover_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 1)),
+    )
+    .expect("dependency direct-indexed field hover should exist in parse-error source");
+    let HoverContents::Markup(markup) = hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(markup.value.contains("**field** `value`"));
+    assert!(markup.value.contains("field value: Int"));
+
+    let definition = definition_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 2)),
+    )
+    .expect("dependency direct-indexed field definition should exist in parse-error source");
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        location
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let field_start = artifact
+        .find("value")
+        .expect("field name should exist in dependency artifact");
+    assert_eq!(
+        location.range,
+        span_to_range(
+            &artifact,
+            Span::new(field_start, field_start + "value".len())
+        )
+    );
+
+    let declaration = declaration_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 3)),
+    )
+    .expect("dependency direct-indexed field declaration should exist in parse-error source");
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_eq!(declaration_location, location);
+
+    let references = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 1)),
+        false,
+    )
+    .expect("dependency direct-indexed field references should exist in parse-error source");
+    assert_eq!(
+        references,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "value", 1),
+                        nth_offset(source, "value", 1) + "value".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "value", 2),
+                        nth_offset(source, "value", 2) + "value".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "value", 3),
+                        nth_offset(source, "value", 3) + "value".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
 }
 
 #[test]

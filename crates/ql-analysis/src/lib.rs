@@ -147,6 +147,7 @@ struct BrokenSourceValueSegment {
     name: String,
     kind: BrokenSourceValueSegmentKind,
     question_unwrap: bool,
+    indexed_iterable: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4002,7 +4003,16 @@ fn dependency_struct_binding_for_broken_source_segments(
         binding = match segment.kind {
             BrokenSourceValueSegmentKind::Field => {
                 let field = binding.fields.get(&segment.name)?;
-                let target = if segment.question_unwrap {
+                let target = if segment.indexed_iterable {
+                    if segment.question_unwrap {
+                        field
+                            .question_iterable_element_type_definition
+                            .as_ref()
+                            .or(field.iterable_element_type_definition.as_ref())?
+                    } else {
+                        field.iterable_element_type_definition.as_ref()?
+                    }
+                } else if segment.question_unwrap {
                     field
                         .question_type_definition
                         .as_ref()
@@ -4014,7 +4024,16 @@ fn dependency_struct_binding_for_broken_source_segments(
             }
             BrokenSourceValueSegmentKind::Method => {
                 let method = binding.methods.get(&segment.name)?;
-                let target = if segment.question_unwrap {
+                let target = if segment.indexed_iterable {
+                    if segment.question_unwrap {
+                        method
+                            .question_iterable_element_type_definition
+                            .as_ref()
+                            .or(method.iterable_element_type_definition.as_ref())?
+                    } else {
+                        method.iterable_element_type_definition.as_ref()?
+                    }
+                } else if segment.question_unwrap {
                     method
                         .question_return_type_definition
                         .as_ref()
@@ -4185,10 +4204,14 @@ fn broken_source_value_candidate_with_end_in_tokens(
             } else {
                 false
             };
+        let (next_cursor, indexed_iterable) =
+            token_index_after_bracket_chain(tokens, cursor).unwrap_or((cursor, false));
+        cursor = next_cursor;
         segments.push(BrokenSourceValueSegment {
             name: name_token.text.clone(),
             kind,
             question_unwrap,
+            indexed_iterable,
         });
     }
 
@@ -4235,6 +4258,9 @@ fn broken_source_segments_with_stop_in_tokens(
             } else {
                 false
             };
+        let (next_cursor, indexed_iterable) =
+            token_index_after_bracket_chain(tokens, cursor).unwrap_or((cursor, false));
+        cursor = next_cursor;
         if cursor > stop_index {
             return None;
         }
@@ -4242,6 +4268,7 @@ fn broken_source_segments_with_stop_in_tokens(
             name: name_token.text.clone(),
             kind,
             question_unwrap,
+            indexed_iterable,
         });
     }
 }
@@ -4267,6 +4294,38 @@ fn token_index_after_balanced_parens(tokens: &[Token], open_index: usize) -> Opt
         index += 1;
     }
     None
+}
+
+fn token_index_after_balanced_brackets(tokens: &[Token], open_index: usize) -> Option<usize> {
+    if tokens.get(open_index).map(|token| token.kind) != Some(TokenKind::LBracket) {
+        return None;
+    }
+
+    let mut depth = 1usize;
+    let mut index = open_index + 1;
+    while index < tokens.len() {
+        match tokens[index].kind {
+            TokenKind::LBracket => depth += 1,
+            TokenKind::RBracket => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index + 1);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn token_index_after_bracket_chain(tokens: &[Token], mut cursor: usize) -> Option<(usize, bool)> {
+    let mut indexed_iterable = false;
+    while tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LBracket) {
+        cursor = token_index_after_balanced_brackets(tokens, cursor)?;
+        indexed_iterable = true;
+    }
+    Some((cursor, indexed_iterable))
 }
 
 fn broken_source_item_definition_names_in_tokens(tokens: &[Token]) -> Vec<String> {

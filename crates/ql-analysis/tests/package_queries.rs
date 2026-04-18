@@ -932,3 +932,101 @@ pub fn read(config: Cfg) -> Int {
     assert_eq!(method_type.path, field_type.path);
     assert_eq!(method_type.span, field_type.span);
 }
+
+#[test]
+fn package_analysis_exposes_dependency_direct_indexed_receiver_field_queries_in_broken_source() {
+    let temp = TempDir::new("ql-analysis-package-direct-indexed-receiver-field-parse-errors");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct Config {
+    children: [Child; 2],
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let first = config.children[0].value
+    let second = config.children[1].value
+    let broken = config.children[0].value
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+
+    let hover = package
+        .dependency_struct_field_hover_in_source_at(source, nth_offset(source, "value", 1))
+        .expect("dependency direct-indexed field hover should survive parse errors");
+    assert_eq!(hover.kind, SymbolKind::Field);
+    assert_eq!(hover.name, "value");
+    assert_eq!(hover.detail, "field value: Int");
+
+    let definition = package
+        .dependency_struct_field_definition_in_source_at(source, nth_offset(source, "value", 2))
+        .expect("dependency direct-indexed field definition should survive parse errors");
+    assert_eq!(definition.kind, SymbolKind::Field);
+    assert_eq!(definition.name, "value");
+    assert!(definition.path.ends_with("dep.qi"));
+
+    let references = package
+        .dependency_struct_field_references_in_source_at(source, nth_offset(source, "value", 3))
+        .expect("dependency direct-indexed field references should survive parse errors");
+    assert_eq!(references.len(), 3);
+    assert_eq!(references[0].name, "value");
+    assert_eq!(
+        references[0].span,
+        Span::new(
+            nth_offset(source, "value", 1),
+            nth_offset(source, "value", 1) + "value".len(),
+        )
+    );
+    assert_eq!(
+        references[1].span,
+        Span::new(
+            nth_offset(source, "value", 2),
+            nth_offset(source, "value", 2) + "value".len(),
+        )
+    );
+    assert_eq!(
+        references[2].span,
+        Span::new(
+            nth_offset(source, "value", 3),
+            nth_offset(source, "value", 3) + "value".len(),
+        )
+    );
+}
