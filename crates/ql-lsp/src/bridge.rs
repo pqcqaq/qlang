@@ -1413,7 +1413,8 @@ fn completion_matches_prefix(label: &str, insert_text: &str, prefix: &str) -> bo
 
 const fn completion_item_kind(kind: SymbolKind) -> CompletionItemKind {
     match kind {
-        SymbolKind::Function | SymbolKind::Method => CompletionItemKind::FUNCTION,
+        SymbolKind::Function => CompletionItemKind::FUNCTION,
+        SymbolKind::Method => CompletionItemKind::METHOD,
         SymbolKind::Const | SymbolKind::Static => CompletionItemKind::CONSTANT,
         SymbolKind::Struct => CompletionItemKind::STRUCT,
         SymbolKind::Enum => CompletionItemKind::ENUM,

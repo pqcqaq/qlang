@@ -3430,11 +3430,11 @@ impl LanguageServer for Backend {
 #[cfg(test)]
 mod tests {
     use super::{
-        GotoTypeDefinitionResponse, completion_for_dependency_struct_fields,
-        completion_for_dependency_variants,
-        document_highlights_for_analysis_at, document_highlights_for_package_analysis_at,
-        fallback_document_highlights_for_package_at, package_analysis_for_path,
-        prepare_rename_for_dependency_imports,
+        GotoTypeDefinitionResponse, completion_for_dependency_member_fields,
+        completion_for_dependency_methods, completion_for_dependency_struct_fields,
+        completion_for_dependency_variants, document_highlights_for_analysis_at,
+        document_highlights_for_package_analysis_at, fallback_document_highlights_for_package_at,
+        package_analysis_for_path, prepare_rename_for_dependency_imports,
         prepare_rename_for_workspace_import_in_broken_source, rename_for_dependency_imports,
         rename_for_workspace_import_in_broken_source,
         semantic_tokens_for_workspace_dependency_fallback,
@@ -11277,8 +11277,8 @@ package demo.app
 
 use demo.shared.beta.build as other
 
-pub fn task() -> Int {
-    return other().ping() + other().value
+pub fn task() -> Bool {
+    return other().ping() && other().value
 }
 "#,
         );
@@ -11308,15 +11308,15 @@ impl Config {
 package demo.shared.beta
 
 pub struct Config {
-    value: Int,
+    value: Bool,
 }
 
 pub fn build() -> Config {
-    return Config { value: 2 }
+    return Config { value: true }
 }
 
 impl Config {
-    pub fn ping(self) -> Int {
+    pub fn ping(self) -> Bool {
         return self.value
     }
 }
@@ -11384,13 +11384,13 @@ impl Config {
 package demo.shared.beta
 
 pub struct Config {
-    value: Int,
+    value: Bool,
 }
 
 pub fn build() -> Config
 
 impl Config {
-    pub fn ping(self) -> Int
+    pub fn ping(self) -> Bool
 }
 "#,
         );
@@ -11403,6 +11403,34 @@ impl Config {
         let alpha_source =
             fs::read_to_string(&alpha_source_path).expect("alpha source should read");
         let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+        let method_hover = workspace_source_hover_for_dependency(
+            &uri,
+            &source,
+            None,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "ping", 1)),
+        )
+        .expect("broken-source same-named dependency method hover should exist");
+        let HoverContents::Markup(method_hover_markup) = method_hover.contents else {
+            panic!("method hover should render as markdown")
+        };
+        assert!(method_hover_markup.value.contains("fn ping(self) -> Int"));
+        assert!(!method_hover_markup.value.contains("fn ping(self) -> Bool"));
+
+        let field_hover = workspace_source_hover_for_dependency(
+            &uri,
+            &source,
+            None,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "value", 1)),
+        )
+        .expect("broken-source same-named dependency field hover should exist");
+        let HoverContents::Markup(field_hover_markup) = field_hover.contents else {
+            panic!("field hover should render as markdown")
+        };
+        assert!(field_hover_markup.value.contains("field value: Int"));
+        assert!(!field_hover_markup.value.contains("field value: Bool"));
 
         let method_definition = workspace_source_definition_for_dependency(
             &uri,
@@ -11504,6 +11532,53 @@ impl Config {
             }),
             "references should not include beta dependency source",
         );
+
+        let completion_source = r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    return build().pi( + build().va
+"#;
+        assert!(analyze_source(completion_source).is_err());
+
+        let method_completion = completion_for_dependency_methods(
+            completion_source,
+            &package,
+            offset_to_position(
+                completion_source,
+                nth_offset(completion_source, "pi", 1) + 2,
+            ),
+        )
+        .expect("broken-source same-named dependency method completion should exist");
+        let CompletionResponse::Array(method_items) = method_completion else {
+            panic!("method completion should resolve to a plain item array")
+        };
+        assert_eq!(method_items.len(), 1);
+        assert_eq!(method_items[0].label, "ping");
+        assert_eq!(method_items[0].kind, Some(CompletionItemKind::METHOD));
+        assert_eq!(
+            method_items[0].detail.as_deref(),
+            Some("fn ping(self) -> Int")
+        );
+
+        let field_completion = completion_for_dependency_member_fields(
+            completion_source,
+            &package,
+            offset_to_position(
+                completion_source,
+                nth_offset(completion_source, "va", 1) + 2,
+            ),
+        )
+        .expect("broken-source same-named dependency field completion should exist");
+        let CompletionResponse::Array(field_items) = field_completion else {
+            panic!("field completion should resolve to a plain item array")
+        };
+        assert_eq!(field_items.len(), 1);
+        assert_eq!(field_items[0].label, "value");
+        assert_eq!(field_items[0].kind, Some(CompletionItemKind::FIELD));
+        assert_eq!(field_items[0].detail.as_deref(), Some("field value: Int"));
     }
 
     #[test]
@@ -11730,7 +11805,7 @@ pub enum Command {
 
     #[test]
     fn same_named_local_dependency_broken_source_variant_completion_prefers_matching_dependency_source()
-    {
+     {
         let temp =
             TempDir::new("ql-lsp-same-named-local-dependency-broken-source-variant-completion");
         let app_path = temp.write(
@@ -11854,8 +11929,8 @@ pub enum Command {
     }
 
     #[test]
-    fn same_named_local_dependency_broken_source_struct_field_completion_prefers_matching_dependency_source(
-    ) {
+    fn same_named_local_dependency_broken_source_struct_field_completion_prefers_matching_dependency_source()
+     {
         let temp = TempDir::new(
             "ql-lsp-same-named-local-dependency-broken-source-struct-field-completion",
         );
