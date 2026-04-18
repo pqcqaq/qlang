@@ -5194,6 +5194,11 @@ fn dependency_member_site_in_broken_source_tokens(
         if root_token.kind != TokenKind::Ident {
             continue;
         }
+        if start_index > 0
+            && tokens.get(start_index - 1).map(|token| token.kind) == Some(TokenKind::Dot)
+        {
+            continue;
+        }
 
         let mut cursor = start_index + 1;
         let root_called = if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LParen) {

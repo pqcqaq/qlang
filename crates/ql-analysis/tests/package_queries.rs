@@ -703,3 +703,142 @@ pub fn read() -> Int {
         ]
     );
 }
+
+#[test]
+fn package_analysis_exposes_dependency_direct_question_member_queries_in_broken_source() {
+    let temp = TempDir::new("ql-analysis-package-direct-question-member-queries-parse-errors");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {
+    child: Option[Child],
+}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let first = config.child?.value
+    let second = config.child()?.get()
+    let third = config.child?.value
+    let fourth = config.child()?.get(
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+
+    let field_hover = package
+        .dependency_struct_field_hover_in_source_at(source, nth_offset(source, "value", 1))
+        .expect("dependency direct-question field hover should survive parse errors");
+    assert_eq!(field_hover.kind, SymbolKind::Field);
+    assert_eq!(field_hover.name, "value");
+    assert_eq!(field_hover.detail, "field value: Int");
+
+    let field_definition = package
+        .dependency_struct_field_definition_in_source_at(source, nth_offset(source, "value", 2))
+        .expect("dependency direct-question field definition should survive parse errors");
+    assert_eq!(field_definition.kind, SymbolKind::Field);
+    assert_eq!(field_definition.name, "value");
+    assert!(field_definition.path.ends_with("dep.qi"));
+
+    let method_hover = package
+        .dependency_method_hover_in_source_at(source, nth_offset(source, "get", 1))
+        .expect("dependency direct-question method hover should survive parse errors");
+    assert_eq!(method_hover.kind, SymbolKind::Method);
+    assert_eq!(method_hover.name, "get");
+    assert_eq!(method_hover.detail, "fn get(self) -> Int");
+
+    let method_definition = package
+        .dependency_method_definition_in_source_at(source, nth_offset(source, "get", 2))
+        .expect("dependency direct-question method definition should survive parse errors");
+    assert_eq!(method_definition.kind, SymbolKind::Method);
+    assert_eq!(method_definition.name, "get");
+    assert!(method_definition.path.ends_with("dep.qi"));
+
+    let field_references = package
+        .dependency_struct_field_references_in_source_at(source, nth_offset(source, "value", 1))
+        .expect("dependency direct-question field references should survive parse errors");
+    assert_eq!(
+        field_references
+            .iter()
+            .map(|reference| reference.span)
+            .collect::<Vec<_>>(),
+        vec![
+            Span::new(
+                nth_offset(source, "value", 1),
+                nth_offset(source, "value", 1) + "value".len(),
+            ),
+            Span::new(
+                nth_offset(source, "value", 2),
+                nth_offset(source, "value", 2) + "value".len(),
+            ),
+        ]
+    );
+
+    let method_references = package
+        .dependency_method_references_in_source_at(source, nth_offset(source, "get", 1))
+        .expect("dependency direct-question method references should survive parse errors");
+    assert_eq!(
+        method_references
+            .iter()
+            .map(|reference| reference.span)
+            .collect::<Vec<_>>(),
+        vec![
+            Span::new(
+                nth_offset(source, "get", 1),
+                nth_offset(source, "get", 1) + "get".len(),
+            ),
+            Span::new(
+                nth_offset(source, "get", 2),
+                nth_offset(source, "get", 2) + "get".len(),
+            ),
+        ]
+    );
+}

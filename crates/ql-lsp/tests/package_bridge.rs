@@ -3407,6 +3407,261 @@ packages = ["../dep"]
 }
 
 #[test]
+fn package_bridge_surfaces_dependency_direct_question_member_queries_in_parse_error_source() {
+    let temp = TempDir::new("ql-lsp-package-direct-question-member-queries-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let first = config.child?.value
+    let second = config.child()?.get()
+    let third = config.child?.value
+    let fourth = config.child()?.get(
+}
+"#;
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {
+    child: Option[Child],
+}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+
+impl Child {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let field_hover = hover_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 1)),
+    )
+    .expect("dependency direct-question field hover should exist in parse-error source");
+    let HoverContents::Markup(field_markup) = field_hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(field_markup.value.contains("**field** `value`"));
+    assert!(field_markup.value.contains("field value: Int"));
+
+    let field_definition = definition_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 2)),
+    )
+    .expect("dependency direct-question field definition should exist in parse-error source");
+    let GotoDefinitionResponse::Scalar(Location {
+        uri: field_definition_uri,
+        range: field_definition_range,
+    }) = field_definition
+    else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        field_definition_uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+
+    let method_hover = hover_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "get", 1)),
+    )
+    .expect("dependency direct-question method hover should exist in parse-error source");
+    let HoverContents::Markup(method_markup) = method_hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(method_markup.value.contains("**method** `get`"));
+    assert!(method_markup.value.contains("fn get(self) -> Int"));
+
+    let method_definition = definition_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "get", 2)),
+    )
+    .expect("dependency direct-question method definition should exist in parse-error source");
+    let GotoDefinitionResponse::Scalar(Location {
+        uri: method_definition_uri,
+        range: method_definition_range,
+    }) = method_definition
+    else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        method_definition_uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+
+    let declaration = declaration_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "get", 1)),
+    )
+    .expect("dependency direct-question method declaration should exist in parse-error source");
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_eq!(declaration_location.uri, method_definition_uri);
+    assert_eq!(declaration_location.range, method_definition_range);
+
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let field_start = artifact
+        .find("value")
+        .expect("field name should exist in dependency artifact");
+    assert_eq!(
+        field_definition_range,
+        span_to_range(
+            &artifact,
+            Span::new(field_start, field_start + "value".len())
+        )
+    );
+    let method_start = artifact
+        .find("pub fn get(self) -> Int")
+        .map(|offset| offset + "pub fn ".len())
+        .expect("method signature should exist in dependency artifact");
+    assert_eq!(
+        method_definition_range,
+        span_to_range(
+            &artifact,
+            Span::new(method_start, method_start + "get".len())
+        )
+    );
+
+    let field_references = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 1)),
+        false,
+    )
+    .expect("dependency direct-question field references should exist in parse-error source");
+    assert_eq!(
+        field_references,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "value", 1),
+                        nth_offset(source, "value", 1) + "value".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "value", 2),
+                        nth_offset(source, "value", 2) + "value".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+
+    let method_references = references_for_dependency_methods(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "get", 1)),
+        false,
+    )
+    .expect("dependency direct-question method references should exist in parse-error source");
+    assert_eq!(
+        method_references,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "get", 1),
+                        nth_offset(source, "get", 1) + "get".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "get", 2),
+                        nth_offset(source, "get", 2) + "get".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn package_bridge_completes_dependency_struct_member_fields_for_closure_parameters() {
     let temp = TempDir::new("ql-lsp-package-struct-member-field-closure-param");
     let app_root = temp.path().join("workspace").join("app");
