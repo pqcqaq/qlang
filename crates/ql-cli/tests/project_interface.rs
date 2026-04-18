@@ -2363,6 +2363,110 @@ pub struct Config {
 }
 
 #[test]
+fn project_emit_interface_source_file_uses_workspace_root_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-source-context");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let tool_root = project_root.join("packages").join("tool");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for workspace source-context test");
+    std::fs::create_dir_all(tool_root.join("src"))
+        .expect("create tool package source directory for workspace source-context test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    let source_path = temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    let app_interface = app_root.join("app.qi");
+    let tool_interface = tool_root.join("tool.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&source_path);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` workspace member source path",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-interface-workspace-source-context",
+        "workspace member source interface emission",
+        &output,
+    )
+    .expect("workspace member source interface emission should succeed");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
+    let normalized_tool_interface = tool_interface.display().to_string().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-workspace-source-context",
+        &normalized_stdout,
+        &[
+            &format!("wrote interface: {normalized_app_interface}"),
+            &format!("wrote interface: {normalized_tool_interface}"),
+        ],
+    )
+    .expect("workspace member source interface emission should keep the outer workspace context");
+    expect_snapshot_matches(
+        "project-interface-workspace-source-context",
+        "workspace member source interface emission stderr",
+        "",
+        &stderr,
+    )
+    .expect("workspace member source interface emission should stay silent on stderr");
+    expect_file_exists(
+        "project-interface-workspace-source-context",
+        &app_interface,
+        "workspace app qi",
+        "workspace member source interface emission",
+    )
+    .expect("workspace member source interface emission should create app qi");
+    expect_file_exists(
+        "project-interface-workspace-source-context",
+        &tool_interface,
+        "workspace tool qi",
+        "workspace member source interface emission",
+    )
+    .expect("workspace member source interface emission should create tool qi");
+}
+
+#[test]
 fn project_emit_interface_keeps_writing_other_workspace_members_when_one_member_fails() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-workspace-partial-failure");

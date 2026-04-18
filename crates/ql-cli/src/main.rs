@@ -7170,7 +7170,12 @@ fn project_emit_interface_path(
     let emit_command_label =
         format_project_emit_interface_command_label(output, changed_only, false);
     let check_command_label = format_project_emit_interface_command_label(None, changed_only, true);
-    let manifest = load_project_manifest(path).map_err(|error| {
+    let request_root = if output.is_none() {
+        resolve_project_command_request_root(path)
+    } else {
+        None
+    };
+    let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path)).map_err(|error| {
         if let ql_project::ProjectError::ManifestNotFound { start } = &error {
             let command_label = if check_only {
                 check_command_label.as_str()

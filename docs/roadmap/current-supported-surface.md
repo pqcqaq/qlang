@@ -38,6 +38,7 @@
 - `ql build` / `ql run` 对 project 内已声明 target 的单个源码文件也已支持 project-aware 入口；无论直接执行 package 自身的 `src/main.ql`、`src/lib.ql`、`src/bin/*.ql`，还是执行 workspace member 下对应源码路径，都会保留 package / workspace profile、依赖构建和 project 输出目录语义。
 - `ql test` 已支持对已发现测试使用 `--target` 做精确 rerun；直接执行 package `tests/` 下的单个 `.ql` 文件，或执行 workspace member 下对应测试文件时，也会保留 package/workspace-aware smoke / UI test 语义。
 - `ql project graph` / `ql project targets` / `ql project lock` 直接指向 workspace member 源码文件时，会解析外层 workspace，而不是退化成单 package 视图。
+- `ql project emit-interface` 在不带 `--output` 时，直接指向 workspace member `.ql` 文件也会解析外层 workspace，并按 workspace member 集合执行发射/检查。
 - 当前真正打通的跨包执行路径仍然很窄：只稳定覆盖 direct local dependency 的 public `extern "c"` 符号。
 
 ### async / runtime
