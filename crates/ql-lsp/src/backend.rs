@@ -10042,6 +10042,195 @@ pub fn exported(value: Int) -> Int
     }
 
     #[test]
+    fn same_named_local_dependency_semantic_tokens_survive_parse_errors_for_members() {
+        let temp = TempDir::new("ql-lsp-same-named-local-dependency-semantic-tokens-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+use demo.shared.beta.build as other
+
+pub fn main() -> Int {
+    let current = build()
+    return current.ping() + current.value + other().tick(
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config {
+    return Config { value: 1 }
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/src/lib.ql",
+            r#"
+package demo.shared.beta
+
+pub struct Config {
+    amount: Int,
+}
+
+pub fn build() -> Config {
+    return Config { amount: 2 }
+}
+
+impl Config {
+    pub fn tick(self) -> Int {
+        return self.amount
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Config {
+    amount: Int,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn tick(self) -> Int
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let SemanticTokensResult::Tokens(tokens) =
+            semantic_tokens_for_workspace_dependency_fallback(&uri, &source, &package)
+        else {
+            panic!("expected full semantic tokens")
+        };
+        let decoded = decode_semantic_tokens(&tokens.data);
+        let legend = semantic_tokens_legend();
+        let function_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::FUNCTION)
+            .expect("function legend entry should exist") as u32;
+        let variable_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::VARIABLE)
+            .expect("variable legend entry should exist") as u32;
+        let property_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::PROPERTY)
+            .expect("property legend entry should exist") as u32;
+        let method_type = legend
+            .token_types
+            .iter()
+            .position(|token_type| *token_type == SemanticTokenType::METHOD)
+            .expect("method legend entry should exist") as u32;
+
+        for (needle, occurrence, token_type) in [
+            ("build", 1usize, function_type),
+            ("other", 2usize, function_type),
+            ("current", 1usize, variable_type),
+            ("current", 2usize, variable_type),
+            ("ping", 1usize, method_type),
+            ("value", 1usize, property_type),
+            ("tick", 1usize, method_type),
+        ] {
+            let span = Span::new(
+                nth_offset(&source, needle, occurrence),
+                nth_offset(&source, needle, occurrence) + needle.len(),
+            );
+            let range = span_to_range(&source, span);
+            assert!(
+                decoded.contains(&(
+                    range.start.line,
+                    range.start.character,
+                    range.end.character - range.start.character,
+                    token_type,
+                )),
+                "expected semantic token for {needle} occurrence {occurrence}",
+            );
+        }
+    }
+
+    #[test]
     fn workspace_dependency_value_queries_survive_parse_errors_and_prefer_workspace_member_source()
     {
         let temp = TempDir::new("ql-lsp-workspace-dependency-value-source-queries-parse-errors");

@@ -10,7 +10,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - 当前跨包执行路径仍然很窄：只稳定支持 direct local dependency 的 public `extern "c"` 符号。
 - 当前 rename 仍以 same-file 为边界；cross-file rename / workspace edits 尚未开放。
 - `ql build` / `ql run` 现在既可从 package 根目录进入 project-aware 流程，也可直接从 package target 源码路径进入；workspace member 下的 `src/main.ql`、`src/lib.ql`、`src/bin/*.ql` 会继承外层 workspace profile 和输出目录语义。`ql test` 直接执行 project `tests/*.ql` 文件时，也会保留 package/workspace-aware smoke 或 UI test 语义；`ql project graph` / `ql project targets` / `ql project lock` 直接指向 workspace member 源码文件时，也会回到外层 workspace 上下文。`ql project emit-interface` 在不带 `--output` 时，直接从 workspace member `.ql` 路径进入也会沿用这一工作区视角。
-- healthy package/workspace 下，LSP 的 source-preferred navigation 现在同时覆盖 workspace members 和 workspace 外本地路径依赖；definition、typeDefinition、references、`workspace/symbol` 都会按 manifest 身份区分同名本地依赖，不会串到另一个实例。broken-source 下，import references fallback 和 direct imported-result member 查询（如 `build().ping()` / `build().value`）也已补到这条本地依赖源码优先路径；package-aware semantic tokens 已接通；`workspace/symbol` 在本地依赖源码可用时会优先返回源码里的 value / method / trait / extend symbols，并覆盖 `workspace_roots` / 无打开文档入口。
+- healthy package/workspace 下，LSP 的 source-preferred navigation 现在同时覆盖 workspace members 和 workspace 外本地路径依赖；definition、typeDefinition、references、`workspace/symbol` 都会按 manifest 身份区分同名本地依赖，不会串到另一个实例。broken-source 下，import references fallback、direct imported-result member 查询（如 `build().ping()` / `build().value`）以及 dependency value/member semantic tokens fallback 也已补到这条本地依赖源码优先路径；package-aware semantic tokens 已接通；`workspace/symbol` 在本地依赖源码可用时会优先返回源码里的 value / method / trait / extend symbols，并覆盖 `workspace_roots` / 无打开文档入口。
 
 ## 先看哪些文档
 

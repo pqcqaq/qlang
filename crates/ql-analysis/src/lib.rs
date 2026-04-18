@@ -1462,7 +1462,13 @@ impl PackageAnalysis {
                 ));
                 tokens
             }
-            Err(_) => collect_dependency_import_root_semantic_tokens_in_broken_source(self, source),
+            Err(_) => {
+                let mut tokens = collect_dependency_semantic_tokens_in_broken_source(self, source);
+                tokens.extend(
+                    collect_dependency_import_root_semantic_tokens_in_broken_source(self, source),
+                );
+                tokens
+            }
         };
         sort_and_dedup_semantic_tokens(&mut tokens);
         tokens
@@ -3837,6 +3843,74 @@ fn collect_dependency_import_root_semantic_tokens_in_broken_source(
                 })
         })
         .collect()
+}
+
+fn collect_dependency_semantic_tokens_in_broken_source(
+    package: &PackageAnalysis,
+    source: &str,
+) -> Vec<SemanticTokenOccurrence> {
+    let mut tokens = dependency_value_occurrences_in_broken_source(package, source)
+        .into_iter()
+        .map(|occurrence| SemanticTokenOccurrence {
+            span: occurrence.reference_span,
+            kind: occurrence.kind,
+        })
+        .collect::<Vec<_>>();
+
+    tokens.extend(
+        dependency_member_sites_in_broken_source(source)
+            .into_iter()
+            .filter_map(|site| {
+                let binding =
+                    dependency_member_receiver_binding_in_broken_source(package, source, &site)?;
+                let kind = match site.member_kind {
+                    BrokenSourceValueSegmentKind::Field => binding
+                        .fields
+                        .contains_key(&site.member_name)
+                        .then_some(SymbolKind::Field)?,
+                    BrokenSourceValueSegmentKind::Method => binding
+                        .methods
+                        .contains_key(&site.member_name)
+                        .then_some(SymbolKind::Method)?,
+                };
+                Some(SemanticTokenOccurrence {
+                    span: site.member_span,
+                    kind,
+                })
+            }),
+    );
+
+    let (lexed_tokens, _) = lex(source);
+    let import_targets = dependency_resolved_import_targets_in_tokens(package, &lexed_tokens);
+    tokens.extend(
+        lexed_tokens
+            .iter()
+            .filter(|token| token.kind == TokenKind::Ident)
+            .filter_map(|token| {
+                let (root_offset, span, variant_name) =
+                    dependency_variant_reference_at(source, token.span.start)?;
+                if span != token.span {
+                    return None;
+                }
+
+                let root_end = dependency_identifier_end(source, root_offset);
+                let root_name = source.get(root_offset..root_end)?;
+                let (_, target) = import_targets.get(root_name)?;
+                if target.kind != SymbolKind::Enum {
+                    return None;
+                }
+
+                let (dependency, symbol) =
+                    dependency_symbol_for_broken_source_target(package, target)?;
+                dependency.variant_for(symbol, &variant_name)?;
+                Some(SemanticTokenOccurrence {
+                    span,
+                    kind: SymbolKind::Variant,
+                })
+            }),
+    );
+
+    tokens
 }
 
 fn dependency_import_bindings_in_tokens(tokens: &[Token]) -> Vec<ImportBinding> {
