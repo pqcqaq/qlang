@@ -3229,7 +3229,15 @@ fn test_json_failure(failure: &TestFailure) -> JsonValue {
 
 fn test_path(path: &Path, command_options: &TestCommandOptions) -> Result<(), u8> {
     let build_options = test_build_options(command_options.profile);
-    let discovered_targets = discover_test_targets(path, &build_options, command_options)?;
+    let project_file_request = (!should_use_project_build(path))
+        .then(|| resolve_project_file_test_request(path))
+        .flatten();
+    let discovered_targets = discover_test_targets(
+        path,
+        &build_options,
+        command_options,
+        project_file_request.as_ref(),
+    )?;
     let discovered_total = discovered_targets.len();
 
     if discovered_targets.is_empty() {
@@ -3325,6 +3333,9 @@ fn test_path(path: &Path, command_options: &TestCommandOptions) -> Result<(), u8
 
     let execution_report = execute_test_targets(
         path,
+        project_file_request
+            .as_ref()
+            .map(|request| request.request_root_manifest_path.as_path()),
         &targets,
         command_options.json,
         &build_options,
@@ -3355,17 +3366,20 @@ fn discover_test_targets(
     path: &Path,
     options: &BuildOptions,
     command_options: &TestCommandOptions,
+    project_file_request: Option<&ProjectFileTestRequest>,
 ) -> Result<Vec<TestTarget>, u8> {
     if should_use_project_build(path) {
         discover_project_test_targets(
+            path,
             path,
             options,
             command_options.package_name.as_deref(),
             command_options.profile_overridden,
         )
-    } else if let Some(request) = resolve_project_file_test_request(path) {
+    } else if let Some(request) = project_file_request {
         let discovered = discover_project_test_targets(
-            &request.manifest_path,
+            path,
+            &request.request_root_manifest_path,
             options,
             command_options.package_name.as_deref(),
             command_options.profile_overridden,
@@ -3389,7 +3403,7 @@ fn discover_test_targets(
 
 #[derive(Clone, Debug)]
 struct ProjectFileTestRequest {
-    manifest_path: PathBuf,
+    request_root_manifest_path: PathBuf,
     display_path: String,
 }
 
@@ -3425,14 +3439,19 @@ fn direct_test_target(path: &Path, options: &BuildOptions) -> Result<TestTarget,
 }
 
 fn discover_project_test_targets(
-    path: &Path,
+    request_path: &Path,
+    project_path: &Path,
     options: &BuildOptions,
     package_name: Option<&str>,
     profile_overridden: bool,
 ) -> Result<Vec<TestTarget>, u8> {
-    let members = load_workspace_build_targets_for_command(path, "`ql test`")?;
-    let members = select_workspace_test_members(path, members, package_name)?;
-    let request_root = project_request_root(path);
+    let members = load_workspace_build_targets_for_command_from_request_root(
+        request_path,
+        project_path,
+        "`ql test`",
+    )?;
+    let members = select_workspace_test_members(request_path, members, package_name)?;
+    let request_root = project_request_root(project_path);
     let mut targets = Vec::new();
 
     for member in members {
@@ -3561,10 +3580,12 @@ fn resolve_project_file_test_request(path: &Path) -> Option<ProjectFileTestReque
         .to_path_buf();
     let tests_root = package_root.join("tests");
     path.strip_prefix(&tests_root).ok()?;
+    let request_root_manifest_path = resolve_project_member_request_root(&manifest_path);
+    let request_root = project_request_root(&request_root_manifest_path);
 
     Some(ProjectFileTestRequest {
-        manifest_path,
-        display_path: display_relative_to_root(&package_root, path),
+        request_root_manifest_path,
+        display_path: display_relative_to_root(&request_root, path),
     })
 }
 
@@ -3585,7 +3606,7 @@ fn resolve_project_source_build_target_request(
         return None;
     }
 
-    let request_root_manifest_path = resolve_project_source_request_root(&manifest.manifest_path);
+    let request_root_manifest_path = resolve_project_member_request_root(&manifest.manifest_path);
 
     Some(ProjectSourceBuildTargetRequest {
         request_root_manifest_path,
@@ -3596,7 +3617,7 @@ fn resolve_project_source_build_target_request(
     })
 }
 
-fn resolve_project_source_request_root(package_manifest_path: &Path) -> PathBuf {
+fn resolve_project_member_request_root(package_manifest_path: &Path) -> PathBuf {
     find_enclosing_workspace_manifest_for_member(package_manifest_path)
         .unwrap_or_else(|| package_manifest_path.to_path_buf())
 }
@@ -3715,6 +3736,7 @@ fn list_test_targets(targets: &[TestTarget]) {
 
 fn execute_test_targets(
     path: &Path,
+    project_request_root: Option<&Path>,
     targets: &[TestTarget],
     json: bool,
     options: &BuildOptions,
@@ -3723,7 +3745,12 @@ fn execute_test_targets(
     let manifest_paths = test_target_manifest_paths(targets);
     let workspace_members = if !manifest_paths.is_empty() {
         prepare_reference_interfaces_for_manifests(&manifest_paths, "`ql test`", false)?;
-        let workspace_members = load_workspace_build_targets_for_command(path, "`ql test`")?;
+        let request_root = project_request_root.unwrap_or(path);
+        let workspace_members = load_workspace_build_targets_for_command_from_request_root(
+            path,
+            request_root,
+            "`ql test`",
+        )?;
         let selected_members =
             select_project_build_plan_root_members(&workspace_members, &manifest_paths);
         prepare_project_dependency_builds(

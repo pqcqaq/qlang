@@ -9,7 +9,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - Phase 8 正在推进 package/workspace、`.qi`、本地依赖、project-aware `build/run/test` 和 dependency-backed LSP。
 - 当前跨包执行路径仍然很窄：只稳定支持 direct local dependency 的 public `extern "c"` 符号。
 - 当前 rename 仍以 same-file 为边界；cross-file rename / workspace edits 尚未开放。
-- `ql build` / `ql run` 现在既可从 package 根目录进入 project-aware 流程，也可直接从 package target 源码路径进入；workspace member 下的 `src/main.ql`、`src/lib.ql`、`src/bin/*.ql` 也会继承外层 workspace profile 和输出目录语义。
+- `ql build` / `ql run` 现在既可从 package 根目录进入 project-aware 流程，也可直接从 package target 源码路径进入；workspace member 下的 `src/main.ql`、`src/lib.ql`、`src/bin/*.ql` 会继承外层 workspace profile 和输出目录语义。`ql test` 直接执行 project `tests/*.ql` 文件时，也会保留 package/workspace-aware smoke 或 UI test 语义。
 
 ## 先看哪些文档
 
@@ -46,6 +46,7 @@ cargo run -p ql-cli -- run path/to/package/src/main.ql
 cargo run -p ql-cli -- build path/to/workspace/packages/app/src/main.ql --json
 cargo run -p ql-cli -- run path/to/workspace/packages/app/src/main.ql
 cargo run -p ql-cli -- test demo-workspace
+cargo run -p ql-cli -- test path/to/workspace/packages/app/tests/smoke.ql
 cargo run -p ql-cli -- test demo-workspace --target packages/app/tests/smoke.ql
 ```
 

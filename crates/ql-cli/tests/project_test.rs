@@ -315,6 +315,110 @@ name = "app"
 }
 
 #[test]
+fn test_workspace_member_file_uses_workspace_default_profile() {
+    if !toolchain_available("`ql test` workspace member file profile test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-workspace-member-file-profile");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create workspace package source tree for workspace member file profile test");
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+
+[profile]
+default = "release"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn helper() -> Int { return 1 }\n",
+    );
+    let smoke_path = temp.write(
+        "workspace/packages/app/tests/smoke.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+    temp.write(
+        "workspace/packages/app/tests/other.ql",
+        "fn main() -> Int { return 0 }\n",
+    );
+
+    let smoke_output = executable_output_path(
+        &project_root.join("packages/app/target/ql/release/tests"),
+        "smoke",
+    );
+    let other_output = executable_output_path(
+        &project_root.join("packages/app/target/ql/release/tests"),
+        "other",
+    );
+    let debug_smoke_output = executable_output_path(
+        &project_root.join("packages/app/target/ql/debug/tests"),
+        "smoke",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&smoke_path);
+    let output = run_command_capture(&mut command, "`ql test` workspace member file profile");
+    let (stdout, stderr) = expect_success(
+        "project-test-workspace-member-file-profile",
+        "workspace member file profile test",
+        &output,
+    )
+    .expect("workspace-member-file `ql test` should honor the outer workspace profile");
+    expect_empty_stderr(
+        "project-test-workspace-member-file-profile",
+        "workspace member file profile test",
+        &stderr,
+    )
+    .expect("workspace member file profile test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-workspace-member-file-profile",
+        &stdout.replace('\\', "/"),
+        &[
+            "test packages/app/tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("workspace member file profile test should run only the selected workspace test");
+    assert!(
+        !stdout
+            .replace('\\', "/")
+            .contains("packages/app/tests/other.ql"),
+        "workspace member file profile test should not run unselected tests: {stdout}"
+    );
+    expect_file_exists(
+        "project-test-workspace-member-file-profile",
+        &smoke_output,
+        "workspace member file smoke executable",
+        "workspace member file profile test",
+    )
+    .expect(
+        "workspace member file profile test should emit the selected smoke artifact under release",
+    );
+    assert!(
+        !other_output.exists(),
+        "workspace member file profile test should not emit unselected test artifacts"
+    );
+    assert!(
+        !debug_smoke_output.exists(),
+        "workspace member file profile test should not silently fall back to the debug profile"
+    );
+}
+
+#[test]
 fn test_package_path_lists_discovered_tests_without_running_them() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-test-list");
