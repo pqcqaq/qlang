@@ -88,6 +88,7 @@ pub struct DependencyHoverInfo {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DependencyDefinitionTarget {
     pub package_name: String,
+    pub manifest_path: PathBuf,
     pub source_path: String,
     pub kind: SymbolKind,
     pub name: String,
@@ -99,6 +100,7 @@ pub struct DependencyDefinitionTarget {
 pub struct DependencyResolvedTarget {
     pub import_span: Span,
     pub package_name: String,
+    pub manifest_path: PathBuf,
     pub source_path: String,
     pub kind: SymbolKind,
     pub name: String,
@@ -176,6 +178,7 @@ struct DependencyValueOccurrence {
     definition_span: Span,
     definition_rename: DependencyValueDefinitionRename,
     package_name: String,
+    manifest_path: PathBuf,
     source_path: String,
     struct_name: String,
     path: PathBuf,
@@ -272,6 +275,7 @@ impl DependencyInterface {
         let span = self.artifact_span_for(symbol)?;
         Some(DependencyDefinitionTarget {
             package_name: symbol.package_name.clone(),
+            manifest_path: self.manifest.manifest_path.clone(),
             source_path: symbol.source_path.clone(),
             kind: symbol.kind,
             name: symbol.name.clone(),
@@ -1040,6 +1044,7 @@ impl PackageAnalysis {
         let target = self.dependency_variant_target_at(analysis, source, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
+            manifest_path: target.manifest_path,
             source_path: target.source_path,
             kind: SymbolKind::Variant,
             name: target.name,
@@ -1056,6 +1061,7 @@ impl PackageAnalysis {
         let target = self.dependency_variant_target_in_source_at(source, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
+            manifest_path: target.manifest_path,
             source_path: target.source_path,
             kind: SymbolKind::Variant,
             name: target.name,
@@ -1222,6 +1228,7 @@ impl PackageAnalysis {
         let target = self.dependency_struct_field_target_at(analysis, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
+            manifest_path: target.manifest_path,
             source_path: target.source_path,
             kind: SymbolKind::Field,
             name: target.name,
@@ -1238,6 +1245,7 @@ impl PackageAnalysis {
         let target = self.dependency_method_target_at(analysis, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
+            manifest_path: target.manifest_path,
             source_path: target.source_path,
             kind: SymbolKind::Method,
             name: target.name,
@@ -1254,6 +1262,7 @@ impl PackageAnalysis {
         let target = self.dependency_method_target_in_source_at(source, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
+            manifest_path: target.manifest_path,
             source_path: target.source_path,
             kind: SymbolKind::Method,
             name: target.name,
@@ -1270,6 +1279,7 @@ impl PackageAnalysis {
         let target = self.dependency_struct_field_target_in_source_at(source, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
+            manifest_path: target.manifest_path,
             source_path: target.source_path,
             kind: SymbolKind::Field,
             name: target.name,
@@ -1482,6 +1492,7 @@ impl PackageAnalysis {
         let target = self.dependency_target_at(analysis, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
+            manifest_path: target.manifest_path,
             source_path: target.source_path,
             kind: target.kind,
             name: target.name,
@@ -1500,6 +1511,7 @@ impl PackageAnalysis {
         let definition_span = dependency.artifact_span_for(symbol)?;
         Some(DependencyDefinitionTarget {
             package_name: dependency.artifact.package_name.clone(),
+            manifest_path: dependency.manifest.manifest_path.clone(),
             source_path: symbol.source_path.clone(),
             kind: symbol.kind,
             name: symbol.name.clone(),
@@ -1532,6 +1544,7 @@ impl PackageAnalysis {
         let target = self.dependency_target_in_source_at(source, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
+            manifest_path: target.manifest_path,
             source_path: target.source_path,
             kind: target.kind,
             name: target.name,
@@ -1548,6 +1561,7 @@ impl PackageAnalysis {
         let target = self.dependency_type_target_in_source_at(source, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
+            manifest_path: target.manifest_path,
             source_path: target.source_path,
             kind: target.kind,
             name: target.name,
@@ -1564,6 +1578,7 @@ impl PackageAnalysis {
         let target = self.dependency_value_target_in_source_at(source, offset)?;
         Some(DependencyDefinitionTarget {
             package_name: target.package_name,
+            manifest_path: target.manifest_path,
             source_path: target.source_path,
             kind: SymbolKind::Struct,
             name: target.struct_name,
@@ -1609,6 +1624,7 @@ impl PackageAnalysis {
         let definition_span = dependency.artifact_span_for(symbol)?;
         Some(DependencyDefinitionTarget {
             package_name: dependency.artifact.package_name.clone(),
+            manifest_path: dependency.manifest.manifest_path.clone(),
             source_path: symbol.source_path.clone(),
             kind: SymbolKind::Enum,
             name: symbol.name.clone(),
@@ -1632,6 +1648,7 @@ impl PackageAnalysis {
         let definition_span = dependency.artifact_span_for(symbol)?;
         Some(DependencyDefinitionTarget {
             package_name: dependency.artifact.package_name.clone(),
+            manifest_path: dependency.manifest.manifest_path.clone(),
             source_path: symbol.source_path.clone(),
             kind: SymbolKind::Enum,
             name: symbol.name.clone(),
@@ -2309,6 +2326,7 @@ impl PackageAnalysis {
         Some(DependencyResolvedTarget {
             import_span,
             package_name: dependency.artifact.package_name.clone(),
+            manifest_path: dependency.manifest.manifest_path.clone(),
             source_path: symbol.source_path.clone(),
             kind: symbol.kind,
             name: symbol.name.clone(),
@@ -2331,6 +2349,7 @@ impl PackageAnalysis {
             return Some(DependencyResolvedTarget {
                 import_span: occurrence.span,
                 package_name: dependency.artifact.package_name.clone(),
+                manifest_path: dependency.manifest.manifest_path.clone(),
                 source_path: symbol.source_path.clone(),
                 kind: symbol.kind,
                 name: symbol.name.clone(),
@@ -2363,6 +2382,7 @@ impl PackageAnalysis {
             return Some(DependencyResolvedTarget {
                 import_span: occurrence.span,
                 package_name: dependency.artifact.package_name.clone(),
+                manifest_path: dependency.manifest.manifest_path.clone(),
                 source_path: symbol.source_path.clone(),
                 kind: symbol.kind,
                 name: symbol.name.clone(),
@@ -2420,6 +2440,7 @@ impl PackageAnalysis {
         Some(DependencyVariantTarget {
             reference_span,
             package_name: dependency.artifact.package_name.clone(),
+            manifest_path: dependency.manifest.manifest_path.clone(),
             source_path: symbol.source_path.clone(),
             enum_name: symbol.name.clone(),
             name: variant.name.clone(),
@@ -2447,6 +2468,7 @@ impl PackageAnalysis {
         Some(DependencyVariantTarget {
             reference_span,
             package_name: dependency.artifact.package_name.clone(),
+            manifest_path: dependency.manifest.manifest_path.clone(),
             source_path: symbol.source_path.clone(),
             enum_name: symbol.name.clone(),
             name: variant.name.clone(),
@@ -2499,6 +2521,7 @@ impl PackageAnalysis {
             .map(|occurrence| DependencyStructFieldTarget {
                 reference_span: occurrence.reference_span,
                 package_name: occurrence.package_name,
+                manifest_path: occurrence.manifest_path,
                 source_path: occurrence.source_path,
                 struct_name: occurrence.struct_name,
                 name: occurrence.name,
@@ -2519,6 +2542,7 @@ impl PackageAnalysis {
             .map(|occurrence| DependencyMethodTarget {
                 reference_span: occurrence.reference_span,
                 package_name: occurrence.package_name,
+                manifest_path: occurrence.manifest_path,
                 source_path: occurrence.source_path,
                 struct_name: occurrence.struct_name,
                 name: occurrence.name,
@@ -2543,6 +2567,7 @@ impl PackageAnalysis {
             .map(|occurrence| DependencyStructFieldTarget {
                 reference_span: occurrence.reference_span,
                 package_name: occurrence.package_name,
+                manifest_path: occurrence.manifest_path,
                 source_path: occurrence.source_path,
                 struct_name: occurrence.struct_name,
                 name: occurrence.name,
@@ -2567,6 +2592,7 @@ impl PackageAnalysis {
             .map(|occurrence| DependencyMethodTarget {
                 reference_span: occurrence.reference_span,
                 package_name: occurrence.package_name,
+                manifest_path: occurrence.manifest_path,
                 source_path: occurrence.source_path,
                 struct_name: occurrence.struct_name,
                 name: occurrence.name,
@@ -2597,6 +2623,7 @@ impl PackageAnalysis {
         Some(DependencyValueTarget {
             reference_span: Span::new(offset, offset),
             package_name: binding.package_name,
+            manifest_path: binding.manifest_path,
             source_path: binding.source_path,
             struct_name: binding.struct_name,
             detail: binding.detail,
@@ -2650,6 +2677,7 @@ impl PackageAnalysis {
 struct DependencyVariantTarget {
     reference_span: Span,
     package_name: String,
+    manifest_path: PathBuf,
     source_path: String,
     enum_name: String,
     name: String,
@@ -2662,6 +2690,7 @@ struct DependencyVariantTarget {
 struct DependencyStructFieldOccurrence {
     reference_span: Span,
     package_name: String,
+    manifest_path: PathBuf,
     source_path: String,
     struct_name: String,
     name: String,
@@ -2689,6 +2718,7 @@ enum DependencyValueDefinitionRename {
 struct DependencyMethodOccurrence {
     reference_span: Span,
     package_name: String,
+    manifest_path: PathBuf,
     source_path: String,
     struct_name: String,
     name: String,
@@ -2707,6 +2737,7 @@ struct DependencyStructFieldCompletionSite {
 struct DependencyStructFieldTarget {
     reference_span: Span,
     package_name: String,
+    manifest_path: PathBuf,
     source_path: String,
     struct_name: String,
     name: String,
@@ -2719,6 +2750,7 @@ struct DependencyStructFieldTarget {
 struct DependencyMethodTarget {
     reference_span: Span,
     package_name: String,
+    manifest_path: PathBuf,
     source_path: String,
     struct_name: String,
     name: String,
@@ -2731,6 +2763,7 @@ struct DependencyMethodTarget {
 struct DependencyValueTarget {
     reference_span: Span,
     package_name: String,
+    manifest_path: PathBuf,
     source_path: String,
     struct_name: String,
     detail: String,
@@ -2741,6 +2774,7 @@ struct DependencyValueTarget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DependencyStructBinding {
     package_name: String,
+    manifest_path: PathBuf,
     source_path: String,
     struct_name: String,
     detail: String,
@@ -2785,6 +2819,7 @@ fn dependency_value_target_for_occurrence(
         package,
         &DependencyDefinitionTarget {
             package_name: occurrence.package_name.clone(),
+            manifest_path: occurrence.manifest_path.clone(),
             source_path: occurrence.source_path.clone(),
             kind: SymbolKind::Struct,
             name: occurrence.struct_name.clone(),
@@ -2795,6 +2830,7 @@ fn dependency_value_target_for_occurrence(
     Some(DependencyValueTarget {
         reference_span: occurrence.reference_span,
         package_name: occurrence.package_name.clone(),
+        manifest_path: occurrence.manifest_path.clone(),
         source_path: occurrence.source_path.clone(),
         struct_name: occurrence.struct_name.clone(),
         detail: binding.detail,
@@ -4057,6 +4093,7 @@ fn dependency_value_occurrences_in_broken_source(
                 definition_span: binding.definition_span,
                 definition_rename: binding.definition_rename.clone(),
                 package_name: binding.dependency.package_name.clone(),
+                manifest_path: binding.dependency.manifest_path.clone(),
                 source_path: binding.dependency.source_path.clone(),
                 struct_name: binding.dependency.struct_name.clone(),
                 path: binding.dependency.path.clone(),
@@ -4841,6 +4878,7 @@ fn dependency_struct_import_bindings_in_tokens(
                 package,
                 &DependencyDefinitionTarget {
                     package_name: target.package_name,
+                    manifest_path: target.manifest_path,
                     source_path: target.source_path,
                     kind: target.kind,
                     name: target.name,
@@ -4954,6 +4992,7 @@ fn dependency_member_receiver_binding_in_broken_source(
                 package,
                 &DependencyDefinitionTarget {
                     package_name: target.package_name,
+                    manifest_path: target.manifest_path,
                     source_path: target.source_path,
                     kind: SymbolKind::Struct,
                     name: target.struct_name,
@@ -4993,6 +5032,7 @@ fn dependency_struct_field_target_in_broken_source(
     Some(DependencyStructFieldTarget {
         reference_span: site.member_span,
         package_name: binding.package_name,
+        manifest_path: binding.manifest_path,
         source_path: binding.source_path,
         struct_name: binding.struct_name,
         name: field.name.clone(),
@@ -5016,6 +5056,7 @@ fn dependency_method_target_in_broken_source(
     Some(DependencyMethodTarget {
         reference_span: site.member_span,
         package_name: binding.package_name,
+        manifest_path: binding.manifest_path,
         source_path: method.source_path.clone(),
         struct_name: binding.struct_name,
         name: method.name.clone(),
@@ -5052,6 +5093,7 @@ fn dependency_resolved_import_targets_in_tokens(
                         DependencyResolvedTarget {
                             import_span,
                             package_name: dependency.artifact.package_name.clone(),
+                            manifest_path: dependency.manifest.manifest_path.clone(),
                             source_path: symbol.source_path.clone(),
                             kind: symbol.kind,
                             name: symbol.name.clone(),
@@ -9581,6 +9623,7 @@ fn push_dependency_struct_field_occurrence_for_path(
     occurrences.push(DependencyStructFieldOccurrence {
         reference_span: field_span,
         package_name: dependency.artifact.package_name.clone(),
+        manifest_path: dependency.manifest.manifest_path.clone(),
         source_path: symbol.source_path.clone(),
         struct_name: symbol.name.clone(),
         name: field.name.clone(),
@@ -9636,6 +9679,7 @@ fn dependency_struct_binding_for_symbol(
 
     Some(DependencyStructBinding {
         package_name: dependency.artifact.package_name.clone(),
+        manifest_path: dependency.manifest.manifest_path.clone(),
         source_path: symbol.source_path.clone(),
         struct_name: symbol.name.clone(),
         detail: symbol.detail.clone(),
@@ -10884,6 +10928,7 @@ fn push_dependency_value_occurrence(
         definition_span: binding.definition_span,
         definition_rename: binding.definition_rename.clone(),
         package_name: binding.dependency.package_name.clone(),
+        manifest_path: binding.dependency.manifest_path.clone(),
         source_path: binding.dependency.source_path.clone(),
         struct_name: binding.dependency.struct_name.clone(),
         path: binding.dependency.path.clone(),
@@ -11230,6 +11275,7 @@ fn push_dependency_struct_field_occurrence_for_binding(
     occurrences.push(DependencyStructFieldOccurrence {
         reference_span: field_span,
         package_name: binding.package_name.clone(),
+        manifest_path: binding.manifest_path.clone(),
         source_path: binding.source_path.clone(),
         struct_name: binding.struct_name.clone(),
         name: field.name.clone(),
@@ -11251,6 +11297,7 @@ fn push_dependency_method_occurrence_for_binding(
     occurrences.push(DependencyMethodOccurrence {
         reference_span: method_span,
         package_name: binding.package_name.clone(),
+        manifest_path: binding.manifest_path.clone(),
         source_path: method.source_path.clone(),
         struct_name: binding.struct_name.clone(),
         name: method.name.clone(),

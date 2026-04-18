@@ -1831,6 +1831,12 @@ fn extend_workspace_dependency_definition_matches(
         return;
     }
 
+    if canonicalize_or_clone(&package.manifest().manifest_path)
+        != canonicalize_or_clone(&target.manifest_path)
+    {
+        return;
+    }
+
     for module in package.modules() {
         let module_path = module.path();
         if !package_module_matches_dependency_source_path(package, module_path, &target.source_path)
@@ -1958,6 +1964,7 @@ fn same_dependency_definition_target(
     rhs: &DependencyDefinitionTarget,
 ) -> bool {
     lhs.package_name == rhs.package_name
+        && canonicalize_or_clone(&lhs.manifest_path) == canonicalize_or_clone(&rhs.manifest_path)
         && lhs.source_path == rhs.source_path
         && lhs.kind == rhs.kind
         && lhs.name == rhs.name
@@ -10817,6 +10824,244 @@ pub fn exported(value: Int) -> Int
                 ),
             );
         }
+    }
+
+    #[test]
+    fn same_named_local_dependency_queries_prefer_matching_dependency_source() {
+        let temp = TempDir::new("ql-lsp-same-named-local-dependency-source-queries");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.Config as Cfg
+use demo.shared.alpha.exported as run
+
+pub fn main(config: Cfg) -> Int {
+    return run(config.value)
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.shared.beta.Config as OtherCfg
+use demo.shared.beta.exported as call
+
+pub fn task(config: OtherCfg) -> Int {
+    return call(config.value)
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        let beta_source_path = temp.write(
+            "workspace/vendor/beta/src/lib.ql",
+            r#"
+package demo.shared.beta
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let alpha_source =
+            fs::read_to_string(&alpha_source_path).expect("alpha source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+        let definition = workspace_source_definition_for_dependency(
+            &uri,
+            &source,
+            Some(&analysis),
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        )
+        .expect("same-named local dependency definition should exist");
+        let GotoDefinitionResponse::Scalar(definition_location) = definition else {
+            panic!("same-named local dependency definition should resolve to one location")
+        };
+        assert_eq!(
+            definition_location
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            alpha_source_path
+                .canonicalize()
+                .expect("alpha source path should canonicalize"),
+        );
+        assert_eq!(
+            definition_location.range.start,
+            offset_to_position(&alpha_source, nth_offset(&alpha_source, "exported", 1)),
+        );
+
+        let type_definition = workspace_source_type_definition_for_dependency(
+            &uri,
+            &source,
+            Some(&analysis),
+            &package,
+            offset_to_position(&source, nth_offset(&source, "Cfg", 2)),
+        )
+        .expect("same-named local dependency type definition should exist");
+        let GotoTypeDefinitionResponse::Scalar(type_location) = type_definition else {
+            panic!("same-named local dependency type definition should resolve to one location")
+        };
+        assert_eq!(
+            type_location
+                .uri
+                .to_file_path()
+                .expect("type definition URI should convert to a file path")
+                .canonicalize()
+                .expect("type definition path should canonicalize"),
+            alpha_source_path
+                .canonicalize()
+                .expect("alpha source path should canonicalize"),
+        );
+        assert_eq!(
+            type_location.range.start,
+            offset_to_position(&alpha_source, nth_offset(&alpha_source, "Config", 1)),
+        );
+
+        let references = workspace_source_references_for_dependency(
+            &uri,
+            &source,
+            Some(&analysis),
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            true,
+        )
+        .expect("same-named local dependency references should exist");
+
+        assert_eq!(references.len(), 3);
+        assert_eq!(
+            references[0]
+                .uri
+                .to_file_path()
+                .expect("reference URI should convert to a file path")
+                .canonicalize()
+                .expect("reference path should canonicalize"),
+            alpha_source_path
+                .canonicalize()
+                .expect("alpha source path should canonicalize"),
+        );
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&alpha_source, nth_offset(&alpha_source, "exported", 1)),
+        );
+        assert_eq!(references[1].uri, uri);
+        assert_eq!(
+            references[1].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 1)),
+        );
+        assert_eq!(references[2].uri, uri);
+        assert_eq!(
+            references[2].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        );
+        assert!(
+            references.iter().all(|reference| reference.uri != task_uri),
+            "references should not include same-named sibling dependency uses",
+        );
+        assert!(
+            references.iter().all(|reference| {
+                reference
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.canonicalize().ok())
+                    != beta_source_path.canonicalize().ok()
+            }),
+            "references should not include beta dependency source",
+        );
     }
 
     #[test]

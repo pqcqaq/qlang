@@ -55,7 +55,8 @@
   - import root / dependency value / enum variant / struct field / method member 的 hover / definition / declaration / references / typeDefinition
   - source-preferred navigation：对 workspace members 和 workspace 外本地路径依赖，能唯一回溯到源码时优先跳源码而不是 `.qi`
   - package-aware semantic tokens
-- `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时会优先返回源码里的 value / method / trait / extend symbols；源码不可用时仍回退到 `.qi`。这条行为现在也覆盖 `workspace_roots` / 无打开文档入口；同名本地依赖按 manifest 身份区分，不会再因为 source-preferred 排除而误丢另一个依赖的 `.qi` 符号。
+- source-preferred dependency navigation 现在按 manifest 身份区分同名本地依赖；definition / typeDefinition / references / `workspace/symbol` 不会再串到另一个依赖实例。
+- `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时会优先返回源码里的 value / method / trait / extend symbols；源码不可用时仍回退到 `.qi`。这条行为现在也覆盖 `workspace_roots` / 无打开文档入口；同名本地依赖也不会再因为 source-preferred 排除而误丢另一个依赖的 `.qi` 符号。
 - broken-source / parse-error 下，当前只保留保守子集，不等于完整恢复；workspace 外本地路径依赖的 import references fallback 已覆盖到源码优先路径。
 - current-document rename 在 parse-error 下也保留了一批保守合同；当前已锁住的窄 slice 包括 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field。
 - rename 仍然只做 same-file；cross-file rename / workspace edits 尚未开放。
