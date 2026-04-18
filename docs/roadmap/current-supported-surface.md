@@ -57,7 +57,7 @@
   - package-aware semantic tokens
 - source-preferred dependency navigation 现在按 manifest 身份区分同名本地依赖；definition / typeDefinition / references / `workspace/symbol` 不会再串到另一个依赖实例。
 - `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时会优先返回源码里的 value / method / trait / extend symbols；源码不可用时仍回退到 `.qi`。这条行为现在也覆盖 `workspace_roots` / 无打开文档入口；同名本地依赖也不会再因为 source-preferred 排除而误丢另一个依赖的 `.qi` 符号。
-- broken-source / parse-error 下，当前只保留保守子集，不等于完整恢复；workspace 外本地路径依赖的 import references fallback、direct imported-result member hover / completion / query（如 `build().ping()` / `build().value`）、dependency struct field label completion、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight`、dependency value/member semantic tokens fallback 都会继续走源码优先路径；同名本地依赖按 manifest 身份区分，不会串到兄弟依赖实例。
+- broken-source / parse-error 下，当前只保留保守子集，不等于完整恢复；workspace 外本地路径依赖的 import references fallback、direct imported-result member hover / completion / query / `documentHighlight`（如 `build().ping()` / `build().value`）、dependency struct field label completion、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight`、dependency value/member semantic tokens fallback 都会继续走源码优先路径；同名本地依赖按 manifest 身份区分，不会串到兄弟依赖实例。
 - current-document rename 在 parse-error 下也保留了一批保守合同；当前已锁住的窄 slice 包括 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field。
 - rename 仍然只做 same-file；cross-file rename / workspace edits 尚未开放。
 
