@@ -2799,6 +2799,89 @@ packages = ["../dep"]
 }
 
 #[test]
+fn package_bridge_completes_dependency_value_root_members_in_parse_error_source() {
+    let temp = TempDir::new("ql-lsp-package-value-root-member-completion-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config
+    return current.va + current.ge(
+"#;
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    assert!(analyze_source(source).is_err());
+
+    let Some(CompletionResponse::Array(field_items)) = completion_for_dependency_member_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".va", 1) + ".va".len()),
+    ) else {
+        panic!("dependency value-root field completion should exist in parse-error source");
+    };
+    assert_eq!(field_items.len(), 1);
+    assert_eq!(field_items[0].label, "value");
+    assert_eq!(field_items[0].kind, Some(CompletionItemKind::FIELD));
+    assert_eq!(field_items[0].detail.as_deref(), Some("field value: Int"));
+
+    let Some(CompletionResponse::Array(method_items)) = completion_for_dependency_methods(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, ".ge", 1) + ".ge".len()),
+    ) else {
+        panic!("dependency value-root method completion should exist in parse-error source");
+    };
+    assert_eq!(method_items.len(), 1);
+    assert_eq!(method_items[0].label, "get");
+    assert_eq!(method_items[0].kind, Some(CompletionItemKind::FUNCTION));
+    assert_eq!(
+        method_items[0].detail.as_deref(),
+        Some("fn get(self) -> Int")
+    );
+}
+
+#[test]
 fn package_bridge_completes_dependency_struct_member_fields_for_closure_parameters() {
     let temp = TempDir::new("ql-lsp-package-struct-member-field-closure-param");
     let app_root = temp.path().join("workspace").join("app");

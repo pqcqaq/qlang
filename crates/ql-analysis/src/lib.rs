@@ -887,14 +887,21 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<Vec<CompletionItem>> {
-        let module = parse_source(source).ok()?;
-        let binding = dependency_member_completion_binding(
-            self,
-            &module,
-            source,
-            offset,
-            DependencyMemberCompletionKind::Method,
-        )?;
+        let binding = match parse_source(source) {
+            Ok(module) => dependency_member_completion_binding(
+                self,
+                &module,
+                source,
+                offset,
+                DependencyMemberCompletionKind::Method,
+            ),
+            Err(_) => dependency_member_completion_binding_in_broken_source(
+                self,
+                source,
+                offset,
+                DependencyMemberCompletionKind::Method,
+            ),
+        }?;
         let mut items = binding
             .methods
             .values()
@@ -922,14 +929,21 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<Vec<CompletionItem>> {
-        let module = parse_source(source).ok()?;
-        let binding = dependency_member_completion_binding(
-            self,
-            &module,
-            source,
-            offset,
-            DependencyMemberCompletionKind::Field,
-        )?;
+        let binding = match parse_source(source) {
+            Ok(module) => dependency_member_completion_binding(
+                self,
+                &module,
+                source,
+                offset,
+                DependencyMemberCompletionKind::Field,
+            ),
+            Err(_) => dependency_member_completion_binding_in_broken_source(
+                self,
+                source,
+                offset,
+                DependencyMemberCompletionKind::Field,
+            ),
+        }?;
         let mut items = binding
             .fields
             .values()
@@ -4725,6 +4739,74 @@ fn dependency_member_completion_binding(
         }
     }
     None
+}
+
+fn dependency_member_completion_binding_in_broken_source(
+    package: &PackageAnalysis,
+    source: &str,
+    offset: usize,
+    kind: DependencyMemberCompletionKind,
+) -> Option<DependencyStructBinding> {
+    let (root_span, member_span, member_name) =
+        dependency_member_completion_site_in_broken_source(source, offset)?;
+    let occurrence = dependency_value_occurrences_in_broken_source(package, source)
+        .into_iter()
+        .find(|occurrence| occurrence.reference_span == root_span)?;
+    let target = dependency_value_target_for_occurrence(package, &occurrence)?;
+    let binding = dependency_struct_binding_for_definition_target(
+        package,
+        &DependencyDefinitionTarget {
+            package_name: target.package_name,
+            source_path: target.source_path,
+            kind: SymbolKind::Struct,
+            name: target.struct_name,
+            path: target.path,
+            span: target.definition_span,
+        },
+    )?;
+    dependency_member_completion_binding_matches(
+        &binding,
+        source,
+        &member_name,
+        member_span,
+        offset,
+        kind,
+    )
+    .then_some(binding)
+}
+
+fn dependency_member_completion_site_in_broken_source(
+    source: &str,
+    offset: usize,
+) -> Option<(Span, Span, String)> {
+    let (tokens, _) = lex(source);
+    let (member_index, member_token) = tokens.iter().enumerate().find(|(_, token)| {
+        token.kind == TokenKind::Ident
+            && dependency_struct_field_completion_span_contains(token.span, offset)
+    })?;
+    if tokens
+        .get(member_index.checked_sub(1)?)
+        .map(|token| token.kind)
+        != Some(TokenKind::Dot)
+    {
+        return None;
+    }
+
+    let root_token = tokens.get(member_index.checked_sub(2)?)?;
+    if root_token.kind != TokenKind::Ident {
+        return None;
+    }
+    if member_index >= 3
+        && tokens.get(member_index - 3).map(|token| token.kind) == Some(TokenKind::Dot)
+    {
+        return None;
+    }
+
+    Some((
+        root_token.span,
+        member_token.span,
+        member_token.text.clone(),
+    ))
 }
 
 fn dependency_member_completion_binding_in_function(
