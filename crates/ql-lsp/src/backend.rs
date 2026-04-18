@@ -1725,21 +1725,35 @@ fn extend_workspace_dependency_reference_locations(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
     target: &DependencyDefinitionTarget,
+    include_declaration: bool,
     locations: &mut Vec<Location>,
 ) {
-    for module in package.modules() {
+    let Ok(source_paths) = collect_package_sources(package.manifest()) else {
+        return;
+    };
+
+    for source_path in source_paths {
         if current_path
-            .is_some_and(|path| canonicalize_or_clone(path) == canonicalize_or_clone(module.path()))
+            .is_some_and(|path| canonicalize_or_clone(path) == canonicalize_or_clone(&source_path))
         {
             continue;
         }
-        let Ok(source) = fs::read_to_string(module.path()) else {
+        let Ok(source) = fs::read_to_string(&source_path) else {
             continue;
         };
         let source = source.replace("\r\n", "\n");
-        let Ok(uri) = Url::from_file_path(module.path()) else {
+        let Ok(uri) = Url::from_file_path(&source_path) else {
             continue;
         };
+        let owned_analysis = package
+            .modules()
+            .iter()
+            .find(|module| {
+                canonicalize_or_clone(module.path()) == canonicalize_or_clone(&source_path)
+            })
+            .map(|module| module.analysis().clone())
+            .or_else(|| analyze_source(&source).ok());
+        let analysis = owned_analysis.as_ref();
         let mut module_locations = lex(&source)
             .0
             .iter()
@@ -1747,12 +1761,14 @@ fn extend_workspace_dependency_reference_locations(
             .filter_map(|token| {
                 let position = span_to_range(&source, token.span).start;
                 let occurrence_span = dependency_occurrence_span_at(&source, package, position)?;
-                let occurrence_target = dependency_definition_target_at(
-                    &source,
-                    Some(module.analysis()),
-                    package,
-                    position,
-                )?;
+                if !include_declaration
+                    && dependency_reference_is_definition_at(&source, analysis, package, position)
+                        == Some(true)
+                {
+                    return None;
+                }
+                let occurrence_target =
+                    dependency_definition_target_at(&source, analysis, package, position)?;
                 (occurrence_span == token.span
                     && same_dependency_definition_target(&occurrence_target, target))
                 .then(|| Location::new(uri.clone(), span_to_range(&source, occurrence_span)))
@@ -1775,9 +1791,16 @@ fn workspace_dependency_reference_locations(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
     target: &DependencyDefinitionTarget,
+    include_declaration: bool,
 ) -> Vec<Location> {
     let mut locations = Vec::new();
-    extend_workspace_dependency_reference_locations(package, current_path, target, &mut locations);
+    extend_workspace_dependency_reference_locations(
+        package,
+        current_path,
+        target,
+        include_declaration,
+        &mut locations,
+    );
     for member_manifest_path in
         workspace_member_manifest_paths_for_package(package.manifest().manifest_path.as_path())
     {
@@ -1788,6 +1811,7 @@ fn workspace_dependency_reference_locations(
             &member_package,
             None,
             target,
+            include_declaration,
             &mut locations,
         );
     }
@@ -2284,6 +2308,51 @@ fn occurrence_matches_definition_target(
     })
 }
 
+fn dependency_reference_is_definition_at(
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<bool> {
+    let offset = position_to_offset(source, position)?;
+    let reference_at = |references: Vec<ql_analysis::ReferenceTarget>| {
+        references
+            .into_iter()
+            .find(|reference| reference.span.contains(offset))
+            .map(|reference| reference.is_definition)
+    };
+
+    if let Some(analysis) = analysis {
+        if let Some(is_definition) = package
+            .dependency_method_references_at(analysis, offset)
+            .and_then(reference_at)
+        {
+            return Some(is_definition);
+        }
+        if let Some(is_definition) = package
+            .dependency_struct_field_references_at(analysis, offset)
+            .and_then(reference_at)
+        {
+            return Some(is_definition);
+        }
+        if let Some(is_definition) = package
+            .dependency_variant_references_at(analysis, source, offset)
+            .and_then(reference_at)
+        {
+            return Some(is_definition);
+        }
+    }
+
+    package
+        .dependency_value_references_in_source_at(source, offset)
+        .and_then(reference_at)
+        .or_else(|| {
+            package
+                .dependency_references_in_source_at(source, offset)
+                .and_then(reference_at)
+        })
+}
+
 fn ranges_overlap(lhs: tower_lsp::lsp_types::Range, rhs: tower_lsp::lsp_types::Range) -> bool {
     position_leq(lhs.start, rhs.end) && position_leq(rhs.start, lhs.end)
 }
@@ -2364,10 +2433,32 @@ fn workspace_source_references_for_dependency(
     let current_path = uri.to_file_path().ok();
     merge_unique_reference_locations(
         &mut locations,
-        workspace_dependency_reference_locations(package, current_path.as_deref(), &target),
+        workspace_dependency_reference_locations(
+            package,
+            current_path.as_deref(),
+            &target,
+            include_declaration,
+        ),
     );
 
     Some(locations)
+}
+
+fn workspace_source_references_for_dependency_in_broken_source(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    workspace_source_references_for_dependency(
+        uri,
+        source,
+        None,
+        package,
+        position,
+        include_declaration,
+    )
 }
 
 fn document_highlights_from_locations(
@@ -2799,16 +2890,30 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(references));
             }
-
-            if let Some(references) = workspace_source_references_for_dependency(
-                &uri,
-                &source,
-                analysis.as_ref(),
-                &package,
-                position,
-                params.context.include_declaration,
-            ) {
+            if analysis.is_none()
+                && let Some(references) =
+                    workspace_source_references_for_dependency_in_broken_source(
+                        &uri,
+                        &source,
+                        &package,
+                        position,
+                        params.context.include_declaration,
+                    )
+            {
                 return Ok(Some(references));
+            }
+
+            if let Some(analysis) = analysis.as_ref() {
+                if let Some(references) = workspace_source_references_for_dependency(
+                    &uri,
+                    &source,
+                    Some(analysis),
+                    &package,
+                    position,
+                    params.context.include_declaration,
+                ) {
+                    return Ok(Some(references));
+                }
             }
 
             return Ok(dependency_references_for_position(
@@ -3067,7 +3172,9 @@ mod tests {
         workspace_source_definition_for_import,
         workspace_source_definition_for_import_in_broken_source, workspace_source_hover_for_import,
         workspace_source_hover_for_import_in_broken_source,
-        workspace_source_references_for_dependency, workspace_source_references_for_import,
+        workspace_source_references_for_dependency,
+        workspace_source_references_for_dependency_in_broken_source,
+        workspace_source_references_for_import,
         workspace_source_references_for_import_in_broken_source,
         workspace_source_type_definition_for_dependency,
         workspace_source_type_definition_for_import,
@@ -3734,10 +3841,6 @@ package demo.dep
 
 pub fn exported(value: Int) -> Int {
     return value
-}
-
-pub fn wrapper(value: Int) -> Int {
-    return exported(value)
 }
 "#,
         );
@@ -6706,6 +6809,10 @@ package demo.core
 pub fn exported(value: Int) -> Int {
     return value
 }
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
 "#,
         );
         temp.write(
@@ -8509,6 +8616,271 @@ impl Config {
                         == offset_to_position(&task_source, nth_offset(&task_source, "ping", 1))
             }),
             "references should include other workspace file method use",
+        );
+    }
+
+    #[test]
+    fn workspace_dependency_value_references_survive_parse_errors_and_prefer_workspace_member_source()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-source-references-parse-errors");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main(value: Int) -> Int {
+    let result = run(value)
+    return result
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as call
+
+pub fn task(value: Int) -> Int {
+    return call(value)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let references = workspace_source_references_for_dependency_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            true,
+        )
+        .expect("broken-source workspace dependency value references should exist");
+
+        assert_eq!(references.len(), 5);
+        assert_eq!(
+            references[0]
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 1)),
+        );
+        assert_eq!(references[1].uri, uri);
+        assert_eq!(
+            references[1].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 1)),
+        );
+        assert_eq!(references[2].uri, uri);
+        assert_eq!(
+            references[2].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == task_uri
+                    && reference.range.start
+                        == offset_to_position(&task_source, nth_offset(&task_source, "call", 1))
+            }),
+            "run should include task alias definition",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == task_uri
+                    && reference.range.start
+                        == offset_to_position(&task_source, nth_offset(&task_source, "call", 2))
+            }),
+            "run should include task call occurrence",
+        );
+    }
+
+    #[test]
+    fn workspace_dependency_value_references_without_declaration_survive_parse_errors() {
+        let temp =
+            TempDir::new("ql-lsp-workspace-dependency-source-references-parse-errors-no-decl");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main(value: Int) -> Int {
+    return run(value
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as call
+
+pub fn task(value: Int) -> Int {
+    return call(value)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+        let references = workspace_source_references_for_dependency_in_broken_source(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            false,
+        )
+        .expect(
+            "broken-source workspace dependency value references without declaration should exist",
+        );
+
+        assert_eq!(references.len(), 3);
+        assert_eq!(references[0].uri, uri);
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.canonicalize().ok())
+                    == core_source_path.canonicalize().ok()
+                    && reference.range.start
+                        == offset_to_position(&core_source, nth_offset(&core_source, "exported", 2))
+            }),
+            "references should include workspace source occurrence",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == task_uri
+                    && reference.range.start
+                        == offset_to_position(&task_source, nth_offset(&task_source, "call", 2))
+            }),
+            "references should include other workspace file occurrence",
         );
     }
 
