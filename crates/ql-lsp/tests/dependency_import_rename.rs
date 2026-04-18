@@ -711,6 +711,118 @@ pub fn read(flag: Bool) -> Int {
 }
 
 #[test]
+fn dependency_local_method_result_value_root_rename_bridge_survives_parse_errors() {
+    let temp = TempDir::new("ql-lsp-dependency-local-method-result-value-root-rename");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config.child()?
+    return current.value + current.value + current.ge(
+"#;
+    let app_source = temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+    let use_offset = nth_offset(source, "current", 2);
+    let use_position = offset_to_position(source, use_offset);
+
+    assert_eq!(
+        prepare_rename_for_dependency_imports(source, &package, use_position),
+        Some(PrepareRenameResponse::RangeWithPlaceholder {
+            range: span_to_range(source, Span::new(use_offset, use_offset + "current".len()),),
+            placeholder: "current".to_owned(),
+        })
+    );
+
+    let uri = Url::from_file_path(&app_source).expect("source path should convert to file uri");
+    let edit = rename_for_dependency_imports(&uri, source, &package, use_position, "selected")
+        .expect("rename should validate")
+        .expect("broken-source dependency local method-result rename should produce edits");
+    assert_workspace_edit(
+        edit,
+        &uri,
+        source,
+        &[
+            (
+                Span::new(
+                    nth_offset(source, "current", 1),
+                    nth_offset(source, "current", 1) + "current".len(),
+                ),
+                "selected",
+            ),
+            (
+                Span::new(
+                    nth_offset(source, "current", 2),
+                    nth_offset(source, "current", 2) + "current".len(),
+                ),
+                "selected",
+            ),
+            (
+                Span::new(
+                    nth_offset(source, "current", 3),
+                    nth_offset(source, "current", 3) + "current".len(),
+                ),
+                "selected",
+            ),
+            (
+                Span::new(
+                    nth_offset(source, "current", 4),
+                    nth_offset(source, "current", 4) + "current".len(),
+                ),
+                "selected",
+            ),
+        ],
+    );
+}
+
+#[test]
 fn dependency_destructured_value_root_rename_rewrites_shorthand_definitions() {
     let temp = TempDir::new("ql-lsp-dependency-destructured-value-root-rename");
     let app_root = temp.path().join("workspace").join("app");

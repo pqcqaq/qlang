@@ -570,6 +570,116 @@ pub fn read(flag: Bool) -> Int {
 }
 
 #[test]
+fn package_analysis_preserves_dependency_local_method_result_value_root_rename_in_broken_source() {
+    let temp = TempDir::new("ql-analysis-package-local-method-result-value-root-rename");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config.child()?
+    return current.value + current.value + current.ge(
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+    let use_position = nth_offset(source, "current", 2);
+
+    assert_eq!(
+        package.dependency_prepare_rename_in_source_at(source, use_position),
+        Some(RenameTarget {
+            kind: SymbolKind::Local,
+            name: "current".to_owned(),
+            span: Span::new(use_position, use_position + "current".len()),
+        })
+    );
+    assert_eq!(
+        package.dependency_rename_in_source_at(source, use_position, "selected"),
+        Ok(Some(RenameResult {
+            kind: SymbolKind::Local,
+            old_name: "current".to_owned(),
+            new_name: "selected".to_owned(),
+            edits: vec![
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "current", 1),
+                        nth_offset(source, "current", 1) + "current".len(),
+                    ),
+                    replacement: "selected".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "current", 2),
+                        nth_offset(source, "current", 2) + "current".len(),
+                    ),
+                    replacement: "selected".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "current", 3),
+                        nth_offset(source, "current", 3) + "current".len(),
+                    ),
+                    replacement: "selected".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "current", 4),
+                        nth_offset(source, "current", 4) + "current".len(),
+                    ),
+                    replacement: "selected".to_owned(),
+                },
+            ],
+        }))
+    );
+}
+
+#[test]
 fn package_analysis_rewrites_dependency_destructured_local_rename_definitions() {
     let temp = TempDir::new("ql-analysis-package-destructured-value-root-rename");
     let app_root = temp.path().join("workspace").join("app");
