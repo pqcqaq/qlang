@@ -11804,6 +11804,161 @@ pub enum Command {
     }
 
     #[test]
+    fn same_named_local_dependency_broken_source_variant_prepare_rename_and_rename_prefer_matching_dependency_source()
+     {
+        let temp = TempDir::new("ql-lsp-same-named-local-dependency-broken-source-variant-rename");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.Command as Cmd
+use demo.shared.beta.Command as OtherCmd
+
+pub fn main() -> Int {
+    let first = Cmd.Retry(1)
+    let second = Cmd.Retry(2)
+    let third = OtherCmd.Retry(
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/src/lib.ql",
+            r#"
+package demo.shared.beta
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let use_offset = nth_offset(&source, "Retry", 2);
+
+        assert_eq!(
+            prepare_rename_for_dependency_imports(
+                &source,
+                &package,
+                offset_to_position(&source, use_offset),
+            ),
+            Some(PrepareRenameResponse::RangeWithPlaceholder {
+                range: span_to_range(&source, Span::new(use_offset, use_offset + "Retry".len())),
+                placeholder: "Retry".to_owned(),
+            }),
+        );
+
+        let edit = rename_for_dependency_imports(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, use_offset),
+            "Repeat",
+        )
+        .expect("rename should succeed")
+        .expect("rename should return workspace edits");
+        assert_workspace_edit(
+            edit,
+            &uri,
+            vec![
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "Retry", 1),
+                            nth_offset(&source, "Retry", 1) + "Retry".len(),
+                        ),
+                    ),
+                    "Repeat".to_owned(),
+                ),
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "Retry", 2),
+                            nth_offset(&source, "Retry", 2) + "Retry".len(),
+                        ),
+                    ),
+                    "Repeat".to_owned(),
+                ),
+            ],
+        );
+    }
+
+    #[test]
     fn same_named_local_dependency_broken_source_variant_completion_prefers_matching_dependency_source()
      {
         let temp =

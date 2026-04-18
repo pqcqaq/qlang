@@ -1157,3 +1157,120 @@ pub fn read(config: Cfg) -> Int {
         }))
     );
 }
+
+#[test]
+fn package_analysis_preserves_same_named_local_dependency_variant_rename_in_broken_source() {
+    let temp = TempDir::new("ql-analysis-package-same-named-local-dependency-variant-rename");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.shared.alpha.Command as Cmd
+use demo.shared.beta.Command as OtherCmd
+
+pub fn main() -> Int {
+    let first = Cmd.Retry(1)
+    let second = Cmd.Retry(2)
+    let third = OtherCmd.Retry(
+"#;
+    temp.write("workspace/packages/app/src/main.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+
+    let use_position = nth_offset(source, "Retry", 2);
+    assert_eq!(
+        package.dependency_prepare_rename_in_source_at(source, use_position),
+        Some(RenameTarget {
+            kind: SymbolKind::Variant,
+            name: "Retry".to_owned(),
+            span: Span::new(use_position, use_position + "Retry".len()),
+        })
+    );
+    assert_eq!(
+        package.dependency_rename_in_source_at(source, use_position, "Repeat"),
+        Ok(Some(RenameResult {
+            kind: SymbolKind::Variant,
+            old_name: "Retry".to_owned(),
+            new_name: "Repeat".to_owned(),
+            edits: vec![
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "Retry", 1),
+                        nth_offset(source, "Retry", 1) + "Retry".len(),
+                    ),
+                    replacement: "Repeat".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "Retry", 2),
+                        nth_offset(source, "Retry", 2) + "Retry".len(),
+                    ),
+                    replacement: "Repeat".to_owned(),
+                },
+            ],
+        }))
+    );
+}
