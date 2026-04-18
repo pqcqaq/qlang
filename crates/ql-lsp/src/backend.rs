@@ -3430,9 +3430,10 @@ impl LanguageServer for Backend {
 #[cfg(test)]
 mod tests {
     use super::{
-        GotoTypeDefinitionResponse, document_highlights_for_analysis_at,
-        document_highlights_for_package_analysis_at, fallback_document_highlights_for_package_at,
-        package_analysis_for_path, prepare_rename_for_dependency_imports,
+        GotoTypeDefinitionResponse, completion_for_dependency_variants,
+        document_highlights_for_analysis_at, document_highlights_for_package_analysis_at,
+        fallback_document_highlights_for_package_at, package_analysis_for_path,
+        prepare_rename_for_dependency_imports,
         prepare_rename_for_workspace_import_in_broken_source, rename_for_dependency_imports,
         rename_for_workspace_import_in_broken_source,
         semantic_tokens_for_workspace_dependency_fallback,
@@ -3458,9 +3459,9 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower_lsp::lsp_types::{
-        GotoDefinitionResponse, HoverContents, Location, Position, PrepareRenameResponse,
-        SemanticTokenType, SemanticTokensResult, SymbolInformation, SymbolKind, TextEdit, Url,
-        WorkspaceEdit,
+        CompletionItemKind, CompletionResponse, GotoDefinitionResponse, HoverContents, Location,
+        Position, PrepareRenameResponse, SemanticTokenType, SemanticTokensResult,
+        SymbolInformation, SymbolKind, TextEdit, Url, WorkspaceEdit,
     };
 
     struct TempDir {
@@ -11724,6 +11725,131 @@ pub enum Command {
             offset_to_position(&source, nth_offset(&source, "Retry", 2)),
         ];
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn same_named_local_dependency_broken_source_variant_completion_prefers_matching_dependency_source()
+    {
+        let temp =
+            TempDir::new("ql-lsp-same-named-local-dependency-broken-source-variant-completion");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.Command as Cmd
+use demo.shared.beta.Command as OtherCmd
+
+pub fn main() -> Int {
+    let first = Cmd.B
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+    Backoff(Int),
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/src/lib.ql",
+            r#"
+package demo.shared.beta
+
+pub enum Command {
+    Retry(Int),
+    Block(Int),
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+    Backoff(Int),
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub enum Command {
+    Retry(Int),
+    Block(Int),
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let completion = completion_for_dependency_variants(
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "B", 1) + 1),
+        )
+        .expect("broken-source same-named dependency variant completion should exist");
+
+        let CompletionResponse::Array(items) = completion else {
+            panic!("variant completion should resolve to a plain item array")
+        };
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "Backoff");
+        assert_eq!(items[0].kind, Some(CompletionItemKind::ENUM_MEMBER));
+        assert_eq!(
+            items[0].detail.as_deref(),
+            Some("variant Command.Backoff(Int)")
+        );
     }
 
     #[test]

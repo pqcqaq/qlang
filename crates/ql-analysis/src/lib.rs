@@ -871,13 +871,35 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<Vec<CompletionItem>> {
-        let module = parse_source(source).ok()?;
         let root_offset = dependency_variant_completion_root_offset(source, offset)?;
-        let root_end = dependency_identifier_end(source, root_offset);
-        let root_name = source.get(root_offset..root_end)?;
-        let (dependency, symbol) =
-            dependency_import_binding_for_local_name(self, &module, root_name)?;
-        dependency.variant_completions_for(symbol)
+        match parse_source(source) {
+            Ok(module) => {
+                let root_end = dependency_identifier_end(source, root_offset);
+                let root_name = source.get(root_offset..root_end)?;
+                let (dependency, symbol) =
+                    dependency_import_binding_for_local_name(self, &module, root_name)?;
+                dependency.variant_completions_for(symbol)
+            }
+            Err(_) => {
+                let root_end = dependency_identifier_end(source, root_offset);
+                let root_name = source.get(root_offset..root_end)?;
+                let (tokens, _) = lex(source);
+                let (_, target) = dependency_resolved_import_targets_in_tokens(self, &tokens)
+                    .get(root_name)?
+                    .clone();
+                if target.kind != SymbolKind::Enum {
+                    return None;
+                }
+
+                let (dependency, symbol) =
+                    dependency_symbol_for_broken_source_target(self, &target)?;
+                if symbol.kind != SymbolKind::Enum {
+                    return None;
+                }
+
+                dependency.variant_completions_for(symbol)
+            }
+        }
     }
 
     pub fn dependency_struct_field_completions_at(
