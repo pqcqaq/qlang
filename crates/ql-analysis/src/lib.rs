@@ -156,6 +156,17 @@ enum BrokenSourceValueSegmentKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct BrokenSourceDependencyMemberSite {
+    root_span: Span,
+    root_called: bool,
+    root_question_unwrap: bool,
+    receiver_segments: Vec<BrokenSourceValueSegment>,
+    member_span: Span,
+    member_name: String,
+    member_kind: BrokenSourceValueSegmentKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct DependencyValueOccurrence {
     kind: SymbolKind,
     local_name: String,
@@ -1330,25 +1341,27 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<Vec<ReferenceTarget>> {
-        let module = parse_source(source).ok()?;
-        let target = self.dependency_method_target_in_source_at(source, offset)?;
-        let mut references = self
-            .dependency_method_occurrences(&module)
-            .into_iter()
-            .filter(|occurrence| {
-                occurrence.package_name == target.package_name
-                    && occurrence.source_path == target.source_path
-                    && occurrence.struct_name == target.struct_name
-                    && occurrence.name == target.name
-                    && occurrence.path == target.path
-            })
-            .map(|occurrence| ReferenceTarget {
-                kind: SymbolKind::Method,
-                name: occurrence.name,
-                span: occurrence.reference_span,
-                is_definition: false,
-            })
-            .collect::<Vec<_>>();
+        let mut references = if let Ok(module) = parse_source(source) {
+            let target = self.dependency_method_target_in_source_at(source, offset)?;
+            self.dependency_method_occurrences(&module)
+                .into_iter()
+                .filter(|occurrence| {
+                    occurrence.package_name == target.package_name
+                        && occurrence.source_path == target.source_path
+                        && occurrence.struct_name == target.struct_name
+                        && occurrence.name == target.name
+                        && occurrence.path == target.path
+                })
+                .map(|occurrence| ReferenceTarget {
+                    kind: SymbolKind::Method,
+                    name: occurrence.name,
+                    span: occurrence.reference_span,
+                    is_definition: false,
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Self::dependency_method_references_in_broken_source(self, source, offset)?
+        };
         if references.is_empty() {
             return None;
         }
@@ -1361,25 +1374,27 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<Vec<ReferenceTarget>> {
-        let module = parse_source(source).ok()?;
-        let target = self.dependency_struct_field_target_in_source_at(source, offset)?;
-        let mut references = self
-            .dependency_struct_field_occurrences(&module)
-            .into_iter()
-            .filter(|occurrence| {
-                occurrence.package_name == target.package_name
-                    && occurrence.source_path == target.source_path
-                    && occurrence.struct_name == target.struct_name
-                    && occurrence.name == target.name
-                    && occurrence.path == target.path
-            })
-            .map(|occurrence| ReferenceTarget {
-                kind: SymbolKind::Field,
-                name: occurrence.name,
-                span: occurrence.reference_span,
-                is_definition: false,
-            })
-            .collect::<Vec<_>>();
+        let mut references = if let Ok(module) = parse_source(source) {
+            let target = self.dependency_struct_field_target_in_source_at(source, offset)?;
+            self.dependency_struct_field_occurrences(&module)
+                .into_iter()
+                .filter(|occurrence| {
+                    occurrence.package_name == target.package_name
+                        && occurrence.source_path == target.source_path
+                        && occurrence.struct_name == target.struct_name
+                        && occurrence.name == target.name
+                        && occurrence.path == target.path
+                })
+                .map(|occurrence| ReferenceTarget {
+                    kind: SymbolKind::Field,
+                    name: occurrence.name,
+                    span: occurrence.reference_span,
+                    is_definition: false,
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Self::dependency_struct_field_references_in_broken_source(self, source, offset)?
+        };
         if references.is_empty() {
             return None;
         }
@@ -2115,6 +2130,66 @@ impl PackageAnalysis {
         )
     }
 
+    fn dependency_method_references_in_broken_source(
+        package: &PackageAnalysis,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<ReferenceTarget>> {
+        let target = dependency_method_target_in_broken_source(package, source, offset)?;
+        let references = dependency_member_sites_in_broken_source(source)
+            .into_iter()
+            .filter(|site| site.member_kind == BrokenSourceValueSegmentKind::Method)
+            .filter_map(|site| {
+                let binding =
+                    dependency_member_receiver_binding_in_broken_source(package, source, &site)?;
+                let method = binding.methods.get(&site.member_name)?;
+                (binding.package_name == target.package_name
+                    && method.source_path == target.source_path
+                    && binding.struct_name == target.struct_name
+                    && method.name == target.name
+                    && binding.path == target.path
+                    && method.definition_span == target.definition_span)
+                    .then(|| ReferenceTarget {
+                        kind: SymbolKind::Method,
+                        name: method.name.clone(),
+                        span: site.member_span,
+                        is_definition: false,
+                    })
+            })
+            .collect::<Vec<_>>();
+        (!references.is_empty()).then_some(references)
+    }
+
+    fn dependency_struct_field_references_in_broken_source(
+        package: &PackageAnalysis,
+        source: &str,
+        offset: usize,
+    ) -> Option<Vec<ReferenceTarget>> {
+        let target = dependency_struct_field_target_in_broken_source(package, source, offset)?;
+        let references = dependency_member_sites_in_broken_source(source)
+            .into_iter()
+            .filter(|site| site.member_kind == BrokenSourceValueSegmentKind::Field)
+            .filter_map(|site| {
+                let binding =
+                    dependency_member_receiver_binding_in_broken_source(package, source, &site)?;
+                let field = binding.fields.get(&site.member_name)?;
+                (binding.package_name == target.package_name
+                    && binding.source_path == target.source_path
+                    && binding.struct_name == target.struct_name
+                    && field.name == target.name
+                    && binding.path == target.path
+                    && field.definition_span == target.definition_span)
+                    .then(|| ReferenceTarget {
+                        kind: SymbolKind::Field,
+                        name: field.name.clone(),
+                        span: site.member_span,
+                        is_definition: false,
+                    })
+            })
+            .collect::<Vec<_>>();
+        (!references.is_empty()).then_some(references)
+    }
+
     pub fn dependency_target_at(
         &self,
         analysis: &Analysis,
@@ -2350,7 +2425,10 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyStructFieldTarget> {
-        let module = parse_source(source).ok()?;
+        let module = match parse_source(source) {
+            Ok(module) => module,
+            Err(_) => return dependency_struct_field_target_in_broken_source(self, source, offset),
+        };
         self.dependency_struct_field_occurrences(&module)
             .into_iter()
             .find(|occurrence| occurrence.reference_span.contains(offset))
@@ -2371,7 +2449,10 @@ impl PackageAnalysis {
         source: &str,
         offset: usize,
     ) -> Option<DependencyMethodTarget> {
-        let module = parse_source(source).ok()?;
+        let module = match parse_source(source) {
+            Ok(module) => module,
+            Err(_) => return dependency_method_target_in_broken_source(self, source, offset),
+        };
         self.dependency_method_occurrences(&module)
             .into_iter()
             .find(|occurrence| occurrence.reference_span.contains(offset))
@@ -4292,6 +4373,98 @@ fn dependency_struct_binding_for_broken_source_import_target(
     dependency_struct_binding_for_definition_target(package, &target)
 }
 
+fn dependency_member_receiver_binding_in_broken_source(
+    package: &PackageAnalysis,
+    source: &str,
+    site: &BrokenSourceDependencyMemberSite,
+) -> Option<DependencyStructBinding> {
+    let root_binding = dependency_value_occurrences_in_broken_source(package, source)
+        .into_iter()
+        .find(|occurrence| {
+            !site.root_called
+                && !site.root_question_unwrap
+                && occurrence.reference_span == site.root_span
+        })
+        .and_then(|occurrence| dependency_value_target_for_occurrence(package, &occurrence))
+        .and_then(|target| {
+            dependency_struct_binding_for_definition_target(
+                package,
+                &DependencyDefinitionTarget {
+                    package_name: target.package_name,
+                    source_path: target.source_path,
+                    kind: SymbolKind::Struct,
+                    name: target.struct_name,
+                    path: target.path,
+                    span: target.definition_span,
+                },
+            )
+        })
+        .or_else(|| {
+            dependency_import_occurrences_in_broken_source(package, source)
+                .into_iter()
+                .find(|occurrence| occurrence.span == site.root_span)
+                .and_then(|occurrence| {
+                    dependency_struct_binding_for_broken_source_import_target(
+                        package,
+                        &occurrence.target,
+                        site.root_called,
+                        site.root_question_unwrap,
+                    )
+                })
+        })?;
+    dependency_struct_binding_for_broken_source_segments(
+        package,
+        root_binding,
+        &site.receiver_segments,
+    )
+}
+
+fn dependency_struct_field_target_in_broken_source(
+    package: &PackageAnalysis,
+    source: &str,
+    offset: usize,
+) -> Option<DependencyStructFieldTarget> {
+    let site = dependency_member_site_in_broken_source(source, offset)?;
+    if site.member_kind != BrokenSourceValueSegmentKind::Field {
+        return None;
+    }
+    let binding = dependency_member_receiver_binding_in_broken_source(package, source, &site)?;
+    let field = binding.fields.get(&site.member_name)?.clone();
+    Some(DependencyStructFieldTarget {
+        reference_span: site.member_span,
+        package_name: binding.package_name,
+        source_path: binding.source_path,
+        struct_name: binding.struct_name,
+        name: field.name.clone(),
+        detail: field.detail.clone(),
+        path: binding.path,
+        definition_span: field.definition_span,
+    })
+}
+
+fn dependency_method_target_in_broken_source(
+    package: &PackageAnalysis,
+    source: &str,
+    offset: usize,
+) -> Option<DependencyMethodTarget> {
+    let site = dependency_member_site_in_broken_source(source, offset)?;
+    if site.member_kind != BrokenSourceValueSegmentKind::Method {
+        return None;
+    }
+    let binding = dependency_member_receiver_binding_in_broken_source(package, source, &site)?;
+    let method = binding.methods.get(&site.member_name)?.clone();
+    Some(DependencyMethodTarget {
+        reference_span: site.member_span,
+        package_name: binding.package_name,
+        source_path: method.source_path.clone(),
+        struct_name: binding.struct_name,
+        name: method.name.clone(),
+        detail: method.detail.clone(),
+        path: binding.path,
+        definition_span: method.definition_span,
+    })
+}
+
 fn dependency_resolved_import_targets_in_tokens(
     package: &PackageAnalysis,
     tokens: &[Token],
@@ -4967,6 +5140,95 @@ fn dependency_struct_field_completion_span_contains(span: Span, offset: usize) -
     span.start <= offset && offset <= span.end
 }
 
+fn dependency_member_site_in_broken_source(
+    source: &str,
+    offset: usize,
+) -> Option<BrokenSourceDependencyMemberSite> {
+    let (tokens, _) = lex(source);
+    let member_index = tokens.iter().enumerate().find_map(|(index, token)| {
+        (token.kind == TokenKind::Ident
+            && dependency_struct_field_completion_span_contains(token.span, offset))
+        .then_some(index)
+    })?;
+    dependency_member_site_in_broken_source_tokens(&tokens, member_index)
+}
+
+fn dependency_member_sites_in_broken_source(source: &str) -> Vec<BrokenSourceDependencyMemberSite> {
+    let (tokens, _) = lex(source);
+    tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, token)| {
+            (token.kind == TokenKind::Ident)
+                .then(|| dependency_member_site_in_broken_source_tokens(&tokens, index))
+                .flatten()
+        })
+        .collect()
+}
+
+fn dependency_member_site_in_broken_source_tokens(
+    tokens: &[Token],
+    member_index: usize,
+) -> Option<BrokenSourceDependencyMemberSite> {
+    let member_token = tokens.get(member_index)?;
+    if member_token.kind != TokenKind::Ident
+        || tokens
+            .get(member_index.checked_sub(1)?)
+            .map(|token| token.kind)
+            != Some(TokenKind::Dot)
+    {
+        return None;
+    }
+
+    let member_kind =
+        if tokens.get(member_index + 1).map(|token| token.kind) == Some(TokenKind::LParen) {
+            BrokenSourceValueSegmentKind::Method
+        } else {
+            BrokenSourceValueSegmentKind::Field
+        };
+    let stop_index = member_index.checked_sub(1)?;
+    for start_index in (0..member_index).rev() {
+        let Some(root_token) = tokens.get(start_index) else {
+            continue;
+        };
+        if root_token.kind != TokenKind::Ident {
+            continue;
+        }
+
+        let mut cursor = start_index + 1;
+        let root_called = if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LParen) {
+            cursor = token_index_after_balanced_parens(tokens, cursor)?;
+            true
+        } else {
+            false
+        };
+        let root_question_unwrap =
+            if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Question) {
+                cursor += 1;
+                true
+            } else {
+                false
+            };
+        let Some(receiver_segments) =
+            broken_source_segments_with_stop_in_tokens(tokens, cursor, stop_index)
+        else {
+            continue;
+        };
+
+        return Some(BrokenSourceDependencyMemberSite {
+            root_span: root_token.span,
+            root_called,
+            root_question_unwrap,
+            receiver_segments,
+            member_span: member_token.span,
+            member_name: member_token.text.clone(),
+            member_kind,
+        });
+    }
+
+    None
+}
+
 fn dependency_indexed_iterable_target_contains_block(block: &ql_ast::Block, offset: usize) -> bool {
     block
         .tail
@@ -5050,45 +5312,18 @@ fn dependency_member_completion_binding_in_broken_source(
     offset: usize,
     kind: DependencyMemberCompletionKind,
 ) -> Option<DependencyStructBinding> {
-    let (root_span, root_called, root_question_unwrap, receiver_segments, member_span, member_name) =
-        dependency_member_completion_site_in_broken_source(source, offset)?;
-    let root_binding = dependency_value_occurrences_in_broken_source(package, source)
-        .into_iter()
-        .find(|occurrence| {
-            !root_called && !root_question_unwrap && occurrence.reference_span == root_span
-        })
-        .and_then(|occurrence| dependency_value_target_for_occurrence(package, &occurrence))
-        .and_then(|target| {
-            dependency_struct_binding_for_definition_target(
-                package,
-                &DependencyDefinitionTarget {
-                    package_name: target.package_name,
-                    source_path: target.source_path,
-                    kind: SymbolKind::Struct,
-                    name: target.struct_name,
-                    path: target.path,
-                    span: target.definition_span,
-                },
-            )
-        })
-        .or_else(|| {
-            dependency_import_occurrences_in_broken_source(package, source)
-                .into_iter()
-                .find(|occurrence| occurrence.span == root_span)
-                .and_then(|occurrence| {
-                    dependency_struct_binding_for_broken_source_import_target(
-                        package,
-                        &occurrence.target,
-                        root_called,
-                        root_question_unwrap,
-                    )
-                })
-        })?;
-    let binding = dependency_struct_binding_for_broken_source_segments(
-        package,
-        root_binding,
-        &receiver_segments,
-    )?;
+    let site = dependency_member_site_in_broken_source(source, offset)?;
+    let expected_kind = match kind {
+        DependencyMemberCompletionKind::Field => BrokenSourceValueSegmentKind::Field,
+        DependencyMemberCompletionKind::Method => BrokenSourceValueSegmentKind::Method,
+        DependencyMemberCompletionKind::ValueType => return None,
+    };
+    if site.member_kind != expected_kind {
+        return None;
+    }
+    let member_span = site.member_span;
+    let member_name = site.member_name.clone();
+    let binding = dependency_member_receiver_binding_in_broken_source(package, source, &site)?;
     dependency_member_completion_binding_matches(
         &binding,
         source,
@@ -5098,72 +5333,6 @@ fn dependency_member_completion_binding_in_broken_source(
         kind,
     )
     .then_some(binding)
-}
-
-fn dependency_member_completion_site_in_broken_source(
-    source: &str,
-    offset: usize,
-) -> Option<(
-    Span,
-    bool,
-    bool,
-    Vec<BrokenSourceValueSegment>,
-    Span,
-    String,
-)> {
-    let (tokens, _) = lex(source);
-    let (member_index, member_token) = tokens.iter().enumerate().find(|(_, token)| {
-        token.kind == TokenKind::Ident
-            && dependency_struct_field_completion_span_contains(token.span, offset)
-    })?;
-    if tokens
-        .get(member_index.checked_sub(1)?)
-        .map(|token| token.kind)
-        != Some(TokenKind::Dot)
-    {
-        return None;
-    }
-
-    let stop_index = member_index.checked_sub(1)?;
-    for start_index in (0..member_index).rev() {
-        let Some(root_token) = tokens.get(start_index) else {
-            continue;
-        };
-        if root_token.kind != TokenKind::Ident {
-            continue;
-        }
-
-        let mut cursor = start_index + 1;
-        let root_called = if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LParen) {
-            cursor = token_index_after_balanced_parens(&tokens, cursor)?;
-            true
-        } else {
-            false
-        };
-        let root_question_unwrap =
-            if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Question) {
-                cursor += 1;
-                true
-            } else {
-                false
-            };
-        let Some(receiver_segments) =
-            broken_source_segments_with_stop_in_tokens(&tokens, cursor, stop_index)
-        else {
-            continue;
-        };
-
-        return Some((
-            root_token.span,
-            root_called,
-            root_question_unwrap,
-            receiver_segments,
-            member_token.span,
-            member_token.text.clone(),
-        ));
-    }
-
-    None
 }
 
 fn dependency_member_completion_binding_in_function(
