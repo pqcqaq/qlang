@@ -28,6 +28,7 @@
 
 ## 各阶段一句话总结
 
+- 最新回归补充：parse-error 文件里 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field 现在也已有独立 regression 锁定，会继续保留 current-document `prepareRename` / `rename`，但仍只做 same-file rename。
 - Phase 1：把源码稳定变成 AST，并保证 formatter 与基础 CLI 可用。
 - Phase 2：把“能解析”推进到“能做名称解析、类型检查和最小 IDE 查询”。
 - Phase 3：建立 MIR 和 ownership/cleanup 分析，为后续 lowering 提供稳定中层。
