@@ -842,3 +842,93 @@ pub fn read(config: Cfg) -> Int {
         ]
     );
 }
+
+#[test]
+fn package_analysis_exposes_dependency_direct_question_member_type_definitions_in_broken_source() {
+    let temp =
+        TempDir::new("ql-analysis-package-direct-question-member-type-definitions-parse-errors");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    leaf: Leaf,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {
+    child: Option[Child],
+}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let field = config.child?.leaf
+    let method = config.child()?.leaf()
+    let broken = config.child()?.leaf(
+}
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+
+    let field_type = package
+        .dependency_struct_field_type_definition_in_source_at(source, nth_offset(source, "leaf", 1))
+        .expect("dependency direct-question field type definition should survive parse errors");
+    assert_eq!(field_type.kind, SymbolKind::Struct);
+    assert_eq!(field_type.name, "Leaf");
+    assert!(field_type.path.ends_with("dep.qi"));
+
+    let method_type = package
+        .dependency_method_type_definition_in_source_at(source, nth_offset(source, "leaf", 2))
+        .expect("dependency direct-question method type definition should survive parse errors");
+    assert_eq!(method_type.kind, SymbolKind::Struct);
+    assert_eq!(method_type.name, "Leaf");
+    assert_eq!(method_type.path, field_type.path);
+    assert_eq!(method_type.span, field_type.span);
+}

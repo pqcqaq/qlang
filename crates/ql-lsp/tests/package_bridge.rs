@@ -17,7 +17,8 @@ use ql_lsp::bridge::{
     references_for_dependency_struct_fields, references_for_dependency_variants,
     references_for_package_analysis, semantic_tokens_for_dependency_fallback,
     semantic_tokens_for_package_analysis, semantic_tokens_legend, span_to_range,
-    type_definition_for_dependency_imports,
+    type_definition_for_dependency_imports, type_definition_for_dependency_method_types,
+    type_definition_for_dependency_struct_field_types,
 };
 use ql_span::Span;
 use tower_lsp::lsp_types::request::{GotoDeclarationResponse, GotoTypeDefinitionResponse};
@@ -3659,6 +3660,126 @@ packages = ["../dep"]
             ),
         ]
     );
+}
+
+#[test]
+fn package_bridge_follows_dependency_direct_question_member_types_in_parse_error_source() {
+    let temp = TempDir::new("ql-lsp-package-direct-question-member-type-definition-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let field = config.child?.leaf
+    let method = config.child()?.leaf()
+    let broken = config.child()?.leaf(
+}
+"#;
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Leaf {
+    value: Int,
+}
+
+pub struct Child {
+    leaf: Leaf,
+}
+
+pub struct ErrInfo {
+    code: Int,
+}
+
+pub struct Config {
+    child: Option[Child],
+}
+
+impl Config {
+    pub fn child(self) -> Result[Child, ErrInfo]
+}
+
+impl Child {
+    pub fn leaf(self) -> Leaf
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+
+    let field_type = type_definition_for_dependency_struct_field_types(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "leaf", 1)),
+    )
+    .expect("dependency direct-question field type definition should exist in parse-error source");
+    let GotoTypeDefinitionResponse::Scalar(field_location) = field_type else {
+        panic!("type definition should be one location")
+    };
+    assert_eq!(
+        field_location
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let anchor = "pub struct Leaf {\n    value: Int,\n}";
+    let anchor_start = artifact
+        .find(anchor)
+        .expect("leaf struct should exist in dependency artifact");
+    assert_eq!(
+        field_location.range,
+        span_to_range(
+            &artifact,
+            Span::new(anchor_start, anchor_start + anchor.len())
+        )
+    );
+
+    let method_type = type_definition_for_dependency_method_types(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "leaf", 2)),
+    )
+    .expect("dependency direct-question method type definition should exist in parse-error source");
+    let GotoTypeDefinitionResponse::Scalar(method_location) = method_type else {
+        panic!("type definition should be one location")
+    };
+    assert_eq!(method_location, field_location);
 }
 
 #[test]

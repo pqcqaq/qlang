@@ -1644,7 +1644,6 @@ impl PackageAnalysis {
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
         let target = self.dependency_struct_field_target_in_source_at(source, offset)?;
-        let module = parse_source(source).ok()?;
         let dependency = self
             .dependencies
             .iter()
@@ -1655,7 +1654,11 @@ impl PackageAnalysis {
                 && symbol.name == target.struct_name
         })?;
         let field = dependency.struct_field_for(symbol, &target.name)?;
-        if dependency_question_wrapped_field_reference_in_module(&module, offset) {
+        let question_wrapped = match parse_source(source) {
+            Ok(module) => dependency_question_wrapped_field_reference_in_module(&module, offset),
+            Err(_) => dependency_question_wrapped_field_reference_in_broken_source(source, offset),
+        };
+        if question_wrapped {
             dependency
                 .public_question_inner_type_target_for_type_expr(&field.ty)
                 .or_else(|| dependency.public_type_target_for_type_expr(&field.ty))
@@ -1670,7 +1673,6 @@ impl PackageAnalysis {
         offset: usize,
     ) -> Option<DependencyDefinitionTarget> {
         let target = self.dependency_method_target_in_source_at(source, offset)?;
-        let module = parse_source(source).ok()?;
         let dependency = self
             .dependencies
             .iter()
@@ -1687,7 +1689,11 @@ impl PackageAnalysis {
                     .then(|| methods.remove(&target.name))
                     .flatten()
             })?;
-        if dependency_question_wrapped_method_reference_in_module(&module, offset) {
+        let question_wrapped = match parse_source(source) {
+            Ok(module) => dependency_question_wrapped_method_reference_in_module(&module, offset),
+            Err(_) => dependency_question_wrapped_method_reference_in_broken_source(source, offset),
+        };
+        if question_wrapped {
             method
                 .question_return_type_definition
                 .or(method.return_type_definition)
@@ -6221,6 +6227,70 @@ fn dependency_question_wrapped_method_reference_in_module(
             DependencyQuestionWrappedReferenceKind::Method,
         )
     })
+}
+
+fn dependency_question_wrapped_field_reference_in_broken_source(
+    source: &str,
+    offset: usize,
+) -> bool {
+    let site = match dependency_member_site_in_broken_source(source, offset) {
+        Some(site) if site.member_kind == BrokenSourceValueSegmentKind::Field => site,
+        _ => return false,
+    };
+    dependency_immediate_member_receiver_is_question_unwrapped(&site)
+        || dependency_broken_source_field_reference_has_trailing_question(source, offset)
+}
+
+fn dependency_question_wrapped_method_reference_in_broken_source(
+    source: &str,
+    offset: usize,
+) -> bool {
+    let (tokens, member_index) =
+        match dependency_member_tokens_and_index_in_broken_source(source, offset) {
+            Some(value) => value,
+            None => return false,
+        };
+    if tokens.get(member_index + 1).map(|token| token.kind) != Some(TokenKind::LParen) {
+        return false;
+    }
+    token_index_after_balanced_parens(&tokens, member_index + 1)
+        .and_then(|index| tokens.get(index))
+        .map(|token| token.kind)
+        == Some(TokenKind::Question)
+}
+
+fn dependency_immediate_member_receiver_is_question_unwrapped(
+    site: &BrokenSourceDependencyMemberSite,
+) -> bool {
+    site.receiver_segments
+        .last()
+        .map(|segment| segment.question_unwrap)
+        .unwrap_or(site.root_question_unwrap)
+}
+
+fn dependency_broken_source_field_reference_has_trailing_question(
+    source: &str,
+    offset: usize,
+) -> bool {
+    let (tokens, member_index) =
+        match dependency_member_tokens_and_index_in_broken_source(source, offset) {
+            Some(value) => value,
+            None => return false,
+        };
+    tokens.get(member_index + 1).map(|token| token.kind) == Some(TokenKind::Question)
+}
+
+fn dependency_member_tokens_and_index_in_broken_source(
+    source: &str,
+    offset: usize,
+) -> Option<(Vec<Token>, usize)> {
+    let (tokens, _) = lex(source);
+    let member_index = tokens.iter().enumerate().find_map(|(index, token)| {
+        (token.kind == TokenKind::Ident
+            && dependency_struct_field_completion_span_contains(token.span, offset))
+        .then_some(index)
+    })?;
+    Some((tokens, member_index))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
