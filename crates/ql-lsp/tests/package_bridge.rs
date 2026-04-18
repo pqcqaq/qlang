@@ -3949,6 +3949,205 @@ packages = ["../dep"]
 }
 
 #[test]
+fn package_bridge_surfaces_dependency_root_indexed_receiver_field_queries_in_parse_error_source() {
+    let temp = TempDir::new("ql-lsp-package-root-indexed-receiver-field-query-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+    let source = r#"
+package demo.app
+
+use demo.dep.load_children
+use demo.dep.maybe_children
+
+pub fn read() -> Int {
+    let first = load_children()[0].value
+    let second = maybe_children()?[1].value
+    let third = load_children()[1].value
+    let fourth = maybe_children()?[0].value
+    let broken = maybe_children()?[0].value
+"#;
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn load_children() -> [Child; 2]
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let direct_hover = hover_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 1)),
+    )
+    .expect("dependency root-indexed call field hover should exist in parse-error source");
+    let HoverContents::Markup(direct_markup) = direct_hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(direct_markup.value.contains("**field** `value`"));
+    assert!(direct_markup.value.contains("field value: Int"));
+
+    let question_hover = hover_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 2)),
+    )
+    .expect("dependency root-indexed question-call field hover should exist in parse-error source");
+    let HoverContents::Markup(question_markup) = question_hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(question_markup.value.contains("**field** `value`"));
+    assert!(question_markup.value.contains("field value: Int"));
+
+    let definition = definition_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 3)),
+    )
+    .expect("dependency root-indexed call field definition should exist in parse-error source");
+    let GotoDefinitionResponse::Scalar(location) = definition else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        location
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let field_start = artifact
+        .find("value")
+        .expect("field name should exist in dependency artifact");
+    assert_eq!(
+        location.range,
+        span_to_range(
+            &artifact,
+            Span::new(field_start, field_start + "value".len())
+        )
+    );
+
+    let declaration = declaration_for_dependency_struct_fields(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 4)),
+    )
+    .expect("dependency root-indexed question-call field declaration should exist in parse-error source");
+    let GotoDeclarationResponse::Scalar(declaration_location) = declaration else {
+        panic!("declaration should be one location")
+    };
+    assert_eq!(declaration_location, location);
+
+    let references = references_for_dependency_struct_fields(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "value", 5)),
+        false,
+    )
+    .expect("dependency root-indexed field references should exist in parse-error source");
+    assert_eq!(
+        references,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "value", 1),
+                        nth_offset(source, "value", 1) + "value".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "value", 2),
+                        nth_offset(source, "value", 2) + "value".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "value", 3),
+                        nth_offset(source, "value", 3) + "value".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "value", 4),
+                        nth_offset(source, "value", 4) + "value".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "value", 5),
+                        nth_offset(source, "value", 5) + "value".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn package_bridge_completes_dependency_struct_member_fields_for_closure_parameters() {
     let temp = TempDir::new("ql-lsp-package-struct-member-field-closure-param");
     let app_root = temp.path().join("workspace").join("app");

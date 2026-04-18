@@ -1030,3 +1030,116 @@ pub fn read(config: Cfg) -> Int {
         )
     );
 }
+
+#[test]
+fn package_analysis_exposes_dependency_root_indexed_receiver_field_queries_in_broken_source() {
+    let temp = TempDir::new("ql-analysis-package-root-indexed-receiver-field-parse-errors");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn load_children() -> [Child; 2]
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.load_children
+use demo.dep.maybe_children
+
+pub fn read() -> Int {
+    let first = load_children()[0].value
+    let second = maybe_children()?[1].value
+    let third = load_children()[1].value
+    let fourth = maybe_children()?[0].value
+    let broken = maybe_children()?[0].value
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+
+    let direct_hover = package
+        .dependency_struct_field_hover_in_source_at(source, nth_offset(source, "value", 1))
+        .expect("dependency root-indexed call field hover should survive parse errors");
+    assert_eq!(direct_hover.kind, SymbolKind::Field);
+    assert_eq!(direct_hover.name, "value");
+    assert_eq!(direct_hover.detail, "field value: Int");
+
+    let question_hover = package
+        .dependency_struct_field_hover_in_source_at(source, nth_offset(source, "value", 2))
+        .expect("dependency root-indexed question-call field hover should survive parse errors");
+    assert_eq!(question_hover.kind, SymbolKind::Field);
+    assert_eq!(question_hover.name, "value");
+    assert_eq!(question_hover.detail, "field value: Int");
+
+    let definition = package
+        .dependency_struct_field_definition_in_source_at(source, nth_offset(source, "value", 3))
+        .expect("dependency root-indexed call field definition should survive parse errors");
+    assert_eq!(definition.kind, SymbolKind::Field);
+    assert_eq!(definition.name, "value");
+    assert!(definition.path.ends_with("dep.qi"));
+
+    let references = package
+        .dependency_struct_field_references_in_source_at(source, nth_offset(source, "value", 5))
+        .expect("dependency root-indexed field references should survive parse errors");
+    assert_eq!(references.len(), 5);
+    assert_eq!(
+        references
+            .iter()
+            .map(|reference| reference.span)
+            .collect::<Vec<_>>(),
+        vec![
+            Span::new(
+                nth_offset(source, "value", 1),
+                nth_offset(source, "value", 1) + "value".len(),
+            ),
+            Span::new(
+                nth_offset(source, "value", 2),
+                nth_offset(source, "value", 2) + "value".len(),
+            ),
+            Span::new(
+                nth_offset(source, "value", 3),
+                nth_offset(source, "value", 3) + "value".len(),
+            ),
+            Span::new(
+                nth_offset(source, "value", 4),
+                nth_offset(source, "value", 4) + "value".len(),
+            ),
+            Span::new(
+                nth_offset(source, "value", 5),
+                nth_offset(source, "value", 5) + "value".len(),
+            ),
+        ]
+    );
+}

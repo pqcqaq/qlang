@@ -161,6 +161,7 @@ struct BrokenSourceDependencyMemberSite {
     root_span: Span,
     root_called: bool,
     root_question_unwrap: bool,
+    root_indexed_iterable: bool,
     receiver_segments: Vec<BrokenSourceValueSegment>,
     member_span: Span,
     member_name: String,
@@ -4420,18 +4421,35 @@ fn dependency_struct_binding_for_broken_source_import_target(
     target: &DependencyResolvedTarget,
     root_called: bool,
     root_question_unwrap: bool,
+    root_indexed_iterable: bool,
 ) -> Option<DependencyStructBinding> {
     let (dependency, symbol) = dependency_symbol_for_broken_source_target(package, target)?;
-    let target = match (target.kind, root_called, root_question_unwrap) {
-        (SymbolKind::Function, true, false) => dependency.function_return_type_target(symbol)?,
-        (SymbolKind::Function, true, true) => {
-            dependency.function_question_return_type_target(symbol)?
+    let target = match target.kind {
+        SymbolKind::Function if root_called => {
+            if root_indexed_iterable {
+                if root_question_unwrap {
+                    dependency.function_question_iterable_element_type_target(symbol)?
+                } else {
+                    dependency.function_iterable_element_type_target(symbol)?
+                }
+            } else if root_question_unwrap {
+                dependency.function_question_return_type_target(symbol)?
+            } else {
+                dependency.function_return_type_target(symbol)?
+            }
         }
-        (SymbolKind::Const | SymbolKind::Static, false, false) => {
-            dependency.global_type_target(symbol)?
-        }
-        (SymbolKind::Const | SymbolKind::Static, false, true) => {
-            dependency.global_question_type_target(symbol)?
+        SymbolKind::Const | SymbolKind::Static if !root_called => {
+            if root_indexed_iterable {
+                if root_question_unwrap {
+                    dependency.global_question_iterable_element_type_target(symbol)?
+                } else {
+                    dependency.global_iterable_element_type_target(symbol)?
+                }
+            } else if root_question_unwrap {
+                dependency.global_question_type_target(symbol)?
+            } else {
+                dependency.global_type_target(symbol)?
+            }
         }
         _ => return None,
     };
@@ -4474,6 +4492,7 @@ fn dependency_member_receiver_binding_in_broken_source(
                         &occurrence.target,
                         site.root_called,
                         site.root_question_unwrap,
+                        site.root_indexed_iterable,
                     )
                 })
         })?;
@@ -5279,6 +5298,9 @@ fn dependency_member_site_in_broken_source_tokens(
             } else {
                 false
             };
+        let (next_cursor, root_indexed_iterable) =
+            token_index_after_bracket_chain(tokens, cursor).unwrap_or((cursor, false));
+        cursor = next_cursor;
         let Some(receiver_segments) =
             broken_source_segments_with_stop_in_tokens(tokens, cursor, stop_index)
         else {
@@ -5289,6 +5311,7 @@ fn dependency_member_site_in_broken_source_tokens(
             root_span: root_token.span,
             root_called,
             root_question_unwrap,
+            root_indexed_iterable,
             receiver_segments,
             member_span: member_token.span,
             member_name: member_token.text.clone(),
