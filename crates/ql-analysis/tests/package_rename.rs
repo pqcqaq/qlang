@@ -3,7 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ql_analysis::{analyze_package, RenameEdit, RenameResult, RenameTarget, SymbolKind};
+use ql_analysis::{
+    RenameEdit, RenameResult, RenameTarget, SymbolKind, analyze_package,
+    analyze_package_dependencies,
+};
 use ql_span::Span;
 
 struct TempDir {
@@ -297,6 +300,99 @@ pub fn read(config: Cfg) -> Int {
     temp.write("workspace/app/src/lib.ql", source);
 
     let package = analyze_package(&app_root).expect("package analysis should succeed");
+    let use_position = nth_offset(source, "current", 2);
+
+    assert_eq!(
+        package.dependency_prepare_rename_in_source_at(source, use_position),
+        Some(RenameTarget {
+            kind: SymbolKind::Local,
+            name: "current".to_owned(),
+            span: Span::new(use_position, use_position + "current".len()),
+        })
+    );
+    assert_eq!(
+        package.dependency_rename_in_source_at(source, use_position, "selected"),
+        Ok(Some(RenameResult {
+            kind: SymbolKind::Local,
+            old_name: "current".to_owned(),
+            new_name: "selected".to_owned(),
+            edits: vec![
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "current", 1),
+                        nth_offset(source, "current", 1) + "current".len(),
+                    ),
+                    replacement: "selected".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "current", 2),
+                        nth_offset(source, "current", 2) + "current".len(),
+                    ),
+                    replacement: "selected".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "current", 3),
+                        nth_offset(source, "current", 3) + "current".len(),
+                    ),
+                    replacement: "selected".to_owned(),
+                },
+            ],
+        }))
+    );
+}
+
+#[test]
+fn package_analysis_preserves_dependency_value_root_rename_in_broken_source() {
+    let temp = TempDir::new("ql-analysis-package-value-root-rename-parse-errors");
+    let app_root = temp.path().join("workspace").join("app");
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.dep.Config as Cfg
+
+pub fn read(config: Cfg) -> Int {
+    let current = config
+    return current.value + current.value
+"#;
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
     let use_position = nth_offset(source, "current", 2);
 
     assert_eq!(
