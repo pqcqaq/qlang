@@ -4204,29 +4204,15 @@ fn broken_source_value_candidate_with_end_in_tokens(
     tokens: &[Token],
     start_index: usize,
 ) -> Option<(BrokenSourceValueCandidate, usize)> {
-    let root = tokens.get(start_index)?;
-    if root.kind != TokenKind::Ident {
-        return None;
-    }
-
-    let mut segments = Vec::new();
-    let mut cursor = start_index + 1;
-    let root_called = if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LParen) {
-        cursor = token_index_after_balanced_parens(tokens, cursor)?;
-        true
-    } else {
-        false
+    let (mut candidate, mut cursor) = match tokens.get(start_index)?.kind {
+        TokenKind::Ident => {
+            broken_source_ident_value_candidate_with_end_in_tokens(tokens, start_index)?
+        }
+        TokenKind::LParen => {
+            broken_source_parenthesized_value_candidate_with_end_in_tokens(tokens, start_index)?
+        }
+        _ => return None,
     };
-    let root_question_unwrap =
-        if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Question) {
-            cursor += 1;
-            true
-        } else {
-            false
-        };
-    let (next_cursor, root_indexed_iterable) =
-        token_index_after_bracket_chain(tokens, cursor).unwrap_or((cursor, false));
-    cursor = next_cursor;
     loop {
         if tokens.get(cursor).map(|token| token.kind) != Some(TokenKind::Dot) {
             break;
@@ -4253,7 +4239,7 @@ fn broken_source_value_candidate_with_end_in_tokens(
         let (next_cursor, indexed_iterable) =
             token_index_after_bracket_chain(tokens, cursor).unwrap_or((cursor, false));
         cursor = next_cursor;
-        segments.push(BrokenSourceValueSegment {
+        candidate.segments.push(BrokenSourceValueSegment {
             name: name_token.text.clone(),
             kind,
             question_unwrap,
@@ -4261,16 +4247,211 @@ fn broken_source_value_candidate_with_end_in_tokens(
         });
     }
 
+    Some((candidate, cursor))
+}
+
+fn broken_source_ident_value_candidate_with_end_in_tokens(
+    tokens: &[Token],
+    start_index: usize,
+) -> Option<(BrokenSourceValueCandidate, usize)> {
+    let root = tokens.get(start_index)?;
+    if root.kind != TokenKind::Ident {
+        return None;
+    }
+
+    let mut cursor = start_index + 1;
+    let root_called = if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::LParen) {
+        cursor = token_index_after_balanced_parens(tokens, cursor)?;
+        true
+    } else {
+        false
+    };
+    let root_question_unwrap =
+        if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Question) {
+            cursor += 1;
+            true
+        } else {
+            false
+        };
+    let (next_cursor, root_indexed_iterable) =
+        token_index_after_bracket_chain(tokens, cursor).unwrap_or((cursor, false));
+    cursor = next_cursor;
+
     Some((
         BrokenSourceValueCandidate {
             root_name: root.text.clone(),
             root_called,
             root_question_unwrap,
             root_indexed_iterable,
-            segments,
+            segments: Vec::new(),
         },
         cursor,
     ))
+}
+
+fn broken_source_parenthesized_value_candidate_with_end_in_tokens(
+    tokens: &[Token],
+    start_index: usize,
+) -> Option<(BrokenSourceValueCandidate, usize)> {
+    if tokens.get(start_index).map(|token| token.kind) != Some(TokenKind::LParen) {
+        return None;
+    }
+
+    let close_after = token_index_after_balanced_parens(tokens, start_index)?;
+    let mut candidate =
+        broken_source_parenthesized_value_candidate_in_tokens(tokens, start_index, close_after)?;
+    let mut cursor = close_after;
+    let outer_question_unwrap =
+        if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Question) {
+            cursor += 1;
+            true
+        } else {
+            false
+        };
+    if outer_question_unwrap {
+        if candidate.root_question_unwrap {
+            return None;
+        }
+        candidate.root_question_unwrap = true;
+    }
+    let (next_cursor, outer_indexed_iterable) =
+        token_index_after_bracket_chain(tokens, cursor).unwrap_or((cursor, false));
+    if outer_indexed_iterable {
+        if candidate.root_indexed_iterable {
+            return None;
+        }
+        candidate.root_indexed_iterable = true;
+    }
+    cursor = next_cursor;
+
+    Some((candidate, cursor))
+}
+
+fn broken_source_parenthesized_value_candidate_in_tokens(
+    tokens: &[Token],
+    open_index: usize,
+    close_after: usize,
+) -> Option<BrokenSourceValueCandidate> {
+    let inner_start = open_index + 1;
+    let inner_end = close_after.checked_sub(1)?;
+    if inner_start >= inner_end {
+        return None;
+    }
+
+    if let Some((candidate, end)) =
+        broken_source_value_candidate_with_end_in_tokens(tokens, inner_start)
+        && end == inner_end
+    {
+        return Some(candidate);
+    }
+
+    match tokens.get(inner_start)?.kind {
+        TokenKind::If => broken_source_if_value_candidate_in_tokens(tokens, inner_start, inner_end),
+        TokenKind::Match => {
+            broken_source_match_value_candidate_in_tokens(tokens, inner_start, inner_end)
+        }
+        _ => None,
+    }
+}
+
+fn broken_source_if_value_candidate_in_tokens(
+    tokens: &[Token],
+    if_index: usize,
+    end_index: usize,
+) -> Option<BrokenSourceValueCandidate> {
+    if tokens.get(if_index).map(|token| token.kind) != Some(TokenKind::If) {
+        return None;
+    }
+
+    let then_open =
+        token_index_of_top_level_kind(tokens, if_index + 1, end_index, TokenKind::LBrace)?;
+    let then_close_after = token_index_after_balanced_braces(tokens, then_open)?;
+    let then_candidate =
+        broken_source_block_tail_value_candidate_in_tokens(tokens, then_open, then_close_after)?;
+    if tokens.get(then_close_after).map(|token| token.kind) != Some(TokenKind::Else) {
+        return None;
+    }
+
+    let else_start = then_close_after + 1;
+    let else_candidate = match tokens.get(else_start)?.kind {
+        TokenKind::LBrace => {
+            let else_close_after = token_index_after_balanced_braces(tokens, else_start)?;
+            if else_close_after != end_index {
+                return None;
+            }
+            broken_source_block_tail_value_candidate_in_tokens(
+                tokens,
+                else_start,
+                else_close_after,
+            )?
+        }
+        TokenKind::If => broken_source_if_value_candidate_in_tokens(tokens, else_start, end_index)?,
+        TokenKind::Match => {
+            broken_source_match_value_candidate_in_tokens(tokens, else_start, end_index)?
+        }
+        _ => broken_source_value_candidate_ending_at_in_tokens(tokens, else_start, end_index)?,
+    };
+
+    (then_candidate == else_candidate).then_some(then_candidate)
+}
+
+fn broken_source_match_value_candidate_in_tokens(
+    tokens: &[Token],
+    match_index: usize,
+    end_index: usize,
+) -> Option<BrokenSourceValueCandidate> {
+    if tokens.get(match_index).map(|token| token.kind) != Some(TokenKind::Match) {
+        return None;
+    }
+
+    let arms_open =
+        token_index_of_top_level_kind(tokens, match_index + 1, end_index, TokenKind::LBrace)?;
+    let arms_close_after = token_index_after_balanced_braces(tokens, arms_open)?;
+    if arms_close_after != end_index {
+        return None;
+    }
+
+    let mut cursor = arms_open + 1;
+    let mut common = None::<BrokenSourceValueCandidate>;
+    while cursor < end_index - 1 {
+        let arrow_index =
+            token_index_of_top_level_kind(tokens, cursor, end_index - 1, TokenKind::FatArrow)?;
+        let body_start = arrow_index + 1;
+        let candidate = match tokens.get(body_start)?.kind {
+            TokenKind::LBrace => {
+                let body_close_after = token_index_after_balanced_braces(tokens, body_start)?;
+                let candidate = broken_source_block_tail_value_candidate_in_tokens(
+                    tokens,
+                    body_start,
+                    body_close_after,
+                )?;
+                cursor = body_close_after;
+                candidate
+            }
+            _ => {
+                let body_end =
+                    token_index_of_next_match_arm_separator(tokens, body_start, end_index - 1)
+                        .unwrap_or(end_index - 1);
+                let candidate = broken_source_value_candidate_ending_at_in_tokens(
+                    tokens, body_start, body_end,
+                )?;
+                cursor = body_end;
+                candidate
+            }
+        };
+
+        match common.as_ref() {
+            Some(existing) if existing != &candidate => return None,
+            Some(_) => {}
+            None => common = Some(candidate),
+        }
+
+        if tokens.get(cursor).map(|token| token.kind) == Some(TokenKind::Comma) {
+            cursor += 1;
+        }
+    }
+
+    common
 }
 
 fn broken_source_segments_with_stop_in_tokens(
@@ -4345,6 +4526,29 @@ fn token_index_after_balanced_parens(tokens: &[Token], open_index: usize) -> Opt
     None
 }
 
+fn token_index_after_balanced_braces(tokens: &[Token], open_index: usize) -> Option<usize> {
+    if tokens.get(open_index).map(|token| token.kind) != Some(TokenKind::LBrace) {
+        return None;
+    }
+
+    let mut depth = 1usize;
+    let mut index = open_index + 1;
+    while index < tokens.len() {
+        match tokens[index].kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index + 1);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
 fn token_index_after_balanced_brackets(tokens: &[Token], open_index: usize) -> Option<usize> {
     if tokens.get(open_index).map(|token| token.kind) != Some(TokenKind::LBracket) {
         return None;
@@ -4364,6 +4568,96 @@ fn token_index_after_balanced_brackets(tokens: &[Token], open_index: usize) -> O
             _ => {}
         }
         index += 1;
+    }
+    None
+}
+
+fn broken_source_block_tail_value_candidate_in_tokens(
+    tokens: &[Token],
+    open_index: usize,
+    close_after: usize,
+) -> Option<BrokenSourceValueCandidate> {
+    if close_after <= open_index + 1 {
+        return None;
+    }
+    broken_source_value_candidate_ending_at_in_tokens(tokens, open_index + 1, close_after - 1)
+}
+
+fn broken_source_value_candidate_ending_at_in_tokens(
+    tokens: &[Token],
+    start_index: usize,
+    end_index: usize,
+) -> Option<BrokenSourceValueCandidate> {
+    if start_index >= end_index {
+        return None;
+    }
+
+    (start_index..end_index).rev().find_map(|index| {
+        broken_source_value_candidate_with_end_in_tokens(tokens, index)
+            .and_then(|(candidate, cursor)| (cursor == end_index).then_some(candidate))
+    })
+}
+
+fn token_index_of_top_level_kind(
+    tokens: &[Token],
+    start_index: usize,
+    end_index: usize,
+    expected: TokenKind,
+) -> Option<usize> {
+    let mut paren_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    for index in start_index..end_index {
+        match tokens.get(index)?.kind {
+            TokenKind::LParen => paren_depth += 1,
+            TokenKind::RParen => paren_depth = paren_depth.saturating_sub(1),
+            TokenKind::LBrace => {
+                if paren_depth == 0
+                    && brace_depth == 0
+                    && bracket_depth == 0
+                    && expected == TokenKind::LBrace
+                {
+                    return Some(index);
+                }
+                brace_depth += 1;
+            }
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::LBracket => bracket_depth += 1,
+            TokenKind::RBracket => bracket_depth = bracket_depth.saturating_sub(1),
+            kind if kind == expected
+                && paren_depth == 0
+                && brace_depth == 0
+                && bracket_depth == 0 =>
+            {
+                return Some(index);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn token_index_of_next_match_arm_separator(
+    tokens: &[Token],
+    start_index: usize,
+    end_index: usize,
+) -> Option<usize> {
+    let mut paren_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    for index in start_index..end_index {
+        match tokens.get(index)?.kind {
+            TokenKind::LParen => paren_depth += 1,
+            TokenKind::RParen => paren_depth = paren_depth.saturating_sub(1),
+            TokenKind::LBrace => brace_depth += 1,
+            TokenKind::RBrace => brace_depth = brace_depth.saturating_sub(1),
+            TokenKind::LBracket => bracket_depth += 1,
+            TokenKind::RBracket => bracket_depth = bracket_depth.saturating_sub(1),
+            TokenKind::Comma if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 => {
+                return Some(index);
+            }
+            _ => {}
+        }
     }
     None
 }

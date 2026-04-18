@@ -4310,6 +4310,169 @@ packages = ["../dep"]
 }
 
 #[test]
+fn package_bridge_surfaces_dependency_structured_root_indexed_value_queries_in_parse_error_source()
+{
+    let temp = TempDir::new("ql-lsp-package-structured-root-indexed-value-query-parse-error");
+    let app_root = temp.path().join("workspace").join("app");
+    let app_path = temp
+        .path()
+        .join("workspace")
+        .join("app")
+        .join("src")
+        .join("lib.ql");
+    let source = r#"
+package demo.app
+
+use demo.dep.maybe_children
+
+pub fn read(flag: Bool) -> Int {
+    let first = (if flag { maybe_children()? } else { maybe_children()? })[0]
+    let second = (match flag { true => maybe_children()?, false => maybe_children()? })[1]
+    return first.value + second.value + first.value
+"#;
+
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    let dep_qi = temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub struct Child {
+    value: Int,
+}
+
+pub fn maybe_children() -> Option[[Child; 2]]
+"#,
+    );
+    temp.write(
+        "workspace/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../dep"]
+"#,
+    );
+    temp.write("workspace/app/src/lib.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should succeed");
+    let uri = Url::from_file_path(&app_path).expect("app path should convert to file URL");
+
+    let direct_hover = hover_for_dependency_values(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "first", 2)),
+    )
+    .expect("dependency structured root-indexed value hover should exist in parse-error source");
+    let HoverContents::Markup(direct_markup) = direct_hover.contents else {
+        panic!("hover should use markdown")
+    };
+    assert!(direct_markup.value.contains("**struct** `Child`"));
+    assert!(direct_markup.value.contains("struct Child"));
+
+    let match_definition = definition_for_dependency_values(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "second", 2)),
+    )
+    .expect(
+        "dependency structured match root-indexed value definition should exist in parse-error source",
+    );
+    let GotoDefinitionResponse::Scalar(match_location) = match_definition else {
+        panic!("definition should be one location")
+    };
+    assert_eq!(
+        match_location
+            .uri
+            .to_file_path()
+            .expect("definition URI should convert to a file path")
+            .canonicalize()
+            .expect("definition path should canonicalize"),
+        dep_qi
+            .canonicalize()
+            .expect("dependency artifact path should canonicalize"),
+    );
+    let artifact = fs::read_to_string(&dep_qi)
+        .expect("dependency interface artifact should exist")
+        .replace("\r\n", "\n");
+    let struct_start = artifact
+        .find("pub struct Child {\n    value: Int,\n}")
+        .expect("struct declaration should exist in dependency artifact");
+    assert_eq!(
+        match_location.range,
+        span_to_range(
+            &artifact,
+            Span::new(
+                struct_start,
+                struct_start + "pub struct Child {\n    value: Int,\n}".len(),
+            )
+        )
+    );
+
+    let match_type_definition = type_definition_for_dependency_values(
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "second", 2)),
+    )
+    .expect(
+        "dependency structured match root-indexed value type definition should exist in parse-error source",
+    );
+    let GotoTypeDefinitionResponse::Scalar(type_location) = match_type_definition else {
+        panic!("type definition should be one location")
+    };
+    assert_eq!(type_location, match_location);
+
+    let references = references_for_dependency_values(
+        &uri,
+        source,
+        &package,
+        offset_to_position(source, nth_offset(source, "first", 1)),
+        false,
+    )
+    .expect(
+        "dependency structured root-indexed value references should exist in parse-error source",
+    );
+    assert_eq!(
+        references,
+        vec![
+            Location::new(
+                uri.clone(),
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "first", 2),
+                        nth_offset(source, "first", 2) + "first".len(),
+                    ),
+                ),
+            ),
+            Location::new(
+                uri,
+                span_to_range(
+                    source,
+                    Span::new(
+                        nth_offset(source, "first", 3),
+                        nth_offset(source, "first", 3) + "first".len(),
+                    ),
+                ),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn package_bridge_completes_dependency_struct_member_fields_for_closure_parameters() {
     let temp = TempDir::new("ql-lsp-package-struct-member-field-closure-param");
     let app_root = temp.path().join("workspace").join("app");
