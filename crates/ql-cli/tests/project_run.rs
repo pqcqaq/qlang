@@ -89,6 +89,58 @@ name = "app"
 }
 
 #[test]
+fn run_project_source_file_uses_project_aware_target_and_profile() {
+    if !toolchain_available("`ql run` direct project source file test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-source-file-project-aware");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/bin"))
+        .expect("create package source tree for direct project source run test");
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[profile]
+default = "release"
+"#,
+    );
+    let main_path = temp.write("app/src/main.ql", "fn main() -> Int { return 13 }\n");
+    temp.write("app/src/bin/admin.ql", "fn main() -> Int { return 2 }\n");
+    let output_path = executable_output_path(&project_root.join("target/ql/release"), "main");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&main_path);
+    let output = run_command_capture(&mut command, "`ql run` direct project source file");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-source-file-project-aware",
+        "direct project source file run",
+        &output,
+        13,
+    )
+    .expect("direct project source file `ql run` should execute the selected target");
+    expect_silent_output(
+        "project-run-source-file-project-aware",
+        "direct project source file run",
+        &stdout,
+        &stderr,
+    )
+    .expect("direct project source file `ql run` should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-source-file-project-aware",
+        &output_path,
+        "direct project source executable",
+        "direct project source file run",
+    )
+    .expect("direct project source file `ql run` should emit the executable under the package target dir");
+}
+
+#[test]
 fn run_package_path_uses_manifest_default_release_profile() {
     if !toolchain_available("`ql run` manifest profile test") {
         return;

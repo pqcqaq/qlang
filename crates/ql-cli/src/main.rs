@@ -1523,6 +1523,22 @@ fn build_path(
         );
     }
 
+    if let Some(request) = resolve_project_source_build_target_request(path) {
+        if selector.is_active() {
+            report_project_source_path_rejects_target_selector("`ql build`", path, selector);
+            return Err(1);
+        }
+        return build_project_path(
+            path,
+            options,
+            &request.selector,
+            emit_interface,
+            emit_overridden,
+            profile_overridden,
+            json,
+        );
+    }
+
     if selector.is_active() {
         if json {
             let mut report =
@@ -1603,8 +1619,11 @@ impl BuildJsonReport {
         profile_overridden: bool,
         emit_interface: bool,
     ) -> Self {
-        let project_scope = should_use_project_build(path);
-        let project_manifest_path = if project_scope {
+        let direct_source_request = resolve_project_source_build_target_request(path);
+        let project_scope = should_use_project_build(path) || direct_source_request.is_some();
+        let project_manifest_path = if let Some(request) = direct_source_request.as_ref() {
+            Some(normalize_path(&request.manifest_path))
+        } else if project_scope {
             load_project_manifest(path)
                 .ok()
                 .map(|manifest| normalize_path(&manifest.manifest_path))
@@ -2757,6 +2776,18 @@ fn report_project_target_selector_requires_project_context(
     eprintln!("note: selector: {}", selector.describe());
 }
 
+fn report_project_source_path_rejects_target_selector(
+    command_label: &str,
+    path: &Path,
+    selector: &ProjectTargetSelector,
+) {
+    eprintln!(
+        "error: {command_label} does not support combining a direct project source path with target selectors"
+    );
+    eprintln!("note: source path: {}", normalize_path(path));
+    eprintln!("note: selector: {}", selector.describe());
+}
+
 fn select_workspace_build_targets(
     path: &Path,
     members: &[WorkspaceBuildTargets],
@@ -2822,6 +2853,20 @@ fn run_path(
     let options = run_build_options(profile);
     if should_use_project_build(path) {
         return run_project_path(path, &options, profile_overridden, selector, program_args);
+    }
+
+    if let Some(request) = resolve_project_source_build_target_request(path) {
+        if selector.is_active() {
+            report_project_source_path_rejects_target_selector("`ql run`", path, selector);
+            return Err(1);
+        }
+        return run_project_path(
+            path,
+            &options,
+            profile_overridden,
+            &request.selector,
+            program_args,
+        );
     }
 
     if selector.is_active() {
@@ -3326,6 +3371,12 @@ struct ProjectFileTestRequest {
     display_path: String,
 }
 
+#[derive(Clone, Debug)]
+struct ProjectSourceBuildTargetRequest {
+    manifest_path: PathBuf,
+    selector: ProjectTargetSelector,
+}
+
 fn test_build_options(profile: BuildProfile) -> BuildOptions {
     let mut options = BuildOptions {
         emit: BuildEmit::Executable,
@@ -3492,6 +3543,32 @@ fn resolve_project_file_test_request(path: &Path) -> Option<ProjectFileTestReque
     Some(ProjectFileTestRequest {
         manifest_path,
         display_path: display_relative_to_root(&package_root, path),
+    })
+}
+
+fn resolve_project_source_build_target_request(
+    path: &Path,
+) -> Option<ProjectSourceBuildTargetRequest> {
+    if !is_ql_source_file(path) {
+        return None;
+    }
+
+    let manifest = load_project_manifest(path).ok()?;
+    let package_name = package_name(&manifest).ok()?.to_owned();
+    let display_path = project_target_display_path(&manifest.manifest_path, path);
+    let targets = discover_package_build_targets(&manifest).ok()?;
+    if !targets.iter().any(|target| {
+        project_target_display_path(&manifest.manifest_path, target.path.as_path()) == display_path
+    }) {
+        return None;
+    }
+
+    Some(ProjectSourceBuildTargetRequest {
+        manifest_path: manifest.manifest_path,
+        selector: ProjectTargetSelector {
+            package_name: Some(package_name),
+            target: Some(ProjectTargetSelectorKind::DisplayPath(display_path)),
+        },
     })
 }
 

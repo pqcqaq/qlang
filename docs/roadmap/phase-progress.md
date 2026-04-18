@@ -1,6 +1,6 @@
 # P1-P8 阶段总览
 
-> 最后同步：2026-04-18
+> 最后同步：2026-04-19
 
 这页只保留阶段级结论和当前焦点。
 
@@ -22,6 +22,7 @@
 - 编译器主路径已经稳定为 AST -> HIR -> resolve -> typeck -> MIR -> LLVM。
 - package/workspace 基础能力已落地：`ql project init`、`targets`、`graph`、`lock`、`emit-interface`。
 - project-aware `ql build` / `ql run` / `ql test` 已可在 package/workspace 根目录工作。
+- `ql build` / `ql run` 现在也可直接从 package 内源码 target 路径进入 project-aware 流程，不再掉回裸单文件输出语义。
 - `ql test` 新增 exact target rerun：`--target` 可精确选择已发现测试，直接运行 package `tests/` 下的单个测试文件时也会保留 project-aware 语义。
 - `qlang.toml` 已支持最小本地依赖、target path 和默认 profile。
 - 第一版 `qlang.lock`、`ql.check --json`、`ql.build --json`、`ql.test --json` 已落地。
