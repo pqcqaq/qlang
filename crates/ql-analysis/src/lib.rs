@@ -861,37 +861,49 @@ impl PackageAnalysis {
         enum_name: &str,
     ) -> Option<Vec<CompletionItem>> {
         let module = package_module_for_source_path(self, source_path)?;
-        let enum_decl = module
-            .analysis()
-            .ast()
-            .items
-            .iter()
-            .find_map(|item| match &item.kind {
-                AstItemKind::Enum(enum_decl)
-                    if is_public(&enum_decl.visibility) && enum_decl.name == enum_name =>
-                {
-                    Some(enum_decl)
-                }
-                _ => None,
-            })?;
+        let module_source = fs::read_to_string(module.path())
+            .ok()?
+            .replace("\r\n", "\n");
+        enum_variant_completions_in_module_source(&module_source, enum_name)
+    }
 
-        let mut items = enum_decl
-            .variants
-            .iter()
-            .map(|variant| CompletionItem {
-                label: variant.name.clone(),
-                insert_text: variant.name.clone(),
-                kind: SymbolKind::Variant,
-                detail: dependency_variant_detail(&enum_decl.name, variant),
-                ty: Some(enum_decl.name.clone()),
+    pub fn public_enum_variant_completions_in_source(
+        &self,
+        source_path: &str,
+        module_source: &str,
+        enum_name: &str,
+    ) -> Option<Vec<CompletionItem>> {
+        package_module_for_source_path(self, source_path)?;
+        enum_variant_completions_in_module_source(module_source, enum_name)
+    }
+
+    pub fn public_struct_literal_field_completions_in_source(
+        &self,
+        source_path: &str,
+        module_source: &str,
+        struct_name: &str,
+        excluded_field_names: &[String],
+    ) -> Option<Vec<CompletionItem>> {
+        let binding = public_struct_completion_binding_in_source(
+            self,
+            source_path,
+            module_source,
+            struct_name,
+        )?;
+        let excluded = excluded_field_names.iter().collect::<HashSet<_>>();
+        let items = binding
+            .fields
+            .values()
+            .filter(|field| !excluded.contains(&field.name))
+            .map(|field| CompletionItem {
+                label: field.name.clone(),
+                insert_text: field.name.clone(),
+                kind: SymbolKind::Field,
+                detail: field.detail.clone(),
+                ty: Some(field.ty.clone()),
             })
             .collect::<Vec<_>>();
-        items.sort_by(|left, right| {
-            left.label
-                .cmp(&right.label)
-                .then_with(|| left.detail.cmp(&right.detail))
-        });
-        Some(items)
+        (!items.is_empty()).then_some(items)
     }
 
     pub fn public_struct_literal_field_completions(
@@ -945,12 +957,80 @@ impl PackageAnalysis {
         Some(items)
     }
 
+    pub fn public_struct_member_field_completions_in_source(
+        &self,
+        source_path: &str,
+        module_source: &str,
+        struct_name: &str,
+    ) -> Option<Vec<CompletionItem>> {
+        let binding = public_struct_completion_binding_in_source(
+            self,
+            source_path,
+            module_source,
+            struct_name,
+        )?;
+        let mut items = binding
+            .fields
+            .values()
+            .map(|field| CompletionItem {
+                label: field.name.clone(),
+                insert_text: field.name.clone(),
+                kind: SymbolKind::Field,
+                detail: field.detail.clone(),
+                ty: Some(field.ty.clone()),
+            })
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return None;
+        }
+        items.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| left.detail.cmp(&right.detail))
+        });
+        Some(items)
+    }
+
     pub fn public_struct_method_completions(
         &self,
         source_path: &str,
         struct_name: &str,
     ) -> Option<Vec<CompletionItem>> {
         let binding = public_struct_completion_binding(self, source_path, struct_name)?;
+        let mut items = binding
+            .methods
+            .values()
+            .map(|method| CompletionItem {
+                label: method.name.clone(),
+                insert_text: method.name.clone(),
+                kind: SymbolKind::Method,
+                detail: method.detail.clone(),
+                ty: method.return_type.clone(),
+            })
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return None;
+        }
+        items.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| left.detail.cmp(&right.detail))
+        });
+        Some(items)
+    }
+
+    pub fn public_struct_method_completions_in_source(
+        &self,
+        source_path: &str,
+        module_source: &str,
+        struct_name: &str,
+    ) -> Option<Vec<CompletionItem>> {
+        let binding = public_struct_completion_binding_in_source(
+            self,
+            source_path,
+            module_source,
+            struct_name,
+        )?;
         let mut items = binding
             .methods
             .values()
@@ -1019,6 +1099,14 @@ impl PackageAnalysis {
             offset,
             DependencyMemberCompletionKind::Method,
         )
+        .or_else(|| {
+            dependency_member_completion_target_in_broken_source(
+                self,
+                source,
+                offset,
+                DependencyMemberCompletionKind::MethodReceiver,
+            )
+        })
     }
 
     pub fn dependency_member_field_completion_target_in_source_at(
@@ -1032,6 +1120,14 @@ impl PackageAnalysis {
             offset,
             DependencyMemberCompletionKind::Field,
         )
+        .or_else(|| {
+            dependency_member_completion_target_in_broken_source(
+                self,
+                source,
+                offset,
+                DependencyMemberCompletionKind::FieldReceiver,
+            )
+        })
     }
 
     fn dependency_value_binding_in_source_at(
@@ -3665,6 +3761,39 @@ fn package_module_for_source_path<'a>(
         .find(|module| package_module_matches_source_path(package, module.path(), source_path))
 }
 
+fn enum_variant_completions_in_module_source(
+    module_source: &str,
+    enum_name: &str,
+) -> Option<Vec<CompletionItem>> {
+    let module = parse_source(module_source).ok()?;
+    let enum_decl = module.items.iter().find_map(|item| match &item.kind {
+        AstItemKind::Enum(enum_decl)
+            if is_public(&enum_decl.visibility) && enum_decl.name == enum_name =>
+        {
+            Some(enum_decl)
+        }
+        _ => None,
+    })?;
+
+    let mut items = enum_decl
+        .variants
+        .iter()
+        .map(|variant| CompletionItem {
+            label: variant.name.clone(),
+            insert_text: variant.name.clone(),
+            kind: SymbolKind::Variant,
+            detail: dependency_variant_detail(&enum_decl.name, variant),
+            ty: Some(enum_decl.name.clone()),
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        left.label
+            .cmp(&right.label)
+            .then_with(|| left.detail.cmp(&right.detail))
+    });
+    Some(items)
+}
+
 fn dependency_struct_completion_target(
     dependency: &DependencyInterface,
     symbol: &DependencySymbol,
@@ -3701,6 +3830,35 @@ fn dependency_member_completion_target_in_source_at(
     })
 }
 
+fn dependency_member_completion_target_in_broken_source(
+    package: &PackageAnalysis,
+    source: &str,
+    offset: usize,
+    kind: DependencyMemberCompletionKind,
+) -> Option<DependencyStructCompletionTarget> {
+    let site = dependency_member_site_in_broken_source(source, offset)?;
+    let expected_kind = match kind {
+        DependencyMemberCompletionKind::Field | DependencyMemberCompletionKind::FieldReceiver => {
+            BrokenSourceValueSegmentKind::Field
+        }
+        DependencyMemberCompletionKind::Method | DependencyMemberCompletionKind::MethodReceiver => {
+            BrokenSourceValueSegmentKind::Method
+        }
+        DependencyMemberCompletionKind::ValueType => return None,
+    };
+    if site.member_kind != expected_kind {
+        return None;
+    }
+    let binding = dependency_member_receiver_binding_in_broken_source(package, source, &site)?;
+    Some(DependencyStructCompletionTarget {
+        package_name: binding.package_name,
+        manifest_path: binding.manifest_path,
+        source_path: binding.source_path,
+        struct_name: binding.struct_name,
+        path: binding.path,
+    })
+}
+
 fn public_struct_completion_binding(
     package: &PackageAnalysis,
     source_path: &str,
@@ -3710,23 +3868,28 @@ fn public_struct_completion_binding(
     let module_source = fs::read_to_string(module.path())
         .ok()?
         .replace("\r\n", "\n");
-    let (struct_decl, detail) =
-        module
-            .analysis()
-            .ast()
-            .items
-            .iter()
-            .find_map(|item| match &item.kind {
-                AstItemKind::Struct(struct_decl)
-                    if is_public(&struct_decl.visibility) && struct_decl.name == struct_name =>
-                {
-                    Some((
-                        struct_decl,
-                        interface_detail_text(&module_source, item.span, &struct_decl.name),
-                    ))
-                }
-                _ => None,
-            })?;
+    public_struct_completion_binding_in_source(package, source_path, &module_source, struct_name)
+}
+
+fn public_struct_completion_binding_in_source(
+    package: &PackageAnalysis,
+    source_path: &str,
+    module_source: &str,
+    struct_name: &str,
+) -> Option<DependencyStructBinding> {
+    package_module_for_source_path(package, source_path)?;
+    let module = parse_source(module_source).ok()?;
+    let (struct_decl, detail) = module.items.iter().find_map(|item| match &item.kind {
+        AstItemKind::Struct(struct_decl)
+            if is_public(&struct_decl.visibility) && struct_decl.name == struct_name =>
+        {
+            Some((
+                struct_decl,
+                interface_detail_text(module_source, item.span, &struct_decl.name),
+            ))
+        }
+        _ => None,
+    })?;
     let fields = struct_decl
         .fields
         .iter()
@@ -3756,27 +3919,52 @@ fn public_struct_completion_binding(
         path: default_interface_path(&package.manifest).ok()?,
         definition_span: struct_decl.name_span,
         fields,
-        methods: public_struct_methods_for_source_path(package, struct_name),
+        methods: public_struct_methods_for_source_path(
+            package,
+            struct_name,
+            Some((source_path, module_source)),
+        ),
     })
 }
 
 fn public_struct_methods_for_source_path(
     package: &PackageAnalysis,
     struct_name: &str,
+    source_override: Option<(&str, &str)>,
 ) -> HashMap<String, DependencyStructResolvedMethod> {
     let mut impl_candidates: HashMap<String, Vec<DependencyStructResolvedMethod>> = HashMap::new();
     let mut extend_candidates: HashMap<String, Vec<DependencyStructResolvedMethod>> =
         HashMap::new();
 
     for module in &package.modules {
-        let Ok(module_source) = fs::read_to_string(module.path()) else {
-            continue;
-        };
-        let module_source = module_source.replace("\r\n", "\n");
         let Some(module_source_path) = package_module_source_path(package, module.path()) else {
             continue;
         };
-        for item in &module.analysis().ast().items {
+        let (module_source, module_ast) = if let Some((override_source_path, override_source)) =
+            source_override
+            && normalized_module_source_path(override_source_path) == module_source_path
+        {
+            if let Ok(parsed_module) = parse_source(override_source) {
+                (override_source.replace("\r\n", "\n"), parsed_module)
+            } else {
+                let Ok(module_source) = fs::read_to_string(module.path()) else {
+                    continue;
+                };
+                (
+                    module_source.replace("\r\n", "\n"),
+                    module.analysis().ast().clone(),
+                )
+            }
+        } else {
+            let Ok(module_source) = fs::read_to_string(module.path()) else {
+                continue;
+            };
+            (
+                module_source.replace("\r\n", "\n"),
+                module.analysis().ast().clone(),
+            )
+        };
+        for item in &module_ast.items {
             match &item.kind {
                 AstItemKind::Impl(impl_block)
                     if dependency_type_expr_targets_struct(&impl_block.target, struct_name) =>

@@ -65,6 +65,8 @@ pub struct Backend {
     workspace_roots: RwLock<Vec<PathBuf>>,
 }
 
+type OpenDocuments = HashMap<PathBuf, (Url, String)>;
+
 impl Backend {
     pub fn new(client: Client) -> Self {
         Self {
@@ -95,6 +97,21 @@ impl Backend {
         let path = uri.to_file_path().ok()?;
         package_analysis_for_path(&path)
     }
+
+    async fn open_file_documents(&self) -> OpenDocuments {
+        file_open_documents(self.documents.entries().await)
+    }
+}
+
+fn file_open_documents(documents: Vec<(Url, String)>) -> OpenDocuments {
+    let mut open_docs = HashMap::new();
+    for (uri, source) in documents {
+        let Ok(path) = uri.to_file_path() else {
+            continue;
+        };
+        open_docs.insert(canonicalize_or_clone(&path), (uri, source));
+    }
+    open_docs
 }
 
 fn configure_workspace_roots(params: &InitializeParams) -> Vec<PathBuf> {
@@ -1041,6 +1058,16 @@ fn package_module_matches_dependency_source_path(
         == normalized_dependency_source_path(dependency_source_path)
 }
 
+fn open_document_snapshot(
+    open_docs: &OpenDocuments,
+    path: &Path,
+) -> Option<(Url, String, Analysis)> {
+    let canonical_path = canonicalize_or_clone(path);
+    let (uri, source) = open_docs.get(&canonical_path)?;
+    let analysis = analyze_source(source).ok()?;
+    Some((uri.clone(), source.clone(), analysis))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WorkspaceSourceSymbolMatch {
     location: Location,
@@ -1385,9 +1412,31 @@ fn hover_from_workspace_source_location(
     current_span: Span,
     source_location: Location,
 ) -> Option<Hover> {
+    let open_docs = OpenDocuments::new();
+    hover_from_workspace_source_location_with_open_docs(
+        current_source,
+        current_span,
+        source_location,
+        &open_docs,
+    )
+}
+
+fn hover_from_workspace_source_location_with_open_docs(
+    current_source: &str,
+    current_span: Span,
+    source_location: Location,
+    open_docs: &OpenDocuments,
+) -> Option<Hover> {
     let source_path = source_location.uri.to_file_path().ok()?;
-    let source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
-    let analysis = analyze_source(&source).ok()?;
+    let (source, analysis) = if let Some((_, open_source, open_analysis)) =
+        open_document_snapshot(open_docs, &source_path)
+    {
+        (open_source, open_analysis)
+    } else {
+        let source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
+        let analysis = analyze_source(&source).ok()?;
+        (source, analysis)
+    };
     let hover = crate::bridge::hover_for_analysis(&source, &analysis, source_location.range.start)?;
 
     Some(Hover {
@@ -1827,6 +1876,27 @@ fn extend_workspace_dependency_definition_matches(
     target: &DependencyDefinitionTarget,
     matches: &mut Vec<Location>,
 ) {
+    let open_docs = OpenDocuments::new();
+    extend_workspace_dependency_definition_matches_with_open_docs(
+        package,
+        current_path,
+        current_source,
+        current_analysis,
+        &open_docs,
+        target,
+        matches,
+    );
+}
+
+fn extend_workspace_dependency_definition_matches_with_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    current_path: Option<&Path>,
+    current_source: Option<&str>,
+    current_analysis: Option<&Analysis>,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+    matches: &mut Vec<Location>,
+) {
     if !supports_workspace_dependency_definition(target.kind) {
         return;
     }
@@ -1844,35 +1914,57 @@ fn extend_workspace_dependency_definition_matches(
             continue;
         }
 
-        let owned_source = if current_path
+        if current_path
             .is_some_and(|path| canonicalize_or_clone(path) == canonicalize_or_clone(module_path))
         {
-            None
-        } else {
-            let Ok(source) = fs::read_to_string(module_path) else {
+            let Ok(uri) = Url::from_file_path(module_path) else {
                 continue;
             };
-            Some(source.replace("\r\n", "\n"))
-        };
-        let module_source = owned_source
-            .as_deref()
-            .unwrap_or_else(|| current_source.unwrap_or_default());
-        let module_analysis = if owned_source.is_some() {
-            module.analysis()
-        } else {
-            current_analysis.unwrap_or(module.analysis())
-        };
+            let Some(module_source) = current_source else {
+                continue;
+            };
+            let Some(module_analysis) = current_analysis else {
+                continue;
+            };
+            for symbol in module_analysis.document_symbols() {
+                if symbol.name != target.name || symbol.kind != target.kind {
+                    continue;
+                }
+                matches.push(Location::new(
+                    uri.clone(),
+                    span_to_range(module_source, symbol.span),
+                ));
+            }
+            continue;
+        }
 
-        let Ok(module_uri) = Url::from_file_path(module_path) else {
+        if let Some((uri, source, analysis)) = open_document_snapshot(open_docs, module_path) {
+            for symbol in analysis.document_symbols() {
+                if symbol.name != target.name || symbol.kind != target.kind {
+                    continue;
+                }
+                matches.push(Location::new(
+                    uri.clone(),
+                    span_to_range(&source, symbol.span),
+                ));
+            }
+            continue;
+        }
+
+        let Ok(uri) = Url::from_file_path(module_path) else {
             continue;
         };
-        for symbol in module_analysis.document_symbols() {
+        let Ok(source) = fs::read_to_string(module_path) else {
+            continue;
+        };
+        let source = source.replace("\r\n", "\n");
+        for symbol in module.analysis().document_symbols() {
             if symbol.name != target.name || symbol.kind != target.kind {
                 continue;
             }
             matches.push(Location::new(
-                module_uri.clone(),
-                span_to_range(module_source, symbol.span),
+                uri.clone(),
+                span_to_range(&source, symbol.span),
             ));
         }
     }
@@ -1978,6 +2070,25 @@ fn extend_workspace_dependency_reference_locations(
     include_declaration: bool,
     locations: &mut Vec<Location>,
 ) {
+    let open_docs = OpenDocuments::new();
+    extend_workspace_dependency_reference_locations_with_open_docs(
+        package,
+        current_path,
+        &open_docs,
+        target,
+        include_declaration,
+        locations,
+    );
+}
+
+fn extend_workspace_dependency_reference_locations_with_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    current_path: Option<&Path>,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+    include_declaration: bool,
+    locations: &mut Vec<Location>,
+) {
     let Ok(source_paths) = collect_package_sources(package.manifest()) else {
         return;
     };
@@ -1988,21 +2099,28 @@ fn extend_workspace_dependency_reference_locations(
         {
             continue;
         }
-        let Ok(source) = fs::read_to_string(&source_path) else {
-            continue;
+        let (uri, source, owned_analysis) = if let Some((open_uri, open_source, open_analysis)) =
+            open_document_snapshot(open_docs, &source_path)
+        {
+            (open_uri, open_source, Some(open_analysis))
+        } else {
+            let Ok(uri) = Url::from_file_path(&source_path) else {
+                continue;
+            };
+            let Ok(source) = fs::read_to_string(&source_path) else {
+                continue;
+            };
+            let source = source.replace("\r\n", "\n");
+            let analysis = package
+                .modules()
+                .iter()
+                .find(|module| {
+                    canonicalize_or_clone(module.path()) == canonicalize_or_clone(&source_path)
+                })
+                .map(|module| module.analysis().clone())
+                .or_else(|| analyze_source(&source).ok());
+            (uri, source, analysis)
         };
-        let source = source.replace("\r\n", "\n");
-        let Ok(uri) = Url::from_file_path(&source_path) else {
-            continue;
-        };
-        let owned_analysis = package
-            .modules()
-            .iter()
-            .find(|module| {
-                canonicalize_or_clone(module.path()) == canonicalize_or_clone(&source_path)
-            })
-            .map(|module| module.analysis().clone())
-            .or_else(|| analyze_source(&source).ok());
         let analysis = owned_analysis.as_ref();
         let mut module_locations = lex(&source)
             .0
@@ -2043,10 +2161,28 @@ fn workspace_dependency_reference_locations(
     target: &DependencyDefinitionTarget,
     include_declaration: bool,
 ) -> Vec<Location> {
-    let mut locations = Vec::new();
-    extend_workspace_dependency_reference_locations(
+    let open_docs = OpenDocuments::new();
+    workspace_dependency_reference_locations_with_open_docs(
         package,
         current_path,
+        &open_docs,
+        target,
+        include_declaration,
+    )
+}
+
+fn workspace_dependency_reference_locations_with_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    current_path: Option<&Path>,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+    include_declaration: bool,
+) -> Vec<Location> {
+    let mut locations = Vec::new();
+    extend_workspace_dependency_reference_locations_with_open_docs(
+        package,
+        current_path,
+        open_docs,
         target,
         include_declaration,
         &mut locations,
@@ -2057,9 +2193,10 @@ fn workspace_dependency_reference_locations(
         let Some(member_package) = package_analysis_for_path(&candidate_manifest_path) else {
             continue;
         };
-        extend_workspace_dependency_reference_locations(
+        extend_workspace_dependency_reference_locations_with_open_docs(
             &member_package,
             None,
+            open_docs,
             target,
             include_declaration,
             &mut locations,
@@ -2085,14 +2222,29 @@ fn workspace_source_location_for_dependency_target(
     package: &ql_analysis::PackageAnalysis,
     target: &DependencyDefinitionTarget,
 ) -> Option<Location> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_location_for_dependency_target_with_open_docs(
+        uri, source, analysis, package, &open_docs, target,
+    )
+}
+
+fn workspace_source_location_for_dependency_target_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+) -> Option<Location> {
     let current_path = uri.to_file_path().ok();
     let mut matches = Vec::new();
 
-    extend_workspace_dependency_definition_matches(
+    extend_workspace_dependency_definition_matches_with_open_docs(
         package,
         current_path.as_deref(),
         Some(source),
         analysis,
+        open_docs,
         target,
         &mut matches,
     );
@@ -2103,11 +2255,12 @@ fn workspace_source_location_for_dependency_target(
         let Some(member_package) = package_analysis_for_path(&candidate_manifest_path) else {
             continue;
         };
-        extend_workspace_dependency_definition_matches(
+        extend_workspace_dependency_definition_matches_with_open_docs(
             &member_package,
             None,
             None,
             None,
+            open_docs,
             target,
             &mut matches,
         );
@@ -2131,9 +2284,25 @@ fn workspace_source_definition_for_dependency(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoDefinitionResponse> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_definition_for_dependency_with_open_docs(
+        uri, source, analysis, package, &open_docs, position,
+    )
+}
+
+fn workspace_source_definition_for_dependency_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoDefinitionResponse> {
     let target = dependency_definition_target_at(source, analysis, package, position)?;
-    workspace_source_location_for_dependency_target(uri, source, analysis, package, &target)
-        .map(GotoDefinitionResponse::Scalar)
+    workspace_source_location_for_dependency_target_with_open_docs(
+        uri, source, analysis, package, open_docs, &target,
+    )
+    .map(GotoDefinitionResponse::Scalar)
 }
 
 fn workspace_source_type_definition_for_dependency(
@@ -2143,9 +2312,25 @@ fn workspace_source_type_definition_for_dependency(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoTypeDefinitionResponse> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_type_definition_for_dependency_with_open_docs(
+        uri, source, analysis, package, &open_docs, position,
+    )
+}
+
+fn workspace_source_type_definition_for_dependency_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoTypeDefinitionResponse> {
     let target = dependency_type_definition_target_at(source, analysis, package, position)?;
-    workspace_source_location_for_dependency_target(uri, source, analysis, package, &target)
-        .map(GotoTypeDefinitionResponse::Scalar)
+    workspace_source_location_for_dependency_target_with_open_docs(
+        uri, source, analysis, package, open_docs, &target,
+    )
+    .map(GotoTypeDefinitionResponse::Scalar)
 }
 
 fn workspace_source_hover_for_dependency(
@@ -2155,12 +2340,32 @@ fn workspace_source_hover_for_dependency(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<Hover> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_hover_for_dependency_with_open_docs(
+        uri, source, analysis, package, &open_docs, position,
+    )
+}
+
+fn workspace_source_hover_for_dependency_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Hover> {
     let occurrence_span = dependency_occurrence_span_at(source, package, position)?;
     let target = dependency_definition_target_at(source, analysis, package, position)?;
-    let source_location =
-        workspace_source_location_for_dependency_target(uri, source, analysis, package, &target)?;
+    let source_location = workspace_source_location_for_dependency_target_with_open_docs(
+        uri, source, analysis, package, open_docs, &target,
+    )?;
 
-    hover_from_workspace_source_location(source, occurrence_span, source_location)
+    hover_from_workspace_source_location_with_open_docs(
+        source,
+        occurrence_span,
+        source_location,
+        open_docs,
+    )
 }
 
 fn workspace_source_dependency_completion(
@@ -2168,8 +2373,11 @@ fn workspace_source_dependency_completion(
     offset: usize,
     package: &ql_analysis::PackageAnalysis,
     target_manifest_path: &Path,
+    target_source_path: &str,
+    open_docs: &OpenDocuments,
     items_for_package: impl Fn(
         &ql_analysis::PackageAnalysis,
+        Option<&str>,
     ) -> Option<Vec<ql_analysis::CompletionItem>>,
 ) -> Option<CompletionResponse> {
     for candidate_manifest_path in
@@ -2183,7 +2391,18 @@ fn workspace_source_dependency_completion(
         {
             continue;
         }
-        if let Some(items) = items_for_package(&candidate_package) {
+        let open_source = open_docs.iter().find_map(|(path, (_, open_source))| {
+            candidate_package.modules().iter().find_map(|module| {
+                (canonicalize_or_clone(module.path()) == canonicalize_or_clone(path)
+                    && package_module_matches_dependency_source_path(
+                        &candidate_package,
+                        module.path(),
+                        target_source_path,
+                    ))
+                .then_some(open_source.as_str())
+            })
+        });
+        if let Some(items) = items_for_package(&candidate_package, open_source) {
             return completion_response(source, offset, items);
         }
     }
@@ -2195,6 +2414,16 @@ fn workspace_source_variant_completions(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<CompletionResponse> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_variant_completions_with_open_docs(source, package, &open_docs, position)
+}
+
+fn workspace_source_variant_completions_with_open_docs(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<CompletionResponse> {
     let offset = position_to_offset(source, position)?;
     let target = package.dependency_variant_completion_target_in_source_at(source, offset)?;
     workspace_source_dependency_completion(
@@ -2202,7 +2431,16 @@ fn workspace_source_variant_completions(
         offset,
         package,
         target.manifest_path.as_path(),
-        |candidate_package| {
+        &target.source_path,
+        open_docs,
+        |candidate_package, open_source| {
+            if let Some(open_source) = open_source {
+                return candidate_package.public_enum_variant_completions_in_source(
+                    &target.source_path,
+                    open_source,
+                    &target.enum_name,
+                );
+            }
             candidate_package
                 .public_enum_variant_completions(&target.source_path, &target.enum_name)
         },
@@ -2214,6 +2452,16 @@ fn workspace_source_struct_field_completions(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<CompletionResponse> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_struct_field_completions_with_open_docs(source, package, &open_docs, position)
+}
+
+fn workspace_source_struct_field_completions_with_open_docs(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<CompletionResponse> {
     let offset = position_to_offset(source, position)?;
     let target = package.dependency_struct_field_completion_target_in_source_at(source, offset)?;
     workspace_source_dependency_completion(
@@ -2221,7 +2469,17 @@ fn workspace_source_struct_field_completions(
         offset,
         package,
         target.target.manifest_path.as_path(),
-        |candidate_package| {
+        &target.target.source_path,
+        open_docs,
+        |candidate_package, open_source| {
+            if let Some(open_source) = open_source {
+                return candidate_package.public_struct_literal_field_completions_in_source(
+                    &target.target.source_path,
+                    open_source,
+                    &target.target.struct_name,
+                    &target.excluded_field_names,
+                );
+            }
             candidate_package.public_struct_literal_field_completions(
                 &target.target.source_path,
                 &target.target.struct_name,
@@ -2236,6 +2494,16 @@ fn workspace_source_member_field_completions(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<CompletionResponse> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_member_field_completions_with_open_docs(source, package, &open_docs, position)
+}
+
+fn workspace_source_member_field_completions_with_open_docs(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<CompletionResponse> {
     let offset = position_to_offset(source, position)?;
     let target = package.dependency_member_field_completion_target_in_source_at(source, offset)?;
     workspace_source_dependency_completion(
@@ -2243,7 +2511,16 @@ fn workspace_source_member_field_completions(
         offset,
         package,
         target.manifest_path.as_path(),
-        |candidate_package| {
+        &target.source_path,
+        open_docs,
+        |candidate_package, open_source| {
+            if let Some(open_source) = open_source {
+                return candidate_package.public_struct_member_field_completions_in_source(
+                    &target.source_path,
+                    open_source,
+                    &target.struct_name,
+                );
+            }
             candidate_package
                 .public_struct_member_field_completions(&target.source_path, &target.struct_name)
         },
@@ -2255,14 +2532,39 @@ fn workspace_source_method_completions(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<CompletionResponse> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_method_completions_with_open_docs(source, package, &open_docs, position)
+}
+
+fn workspace_source_method_completions_with_open_docs(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<CompletionResponse> {
     let offset = position_to_offset(source, position)?;
-    let target = package.dependency_method_completion_target_in_source_at(source, offset)?;
+    let target = package
+        .dependency_method_completion_target_in_source_at(source, offset)
+        .or_else(|| {
+            offset.checked_sub(1).and_then(|fallback_offset| {
+                package.dependency_method_completion_target_in_source_at(source, fallback_offset)
+            })
+        })?;
     workspace_source_dependency_completion(
         source,
         offset,
         package,
         target.manifest_path.as_path(),
-        |candidate_package| {
+        &target.source_path,
+        open_docs,
+        |candidate_package, open_source| {
+            if let Some(open_source) = open_source {
+                return candidate_package.public_struct_method_completions_in_source(
+                    &target.source_path,
+                    open_source,
+                    &target.struct_name,
+                );
+            }
             candidate_package
                 .public_struct_method_completions(&target.source_path, &target.struct_name)
         },
@@ -2463,11 +2765,26 @@ fn workspace_dependency_document_highlights(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<Vec<DocumentHighlight>> {
-    let locations = workspace_source_references_for_dependency(
+    let open_docs = OpenDocuments::new();
+    workspace_dependency_document_highlights_with_open_docs(
+        uri, source, analysis, package, position, &open_docs,
+    )
+}
+
+fn workspace_dependency_document_highlights_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+    open_docs: &OpenDocuments,
+) -> Option<Vec<DocumentHighlight>> {
+    let locations = workspace_source_references_for_dependency_with_open_docs(
         uri,
         source,
         Some(analysis),
         package,
+        open_docs,
         position,
         true,
     )?;
@@ -2620,9 +2937,24 @@ fn normalize_reference_locations_with_definition(
 }
 
 fn same_file_references_for_source_location(source_location: &Location) -> Option<Vec<Location>> {
+    let open_docs = OpenDocuments::new();
+    same_file_references_for_source_location_with_open_docs(source_location, &open_docs)
+}
+
+fn same_file_references_for_source_location_with_open_docs(
+    source_location: &Location,
+    open_docs: &OpenDocuments,
+) -> Option<Vec<Location>> {
     let source_path = source_location.uri.to_file_path().ok()?;
-    let source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
-    let analysis = analyze_source(&source).ok()?;
+    let (source, analysis) = if let Some((_, open_source, open_analysis)) =
+        open_document_snapshot(open_docs, &source_path)
+    {
+        (open_source, open_analysis)
+    } else {
+        let source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
+        let analysis = analyze_source(&source).ok()?;
+        (source, analysis)
+    };
     let definition_target =
         definition_target_for_source_location(&analysis, &source, source_location.range)?;
     let (tokens, _) = lex(&source);
@@ -2823,9 +3155,31 @@ fn workspace_source_references_for_dependency(
     position: tower_lsp::lsp_types::Position,
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_references_for_dependency_with_open_docs(
+        uri,
+        source,
+        analysis,
+        package,
+        &open_docs,
+        position,
+        include_declaration,
+    )
+}
+
+fn workspace_source_references_for_dependency_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
     let target = dependency_definition_target_at(source, analysis, package, position)?;
-    let source_definition =
-        workspace_source_location_for_dependency_target(uri, source, analysis, package, &target)?;
+    let source_definition = workspace_source_location_for_dependency_target_with_open_docs(
+        uri, source, analysis, package, open_docs, &target,
+    )?;
     let mut locations = dependency_references_for_position(
         uri,
         source,
@@ -2837,7 +3191,8 @@ fn workspace_source_references_for_dependency(
     if include_declaration {
         normalize_reference_locations_with_definition(&mut locations, &source_definition);
     }
-    if let Some(mut source_locations) = same_file_references_for_source_location(&source_definition)
+    if let Some(mut source_locations) =
+        same_file_references_for_source_location_with_open_docs(&source_definition, open_docs)
     {
         if !include_declaration {
             source_locations.retain(|location| !same_location_anchor(location, &source_definition));
@@ -2847,9 +3202,10 @@ fn workspace_source_references_for_dependency(
     let current_path = uri.to_file_path().ok();
     merge_unique_reference_locations(
         &mut locations,
-        workspace_dependency_reference_locations(
+        workspace_dependency_reference_locations_with_open_docs(
             package,
             current_path.as_deref(),
+            open_docs,
             &target,
             include_declaration,
         ),
@@ -3045,6 +3401,7 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let open_docs = self.open_file_documents().await;
             let analysis = analyze_source(&source).ok();
             if let Some(analysis) = analysis.as_ref() {
                 if let Some(hover) =
@@ -3057,11 +3414,12 @@ impl LanguageServer for Backend {
             ) {
                 return Ok(Some(hover));
             }
-            if let Some(hover) = workspace_source_hover_for_dependency(
+            if let Some(hover) = workspace_source_hover_for_dependency_with_open_docs(
                 &uri,
                 &source,
                 analysis.as_ref(),
                 &package,
+                &open_docs,
                 position,
             ) {
                 return Ok(Some(hover));
@@ -3105,6 +3463,7 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let open_docs = self.open_file_documents().await;
             let analysis = analyze_source(&source).ok();
             if let Some(analysis) = analysis.as_ref()
                 && let Some(definition) = workspace_source_definition_for_import(
@@ -3120,11 +3479,12 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(definition));
             }
-            if let Some(definition) = workspace_source_definition_for_dependency(
+            if let Some(definition) = workspace_source_definition_for_dependency_with_open_docs(
                 &uri,
                 &source,
                 analysis.as_ref(),
                 &package,
+                &open_docs,
                 position,
             ) {
                 return Ok(Some(definition));
@@ -3164,6 +3524,7 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let open_docs = self.open_file_documents().await;
             let analysis = analyze_source(&source).ok();
             if let Some(analysis) = analysis.as_ref()
                 && let Some(GotoDefinitionResponse::Scalar(location)) =
@@ -3182,11 +3543,12 @@ impl LanguageServer for Backend {
                 return Ok(Some(GotoDeclarationResponse::Scalar(location)));
             }
             if let Some(GotoDefinitionResponse::Scalar(location)) =
-                workspace_source_definition_for_dependency(
+                workspace_source_definition_for_dependency_with_open_docs(
                     &uri,
                     &source,
                     analysis.as_ref(),
                     &package,
+                    &open_docs,
                     position,
                 )
             {
@@ -3227,6 +3589,7 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let open_docs = self.open_file_documents().await;
             let analysis = analyze_source(&source).ok();
             if let Some(analysis) = analysis.as_ref() {
                 if let Some(definition) = workspace_source_type_definition_for_import(
@@ -3241,11 +3604,12 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(definition));
             }
-            if let Some(definition) = workspace_source_type_definition_for_dependency(
+            if let Some(definition) = workspace_source_type_definition_for_dependency_with_open_docs(
                 &uri,
                 &source,
                 analysis.as_ref(),
                 &package,
+                &open_docs,
                 position,
             ) {
                 return Ok(Some(definition));
@@ -3292,6 +3656,7 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let open_docs = self.open_file_documents().await;
             let analysis = analyze_source(&source).ok();
             if let Some(analysis) = analysis.as_ref() {
                 if let Some(references) = workspace_source_references_for_import(
@@ -3329,17 +3694,18 @@ impl LanguageServer for Backend {
                 return Ok(Some(references));
             }
 
-            if let Some(analysis) = analysis.as_ref() {
-                if let Some(references) = workspace_source_references_for_dependency(
+            if let Some(analysis) = analysis.as_ref()
+                && let Some(references) = workspace_source_references_for_dependency_with_open_docs(
                     &uri,
                     &source,
                     Some(analysis),
                     &package,
+                    &open_docs,
                     position,
                     params.context.include_declaration,
-                ) {
-                    return Ok(Some(references));
-                }
+                )
+            {
+                return Ok(Some(references));
             }
 
             return Ok(dependency_references_for_position(
@@ -3375,6 +3741,7 @@ impl LanguageServer for Backend {
         };
 
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let open_docs = self.open_file_documents().await;
             let Ok(analysis) = analyze_source(&source) else {
                 return Ok(fallback_document_highlights_for_package_at(
                     &uri, &source, &package, position,
@@ -3385,8 +3752,8 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(highlights));
             }
-            if let Some(highlights) = workspace_dependency_document_highlights(
-                &uri, &source, &analysis, &package, position,
+            if let Some(highlights) = workspace_dependency_document_highlights_with_open_docs(
+                &uri, &source, &analysis, &package, position, &open_docs,
             ) {
                 return Ok(Some(highlights));
             }
@@ -3412,13 +3779,14 @@ impl LanguageServer for Backend {
         let package = self.package_analysis_for_uri(&uri);
 
         if let Some(package) = package.as_ref() {
+            let open_docs = self.open_file_documents().await;
             if let Some(completion) = completion_for_dependency_imports(&source, package, position)
             {
                 return Ok(Some(completion));
             }
-            if let Some(completion) =
-                workspace_source_struct_field_completions(&source, package, position)
-            {
+            if let Some(completion) = workspace_source_struct_field_completions_with_open_docs(
+                &source, package, &open_docs, position,
+            ) {
                 return Ok(Some(completion));
             }
             if let Some(completion) =
@@ -3426,9 +3794,9 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(completion));
             }
-            if let Some(completion) =
-                workspace_source_member_field_completions(&source, package, position)
-            {
+            if let Some(completion) = workspace_source_member_field_completions_with_open_docs(
+                &source, package, &open_docs, position,
+            ) {
                 return Ok(Some(completion));
             }
             if let Some(completion) =
@@ -3436,18 +3804,18 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(completion));
             }
-            if let Some(completion) =
-                workspace_source_method_completions(&source, package, position)
-            {
+            if let Some(completion) = workspace_source_method_completions_with_open_docs(
+                &source, package, &open_docs, position,
+            ) {
                 return Ok(Some(completion));
             }
             if let Some(completion) = completion_for_dependency_methods(&source, package, position)
             {
                 return Ok(Some(completion));
             }
-            if let Some(completion) =
-                workspace_source_variant_completions(&source, package, position)
-            {
+            if let Some(completion) = workspace_source_variant_completions_with_open_docs(
+                &source, package, &open_docs, position,
+            ) {
                 return Ok(Some(completion));
             }
             if let Some(completion) = completion_for_dependency_variants(&source, package, position)
@@ -3623,19 +3991,22 @@ mod tests {
         completion_for_dependency_methods, completion_for_dependency_struct_fields,
         completion_for_dependency_variants, completion_options,
         document_highlights_for_analysis_at, fallback_document_highlights_for_package_at,
-        package_analysis_for_path, prepare_rename_for_dependency_imports,
+        file_open_documents, package_analysis_for_path, prepare_rename_for_dependency_imports,
         prepare_rename_for_workspace_import_in_broken_source, rename_for_dependency_imports,
         rename_for_workspace_import_in_broken_source,
         semantic_tokens_for_workspace_dependency_fallback,
         semantic_tokens_for_workspace_package_analysis, workspace_dependency_document_highlights,
         workspace_import_document_highlights, workspace_source_definition_for_dependency,
+        workspace_source_definition_for_dependency_with_open_docs,
         workspace_source_definition_for_import,
         workspace_source_definition_for_import_in_broken_source,
         workspace_source_hover_for_dependency, workspace_source_hover_for_import,
         workspace_source_hover_for_import_in_broken_source,
         workspace_source_member_field_completions, workspace_source_method_completions,
+        workspace_source_method_completions_with_open_docs,
         workspace_source_references_for_dependency,
         workspace_source_references_for_dependency_in_broken_source,
+        workspace_source_references_for_dependency_with_open_docs,
         workspace_source_references_for_import,
         workspace_source_references_for_import_in_broken_source,
         workspace_source_struct_field_completions, workspace_source_type_definition_for_dependency,
@@ -14704,6 +15075,293 @@ pub struct Settings {
         assert_eq!(field_items[0].label, "port");
         assert_eq!(field_items[0].kind, Some(CompletionItemKind::FIELD));
         assert_eq!(field_items[0].detail.as_deref(), Some("field port: Int"));
+    }
+
+    #[test]
+    fn workspace_dependency_queries_use_unsaved_open_local_dependency_source() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-queries");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    return build().ping()
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn forward(counter: Counter) -> Int {
+    return counter.ping()
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let open_docs =
+            file_open_documents(vec![(alpha_uri.clone(), open_alpha_source.to_owned())]);
+
+        let definition = workspace_source_definition_for_dependency_with_open_docs(
+            &uri,
+            &source,
+            Some(&analysis),
+            &package,
+            &open_docs,
+            offset_to_position(&source, nth_offset(&source, "ping", 1) + 1),
+        )
+        .expect("dependency definition should use open dependency source");
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("dependency definition should resolve to a scalar source location")
+        };
+        assert_eq!(location.uri, alpha_uri);
+        assert_eq!(
+            location.range.start,
+            offset_to_position(open_alpha_source, nth_offset(open_alpha_source, "ping", 1)),
+        );
+
+        let references = workspace_source_references_for_dependency_with_open_docs(
+            &uri,
+            &source,
+            Some(&analysis),
+            &package,
+            &open_docs,
+            offset_to_position(&source, nth_offset(&source, "ping", 1) + 1),
+            true,
+        )
+        .expect("dependency references should use open dependency source");
+
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == alpha_uri
+                    && reference.range.start
+                        == offset_to_position(
+                            open_alpha_source,
+                            nth_offset(open_alpha_source, "ping", 1),
+                        )
+            }),
+            "references should include open dependency source definition",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == alpha_uri
+                    && reference.range.start
+                        == offset_to_position(
+                            open_alpha_source,
+                            nth_offset(open_alpha_source, "ping", 2),
+                        )
+            }),
+            "references should include open dependency source method use",
+        );
+    }
+
+    #[test]
+    fn workspace_dependency_method_completion_uses_unsaved_open_local_dependency_source() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-method-completion");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    return build().pu()
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let open_docs = file_open_documents(vec![(alpha_uri, open_alpha_source.to_owned())]);
+        let offset = nth_offset(&source, "build().pu", 1) + "build().pu".len();
+
+        let completion = workspace_source_method_completions_with_open_docs(
+            &source,
+            &package,
+            &open_docs,
+            offset_to_position(&source, offset),
+        )
+        .expect("method completion should use open dependency source");
+
+        let CompletionResponse::Array(items) = completion else {
+            panic!("method completion should resolve to a plain item array")
+        };
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "pulse");
+        assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
+        assert_eq!(items[0].detail.as_deref(), Some("fn pulse(self) -> Int"));
     }
 
     #[test]
