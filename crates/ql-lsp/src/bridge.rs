@@ -1011,7 +1011,7 @@ pub fn completion_for_package_analysis(
     completion_response(source, offset, analysis.completions_at(offset)?)
 }
 
-fn completion_response(
+pub(crate) fn completion_response(
     source: &str,
     offset: usize,
     items: Vec<ql_analysis::CompletionItem>,

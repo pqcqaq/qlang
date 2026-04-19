@@ -35,7 +35,7 @@ use crate::bridge::{
     completion_for_analysis, completion_for_dependency_imports,
     completion_for_dependency_member_fields, completion_for_dependency_methods,
     completion_for_dependency_struct_fields, completion_for_dependency_variants,
-    completion_for_package_analysis, declaration_for_dependency_imports,
+    completion_for_package_analysis, completion_response, declaration_for_dependency_imports,
     declaration_for_dependency_methods, declaration_for_dependency_struct_fields,
     declaration_for_dependency_values, declaration_for_dependency_variants,
     declaration_for_package_analysis, definition_for_dependency_imports,
@@ -2163,6 +2163,112 @@ fn workspace_source_hover_for_dependency(
     hover_from_workspace_source_location(source, occurrence_span, source_location)
 }
 
+fn workspace_source_dependency_completion(
+    source: &str,
+    offset: usize,
+    package: &ql_analysis::PackageAnalysis,
+    target_manifest_path: &Path,
+    items_for_package: impl Fn(
+        &ql_analysis::PackageAnalysis,
+    ) -> Option<Vec<ql_analysis::CompletionItem>>,
+) -> Option<CompletionResponse> {
+    for candidate_manifest_path in
+        source_preferred_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
+            continue;
+        };
+        if canonicalize_or_clone(candidate_package.manifest().manifest_path.as_path())
+            != canonicalize_or_clone(target_manifest_path)
+        {
+            continue;
+        }
+        if let Some(items) = items_for_package(&candidate_package) {
+            return completion_response(source, offset, items);
+        }
+    }
+    None
+}
+
+fn workspace_source_variant_completions(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<CompletionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let target = package.dependency_variant_completion_target_in_source_at(source, offset)?;
+    workspace_source_dependency_completion(
+        source,
+        offset,
+        package,
+        target.manifest_path.as_path(),
+        |candidate_package| {
+            candidate_package
+                .public_enum_variant_completions(&target.source_path, &target.enum_name)
+        },
+    )
+}
+
+fn workspace_source_struct_field_completions(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<CompletionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let target = package.dependency_struct_field_completion_target_in_source_at(source, offset)?;
+    workspace_source_dependency_completion(
+        source,
+        offset,
+        package,
+        target.target.manifest_path.as_path(),
+        |candidate_package| {
+            candidate_package.public_struct_literal_field_completions(
+                &target.target.source_path,
+                &target.target.struct_name,
+                &target.excluded_field_names,
+            )
+        },
+    )
+}
+
+fn workspace_source_member_field_completions(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<CompletionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let target = package.dependency_member_field_completion_target_in_source_at(source, offset)?;
+    workspace_source_dependency_completion(
+        source,
+        offset,
+        package,
+        target.manifest_path.as_path(),
+        |candidate_package| {
+            candidate_package
+                .public_struct_member_field_completions(&target.source_path, &target.struct_name)
+        },
+    )
+}
+
+fn workspace_source_method_completions(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<CompletionResponse> {
+    let offset = position_to_offset(source, position)?;
+    let target = package.dependency_method_completion_target_in_source_at(source, offset)?;
+    workspace_source_dependency_completion(
+        source,
+        offset,
+        package,
+        target.manifest_path.as_path(),
+        |candidate_package| {
+            candidate_package
+                .public_struct_method_completions(&target.source_path, &target.struct_name)
+        },
+    )
+}
+
 fn workspace_source_references_for_import(
     uri: &Url,
     source: &str,
@@ -3311,7 +3417,17 @@ impl LanguageServer for Backend {
                 return Ok(Some(completion));
             }
             if let Some(completion) =
+                workspace_source_struct_field_completions(&source, package, position)
+            {
+                return Ok(Some(completion));
+            }
+            if let Some(completion) =
                 completion_for_dependency_struct_fields(&source, package, position)
+            {
+                return Ok(Some(completion));
+            }
+            if let Some(completion) =
+                workspace_source_member_field_completions(&source, package, position)
             {
                 return Ok(Some(completion));
             }
@@ -3320,7 +3436,17 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(completion));
             }
+            if let Some(completion) =
+                workspace_source_method_completions(&source, package, position)
+            {
+                return Ok(Some(completion));
+            }
             if let Some(completion) = completion_for_dependency_methods(&source, package, position)
+            {
+                return Ok(Some(completion));
+            }
+            if let Some(completion) =
+                workspace_source_variant_completions(&source, package, position)
             {
                 return Ok(Some(completion));
             }
@@ -3507,14 +3633,16 @@ mod tests {
         workspace_source_definition_for_import_in_broken_source,
         workspace_source_hover_for_dependency, workspace_source_hover_for_import,
         workspace_source_hover_for_import_in_broken_source,
+        workspace_source_member_field_completions, workspace_source_method_completions,
         workspace_source_references_for_dependency,
         workspace_source_references_for_dependency_in_broken_source,
         workspace_source_references_for_import,
         workspace_source_references_for_import_in_broken_source,
-        workspace_source_type_definition_for_dependency,
+        workspace_source_struct_field_completions, workspace_source_type_definition_for_dependency,
         workspace_source_type_definition_for_import,
         workspace_source_type_definition_for_import_in_broken_source,
-        workspace_symbols_for_documents, workspace_symbols_for_documents_and_roots,
+        workspace_source_variant_completions, workspace_symbols_for_documents,
+        workspace_symbols_for_documents_and_roots,
     };
     use crate::bridge::{semantic_tokens_legend, span_to_range};
     use ql_analysis::{RenameError, SymbolKind as AnalysisSymbolKind, analyze_source};
@@ -14236,6 +14364,346 @@ pub struct Settings {
         assert_eq!(items[0].label, "port");
         assert_eq!(items[0].kind, Some(CompletionItemKind::FIELD));
         assert_eq!(items[0].detail.as_deref(), Some("field port: Int"));
+    }
+
+    #[test]
+    fn same_named_local_dependency_workspace_member_completion_prefers_matching_dependency_source_over_stale_interface()
+     {
+        let temp = TempDir::new(
+            "ql-lsp-same-named-local-dependency-workspace-member-completion-source-preferred",
+        );
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+use demo.shared.beta.build as other
+
+pub fn main() -> Int {
+    return build().pi() + build().to + other().pong() + other().block
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    total: Int,
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.total
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { total: 1, value: 2 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/src/lib.ql",
+            r#"
+package demo.shared.beta
+
+pub struct Counter {
+    block: Int,
+    value: Int,
+}
+
+impl Counter {
+    pub fn pong(self) -> Int {
+        return self.block
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { block: 3, value: 4 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    count: Int,
+    value: Int,
+}
+
+impl Counter {
+    pub fn paint(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Counter {
+    bonus: Int,
+    value: Int,
+}
+
+impl Counter {
+    pub fn pop(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_ok());
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+
+        let method_completion = workspace_source_method_completions(
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "pi", 1) + 2),
+        )
+        .expect("workspace same-named dependency method completion should exist");
+        let CompletionResponse::Array(method_items) = method_completion else {
+            panic!("method completion should resolve to a plain item array")
+        };
+        assert_eq!(method_items.len(), 1);
+        assert_eq!(method_items[0].label, "ping");
+        assert_eq!(method_items[0].kind, Some(CompletionItemKind::METHOD));
+        assert_eq!(
+            method_items[0].detail.as_deref(),
+            Some("fn ping(self) -> Int")
+        );
+
+        let field_completion = workspace_source_member_field_completions(
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "to", 1) + 2),
+        )
+        .expect("workspace same-named dependency field completion should exist");
+        let CompletionResponse::Array(field_items) = field_completion else {
+            panic!("field completion should resolve to a plain item array")
+        };
+        assert_eq!(field_items.len(), 1);
+        assert_eq!(field_items[0].label, "total");
+        assert_eq!(field_items[0].kind, Some(CompletionItemKind::FIELD));
+        assert_eq!(field_items[0].detail.as_deref(), Some("field total: Int"));
+    }
+
+    #[test]
+    fn same_named_local_dependency_workspace_variant_and_struct_field_completion_prefer_matching_dependency_source_over_stale_interface()
+     {
+        let temp = TempDir::new(
+            "ql-lsp-same-named-local-dependency-workspace-variant-struct-field-completion-source-preferred",
+        );
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.Command as Cmd
+use demo.shared.beta.Command as OtherCmd
+use demo.shared.alpha.Settings as Settings
+use demo.shared.beta.Settings as OtherSettings
+
+pub fn main() -> Int {
+    let first = Cmd.B(1)
+    let settings = Settings { host: "localhost", po: 1 }
+    let other = OtherCmd.Block(1)
+    let second = OtherSettings { host: "localhost", block: true }
+    return first + settings.port + other + second.block
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+    Backoff(Int),
+}
+
+pub struct Settings {
+    host: String,
+    port: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/src/lib.ql",
+            r#"
+package demo.shared.beta
+
+pub enum Command {
+    Retry(Int),
+    Block(Int),
+}
+
+pub struct Settings {
+    host: String,
+    block: Bool,
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+    Bounce(Int),
+}
+
+pub struct Settings {
+    host: String,
+    priority: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub enum Command {
+    Retry(Int),
+    Barrier(Int),
+}
+
+pub struct Settings {
+    host: String,
+    branch: Bool,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_ok());
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+
+        let variant_completion = workspace_source_variant_completions(
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "B", 1) + 1),
+        )
+        .expect("workspace same-named dependency variant completion should exist");
+        let CompletionResponse::Array(variant_items) = variant_completion else {
+            panic!("variant completion should resolve to a plain item array")
+        };
+        assert_eq!(variant_items.len(), 1);
+        assert_eq!(variant_items[0].label, "Backoff");
+        assert_eq!(variant_items[0].kind, Some(CompletionItemKind::ENUM_MEMBER));
+        assert_eq!(
+            variant_items[0].detail.as_deref(),
+            Some("variant Command.Backoff(Int)")
+        );
+
+        let field_completion = workspace_source_struct_field_completions(
+            &source,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "po", 1) + 2),
+        )
+        .expect("workspace same-named dependency struct field completion should exist");
+        let CompletionResponse::Array(field_items) = field_completion else {
+            panic!("struct field completion should resolve to a plain item array")
+        };
+        assert_eq!(field_items.len(), 1);
+        assert_eq!(field_items[0].label, "port");
+        assert_eq!(field_items[0].kind, Some(CompletionItemKind::FIELD));
+        assert_eq!(field_items[0].detail.as_deref(), Some("field port: Int"));
     }
 
     #[test]

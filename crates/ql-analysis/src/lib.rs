@@ -113,6 +113,30 @@ pub struct DependencyResolvedTarget {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyEnumCompletionTarget {
+    pub package_name: String,
+    pub manifest_path: PathBuf,
+    pub source_path: String,
+    pub enum_name: String,
+    pub path: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyStructCompletionTarget {
+    pub package_name: String,
+    pub manifest_path: PathBuf,
+    pub source_path: String,
+    pub struct_name: String,
+    pub path: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyStructFieldCompletionTarget {
+    pub target: DependencyStructCompletionTarget,
+    pub excluded_field_names: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct DependencyImportOccurrence {
     local_name: String,
     span: Span,
@@ -829,6 +853,185 @@ impl PackageAnalysis {
 
     pub fn dependencies(&self) -> &[DependencyInterface] {
         &self.dependencies
+    }
+
+    pub fn public_enum_variant_completions(
+        &self,
+        source_path: &str,
+        enum_name: &str,
+    ) -> Option<Vec<CompletionItem>> {
+        let module = package_module_for_source_path(self, source_path)?;
+        let enum_decl = module
+            .analysis()
+            .ast()
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                AstItemKind::Enum(enum_decl)
+                    if is_public(&enum_decl.visibility) && enum_decl.name == enum_name =>
+                {
+                    Some(enum_decl)
+                }
+                _ => None,
+            })?;
+
+        let mut items = enum_decl
+            .variants
+            .iter()
+            .map(|variant| CompletionItem {
+                label: variant.name.clone(),
+                insert_text: variant.name.clone(),
+                kind: SymbolKind::Variant,
+                detail: dependency_variant_detail(&enum_decl.name, variant),
+                ty: Some(enum_decl.name.clone()),
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| left.detail.cmp(&right.detail))
+        });
+        Some(items)
+    }
+
+    pub fn public_struct_literal_field_completions(
+        &self,
+        source_path: &str,
+        struct_name: &str,
+        excluded_field_names: &[String],
+    ) -> Option<Vec<CompletionItem>> {
+        let binding = public_struct_completion_binding(self, source_path, struct_name)?;
+        let excluded = excluded_field_names.iter().collect::<HashSet<_>>();
+        let items = binding
+            .fields
+            .values()
+            .filter(|field| !excluded.contains(&field.name))
+            .map(|field| CompletionItem {
+                label: field.name.clone(),
+                insert_text: field.name.clone(),
+                kind: SymbolKind::Field,
+                detail: field.detail.clone(),
+                ty: Some(field.ty.clone()),
+            })
+            .collect::<Vec<_>>();
+        (!items.is_empty()).then_some(items)
+    }
+
+    pub fn public_struct_member_field_completions(
+        &self,
+        source_path: &str,
+        struct_name: &str,
+    ) -> Option<Vec<CompletionItem>> {
+        let binding = public_struct_completion_binding(self, source_path, struct_name)?;
+        let mut items = binding
+            .fields
+            .values()
+            .map(|field| CompletionItem {
+                label: field.name.clone(),
+                insert_text: field.name.clone(),
+                kind: SymbolKind::Field,
+                detail: field.detail.clone(),
+                ty: Some(field.ty.clone()),
+            })
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return None;
+        }
+        items.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| left.detail.cmp(&right.detail))
+        });
+        Some(items)
+    }
+
+    pub fn public_struct_method_completions(
+        &self,
+        source_path: &str,
+        struct_name: &str,
+    ) -> Option<Vec<CompletionItem>> {
+        let binding = public_struct_completion_binding(self, source_path, struct_name)?;
+        let mut items = binding
+            .methods
+            .values()
+            .map(|method| CompletionItem {
+                label: method.name.clone(),
+                insert_text: method.name.clone(),
+                kind: SymbolKind::Method,
+                detail: method.detail.clone(),
+                ty: method.return_type.clone(),
+            })
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return None;
+        }
+        items.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| left.detail.cmp(&right.detail))
+        });
+        Some(items)
+    }
+
+    pub fn dependency_variant_completion_target_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyEnumCompletionTarget> {
+        let module = parse_source(source).ok()?;
+        let root_offset = dependency_variant_completion_root_offset(source, offset)?;
+        let root_end = dependency_identifier_end(source, root_offset);
+        let root_name = source.get(root_offset..root_end)?;
+        let (dependency, symbol) =
+            dependency_import_binding_for_local_name(self, &module, root_name)?;
+        (symbol.kind == SymbolKind::Enum).then(|| DependencyEnumCompletionTarget {
+            package_name: dependency.artifact.package_name.clone(),
+            manifest_path: dependency.manifest.manifest_path.clone(),
+            source_path: symbol.source_path.clone(),
+            enum_name: symbol.name.clone(),
+            path: dependency.interface_path.clone(),
+        })
+    }
+
+    pub fn dependency_struct_field_completion_target_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyStructFieldCompletionTarget> {
+        let module = parse_source(source).ok()?;
+        let site = dependency_struct_field_completion_site(&module, offset)?;
+        let (dependency, symbol) =
+            dependency_struct_import_binding_for_local_name(self, &module, &site.root_name)?;
+        Some(DependencyStructFieldCompletionTarget {
+            target: dependency_struct_completion_target(dependency, symbol)?,
+            excluded_field_names: site.excluded_field_names,
+        })
+    }
+
+    pub fn dependency_method_completion_target_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyStructCompletionTarget> {
+        dependency_member_completion_target_in_source_at(
+            self,
+            source,
+            offset,
+            DependencyMemberCompletionKind::Method,
+        )
+    }
+
+    pub fn dependency_member_field_completion_target_in_source_at(
+        &self,
+        source: &str,
+        offset: usize,
+    ) -> Option<DependencyStructCompletionTarget> {
+        dependency_member_completion_target_in_source_at(
+            self,
+            source,
+            offset,
+            DependencyMemberCompletionKind::Field,
+        )
     }
 
     fn dependency_value_binding_in_source_at(
@@ -3429,6 +3632,234 @@ fn load_available_package_dependencies(manifest: &ProjectManifest) -> Vec<Depend
     dependencies
 }
 
+fn normalized_relative_source_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn normalized_module_source_path(path: &str) -> String {
+    path.replace('\\', "/").trim_start_matches("./").to_owned()
+}
+
+fn package_module_source_path(package: &PackageAnalysis, module_path: &Path) -> Option<String> {
+    let package_root = package.manifest.manifest_path.parent()?;
+    let relative_path = module_path.strip_prefix(package_root).ok()?;
+    Some(normalized_relative_source_path(relative_path))
+}
+
+fn package_module_matches_source_path(
+    package: &PackageAnalysis,
+    module_path: &Path,
+    source_path: &str,
+) -> bool {
+    package_module_source_path(package, module_path)
+        .is_some_and(|relative_path| relative_path == normalized_module_source_path(source_path))
+}
+
+fn package_module_for_source_path<'a>(
+    package: &'a PackageAnalysis,
+    source_path: &str,
+) -> Option<&'a PackageModuleAnalysis> {
+    package
+        .modules
+        .iter()
+        .find(|module| package_module_matches_source_path(package, module.path(), source_path))
+}
+
+fn dependency_struct_completion_target(
+    dependency: &DependencyInterface,
+    symbol: &DependencySymbol,
+) -> Option<DependencyStructCompletionTarget> {
+    (symbol.kind == SymbolKind::Struct).then(|| DependencyStructCompletionTarget {
+        package_name: dependency.artifact.package_name.clone(),
+        manifest_path: dependency.manifest.manifest_path.clone(),
+        source_path: symbol.source_path.clone(),
+        struct_name: symbol.name.clone(),
+        path: dependency.interface_path.clone(),
+    })
+}
+
+fn dependency_member_completion_target_in_source_at(
+    package: &PackageAnalysis,
+    source: &str,
+    offset: usize,
+    kind: DependencyMemberCompletionKind,
+) -> Option<DependencyStructCompletionTarget> {
+    let module = parse_source(source).ok()?;
+    let target_kind = match kind {
+        DependencyMemberCompletionKind::Field => DependencyMemberCompletionKind::FieldReceiver,
+        DependencyMemberCompletionKind::Method => DependencyMemberCompletionKind::MethodReceiver,
+        other => other,
+    };
+    let binding =
+        dependency_member_completion_binding(package, &module, source, offset, target_kind)?;
+    Some(DependencyStructCompletionTarget {
+        package_name: binding.package_name,
+        manifest_path: binding.manifest_path,
+        source_path: binding.source_path,
+        struct_name: binding.struct_name,
+        path: binding.path,
+    })
+}
+
+fn public_struct_completion_binding(
+    package: &PackageAnalysis,
+    source_path: &str,
+    struct_name: &str,
+) -> Option<DependencyStructBinding> {
+    let module = package_module_for_source_path(package, source_path)?;
+    let module_source = fs::read_to_string(module.path())
+        .ok()?
+        .replace("\r\n", "\n");
+    let (struct_decl, detail) =
+        module
+            .analysis()
+            .ast()
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                AstItemKind::Struct(struct_decl)
+                    if is_public(&struct_decl.visibility) && struct_decl.name == struct_name =>
+                {
+                    Some((
+                        struct_decl,
+                        interface_detail_text(&module_source, item.span, &struct_decl.name),
+                    ))
+                }
+                _ => None,
+            })?;
+    let fields = struct_decl
+        .fields
+        .iter()
+        .map(|field| {
+            (
+                field.name.clone(),
+                DependencyStructResolvedField {
+                    name: field.name.clone(),
+                    detail: dependency_struct_field_detail(field),
+                    ty: render_dependency_type_expr(&field.ty),
+                    definition_span: field.name_span,
+                    type_definition: None,
+                    question_type_definition: None,
+                    iterable_element_type_definition: None,
+                    question_iterable_element_type_definition: None,
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    Some(DependencyStructBinding {
+        package_name: package.manifest.package.as_ref()?.name.clone(),
+        manifest_path: package.manifest.manifest_path.clone(),
+        source_path: source_path.to_owned(),
+        struct_name: struct_name.to_owned(),
+        detail,
+        path: default_interface_path(&package.manifest).ok()?,
+        definition_span: struct_decl.name_span,
+        fields,
+        methods: public_struct_methods_for_source_path(package, struct_name),
+    })
+}
+
+fn public_struct_methods_for_source_path(
+    package: &PackageAnalysis,
+    struct_name: &str,
+) -> HashMap<String, DependencyStructResolvedMethod> {
+    let mut impl_candidates: HashMap<String, Vec<DependencyStructResolvedMethod>> = HashMap::new();
+    let mut extend_candidates: HashMap<String, Vec<DependencyStructResolvedMethod>> =
+        HashMap::new();
+
+    for module in &package.modules {
+        let Ok(module_source) = fs::read_to_string(module.path()) else {
+            continue;
+        };
+        let module_source = module_source.replace("\r\n", "\n");
+        let Some(module_source_path) = package_module_source_path(package, module.path()) else {
+            continue;
+        };
+        for item in &module.analysis().ast().items {
+            match &item.kind {
+                AstItemKind::Impl(impl_block)
+                    if dependency_type_expr_targets_struct(&impl_block.target, struct_name) =>
+                {
+                    for method in impl_block
+                        .methods
+                        .iter()
+                        .filter(|method| is_public(&method.visibility))
+                    {
+                        impl_candidates
+                            .entry(method.name.clone())
+                            .or_default()
+                            .push(DependencyStructResolvedMethod {
+                                name: method.name.clone(),
+                                source_path: module_source_path.clone(),
+                                detail: source_function_detail_text(
+                                    &module_source,
+                                    method.span,
+                                    &method.name,
+                                ),
+                                return_type: method
+                                    .return_type
+                                    .as_ref()
+                                    .map(render_dependency_type_expr),
+                                definition_span: method.name_span,
+                                return_type_definition: None,
+                                question_return_type_definition: None,
+                                iterable_element_type_definition: None,
+                                question_iterable_element_type_definition: None,
+                            });
+                    }
+                }
+                AstItemKind::Extend(extend_block)
+                    if dependency_type_expr_targets_struct(&extend_block.target, struct_name) =>
+                {
+                    for method in extend_block
+                        .methods
+                        .iter()
+                        .filter(|method| is_public(&method.visibility))
+                    {
+                        extend_candidates
+                            .entry(method.name.clone())
+                            .or_default()
+                            .push(DependencyStructResolvedMethod {
+                                name: method.name.clone(),
+                                source_path: module_source_path.clone(),
+                                detail: source_function_detail_text(
+                                    &module_source,
+                                    method.span,
+                                    &method.name,
+                                ),
+                                return_type: method
+                                    .return_type
+                                    .as_ref()
+                                    .map(render_dependency_type_expr),
+                                definition_span: method.name_span,
+                                return_type_definition: None,
+                                question_return_type_definition: None,
+                                iterable_element_type_definition: None,
+                                question_iterable_element_type_definition: None,
+                            });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut methods = HashMap::new();
+    for (name, candidates) in impl_candidates {
+        if candidates.len() == 1 {
+            methods.insert(name, candidates.into_iter().next().unwrap());
+        }
+    }
+    for (name, candidates) in extend_candidates {
+        if methods.contains_key(&name) || candidates.len() != 1 {
+            continue;
+        }
+        methods.insert(name, candidates.into_iter().next().unwrap());
+    }
+    methods
+}
+
 fn index_dependency_symbols(artifact: &InterfaceArtifact) -> Vec<DependencySymbol> {
     let mut symbols = Vec::new();
     for module in &artifact.modules {
@@ -3619,6 +4050,14 @@ fn interface_detail_text(source: &str, span: Span, fallback_name: &str) -> Strin
         .unwrap_or(detail)
         .trim()
         .to_owned()
+}
+
+fn source_function_detail_text(source: &str, span: Span, fallback_name: &str) -> String {
+    let detail = interface_detail_text(source, span, fallback_name);
+    detail
+        .split_once('{')
+        .map(|(signature, _)| signature.trim().to_owned())
+        .unwrap_or(detail)
 }
 
 fn is_public(visibility: &AstVisibility) -> bool {
@@ -6375,6 +6814,8 @@ fn dependency_indexed_iterable_target_contains(expr: &ql_ast::Expr, offset: usiz
 enum DependencyMemberCompletionKind {
     Field,
     Method,
+    FieldReceiver,
+    MethodReceiver,
     ValueType,
 }
 
@@ -6412,8 +6853,12 @@ fn dependency_member_completion_binding_in_broken_source(
 ) -> Option<DependencyStructBinding> {
     let site = dependency_member_site_in_broken_source(source, offset)?;
     let expected_kind = match kind {
-        DependencyMemberCompletionKind::Field => BrokenSourceValueSegmentKind::Field,
-        DependencyMemberCompletionKind::Method => BrokenSourceValueSegmentKind::Method,
+        DependencyMemberCompletionKind::Field | DependencyMemberCompletionKind::FieldReceiver => {
+            BrokenSourceValueSegmentKind::Field
+        }
+        DependencyMemberCompletionKind::Method | DependencyMemberCompletionKind::MethodReceiver => {
+            BrokenSourceValueSegmentKind::Method
+        }
         DependencyMemberCompletionKind::ValueType => return None,
     };
     if site.member_kind != expected_kind {
@@ -7286,6 +7731,8 @@ fn dependency_member_completion_binding_matches(
         DependencyMemberCompletionKind::Method => {
             method_prefix_match && (next_non_whitespace == Some('(') || !field_prefix_match)
         }
+        DependencyMemberCompletionKind::FieldReceiver => next_non_whitespace != Some('('),
+        DependencyMemberCompletionKind::MethodReceiver => next_non_whitespace == Some('('),
         DependencyMemberCompletionKind::ValueType => false,
     }
 }
