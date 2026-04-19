@@ -7,9 +7,9 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - Phase 1 到 Phase 6 的编译器和 same-file tooling 已落地。
 - Phase 7 正在收口 async/runtime/build 的最小可用子集。
 - Phase 8 正在推进 package/workspace、`.qi`、本地依赖、project-aware `build/run/test` 和 dependency-backed LSP。
-- 当前跨包执行路径仍然很窄：只稳定支持 direct local dependency 的 bridgeable public `const/static` values、受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）、public `extern "c"` 符号，以及被这些 value/function 签名直接引用的 public 非泛型 `struct`。
-- root target 的 dependency bridge 现在会按实际导入情况为直依赖注入 public type declaration、value declaration 和 function wrapper；当前稳定覆盖 data-only public `struct`、bridgeable public `const/static` values、受限 public free function / `extern "c"` 符号，以及 value initializer 对同模块 bridgeable public function 的直接命名或直接调用。未导入 sibling dependency 的同名符号不再提前卡住 `ql build/run/test`，但实际导入的同名直依赖 type/value/function/extern 仍会显式失败。
-- LLVM 可执行主路径现在已支持本地 `impl` / `extend` receiver method 的直接调用（如 `value.read()`）；当前只覆盖 direct call position，不包含 method value、trait receiver method 或 dependency receiver method bridge。
+- 当前跨包执行路径仍然很窄：只稳定支持 direct local dependency 的 bridgeable public `const/static` values、受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）、public `extern "c"` 符号、被这些 value/function 签名直接引用的 public 非泛型 `struct`，以及这些 bridgeable public `struct` 上的受限 public receiver method。
+- root target 的 dependency bridge 现在会按实际导入情况为直依赖注入 public type declaration、value declaration、function wrapper 和受限 method forwarder；当前稳定覆盖 data-only public `struct`、bridgeable public `const/static` values、受限 public free function / `extern "c"` 符号、value initializer 对同模块 bridgeable public function 的直接命名或直接调用，以及 bridgeable public `struct` 上的受限 public `impl` / `extend` receiver method。未导入 sibling dependency 的同名符号不再提前卡住 `ql build/run/test`，但实际导入的同名直依赖 type/value/function/extern 仍会显式失败。
+- LLVM 可执行主路径现在已支持本地与 direct local dependency 的 `impl` / `extend` receiver method 直接调用（如 `value.read()`）；当前只覆盖 direct call position，不包含 method value 或 trait receiver method。
 - 当前 rename 仍以 same-file 为边界；cross-file rename / workspace edits 尚未开放。
 - `ql build` / `ql run` 已支持从 package 根目录和已声明 target 的源码路径进入 project-aware 流程；workspace member 源码路径会继承外层 workspace profile 和输出目录语义。
 - `ql build --list` / `ql run --list` 已可直接列出当前 package / workspace 下的 build targets；workspace member 目录或源码路径也会回到外层 workspace 视角；`--json` 复用 `ql.project.targets.v1`，`ql run --list` 只展示 runnable targets。

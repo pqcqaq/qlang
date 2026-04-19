@@ -10,7 +10,8 @@ use ql_analysis::{
     parse_errors_to_diagnostics,
 };
 use ql_ast::{
-    CallArg, Expr, ExprKind, FunctionDecl, GlobalDecl, ItemKind, Module, Param, Visibility,
+    CallArg, Expr, ExprKind, FunctionDecl, GlobalDecl, ItemKind, Module, Param, ReceiverKind,
+    Visibility,
 };
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
@@ -6363,6 +6364,16 @@ fn render_direct_dependency_bridge_items(
         &mut required_types_by_module_path,
         &function_forwarders.required_types_by_module_path,
     );
+    let method_forwarders = render_direct_dependency_public_method_forwarders(
+        command_label,
+        manifest_path,
+        &required_types_by_module_path,
+        report_failure,
+    )?;
+    extend_dependency_bridge_name_requirements(
+        &mut required_types_by_module_path,
+        &method_forwarders.required_types_by_module_path,
+    );
     let type_declarations = render_direct_dependency_public_type_declarations(
         command_label,
         manifest_path,
@@ -6379,9 +6390,11 @@ fn render_direct_dependency_bridge_items(
     let declarations =
         join_dependency_bridge_sections(&type_declarations, &value_declarations.declarations);
     let declarations = join_dependency_bridge_sections(&declarations, &extern_declarations);
+    let declarations =
+        join_dependency_bridge_sections(&declarations, &function_forwarders.forwarders);
     Ok(join_dependency_bridge_sections(
         &declarations,
-        &function_forwarders.forwarders,
+        &method_forwarders.forwarders,
     ))
 }
 
@@ -6401,6 +6414,14 @@ fn render_direct_dependency_bridge_items_quiet(
         &mut required_types_by_module_path,
         &function_forwarders.required_types_by_module_path,
     );
+    let method_forwarders = render_direct_dependency_public_method_forwarders_quiet(
+        manifest_path,
+        &required_types_by_module_path,
+    )?;
+    extend_dependency_bridge_name_requirements(
+        &mut required_types_by_module_path,
+        &method_forwarders.required_types_by_module_path,
+    );
     let type_declarations = render_direct_dependency_public_type_declarations_quiet(
         manifest_path,
         source,
@@ -6411,9 +6432,11 @@ fn render_direct_dependency_bridge_items_quiet(
     let declarations =
         join_dependency_bridge_sections(&type_declarations, &value_declarations.declarations);
     let declarations = join_dependency_bridge_sections(&declarations, &extern_declarations);
+    let declarations =
+        join_dependency_bridge_sections(&declarations, &function_forwarders.forwarders);
     Ok(join_dependency_bridge_sections(
         &declarations,
-        &function_forwarders.forwarders,
+        &method_forwarders.forwarders,
     ))
 }
 
@@ -6607,6 +6630,12 @@ struct RenderedDependencyPublicValueDeclarations {
 
 #[derive(Default)]
 struct RenderedDependencyPublicFunctionForwarders {
+    forwarders: String,
+    required_types_by_module_path: BTreeMap<Vec<String>, BTreeSet<String>>,
+}
+
+#[derive(Default)]
+struct RenderedDependencyPublicMethodForwarders {
     forwarders: String,
     required_types_by_module_path: BTreeMap<Vec<String>, BTreeSet<String>>,
 }
@@ -7192,6 +7221,268 @@ fn render_direct_dependency_public_function_forwarders_quiet(
     })
 }
 
+fn render_direct_dependency_public_method_forwarders(
+    command_label: &str,
+    manifest_path: &Path,
+    required_types_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
+    report_failure: bool,
+) -> Result<RenderedDependencyPublicMethodForwarders, u8> {
+    let manifest = load_project_manifest(manifest_path).map_err(|error| {
+        if report_failure {
+            report_project_build_dependency_error(command_label, None, &error);
+        }
+        1
+    })?;
+    let direct_dependencies = load_reference_manifests(&manifest).map_err(|error| {
+        if report_failure {
+            report_project_build_dependency_error(command_label, Some(manifest_path), &error);
+        }
+        1
+    })?;
+
+    let mut forwarders = Vec::new();
+    let mut discovered_required_types = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
+
+    for dependency in direct_dependencies {
+        let dependency_package = match package_name(&dependency) {
+            Ok(name) => name.to_owned(),
+            Err(error) => {
+                if report_failure {
+                    report_project_build_dependency_error(
+                        command_label,
+                        Some(manifest_path),
+                        &error,
+                    );
+                }
+                return Err(1);
+            }
+        };
+        let interface_path = default_interface_path(&dependency).map_err(|error| {
+            if report_failure {
+                report_project_build_dependency_error(command_label, Some(manifest_path), &error);
+            }
+            1
+        })?;
+        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+            if report_failure {
+                eprintln!(
+                    "error: {command_label} failed to load referenced package interface `{}`: {error}",
+                    normalize_path(&interface_path)
+                );
+                eprintln!(
+                    "note: while preparing dependency public method bridges for `{}`",
+                    normalize_path(manifest_path)
+                );
+            }
+            1
+        })?;
+
+        for module in &artifact.modules {
+            let dependency_source_path =
+                dependency_module_source_path(&dependency.manifest_path, &module.source_path);
+            let dependency_source = fs::read_to_string(&dependency_source_path).map_err(|error| {
+                if report_failure {
+                    eprintln!(
+                        "error: {command_label} failed to access dependency source `{}`: {error}",
+                        normalize_path(&dependency_source_path)
+                    );
+                    eprintln!(
+                        "note: while preparing dependency public method bridges for `{}`",
+                        normalize_path(manifest_path)
+                    );
+                }
+                1
+            })?;
+            let source_module = match parse_source(&dependency_source) {
+                Ok(module) => module,
+                Err(_) => {
+                    if report_failure {
+                        eprintln!(
+                            "error: {command_label} failed to parse dependency source `{}` while preparing public method bridges",
+                            normalize_path(&dependency_source_path)
+                        );
+                        eprintln!("note: dependency package: `{dependency_package}`");
+                    }
+                    return Err(1);
+                }
+            };
+            collect_dependency_module_public_method_forwarders(
+                &dependency_package,
+                &source_module,
+                &dependency_source,
+                required_types_by_module_path,
+                &mut discovered_required_types,
+                &mut forwarders,
+            );
+        }
+    }
+
+    Ok(RenderedDependencyPublicMethodForwarders {
+        forwarders: forwarders.join("\n\n"),
+        required_types_by_module_path: discovered_required_types,
+    })
+}
+
+fn render_direct_dependency_public_method_forwarders_quiet(
+    manifest_path: &Path,
+    required_types_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
+) -> Result<RenderedDependencyPublicMethodForwarders, PrepareProjectTargetBuildError> {
+    let manifest = load_project_manifest(manifest_path)
+        .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
+    let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let direct_dependencies = manifest
+        .references
+        .packages
+        .iter()
+        .map(|reference| {
+            let reference_manifest_path = reference_manifest_path(&manifest, reference);
+            let dependency_manifest = load_project_manifest(&manifest_dir.join(reference))
+                .map_err(|error| {
+                    target_prep_dependency_manifest_failure(Some(&reference_manifest_path), &error)
+                })?;
+            Ok::<_, PrepareProjectTargetBuildError>(dependency_manifest)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut forwarders = Vec::new();
+    let mut discovered_required_types = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
+
+    for dependency_manifest in direct_dependencies {
+        let dependency_package = package_name(&dependency_manifest)
+            .map(str::to_owned)
+            .map_err(|error| {
+                target_prep_dependency_manifest_failure(
+                    Some(&dependency_manifest.manifest_path),
+                    &error,
+                )
+            })?;
+        let interface_path = default_interface_path(&dependency_manifest).map_err(|error| {
+            target_prep_dependency_manifest_failure(
+                Some(&dependency_manifest.manifest_path),
+                &error,
+            )
+        })?;
+        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+            PrepareProjectTargetBuildError {
+                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
+                    dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                    dependency_package: dependency_package.clone(),
+                    interface_path: interface_path.clone(),
+                    message: format!(
+                        "failed to load referenced package interface `{}`: {error}",
+                        normalize_path(&interface_path)
+                    ),
+                },
+            }
+        })?;
+
+        for module in &artifact.modules {
+            let dependency_source_path = dependency_module_source_path(
+                &dependency_manifest.manifest_path,
+                &module.source_path,
+            );
+            let dependency_source =
+                fs::read_to_string(&dependency_source_path).map_err(|error| {
+                    PrepareProjectTargetBuildError {
+                        failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
+                            dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                            dependency_package: dependency_package.clone(),
+                            source_path: dependency_source_path.clone(),
+                            message: format!(
+                                "failed to access dependency source `{}`: {error}",
+                                normalize_path(&dependency_source_path)
+                            ),
+                        },
+                    }
+                })?;
+            let source_module = parse_source(&dependency_source).map_err(|_| {
+                PrepareProjectTargetBuildError {
+                    failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
+                        dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                        dependency_package: dependency_package.clone(),
+                        source_path: dependency_source_path.clone(),
+                        message: format!(
+                            "failed to parse dependency source `{}` while preparing public method bridges",
+                            normalize_path(&dependency_source_path)
+                        ),
+                    },
+                }
+            })?;
+            collect_dependency_module_public_method_forwarders(
+                &dependency_package,
+                &source_module,
+                &dependency_source,
+                required_types_by_module_path,
+                &mut discovered_required_types,
+                &mut forwarders,
+            );
+        }
+    }
+
+    Ok(RenderedDependencyPublicMethodForwarders {
+        forwarders: forwarders.join("\n\n"),
+        required_types_by_module_path: discovered_required_types,
+    })
+}
+
+fn collect_dependency_module_public_method_forwarders(
+    dependency_package: &str,
+    module: &Module,
+    contents: &str,
+    required_types_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
+    discovered_required_types: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
+    forwarders: &mut Vec<String>,
+) {
+    let module_import_path = dependency_interface_module_import_path(dependency_package, module);
+    let Some(initial_required_types) = required_types_by_module_path.get(&module_import_path)
+    else {
+        return;
+    };
+    let type_candidates = dependency_public_type_bridge_candidates(module);
+    let mut pending_types = initial_required_types.clone();
+    let mut processed_types = BTreeSet::new();
+    let mut emitted_methods = BTreeSet::<(String, String)>::new();
+
+    while let Some(struct_name) = pending_types.iter().next().cloned() {
+        pending_types.remove(&struct_name);
+        if !processed_types.insert(struct_name.clone())
+            || !type_candidates.contains_key(&struct_name)
+        {
+            continue;
+        }
+
+        for (method_name, method) in
+            dependency_public_struct_method_bridge_candidates(module, &struct_name)
+        {
+            let type_dependencies =
+                collect_dependency_public_function_type_dependencies(method, &type_candidates);
+            if !type_dependencies.is_empty() {
+                let required_types = discovered_required_types
+                    .entry(module_import_path.clone())
+                    .or_default();
+                for dependency in type_dependencies {
+                    if required_types.insert(dependency.clone()) {
+                        pending_types.insert(dependency);
+                    }
+                }
+            }
+
+            if !emitted_methods.insert((struct_name.clone(), method_name)) {
+                continue;
+            }
+
+            if let Some(forwarder) = render_imported_dependency_public_method_forwarder(
+                &module_import_path,
+                &struct_name,
+                method,
+                contents,
+            ) {
+                forwarders.push(forwarder);
+            }
+        }
+    }
+}
+
 fn render_public_dependency_function_export_wrappers(
     command_label: &str,
     manifest_path: &Path,
@@ -7234,6 +7525,7 @@ fn render_public_dependency_function_export_wrappers_for_package(
 
     let mut wrappers = Vec::new();
     let module_import_path = dependency_interface_module_import_path(package_name, &module);
+    let type_candidates = dependency_public_type_bridge_candidates(&module);
     for item in &module.items {
         let ItemKind::Function(function) = &item.kind else {
             continue;
@@ -7242,6 +7534,20 @@ fn render_public_dependency_function_export_wrappers_for_package(
             render_dependency_public_function_export_wrapper(&module_import_path, function, source)
         {
             wrappers.push(wrapper);
+        }
+    }
+    for struct_name in type_candidates.keys() {
+        for method in
+            dependency_public_struct_method_bridge_candidates(&module, struct_name).values()
+        {
+            if let Some(wrapper) = render_dependency_public_method_export_wrapper(
+                &module_import_path,
+                struct_name,
+                method,
+                source,
+            ) {
+                wrappers.push(wrapper);
+            }
         }
     }
 
@@ -7379,6 +7685,72 @@ fn dependency_public_function_bridge_candidates(module: &Module) -> BTreeSet<Str
             _ => None,
         })
         .collect()
+}
+
+fn dependency_type_expr_targets_struct(ty: &ql_ast::TypeExpr, struct_name: &str) -> bool {
+    let ql_ast::TypeExprKind::Named { path, .. } = &ty.kind else {
+        return false;
+    };
+    path.segments
+        .last()
+        .is_some_and(|segment| segment == struct_name)
+}
+
+fn dependency_public_struct_method_bridge_candidates<'a>(
+    module: &'a Module,
+    struct_name: &str,
+) -> BTreeMap<String, &'a FunctionDecl> {
+    let mut impl_candidates = BTreeMap::<String, Vec<&'a FunctionDecl>>::new();
+    let mut extend_candidates = BTreeMap::<String, Vec<&'a FunctionDecl>>::new();
+
+    for item in &module.items {
+        match &item.kind {
+            ItemKind::Impl(impl_block)
+                if impl_block.trait_ty.is_none()
+                    && dependency_type_expr_targets_struct(&impl_block.target, struct_name) =>
+            {
+                for method in impl_block
+                    .methods
+                    .iter()
+                    .filter(|method| supports_dependency_public_method_import_bridge(method))
+                {
+                    impl_candidates
+                        .entry(method.name.clone())
+                        .or_default()
+                        .push(method);
+                }
+            }
+            ItemKind::Extend(extend_block)
+                if dependency_type_expr_targets_struct(&extend_block.target, struct_name) =>
+            {
+                for method in extend_block
+                    .methods
+                    .iter()
+                    .filter(|method| supports_dependency_public_method_import_bridge(method))
+                {
+                    extend_candidates
+                        .entry(method.name.clone())
+                        .or_default()
+                        .push(method);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut methods = BTreeMap::new();
+    for (name, candidates) in impl_candidates {
+        if candidates.len() == 1 {
+            methods.insert(name, candidates.into_iter().next().unwrap());
+        }
+    }
+    for (name, candidates) in extend_candidates {
+        if methods.contains_key(&name) || candidates.len() != 1 {
+            continue;
+        }
+        methods.insert(name, candidates.into_iter().next().unwrap());
+    }
+    methods
 }
 
 fn collect_dependency_public_type_expr_dependencies<'a>(
@@ -8336,6 +8708,110 @@ fn render_dependency_public_function_export_wrapper(
     Some(rendered)
 }
 
+fn supports_dependency_public_method_import_bridge(function: &FunctionDecl) -> bool {
+    function.visibility == Visibility::Public
+        && function.abi.is_none()
+        && !function.is_async
+        && !function.is_unsafe
+        && function.generics.is_empty()
+        && function.where_clause.is_empty()
+        && matches!(function.params.first(), Some(Param::Receiver { .. }))
+        && function
+            .params
+            .iter()
+            .skip(1)
+            .all(|param| matches!(param, Param::Regular { .. }))
+}
+
+fn supports_dependency_public_method_export_bridge(function: &FunctionDecl) -> bool {
+    supports_dependency_public_method_import_bridge(function) && function.body.is_some()
+}
+
+fn render_imported_dependency_public_method_forwarder(
+    module_import_path: &[String],
+    struct_name: &str,
+    function: &FunctionDecl,
+    contents: &str,
+) -> Option<String> {
+    if !supports_dependency_public_method_import_bridge(function) {
+        return None;
+    }
+    let receiver_kind = dependency_bridge_receiver_kind(function)?;
+    let ffi_params =
+        render_dependency_bridge_method_ffi_param_list(struct_name, function, contents);
+    let method_params = render_dependency_bridge_method_param_list(function, contents)?;
+    let args = render_dependency_bridge_method_arg_list("self", function);
+    let return_suffix = render_dependency_bridge_return_suffix(function, contents);
+    let export_name = dependency_public_method_export_name(
+        module_import_path,
+        struct_name,
+        function.name.as_str(),
+    );
+    let visibility = render_dependency_bridge_visibility_prefix(&function.visibility);
+    let mut rendered = format!("extern \"c\" fn {export_name}({ffi_params}){return_suffix}\n\n");
+    rendered.push_str(&format!("impl {struct_name} {{\n"));
+    rendered.push_str(&format!(
+        "    {visibility}fn {}({method_params}){return_suffix} {{\n",
+        function.name
+    ));
+    let _ = receiver_kind;
+    if function.return_type.is_some() {
+        rendered.push_str(&format!("        return {export_name}({args})\n"));
+    } else {
+        rendered.push_str(&format!("        {export_name}({args})\n"));
+    }
+    rendered.push_str("    }\n}");
+    Some(rendered)
+}
+
+fn render_dependency_public_method_export_wrapper(
+    module_import_path: &[String],
+    struct_name: &str,
+    function: &FunctionDecl,
+    contents: &str,
+) -> Option<String> {
+    if !supports_dependency_public_method_export_bridge(function) {
+        return None;
+    }
+    let receiver_kind = dependency_bridge_receiver_kind(function)?;
+    let ffi_params =
+        render_dependency_bridge_method_ffi_param_list(struct_name, function, contents);
+    let regular_args = render_dependency_bridge_arg_list(function);
+    let method_call_args = if regular_args.is_empty() {
+        "()".to_owned()
+    } else {
+        format!("({regular_args})")
+    };
+    let receiver_name = match receiver_kind {
+        ReceiverKind::Mutable => "bridge_receiver",
+        ReceiverKind::ReadOnly | ReceiverKind::Move => "receiver",
+    };
+    let return_suffix = render_dependency_bridge_return_suffix(function, contents);
+    let export_name = dependency_public_method_export_name(
+        module_import_path,
+        struct_name,
+        function.name.as_str(),
+    );
+    let mut rendered =
+        format!("extern \"c\" pub fn {export_name}({ffi_params}){return_suffix} {{\n");
+    if matches!(receiver_kind, ReceiverKind::Mutable) {
+        rendered.push_str("    var bridge_receiver = receiver\n");
+    }
+    if function.return_type.is_some() {
+        rendered.push_str(&format!(
+            "    return {receiver_name}.{}{method_call_args}\n",
+            function.name
+        ));
+    } else {
+        rendered.push_str(&format!(
+            "    {receiver_name}.{}{method_call_args}\n",
+            function.name
+        ));
+    }
+    rendered.push('}');
+    Some(rendered)
+}
+
 fn render_dependency_bridge_param_list(function: &FunctionDecl, contents: &str) -> String {
     function
         .params
@@ -8348,6 +8824,49 @@ fn render_dependency_bridge_param_list(function: &FunctionDecl, contents: &str) 
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn dependency_bridge_receiver_kind(function: &FunctionDecl) -> Option<ReceiverKind> {
+    match function.params.first()? {
+        Param::Receiver { kind, .. } => Some(*kind),
+        Param::Regular { .. } => None,
+    }
+}
+
+fn render_dependency_bridge_method_param_list(
+    function: &FunctionDecl,
+    contents: &str,
+) -> Option<String> {
+    let receiver =
+        render_dependency_bridge_receiver_text(dependency_bridge_receiver_kind(function)?);
+    let regular_params = render_dependency_bridge_param_list(function, contents);
+    if regular_params.is_empty() {
+        Some(receiver.to_owned())
+    } else {
+        Some(format!("{receiver}, {regular_params}"))
+    }
+}
+
+fn render_dependency_bridge_method_ffi_param_list(
+    struct_name: &str,
+    function: &FunctionDecl,
+    contents: &str,
+) -> String {
+    let regular_params = render_dependency_bridge_param_list(function, contents);
+    if regular_params.is_empty() {
+        format!("receiver: {struct_name}")
+    } else {
+        format!("receiver: {struct_name}, {regular_params}")
+    }
+}
+
+fn render_dependency_bridge_method_arg_list(receiver: &str, function: &FunctionDecl) -> String {
+    let regular_args = render_dependency_bridge_arg_list(function);
+    if regular_args.is_empty() {
+        receiver.to_owned()
+    } else {
+        format!("{receiver}, {regular_args}")
+    }
 }
 
 fn render_dependency_bridge_arg_list(function: &FunctionDecl) -> String {
@@ -8370,6 +8889,21 @@ fn render_dependency_bridge_return_suffix(function: &FunctionDecl, contents: &st
         .unwrap_or_default()
 }
 
+fn render_dependency_bridge_receiver_text(kind: ReceiverKind) -> &'static str {
+    match kind {
+        ReceiverKind::ReadOnly => "self",
+        ReceiverKind::Mutable => "var self",
+        ReceiverKind::Move => "move self",
+    }
+}
+
+fn render_dependency_bridge_visibility_prefix(visibility: &Visibility) -> &'static str {
+    match visibility {
+        Visibility::Private => "",
+        Visibility::Public => "pub ",
+    }
+}
+
 fn dependency_public_function_export_name(
     module_import_path: &[String],
     symbol_name: &str,
@@ -8379,6 +8913,22 @@ fn dependency_public_function_export_name(
         rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(segment));
         rendered.push('_');
     }
+    rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(symbol_name));
+    rendered
+}
+
+fn dependency_public_method_export_name(
+    module_import_path: &[String],
+    struct_name: &str,
+    symbol_name: &str,
+) -> String {
+    let mut rendered = String::from("__ql_bridge_method_");
+    for segment in module_import_path {
+        rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(segment));
+        rendered.push('_');
+    }
+    rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(struct_name));
+    rendered.push('_');
     rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(symbol_name));
     rendered
 }
