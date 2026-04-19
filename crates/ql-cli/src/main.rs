@@ -847,7 +847,7 @@ fn run() -> Result<(), u8> {
 }
 
 fn check_path(path: &Path, sync_interfaces: bool, json: bool) -> Result<(), u8> {
-    let request_root = resolve_project_source_command_request_root(path);
+    let request_root = resolve_project_workspace_member_command_request_root(path);
     let manifest_request_path = request_root.as_deref().unwrap_or(path);
     let use_package_check = should_use_package_check(manifest_request_path)
         || (is_ql_source_file(path) && load_project_manifest(manifest_request_path).is_ok());
@@ -9140,7 +9140,7 @@ fn project_emit_interface_path(
         format_project_emit_interface_command_label(output, changed_only, false);
     let check_command_label = format_project_emit_interface_command_label(None, changed_only, true);
     let request_root = if output.is_none() {
-        resolve_project_source_command_request_root(path)
+        resolve_project_workspace_member_command_request_root(path)
     } else {
         None
     };

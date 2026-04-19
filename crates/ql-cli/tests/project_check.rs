@@ -2449,6 +2449,112 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn check_workspace_member_directory_uses_enclosing_workspace() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-workspace-member-dir");
+    let member_dir = temp.path().join("workspace").join("packages").join("app");
+    let app_source = member_dir.join("src").join("lib.ql");
+    let tool_root = temp.path().join("workspace").join("packages").join("tool");
+    let tool_source = tool_root.join("src").join("lib.ql");
+    let dep_root = temp.path().join("workspace").join("dep");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(member_dir.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(tool_root.join("src")).expect("create tool source directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn main() -> Int {
+    return 2
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["check"]).arg(&member_dir);
+    let output = run_command_capture(&mut command, "`ql check` workspace member directory");
+    let (stdout, stderr) = expect_success(
+        "project-check-workspace-member-dir",
+        "workspace member directory ql check",
+        &output,
+    )
+    .expect("workspace member directory ql check should succeed");
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-check-workspace-member-dir",
+        &normalized_stdout,
+        &[
+            &format!("ok: {}", app_source.display().to_string().replace('\\', "/")),
+            &format!("ok: {}", tool_source.display().to_string().replace('\\', "/")),
+            "loaded interface: ",
+            "dep.qi",
+        ],
+    )
+    .expect(
+        "workspace member directory ql check should reuse the enclosing workspace instead of only the member package",
+    );
+    assert!(
+        stderr.trim().is_empty(),
+        "expected workspace member directory ql check stderr to stay empty, got:\n{stderr}"
+    );
+}
+
+#[test]
 fn check_workspace_root_syncs_dependency_interfaces_once() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-check-workspace-sync");
