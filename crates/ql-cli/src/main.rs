@@ -716,6 +716,58 @@ fn run() -> Result<(), u8> {
                         .unwrap_or_else(|| PathBuf::from("."));
                     project_add_path(&path, &package_name, &dependencies)
                 }
+                "remove" => {
+                    let remaining = args.collect::<Vec<_>>();
+                    let mut path = None;
+                    let mut package_name = None;
+                    let mut index = 0;
+
+                    while index < remaining.len() {
+                        match remaining[index].as_str() {
+                            "--name" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project remove --name` expects a package name"
+                                    );
+                                    return Err(1);
+                                };
+                                if package_name.is_some() {
+                                    eprintln!(
+                                        "error: `ql project remove` received `--name` more than once"
+                                    );
+                                    return Err(1);
+                                }
+                                package_name = Some(value.clone());
+                            }
+                            other if other.starts_with('-') => {
+                                eprintln!("error: unknown `ql project remove` option `{other}`");
+                                return Err(1);
+                            }
+                            other => {
+                                if path.is_some() {
+                                    eprintln!(
+                                        "error: unknown `ql project remove` argument `{other}`"
+                                    );
+                                    return Err(1);
+                                }
+                                path = Some(PathBuf::from(other));
+                            }
+                        }
+
+                        index += 1;
+                    }
+
+                    let Some(package_name) = package_name else {
+                        eprintln!("error: `ql project remove` requires `--name <package>`");
+                        return Err(1);
+                    };
+
+                    let path = path
+                        .or_else(|| env::current_dir().ok())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    project_remove_path(&path, &package_name)
+                }
                 other => {
                     eprintln!("error: unknown `ql project` subcommand `{other}`");
                     print_usage();
@@ -8035,7 +8087,7 @@ fn project_add_path(path: &Path, package_name: &str, dependencies: &[String]) ->
         return Err(1);
     }
 
-    let workspace_manifest = resolve_project_add_workspace_manifest(path).map_err(|message| {
+    let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
         eprintln!("error: `ql project add` {message}");
         1
     })?;
@@ -8057,6 +8109,27 @@ fn project_add_path(path: &Path, package_name: &str, dependencies: &[String]) ->
         println!("created: {}", normalize_path(&path));
     }
 
+    Ok(())
+}
+
+fn project_remove_path(path: &Path, package_name: &str) -> Result<(), u8> {
+    if let Err(message) = validate_project_package_name(package_name) {
+        eprintln!("error: `ql project remove` {message}");
+        return Err(1);
+    }
+
+    let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
+        eprintln!("error: `ql project remove` {message}");
+        1
+    })?;
+    let (updated_manifest_path, removed_member_root) =
+        remove_workspace_project_member(&workspace_manifest, package_name).map_err(|message| {
+            eprintln!("error: `ql project remove` {message}");
+            1
+        })?;
+
+    println!("updated: {}", normalize_path(&updated_manifest_path));
+    println!("removed: {}", normalize_path(&removed_member_root));
     Ok(())
 }
 
@@ -8120,18 +8193,16 @@ fn init_workspace_project(target_root: &Path, package_name: &str) -> Result<Vec<
     Ok(created_paths)
 }
 
-fn resolve_project_add_workspace_manifest(
-    path: &Path,
-) -> Result<ql_project::ProjectManifest, String> {
-    let manifest =
-        load_project_manifest(path).map_err(|error| project_add_manifest_error(path, &error))?;
+fn resolve_project_workspace_manifest(path: &Path) -> Result<ql_project::ProjectManifest, String> {
+    let manifest = load_project_manifest(path)
+        .map_err(|error| project_workspace_manifest_error(path, &error))?;
     let workspace_manifest_path = if manifest.workspace.is_some() {
         manifest.manifest_path.clone()
     } else {
         resolve_project_member_request_root(&manifest.manifest_path)
     };
     let workspace_manifest = load_project_manifest(&workspace_manifest_path)
-        .map_err(|error| project_add_manifest_error(path, &error))?;
+        .map_err(|error| project_workspace_manifest_error(path, &error))?;
 
     if workspace_manifest.workspace.is_none() {
         return Err(format!(
@@ -8144,7 +8215,7 @@ fn resolve_project_add_workspace_manifest(
     Ok(workspace_manifest)
 }
 
-fn project_add_manifest_error(path: &Path, error: &ql_project::ProjectError) -> String {
+fn project_workspace_manifest_error(path: &Path, error: &ql_project::ProjectError) -> String {
     match error {
         ql_project::ProjectError::ManifestNotFound { start } => format!(
             "requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
@@ -8266,6 +8337,94 @@ fn find_workspace_member_with_package_name(
         })
 }
 
+fn find_workspace_member_entries_by_package_name(
+    workspace_manifest: &ql_project::ProjectManifest,
+    wanted_package_name: &str,
+) -> Vec<(String, PathBuf)> {
+    let workspace_root = workspace_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    workspace_manifest
+        .workspace
+        .as_ref()
+        .map(|workspace| {
+            workspace
+                .members
+                .iter()
+                .filter_map(|member| {
+                    let member_manifest =
+                        load_project_manifest(&workspace_root.join(member)).ok()?;
+                    let existing_package_name = package_name(&member_manifest).ok()?;
+                    (existing_package_name == wanted_package_name)
+                        .then_some((member.clone(), member_manifest.manifest_path))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn remove_workspace_project_member(
+    workspace_manifest: &ql_project::ProjectManifest,
+    package_name: &str,
+) -> Result<(PathBuf, PathBuf), String> {
+    let Some(_workspace) = workspace_manifest.workspace.as_ref() else {
+        return Err(format!(
+            "manifest `{}` is not a workspace",
+            normalize_path(&workspace_manifest.manifest_path)
+        ));
+    };
+
+    let member_entries =
+        find_workspace_member_entries_by_package_name(workspace_manifest, package_name);
+    if member_entries.is_empty() {
+        return Err(format!(
+            "workspace manifest `{}` does not contain member package `{package_name}`",
+            normalize_path(&workspace_manifest.manifest_path)
+        ));
+    }
+    if member_entries.len() > 1 {
+        let matching_members = member_entries
+            .iter()
+            .map(|(member, _)| member.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "workspace manifest `{}` contains multiple members for package `{package_name}`: {matching_members}",
+            normalize_path(&workspace_manifest.manifest_path)
+        ));
+    }
+
+    let (member_entry, member_manifest_path) = &member_entries[0];
+    let workspace_manifest_source =
+        fs::read_to_string(&workspace_manifest.manifest_path).map_err(|error| {
+            format!(
+                "failed to read `{}`: {error}",
+                normalize_path(&workspace_manifest.manifest_path)
+            )
+        })?;
+    let updated_workspace_manifest =
+        remove_workspace_manifest_member(&workspace_manifest_source, member_entry)?;
+    fs::write(
+        &workspace_manifest.manifest_path,
+        updated_workspace_manifest,
+    )
+    .map_err(|error| {
+        format!(
+            "failed to write `{}`: {error}",
+            normalize_path(&workspace_manifest.manifest_path)
+        )
+    })?;
+
+    Ok((
+        workspace_manifest.manifest_path.clone(),
+        member_manifest_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf(),
+    ))
+}
+
 fn append_workspace_manifest_member(source: &str, member: &str) -> Result<String, String> {
     let mut value = toml::from_str::<TomlValue>(source)
         .map_err(|error| format!("failed to parse workspace manifest: {error}"))?;
@@ -8281,6 +8440,37 @@ fn append_workspace_manifest_member(source: &str, member: &str) -> Result<String
         .as_array_mut()
         .ok_or_else(|| "workspace manifest must declare `[workspace].members`".to_owned())?;
     members.push(TomlValue::String(member.to_owned()));
+
+    let mut rendered = toml::to_string(&value)
+        .map_err(|error| format!("failed to render workspace manifest: {error}"))?;
+    if !rendered.ends_with('\n') {
+        rendered.push('\n');
+    }
+    Ok(rendered)
+}
+
+fn remove_workspace_manifest_member(source: &str, member: &str) -> Result<String, String> {
+    let mut value = toml::from_str::<TomlValue>(source)
+        .map_err(|error| format!("failed to parse workspace manifest: {error}"))?;
+    let Some(root) = value.as_table_mut() else {
+        return Err("workspace manifest must be a TOML table".to_owned());
+    };
+    let Some(workspace) = root.get_mut("workspace").and_then(TomlValue::as_table_mut) else {
+        return Err("workspace manifest must declare `[workspace]`".to_owned());
+    };
+    let members = workspace
+        .entry("members")
+        .or_insert_with(|| TomlValue::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| "workspace manifest must declare `[workspace].members`".to_owned())?;
+
+    let original_len = members.len();
+    members.retain(|value| value.as_str().is_none_or(|existing| existing != member));
+    if members.len() == original_len {
+        return Err(format!(
+            "workspace manifest does not declare member `{member}`"
+        ));
+    }
 
     let mut rendered = toml::to_string(&value)
         .map_err(|error| format!("failed to render workspace manifest: {error}"))?;
@@ -11135,6 +11325,7 @@ fn print_usage() {
     eprintln!("  ql project lock [file-or-dir] [--check] [--json]");
     eprintln!("  ql project init [dir] [--workspace] [--name <package>]");
     eprintln!("  ql project add [file-or-dir] --name <package> [--dependency <package> ...]");
+    eprintln!("  ql project remove [file-or-dir] --name <package>");
     eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]");
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");

@@ -26,6 +26,7 @@
 - 已实现：`ql check`、`ql fmt`、`ql mir`、`ql ownership`、`ql runtime`、`ql build`、`ql run`、`ql test`、`ql project`、`ql ffi`。
 - `ql project init` 已能生成最小 package / workspace 脚手架，并附带 `src/lib.ql`、`src/main.ql`、`tests/smoke.ql`。
 - `ql project add` 已能向现有 workspace 增量加入 `packages/<name>` member scaffold，并可在创建时直接写入 workspace 内本地依赖到 `[dependencies]`。
+- `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里摘除，并保留原包目录，先支持安全退出 dependency graph，再由用户决定是否清理文件。
 - `ql project targets`、`ql project graph`、`ql project lock`、`ql project emit-interface` 已落地。
 - `qlang.toml` 当前只稳定支持：
   - `[package].name`
