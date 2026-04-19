@@ -1078,14 +1078,14 @@ impl<'a> ModuleEmitter<'a> {
                     self.collect_guard_expr_callees(value_expr, queue);
                     return;
                 }
-                let mut visited = HashSet::new();
-                if let Some(function) = const_or_static_callable_function_ref(
-                    self.input.hir,
-                    self.input.resolution,
-                    *item,
-                    &mut visited,
-                ) {
-                    queue.push_back(function);
+                match &self.input.hir.item(*item).kind {
+                    ItemKind::Function(_) => {
+                        queue.push_back(FunctionRef::Item(*item));
+                    }
+                    ItemKind::Const(global) | ItemKind::Static(global) => {
+                        self.collect_guard_expr_callees(global.value, queue);
+                    }
+                    _ => {}
                 }
             }
             Operand::Constant(Constant::Import(path)) => {
@@ -1102,14 +1102,11 @@ impl<'a> ModuleEmitter<'a> {
                     queue.push_back(FunctionRef::Item(item_id));
                     return;
                 }
-                let mut visited = HashSet::new();
-                if let Some(function) = const_or_static_callable_function_ref(
-                    self.input.hir,
-                    self.input.resolution,
-                    item_id,
-                    &mut visited,
-                ) {
-                    queue.push_back(function);
+                match &self.input.hir.item(item_id).kind {
+                    ItemKind::Const(global) | ItemKind::Static(global) => {
+                        self.collect_guard_expr_callees(global.value, queue);
+                    }
+                    _ => {}
                 }
             }
             Operand::Place(_)
@@ -1125,6 +1122,16 @@ impl<'a> ModuleEmitter<'a> {
     }
 
     fn collect_guard_expr_callees(&self, expr_id: hir::ExprId, queue: &mut VecDeque<FunctionRef>) {
+        let mut visited_items = HashSet::new();
+        self.collect_guard_expr_callees_with_const_items(expr_id, queue, &mut visited_items);
+    }
+
+    fn collect_guard_expr_callees_with_const_items(
+        &self,
+        expr_id: hir::ExprId,
+        queue: &mut VecDeque<FunctionRef>,
+        visited_items: &mut HashSet<ItemId>,
+    ) {
         let mut visited = HashSet::new();
         if let Some(function) = const_expr_sync_function_ref(
             self.input.hir,
@@ -1142,23 +1149,29 @@ impl<'a> ModuleEmitter<'a> {
                 {
                     queue.push_back(function);
                 }
-                self.collect_guard_expr_callees(*callee, queue);
+                self.collect_guard_expr_callees_with_const_items(*callee, queue, visited_items);
                 for arg in args {
-                    self.collect_guard_expr_callees(guard_call_arg_expr(arg), queue);
+                    self.collect_guard_expr_callees_with_const_items(
+                        guard_call_arg_expr(arg),
+                        queue,
+                        visited_items,
+                    );
                 }
             }
-            hir::ExprKind::Unary { expr, .. } => self.collect_guard_expr_callees(*expr, queue),
+            hir::ExprKind::Unary { expr, .. } => {
+                self.collect_guard_expr_callees_with_const_items(*expr, queue, visited_items)
+            }
             hir::ExprKind::Binary { left, right, .. } => {
-                self.collect_guard_expr_callees(*left, queue);
-                self.collect_guard_expr_callees(*right, queue);
+                self.collect_guard_expr_callees_with_const_items(*left, queue, visited_items);
+                self.collect_guard_expr_callees_with_const_items(*right, queue, visited_items);
             }
             hir::ExprKind::Member { object, .. } => {
-                self.collect_guard_expr_callees(*object, queue);
+                self.collect_guard_expr_callees_with_const_items(*object, queue, visited_items);
             }
             hir::ExprKind::Bracket { target, items } => {
-                self.collect_guard_expr_callees(*target, queue);
+                self.collect_guard_expr_callees_with_const_items(*target, queue, visited_items);
                 for item in items {
-                    self.collect_guard_expr_callees(*item, queue);
+                    self.collect_guard_expr_callees_with_const_items(*item, queue, visited_items);
                 }
             }
             hir::ExprKind::Block(block_id) | hir::ExprKind::Unsafe(block_id) => {
@@ -1169,33 +1182,45 @@ impl<'a> ModuleEmitter<'a> {
                 then_branch,
                 else_branch,
             } => {
-                self.collect_guard_expr_callees(*condition, queue);
+                self.collect_guard_expr_callees_with_const_items(*condition, queue, visited_items);
                 self.collect_guard_block_callees(*then_branch, queue);
                 if let Some(other) = else_branch {
-                    self.collect_guard_expr_callees(*other, queue);
+                    self.collect_guard_expr_callees_with_const_items(*other, queue, visited_items);
                 }
             }
             hir::ExprKind::Match { value, arms } => {
-                self.collect_guard_expr_callees(*value, queue);
+                self.collect_guard_expr_callees_with_const_items(*value, queue, visited_items);
                 for arm in arms {
                     if let Some(guard) = arm.guard {
-                        self.collect_guard_expr_callees(guard, queue);
+                        self.collect_guard_expr_callees_with_const_items(
+                            guard,
+                            queue,
+                            visited_items,
+                        );
                     }
-                    self.collect_guard_expr_callees(arm.body, queue);
+                    self.collect_guard_expr_callees_with_const_items(
+                        arm.body,
+                        queue,
+                        visited_items,
+                    );
                 }
             }
             hir::ExprKind::Tuple(items) | hir::ExprKind::Array(items) => {
                 for item in items {
-                    self.collect_guard_expr_callees(*item, queue);
+                    self.collect_guard_expr_callees_with_const_items(*item, queue, visited_items);
                 }
             }
             hir::ExprKind::StructLiteral { fields, .. } => {
                 for field in fields {
-                    self.collect_guard_expr_callees(field.value, queue);
+                    self.collect_guard_expr_callees_with_const_items(
+                        field.value,
+                        queue,
+                        visited_items,
+                    );
                 }
             }
             hir::ExprKind::Closure { body, .. } | hir::ExprKind::Question(body) => {
-                self.collect_guard_expr_callees(*body, queue);
+                self.collect_guard_expr_callees_with_const_items(*body, queue, visited_items);
             }
             hir::ExprKind::Name(_) => {
                 if let Some(item_id) =
@@ -1206,7 +1231,30 @@ impl<'a> ModuleEmitter<'a> {
                         item_id,
                     )
                 {
-                    self.collect_guard_expr_callees(value_expr, queue);
+                    self.collect_guard_expr_callees_with_const_items(
+                        value_expr,
+                        queue,
+                        visited_items,
+                    );
+                    return;
+                }
+                if let Some(value_resolution) = self.input.resolution.expr_resolution(expr_id)
+                    && let Some(item_id) =
+                        local_item_for_value_resolution(self.input.hir, value_resolution)
+                    && visited_items.insert(item_id)
+                {
+                    match &self.input.hir.item(item_id).kind {
+                        ItemKind::Function(_) => queue.push_back(FunctionRef::Item(item_id)),
+                        ItemKind::Const(global) | ItemKind::Static(global) => {
+                            self.collect_guard_expr_callees_with_const_items(
+                                global.value,
+                                queue,
+                                visited_items,
+                            );
+                        }
+                        _ => {}
+                    }
+                    visited_items.remove(&item_id);
                 }
             }
             hir::ExprKind::Integer(_)
@@ -13924,6 +13972,22 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             }
             hir::ExprKind::Question(inner) => {
                 self.render_const_expr(output, *inner, expected_ty, span)
+            }
+            hir::ExprKind::Call { callee, args } => {
+                let rendered = self.render_cleanup_call(output, *callee, args, span).unwrap_or_else(
+                    || {
+                        panic!(
+                            "prepared const item lowering at {span:?} should only use non-void call expressions"
+                        )
+                    },
+                );
+                if let Some(expected_ty) = expected_ty {
+                    assert!(
+                        expected_ty.compatible_with(&rendered.ty),
+                        "prepared const item lowering at {span:?} should only render compatible call expressions"
+                    );
+                }
+                rendered
             }
             hir::ExprKind::Closure { .. } => {
                 let ty = self

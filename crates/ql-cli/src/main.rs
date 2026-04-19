@@ -9,7 +9,9 @@ use ql_analysis::{
     PackageAnalysisError, analyze_package, analyze_source as analyze_semantics,
     parse_errors_to_diagnostics,
 };
-use ql_ast::{Expr, ExprKind, FunctionDecl, GlobalDecl, ItemKind, Module, Param, Visibility};
+use ql_ast::{
+    CallArg, Expr, ExprKind, FunctionDecl, GlobalDecl, ItemKind, Module, Param, Visibility,
+};
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
     BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile,
@@ -6297,9 +6299,11 @@ fn render_direct_dependency_bridge_items(
         command_label,
         manifest_path,
         source,
+        &value_declarations.required_functions_by_module_path,
         report_failure,
     )?;
-    let declarations = join_dependency_bridge_sections(&value_declarations, &extern_declarations);
+    let declarations =
+        join_dependency_bridge_sections(&value_declarations.declarations, &extern_declarations);
     Ok(join_dependency_bridge_sections(
         &declarations,
         &function_forwarders,
@@ -6314,9 +6318,13 @@ fn render_direct_dependency_bridge_items_quiet(
         render_direct_dependency_public_value_declarations_quiet(manifest_path, source)?;
     let extern_declarations =
         render_direct_dependency_extern_declarations_quiet(manifest_path, source)?;
-    let function_forwarders =
-        render_direct_dependency_public_function_forwarders_quiet(manifest_path, source)?;
-    let declarations = join_dependency_bridge_sections(&value_declarations, &extern_declarations);
+    let function_forwarders = render_direct_dependency_public_function_forwarders_quiet(
+        manifest_path,
+        source,
+        &value_declarations.required_functions_by_module_path,
+    )?;
+    let declarations =
+        join_dependency_bridge_sections(&value_declarations.declarations, &extern_declarations);
     Ok(join_dependency_bridge_sections(
         &declarations,
         &function_forwarders,
@@ -6504,12 +6512,18 @@ fn render_direct_dependency_extern_declarations_quiet(
     Ok(declarations.join("\n\n"))
 }
 
+#[derive(Default)]
+struct RenderedDependencyPublicValueDeclarations {
+    declarations: String,
+    required_functions_by_module_path: BTreeMap<Vec<String>, BTreeSet<String>>,
+}
+
 fn render_direct_dependency_public_value_declarations(
     command_label: &str,
     manifest_path: &Path,
     source: &str,
     report_failure: bool,
-) -> Result<String, u8> {
+) -> Result<RenderedDependencyPublicValueDeclarations, u8> {
     let manifest = load_project_manifest(manifest_path).map_err(|error| {
         if report_failure {
             report_project_build_dependency_error(command_label, None, &error);
@@ -6524,12 +6538,13 @@ fn render_direct_dependency_public_value_declarations(
     })?;
     let root_source_module = match parse_source(source) {
         Ok(module) => module,
-        Err(_) => return Ok(String::new()),
+        Err(_) => return Ok(RenderedDependencyPublicValueDeclarations::default()),
     };
     let occupied_root_names = collect_top_level_definition_names(&root_source_module);
 
     let mut declarations = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
+    let mut required_functions_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
 
     for dependency in direct_dependencies {
         let dependency_package = match package_name(&dependency) {
@@ -6605,6 +6620,7 @@ fn render_direct_dependency_public_value_declarations(
                 &dependency_source,
                 Some(&imported_externs),
                 &occupied_root_names,
+                &mut required_functions_by_module_path,
                 &mut owners_by_symbol,
                 &mut declarations,
             )
@@ -6637,19 +6653,22 @@ fn render_direct_dependency_public_value_declarations(
         }
     }
 
-    Ok(declarations.join("\n\n"))
+    Ok(RenderedDependencyPublicValueDeclarations {
+        declarations: declarations.join("\n\n"),
+        required_functions_by_module_path,
+    })
 }
 
 fn render_direct_dependency_public_value_declarations_quiet(
     manifest_path: &Path,
     source: &str,
-) -> Result<String, PrepareProjectTargetBuildError> {
+) -> Result<RenderedDependencyPublicValueDeclarations, PrepareProjectTargetBuildError> {
     let manifest = load_project_manifest(manifest_path)
         .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
     let root_source_module = match parse_source(source) {
         Ok(module) => module,
-        Err(_) => return Ok(String::new()),
+        Err(_) => return Ok(RenderedDependencyPublicValueDeclarations::default()),
     };
     let occupied_root_names = collect_top_level_definition_names(&root_source_module);
     let direct_dependencies = manifest
@@ -6668,6 +6687,7 @@ fn render_direct_dependency_public_value_declarations_quiet(
 
     let mut declarations = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
+    let mut required_functions_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
 
     for dependency_manifest in direct_dependencies {
         let dependency_package = package_name(&dependency_manifest)
@@ -6741,6 +6761,7 @@ fn render_direct_dependency_public_value_declarations_quiet(
                 &dependency_source,
                 Some(&imported_externs),
                 &occupied_root_names,
+                &mut required_functions_by_module_path,
                 &mut owners_by_symbol,
                 &mut declarations,
             )
@@ -6773,13 +6794,17 @@ fn render_direct_dependency_public_value_declarations_quiet(
         }
     }
 
-    Ok(declarations.join("\n\n"))
+    Ok(RenderedDependencyPublicValueDeclarations {
+        declarations: declarations.join("\n\n"),
+        required_functions_by_module_path,
+    })
 }
 
 fn render_direct_dependency_public_function_forwarders(
     command_label: &str,
     manifest_path: &Path,
     source: &str,
+    required_functions_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
     report_failure: bool,
 ) -> Result<String, u8> {
     let manifest = load_project_manifest(manifest_path).map_err(|error| {
@@ -6842,12 +6867,15 @@ fn render_direct_dependency_public_function_forwarders(
             collect_imported_dependency_externs(&root_source_module, &module_import_paths);
 
         for module in &artifact.modules {
+            let module_import_path =
+                dependency_interface_module_import_path(&dependency_package, &module.syntax);
             collect_dependency_module_public_function_forwarders(
                 &dependency_package,
                 &dependency.manifest_path,
                 &module.syntax,
                 &module.contents,
                 Some(&imported_externs),
+                required_functions_by_module_path.get(&module_import_path),
                 &occupied_root_names,
                 &mut owners_by_symbol,
                 &mut forwarders,
@@ -6890,6 +6918,7 @@ fn render_direct_dependency_public_function_forwarders(
 fn render_direct_dependency_public_function_forwarders_quiet(
     manifest_path: &Path,
     source: &str,
+    required_functions_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
 ) -> Result<String, PrepareProjectTargetBuildError> {
     let manifest = load_project_manifest(manifest_path)
         .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
@@ -6950,12 +6979,15 @@ fn render_direct_dependency_public_function_forwarders_quiet(
             collect_imported_dependency_externs(&root_source_module, &module_import_paths);
 
         for module in &artifact.modules {
+            let module_import_path =
+                dependency_interface_module_import_path(&dependency_package, &module.syntax);
             collect_dependency_module_public_function_forwarders(
                 &dependency_package,
                 &dependency_manifest.manifest_path,
                 &module.syntax,
                 &module.contents,
                 Some(&imported_externs),
+                required_functions_by_module_path.get(&module_import_path),
                 &occupied_root_names,
                 &mut owners_by_symbol,
                 &mut forwarders,
@@ -7111,6 +7143,12 @@ struct DependencyPublicGlobalBridgeCandidate<'a> {
     global: &'a GlobalDecl,
 }
 
+#[derive(Default)]
+struct DependencyPublicGlobalExprDependencies {
+    globals: BTreeSet<String>,
+    functions: BTreeSet<String>,
+}
+
 fn dependency_public_global_bridge_candidates<'a>(
     module: &'a Module,
 ) -> BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>> {
@@ -7132,73 +7170,158 @@ fn dependency_public_global_bridge_candidates<'a>(
     candidates
 }
 
+fn dependency_public_function_bridge_candidates(module: &Module) -> BTreeSet<String> {
+    module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ItemKind::Function(function)
+                if supports_dependency_public_function_export_bridge(function) =>
+            {
+                Some(function.name.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn collect_dependency_public_global_expr_dependencies<'a>(
     expr: &Expr,
-    candidates: &BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>>,
-    dependencies: &mut BTreeSet<String>,
+    global_candidates: &BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>>,
+    function_candidates: &BTreeSet<String>,
+    dependencies: &mut DependencyPublicGlobalExprDependencies,
 ) -> bool {
     match &expr.kind {
         ExprKind::Integer(_) | ExprKind::String { .. } | ExprKind::Bool(_) => true,
         ExprKind::Name(name) => {
-            if candidates.contains_key(name) {
-                dependencies.insert(name.clone());
+            if global_candidates.contains_key(name) {
+                dependencies.globals.insert(name.clone());
+                true
+            } else if function_candidates.contains(name) {
+                dependencies.functions.insert(name.clone());
                 true
             } else {
                 false
             }
         }
         ExprKind::Tuple(items) | ExprKind::Array(items) => items.iter().all(|item| {
-            collect_dependency_public_global_expr_dependencies(item, candidates, dependencies)
+            collect_dependency_public_global_expr_dependencies(
+                item,
+                global_candidates,
+                function_candidates,
+                dependencies,
+            )
         }),
         ExprKind::StructLiteral { fields, .. } => fields.iter().all(|field| {
             field.value.as_ref().is_some_and(|value| {
-                collect_dependency_public_global_expr_dependencies(value, candidates, dependencies)
+                collect_dependency_public_global_expr_dependencies(
+                    value,
+                    global_candidates,
+                    function_candidates,
+                    dependencies,
+                )
             })
         }),
         ExprKind::Binary { left, right, .. } => {
-            collect_dependency_public_global_expr_dependencies(left, candidates, dependencies)
-                && collect_dependency_public_global_expr_dependencies(
-                    right,
-                    candidates,
-                    dependencies,
-                )
+            collect_dependency_public_global_expr_dependencies(
+                left,
+                global_candidates,
+                function_candidates,
+                dependencies,
+            ) && collect_dependency_public_global_expr_dependencies(
+                right,
+                global_candidates,
+                function_candidates,
+                dependencies,
+            )
         }
         ExprKind::Unary { expr, .. } | ExprKind::Question(expr) => {
-            collect_dependency_public_global_expr_dependencies(expr, candidates, dependencies)
+            collect_dependency_public_global_expr_dependencies(
+                expr,
+                global_candidates,
+                function_candidates,
+                dependencies,
+            )
         }
-        ExprKind::Member { object, .. } => {
-            collect_dependency_public_global_expr_dependencies(object, candidates, dependencies)
+        ExprKind::Call { callee, args } => {
+            collect_dependency_public_global_expr_dependencies(
+                callee,
+                global_candidates,
+                function_candidates,
+                dependencies,
+            ) && args.iter().all(|arg| match arg {
+                CallArg::Positional(value) => collect_dependency_public_global_expr_dependencies(
+                    value,
+                    global_candidates,
+                    function_candidates,
+                    dependencies,
+                ),
+                CallArg::Named { value, .. } => collect_dependency_public_global_expr_dependencies(
+                    value,
+                    global_candidates,
+                    function_candidates,
+                    dependencies,
+                ),
+            })
         }
+        ExprKind::Member { object, .. } => collect_dependency_public_global_expr_dependencies(
+            object,
+            global_candidates,
+            function_candidates,
+            dependencies,
+        ),
         ExprKind::Bracket { target, items } => {
-            collect_dependency_public_global_expr_dependencies(target, candidates, dependencies)
-                && items.iter().all(|item| {
-                    collect_dependency_public_global_expr_dependencies(
-                        item,
-                        candidates,
-                        dependencies,
-                    )
-                })
+            collect_dependency_public_global_expr_dependencies(
+                target,
+                global_candidates,
+                function_candidates,
+                dependencies,
+            ) && items.iter().all(|item| {
+                collect_dependency_public_global_expr_dependencies(
+                    item,
+                    global_candidates,
+                    function_candidates,
+                    dependencies,
+                )
+            })
         }
         ExprKind::NoneLiteral
         | ExprKind::Block(_)
         | ExprKind::Unsafe(_)
         | ExprKind::If { .. }
         | ExprKind::Match { .. }
-        | ExprKind::Closure { .. }
-        | ExprKind::Call { .. } => false,
+        | ExprKind::Closure { .. } => false,
     }
+}
+
+fn dependency_public_global_dependencies<'a>(
+    symbol_name: &str,
+    global_candidates: &BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>>,
+    function_candidates: &BTreeSet<String>,
+) -> Option<DependencyPublicGlobalExprDependencies> {
+    let candidate = global_candidates.get(symbol_name)?;
+    let mut dependencies = DependencyPublicGlobalExprDependencies::default();
+    collect_dependency_public_global_expr_dependencies(
+        &candidate.global.value,
+        global_candidates,
+        function_candidates,
+        &mut dependencies,
+    )
+    .then_some(dependencies)
 }
 
 fn dependency_public_global_bridge_order<'a>(
     symbol_name: &str,
-    candidates: &BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>>,
+    global_candidates: &BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>>,
+    function_candidates: &BTreeSet<String>,
 ) -> Option<Vec<String>> {
     let mut visiting = BTreeSet::new();
     let mut visited = BTreeSet::new();
     let mut ordered = Vec::new();
     if collect_dependency_public_global_bridge_order(
         symbol_name,
-        candidates,
+        global_candidates,
+        function_candidates,
         &mut visiting,
         &mut visited,
         &mut ordered,
@@ -7211,7 +7334,8 @@ fn dependency_public_global_bridge_order<'a>(
 
 fn collect_dependency_public_global_bridge_order<'a>(
     symbol_name: &str,
-    candidates: &BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>>,
+    global_candidates: &BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>>,
+    function_candidates: &BTreeSet<String>,
     visiting: &mut BTreeSet<String>,
     visited: &mut BTreeSet<String>,
     ordered: &mut Vec<String>,
@@ -7219,28 +7343,25 @@ fn collect_dependency_public_global_bridge_order<'a>(
     if visited.contains(symbol_name) {
         return true;
     }
-    let Some(candidate) = candidates.get(symbol_name) else {
+    let Some(_) = global_candidates.get(symbol_name) else {
         return false;
     };
     if !visiting.insert(symbol_name.to_owned()) {
         return false;
     }
 
-    let mut dependencies = BTreeSet::new();
-    let bridgeable = collect_dependency_public_global_expr_dependencies(
-        &candidate.global.value,
-        candidates,
-        &mut dependencies,
-    );
-    if !bridgeable {
+    let Some(dependencies) =
+        dependency_public_global_dependencies(symbol_name, global_candidates, function_candidates)
+    else {
         visiting.remove(symbol_name);
         return false;
-    }
+    };
 
-    for dependency in dependencies {
+    for dependency in dependencies.globals {
         if !collect_dependency_public_global_bridge_order(
             &dependency,
-            candidates,
+            global_candidates,
+            function_candidates,
             visiting,
             visited,
             ordered,
@@ -7263,11 +7384,13 @@ fn collect_dependency_module_public_value_declarations(
     contents: &str,
     imported_externs: Option<&ImportedDependencyExterns>,
     occupied_root_names: &BTreeSet<String>,
+    required_functions_by_module_path: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     declarations: &mut Vec<String>,
 ) -> Result<(), DependencyPublicValueBridgeError> {
     let module_import_path = dependency_interface_module_import_path(dependency_package, module);
-    let candidates = dependency_public_global_bridge_candidates(module);
+    let global_candidates = dependency_public_global_bridge_candidates(module);
+    let function_candidates = dependency_public_function_bridge_candidates(module);
     let mut emitted = BTreeSet::new();
 
     for item in &module.items {
@@ -7285,9 +7408,11 @@ fn collect_dependency_module_public_value_declarations(
             continue;
         }
 
-        let Some(ordered_symbols) =
-            dependency_public_global_bridge_order(&global.name, &candidates)
-        else {
+        let Some(ordered_symbols) = dependency_public_global_bridge_order(
+            &global.name,
+            &global_candidates,
+            &function_candidates,
+        ) else {
             continue;
         };
 
@@ -7300,9 +7425,15 @@ fn collect_dependency_module_public_value_declarations(
                     symbol: ordered_symbol,
                 });
             }
-            let candidate = candidates
+            let candidate = global_candidates
                 .get(&ordered_symbol)
                 .expect("ordered dependency public globals should resolve to candidates");
+            let dependencies = dependency_public_global_dependencies(
+                &ordered_symbol,
+                &global_candidates,
+                &function_candidates,
+            )
+            .expect("emitted dependency public globals should remain bridgeable");
             record_dependency_extern_declaration(
                 dependency_package,
                 dependency_manifest_path,
@@ -7314,6 +7445,12 @@ fn collect_dependency_module_public_value_declarations(
             .map_err(|(symbol, owner)| {
                 DependencyPublicValueBridgeError::DependencyConflict { symbol, owner }
             })?;
+            if !dependencies.functions.is_empty() {
+                required_functions_by_module_path
+                    .entry(module_import_path.clone())
+                    .or_default()
+                    .extend(dependencies.functions);
+            }
             emitted.insert(ordered_symbol);
         }
     }
@@ -7327,6 +7464,7 @@ fn collect_dependency_module_public_function_forwarders(
     module: &Module,
     contents: &str,
     imported_externs: Option<&ImportedDependencyExterns>,
+    required_function_names: Option<&BTreeSet<String>>,
     occupied_root_names: &BTreeSet<String>,
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     forwarders: &mut Vec<String>,
@@ -7340,9 +7478,13 @@ fn collect_dependency_module_public_function_forwarders(
         if !supports_dependency_public_function_import_bridge(function) {
             continue;
         }
-        if imported_externs.is_some_and(|imports| {
-            !dependency_extern_is_imported(imports, &module_import_path, &function.name)
-        }) {
+        let imported = imported_externs.is_none_or(|imports| {
+            dependency_extern_is_imported(imports, &module_import_path, &function.name)
+        });
+        let required_by_value = required_function_names.is_some_and(|required_function_names| {
+            required_function_names.contains(&function.name)
+        });
+        if !imported && !required_by_value {
             continue;
         }
         if occupied_root_names.contains(&function.name) {

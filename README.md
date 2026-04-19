@@ -7,8 +7,8 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - Phase 1 到 Phase 6 的编译器和 same-file tooling 已落地。
 - Phase 7 正在收口 async/runtime/build 的最小可用子集。
 - Phase 8 正在推进 package/workspace、`.qi`、本地依赖、project-aware `build/run/test` 和 dependency-backed LSP。
-- 当前跨包执行路径仍然很窄：只稳定支持 direct local dependency 的 bridgeable public `const/static` values、受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）与 public `extern "c"` 符号。
-- root target 的 dependency bridge 现在只会为当前源码实际导入的直依赖 bridgeable public `const/static` values、受限 public free function / `extern "c"` 符号注入声明或 wrapper；未导入 sibling dependency 的同名符号不再提前卡住 `ql build/run/test`，但实际导入的同名直依赖 value/function/extern 仍会显式失败。
+- 当前跨包执行路径仍然很窄：只稳定支持 direct local dependency 的 bridgeable public `const/static` values、受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）与 public `extern "c"` 符号；其中 value bridge 现在也覆盖“初始化器直接命名同模块 bridgeable public free function”以及“调用同模块 bridgeable public free function”的窄 slice。
+- root target 的 dependency bridge 现在只会为当前源码实际导入的直依赖 bridgeable public `const/static` values、受限 public free function / `extern "c"` 符号注入声明或 wrapper；当导入的 value 依赖同模块 bridgeable public function 时，会隐式补齐所需 wrapper。未导入 sibling dependency 的同名符号不再提前卡住 `ql build/run/test`，但实际导入的同名直依赖 value/function/extern 仍会显式失败。
 - 当前 rename 仍以 same-file 为边界；cross-file rename / workspace edits 尚未开放。
 - `ql build` / `ql run` 已支持从 package 根目录和已声明 target 的源码路径进入 project-aware 流程；workspace member 源码路径会继承外层 workspace profile 和输出目录语义。
 - `ql build --list` / `ql run --list` 已可直接列出当前 package / workspace 下的 build targets；workspace member 目录或源码路径也会回到外层 workspace 视角；`--json` 复用 `ql.project.targets.v1`，`ql run --list` 只展示 runnable targets。

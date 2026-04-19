@@ -1212,3 +1212,94 @@ dep = "../dep"
     )
     .expect("dependency public value run should still emit the executable artifact");
 }
+
+#[test]
+fn run_package_path_supports_dependency_public_values_with_function_initializers() {
+    if !toolchain_available("`ql run` dependency public value initializer test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-dependency-public-value-function-initializers");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub fn add_one(value: Int) -> Int { return value + 1 }\npub fn make_value() -> Int { return add_one(6) }\npub const VALUE: Int = make_value()\npub const APPLY: (Int) -> Int = add_one\n",
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        "use dep.VALUE as VALUE_ALIAS\nuse dep.APPLY as RUN\n\nfn main() -> Int { return VALUE_ALIAS + RUN(3) }\n",
+    );
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let executable_output = executable_output_path(&project_root.join("target/ql/debug"), "main");
+    assert!(
+        !interface_output.exists(),
+        "dependency interface should start missing for dependency public value initializer test"
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql run` dependency public value initializer");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-dependency-public-value-function-initializers",
+        "package path run with dependency public value function initializers",
+        &output,
+        11,
+    )
+    .expect(
+        "package-path `ql run` should support dependency public values with function initializers",
+    );
+    expect_silent_output(
+        "project-run-dependency-public-value-function-initializers",
+        "package path run with dependency public value function initializers",
+        &stdout,
+        &stderr,
+    )
+    .expect("dependency public value initializer run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-dependency-public-value-function-initializers",
+        &interface_output,
+        "synced dependency interface",
+        "package path run with dependency public value function initializers",
+    )
+    .expect("dependency public value initializer run should emit the dependency interface");
+    expect_file_exists(
+        "project-run-dependency-public-value-function-initializers",
+        &dependency_output,
+        "dependency package artifact",
+        "package path run with dependency public value function initializers",
+    )
+    .expect(
+        "dependency public value initializer run should also build the dependency package artifact",
+    );
+    expect_file_exists(
+        "project-run-dependency-public-value-function-initializers",
+        &executable_output,
+        "package executable",
+        "package path run with dependency public value function initializers",
+    )
+    .expect("dependency public value initializer run should still emit the executable artifact");
+}
