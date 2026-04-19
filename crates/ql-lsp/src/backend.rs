@@ -3474,7 +3474,7 @@ fn dependency_references_for_position(
         })
 }
 
-fn workspace_source_references_for_root_definition_with_open_docs(
+fn workspace_source_references_for_root_symbol_with_open_docs(
     uri: &Url,
     source: &str,
     analysis: &Analysis,
@@ -3484,20 +3484,16 @@ fn workspace_source_references_for_root_definition_with_open_docs(
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
     let offset = position_to_offset(source, position)?;
-    let definition_reference = analysis.references_at(offset).and_then(|references| {
-        references
-            .into_iter()
-            .find(|reference| reference.is_definition && reference.span.contains(offset))
-    })?;
     let definition_target = analysis.definition_at(offset)?;
     if !supports_workspace_source_root_definition_references(definition_target.kind) {
         return None;
     }
+    if !occurrence_matches_definition_target(analysis, offset, &definition_target) {
+        return None;
+    }
 
-    let source_definition = Location::new(
-        uri.clone(),
-        span_to_range(source, definition_reference.span),
-    );
+    let source_definition =
+        Location::new(uri.clone(), span_to_range(source, definition_target.span));
     let mut locations = Vec::new();
 
     if let Some(mut same_file_locations) =
@@ -4088,17 +4084,15 @@ impl LanguageServer for Backend {
             let open_docs = self.open_file_documents().await;
             let analysis = analyze_source(&source).ok();
             if let Some(analysis) = analysis.as_ref() {
-                if let Some(references) =
-                    workspace_source_references_for_root_definition_with_open_docs(
-                        &uri,
-                        &source,
-                        analysis,
-                        &package,
-                        &open_docs,
-                        position,
-                        params.context.include_declaration,
-                    )
-                {
+                if let Some(references) = workspace_source_references_for_root_symbol_with_open_docs(
+                    &uri,
+                    &source,
+                    analysis,
+                    &package,
+                    &open_docs,
+                    position,
+                    params.context.include_declaration,
+                ) {
                     return Ok(Some(references));
                 }
                 if let Some(references) = workspace_source_references_for_import(
@@ -4486,7 +4480,7 @@ mod tests {
         workspace_source_references_for_dependency_with_open_docs,
         workspace_source_references_for_import,
         workspace_source_references_for_import_in_broken_source,
-        workspace_source_references_for_root_definition_with_open_docs,
+        workspace_source_references_for_root_symbol_with_open_docs,
         workspace_source_struct_field_completions, workspace_source_type_definition_for_dependency,
         workspace_source_type_definition_for_import,
         workspace_source_type_definition_for_import_in_broken_source,
@@ -12040,7 +12034,7 @@ pub fn exported(value: Int) -> Int
         let task_source = fs::read_to_string(&task_path).expect("task source should read");
         let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
 
-        let references = workspace_source_references_for_root_definition_with_open_docs(
+        let references = workspace_source_references_for_root_symbol_with_open_docs(
             &core_uri,
             &core_source,
             &core_analysis,
@@ -12054,6 +12048,143 @@ pub fn exported(value: Int) -> Int
             true,
         )
         .expect("workspace root definition references should exist");
+
+        assert_eq!(references.len(), 6);
+        assert_eq!(references[0].uri, core_uri);
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 1)),
+        );
+        assert_eq!(references[1].uri, core_uri);
+        assert_eq!(
+            references[1].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 2)),
+        );
+        assert_eq!(references[2].uri, app_uri);
+        assert_eq!(
+            references[2].range.start,
+            offset_to_position(&app_source, nth_offset(&app_source, "run", 1)),
+        );
+        assert_eq!(references[3].uri, app_uri);
+        assert_eq!(
+            references[3].range.start,
+            offset_to_position(&app_source, nth_offset(&app_source, "run", 2)),
+        );
+        assert_eq!(references[4].uri, task_uri);
+        assert_eq!(
+            references[4].range.start,
+            offset_to_position(&task_source, nth_offset(&task_source, "call", 1)),
+        );
+        assert_eq!(references[5].uri, task_uri);
+        assert_eq!(
+            references[5].range.start,
+            offset_to_position(&task_source, nth_offset(&task_source, "call", 2)),
+        );
+    }
+
+    #[test]
+    fn workspace_root_function_usage_references_include_workspace_imports() {
+        let temp = TempDir::new("ql-lsp-workspace-root-function-usage-import-references");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as call
+
+pub fn task() -> Int {
+    return call(2)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+        let references = workspace_source_references_for_root_symbol_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &file_open_documents(vec![
+                (core_uri.clone(), core_source.clone()),
+                (app_uri.clone(), app_source.clone()),
+                (task_uri.clone(), task_source.clone()),
+            ]),
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 2)),
+            true,
+        )
+        .expect("workspace root usage references should exist");
 
         assert_eq!(references.len(), 6);
         assert_eq!(references[0].uri, core_uri);

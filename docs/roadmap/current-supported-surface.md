@@ -65,7 +65,7 @@
   - source-preferred navigation：对 workspace members 和 workspace 外本地路径依赖，能唯一回溯到源码时优先跳源码而不是 `.qi`
   - package-aware semantic tokens
 - healthy workspace 下，source-preferred dependency definition / typeDefinition / references / current-document `documentHighlight` / method completion 现在会直接读取已打开但未落盘的本地依赖源码，而不是只看磁盘文件。
-- workspace root `function / const / static` 现在也补上了源码定义点发起的 references 聚合：会保留当前文件内引用，并联动返回 workspace 中对应 import alias/use 位置。
+- workspace root `function / const / static` 现在也补上了 references 聚合：无论从源码定义点还是同文件使用点发起，都会保留当前文件内引用，并联动返回 workspace 中对应 import alias/use 位置。
 - source-preferred dependency tooling 现在按 manifest 身份区分同名本地依赖；definition / typeDefinition / references / current-document `documentHighlight` / dependency completion / `workspace/symbol` 不会再串到另一个依赖实例。
 - `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时会优先返回源码里的 value / method / trait / extend symbols；源码不可用时仍回退到 `.qi`。这条行为现在也覆盖 `workspace_roots` / 无打开文档入口；同名本地依赖也不会再因为 source-preferred 排除而误丢另一个依赖的 `.qi` 符号。
 - 同名本地依赖的 type / enum / enum member、method / trait method / extend method 组合场景现在也有显式回归保护；`[dependencies]` 本地路径依赖在 open document 和 `workspace_roots` 入口上也都锁住了“源码优先 + 兄弟依赖 `.qi` 保留”这条 `workspace/symbol` 合同。
