@@ -14,6 +14,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - `ql build --list` / `ql run --list` 已可直接列出当前 package / workspace 下的 build targets；`--json` 复用 `ql.project.targets.v1`，`ql run --list` 只展示 runnable targets。
 - `ql project add` 已能向现有 workspace 增量加入 `packages/<name>` member scaffold，并可在创建时直接写入 workspace 内本地依赖到 `[dependencies]`。
 - `ql check` / `ql build` / `ql run` / `ql test` 与 `ql project targets` / `graph` / `lock` 已提供第一版 `--json` 机器输出；`ql run --json` 当前输出 `ql.run.v1`，`ql project lock --json` 当前输出 `ql.project.lock.result.v1`。
+- `ql check` 现在也会在 workspace member 源码路径入口上恢复外层 workspace 语义，不再悄悄退回单 package 检查。
 - `ql test` 直接执行 project `tests/*.ql` 文件时会保留 package/workspace-aware smoke 或 UI test 语义；`ql project graph` / `ql project targets` / `ql project lock` 指向 workspace member 源码文件时会回到外层 workspace 上下文；`ql project emit-interface` 在不带 `--output` 时也沿用这一视角。
 - healthy package/workspace 下，LSP 的 source-preferred navigation 已覆盖 workspace members 和 workspace 外本地路径依赖；definition、typeDefinition、references、`workspace/symbol` 会按 manifest 身份区分同名本地依赖，且 `workspace/symbol` 在源码可用时优先返回源码符号。
 - broken-source / parse-error 下，import references fallback、direct imported-result member hover / completion / 查询 / `documentHighlight`、dependency struct field label completion、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight`、dependency value/member semantic tokens fallback，以及 current-document dependency enum variant rename 都会继续走保守可用路径；同名本地依赖仍按 manifest 身份区分。
@@ -47,6 +48,7 @@ cargo run -p ql-cli -- check fixtures/parser/pass/basic.ql
 cargo run -p ql-cli -- build fixtures/codegen/pass/minimal_build.ql --emit llvm-ir
 cargo run -p ql-cli -- project init demo-workspace --workspace --name app
 cargo run -p ql-cli -- project add demo-workspace --name tools --dependency app
+cargo run -p ql-cli -- check path/to/workspace/packages/app/src/lib.ql
 cargo run -p ql-cli -- project graph demo-workspace
 cargo run -p ql-cli -- project lock demo-workspace --json
 cargo run -p ql-cli -- build demo-workspace --list

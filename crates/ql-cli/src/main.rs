@@ -795,13 +795,15 @@ fn run() -> Result<(), u8> {
 }
 
 fn check_path(path: &Path, sync_interfaces: bool, json: bool) -> Result<(), u8> {
-    let use_package_check = should_use_package_check(path)
-        || (is_ql_source_file(path) && load_project_manifest(path).is_ok());
+    let request_root = resolve_project_command_request_root(path);
+    let manifest_request_path = request_root.as_deref().unwrap_or(path);
+    let use_package_check = should_use_package_check(manifest_request_path)
+        || (is_ql_source_file(path) && load_project_manifest(manifest_request_path).is_ok());
     if use_package_check {
         let check_command_label = format_check_command_label(sync_interfaces);
         let mut package_manifest_path = None;
         let mut json_report = None;
-        if let Ok(manifest) = load_project_manifest(path) {
+        if let Ok(manifest) = load_project_manifest(manifest_request_path) {
             if manifest.package.is_none() && manifest.workspace.is_some() {
                 return check_workspace_manifest(&manifest, sync_interfaces, json);
             }
