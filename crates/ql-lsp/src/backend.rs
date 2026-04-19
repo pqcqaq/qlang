@@ -939,11 +939,11 @@ fn workspace_symbols_for_dependencies(
         };
         let source = source.replace("\r\n", "\n");
 
-        for symbol in dependency.symbols() {
+        for symbol in dependency.workspace_symbols() {
             if !query.is_empty() && !symbol.name.to_ascii_lowercase().contains(query) {
                 continue;
             }
-            let Some(span) = dependency.definition_span_for_symbol(symbol) else {
+            let Some(span) = dependency.definition_span_for_symbol(&symbol) else {
                 continue;
             };
 
@@ -3662,6 +3662,14 @@ mod tests {
         dependency_interface_path: PathBuf,
     }
 
+    struct SameNamedDependencyEnumSymbolsFixture {
+        workspace_root: PathBuf,
+        open_path: PathBuf,
+        dependency_source_path: PathBuf,
+        dependency_source: String,
+        dependency_interface_path: PathBuf,
+    }
+
     struct SameNamedDependencyInterfaceSymbolsFixture {
         workspace_root: PathBuf,
         open_path: PathBuf,
@@ -3894,6 +3902,105 @@ packages = ["../../vendor/dep-source", "../../vendor/dep-interface"]
         );
 
         SameNamedDependencyMethodSymbolsFixture {
+            workspace_root,
+            open_path,
+            dependency_source: fs::read_to_string(&dependency_source_path)
+                .expect("dependency source should read"),
+            dependency_source_path,
+            dependency_interface_path,
+        }
+    }
+
+    fn setup_same_named_dependency_enum_symbols_broken_fixture(
+        temp: &TempDir,
+    ) -> SameNamedDependencyEnumSymbolsFixture {
+        let workspace_root = temp.path().join("workspace");
+        let open_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.Command as Cmd
+use demo.shared.beta.Command as OtherCmd
+
+pub fn main() -> Int {
+    let first = Cmd.Retry(1)
+    let second = Cmd.Retry(2)
+    let third = OtherCmd.Retry(
+"#,
+        );
+        let dependency_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub enum Command {
+    Retry(Int),
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+
+        SameNamedDependencyEnumSymbolsFixture {
             workspace_root,
             open_path,
             dependency_source: fs::read_to_string(&dependency_source_path)
@@ -7489,6 +7596,53 @@ fn main() -> Int {
 
     #[allow(deprecated)]
     #[test]
+    fn workspace_symbol_search_keeps_same_named_dependency_enum_symbols_for_broken_open_packages_with_local_dependencies()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-broken-same-name-local-dependency-enums");
+        let fixture = setup_same_named_dependency_enum_symbols_broken_fixture(&temp);
+        let open_source = fs::read_to_string(&fixture.open_path).expect("open file should read");
+        let open_uri =
+            Url::from_file_path(&fixture.open_path).expect("open path should convert to URI");
+
+        let enum_symbols = workspace_symbols_for_documents(
+            vec![(open_uri.clone(), open_source.clone())],
+            "Command",
+        );
+        let variant_symbols =
+            workspace_symbols_for_documents(vec![(open_uri, open_source)], "Retry");
+
+        assert_source_and_dependency_symbols(
+            enum_symbols,
+            "Command",
+            SymbolKind::ENUM,
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            7,
+            0,
+            9,
+            1,
+            "core",
+        );
+        assert_source_and_dependency_symbols(
+            variant_symbols,
+            "Retry",
+            SymbolKind::ENUM_MEMBER,
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            8,
+            4,
+            8,
+            9,
+            "core",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
     fn workspace_symbol_search_keeps_available_dependency_trait_and_extend_methods_when_one_package_interface_is_missing()
      {
         let temp =
@@ -8788,6 +8942,55 @@ pub fn exported(value: Int) -> Int
             21,
             1,
             "dep",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_uses_workspace_roots_and_keeps_same_named_dependency_enum_symbols_for_broken_members_with_local_dependencies()
+     {
+        let temp =
+            TempDir::new("ql-lsp-workspace-symbol-root-broken-same-name-local-dependency-enums");
+        let fixture = setup_same_named_dependency_enum_symbols_broken_fixture(&temp);
+
+        let enum_symbols = workspace_symbols_for_documents_and_roots(
+            Vec::new(),
+            &[fixture.workspace_root.clone()],
+            "Command",
+        );
+        let variant_symbols = workspace_symbols_for_documents_and_roots(
+            Vec::new(),
+            &[fixture.workspace_root],
+            "Retry",
+        );
+
+        assert_source_and_dependency_symbols(
+            enum_symbols,
+            "Command",
+            SymbolKind::ENUM,
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            7,
+            0,
+            9,
+            1,
+            "core",
+        );
+        assert_source_and_dependency_symbols(
+            variant_symbols,
+            "Retry",
+            SymbolKind::ENUM_MEMBER,
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            8,
+            4,
+            8,
+            9,
+            "core",
         );
     }
 

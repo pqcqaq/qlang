@@ -234,6 +234,32 @@ impl DependencyInterface {
         &self.symbols
     }
 
+    pub fn workspace_symbols(&self) -> Vec<DependencySymbol> {
+        let mut symbols = self.symbols.clone();
+        for module in &self.artifact.modules {
+            for item in &module.syntax.items {
+                let AstItemKind::Enum(enum_decl) = &item.kind else {
+                    continue;
+                };
+                if !is_public(&enum_decl.visibility) {
+                    continue;
+                }
+                for variant in &enum_decl.variants {
+                    push_dependency_symbol(
+                        &self.artifact.package_name,
+                        &module.source_path,
+                        SymbolKind::Variant,
+                        &variant.name,
+                        variant.name_span,
+                        dependency_variant_detail(&enum_decl.name, variant),
+                        &mut symbols,
+                    );
+                }
+            }
+        }
+        symbols
+    }
+
     pub fn symbols_named(&self, name: &str) -> Vec<&DependencySymbol> {
         self.symbols
             .iter()
