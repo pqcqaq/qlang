@@ -2981,6 +2981,187 @@ fn rename_for_workspace_source_dependency_with_open_docs(
     Ok(Some(WorkspaceEdit::new(changes)))
 }
 
+fn local_source_dependency_target_with_analysis(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<DependencyDefinitionTarget> {
+    let offset = position_to_offset(source, position)?;
+    let definition_span = analysis
+        .references_at(offset)
+        .and_then(|references| {
+            references
+                .into_iter()
+                .find(|reference| reference.is_definition)
+                .map(|reference| reference.span)
+        })
+        .or_else(|| {
+            analysis
+                .definition_at(offset)
+                .map(|definition| definition.span)
+        })?;
+    let definition = analysis.definition_at(offset)?;
+    if !supports_workspace_source_dependency_rename(definition.kind) {
+        return None;
+    }
+
+    let source_definition = Location::new(uri.clone(), span_to_range(source, definition_span));
+    let mut matches = Vec::new();
+
+    for candidate_manifest_path in
+        source_preferred_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
+            continue;
+        };
+        let Ok(source_paths) = collect_package_sources(candidate_package.manifest()) else {
+            continue;
+        };
+
+        for source_path in source_paths {
+            let (candidate_uri, candidate_source, owned_analysis) =
+                if let Some((open_uri, open_source, open_analysis)) =
+                    open_document_snapshot(open_docs, &source_path)
+                {
+                    (open_uri, open_source, Some(open_analysis))
+                } else {
+                    let Ok(candidate_uri) = Url::from_file_path(&source_path) else {
+                        continue;
+                    };
+                    let Ok(candidate_source) = fs::read_to_string(&source_path) else {
+                        continue;
+                    };
+                    let candidate_source = candidate_source.replace("\r\n", "\n");
+                    let candidate_analysis = candidate_package
+                        .modules()
+                        .iter()
+                        .find(|module| {
+                            canonicalize_or_clone(module.path())
+                                == canonicalize_or_clone(&source_path)
+                        })
+                        .map(|module| module.analysis().clone())
+                        .or_else(|| analyze_source(&candidate_source).ok());
+                    (candidate_uri, candidate_source, candidate_analysis)
+                };
+            let candidate_analysis = owned_analysis.as_ref();
+
+            for token in lex(&candidate_source)
+                .0
+                .iter()
+                .filter(|token| token.kind == TokenKind::Ident && token.text == definition.name)
+            {
+                let position = span_to_range(&candidate_source, token.span).start;
+                let Some(occurrence_span) =
+                    dependency_occurrence_span_at(&candidate_source, &candidate_package, position)
+                else {
+                    continue;
+                };
+                if occurrence_span != token.span {
+                    continue;
+                }
+                let Some(target) = dependency_definition_target_at(
+                    &candidate_source,
+                    candidate_analysis,
+                    &candidate_package,
+                    position,
+                ) else {
+                    continue;
+                };
+                if target.kind != definition.kind || target.name != definition.name {
+                    continue;
+                }
+                let Some(mapped_source) =
+                    workspace_source_location_for_dependency_target_with_open_docs(
+                        &candidate_uri,
+                        &candidate_source,
+                        candidate_analysis,
+                        &candidate_package,
+                        open_docs,
+                        &target,
+                    )
+                else {
+                    continue;
+                };
+                if same_location_anchor(&mapped_source, &source_definition)
+                    && !matches
+                        .iter()
+                        .any(|existing| same_dependency_definition_target(existing, &target))
+                {
+                    matches.push(target);
+                }
+            }
+        }
+    }
+
+    (matches.len() == 1).then(|| matches.remove(0))
+}
+
+fn rename_for_local_source_dependency_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+    new_name: &str,
+) -> std::result::Result<Option<WorkspaceEdit>, RenameError> {
+    validate_rename_text(new_name)?;
+
+    let Some(offset) = position_to_offset(source, position) else {
+        return Ok(None);
+    };
+    let Some(local_target) = local_source_dependency_target_with_analysis(
+        uri, source, analysis, package, open_docs, position,
+    ) else {
+        return Ok(None);
+    };
+    let Some(rename) = analysis.rename_at(offset, new_name)? else {
+        return Ok(None);
+    };
+    let external_locations = workspace_dependency_reference_locations_with_open_docs(
+        package,
+        uri.to_file_path().ok().as_deref(),
+        open_docs,
+        &local_target,
+        false,
+    );
+    if external_locations.is_empty() {
+        return Ok(None);
+    }
+
+    let mut changes = HashMap::<Url, Vec<TextEdit>>::new();
+    changes.insert(
+        uri.clone(),
+        rename
+            .edits
+            .into_iter()
+            .map(|edit| TextEdit::new(span_to_range(source, edit.span), edit.replacement))
+            .collect(),
+    );
+
+    for location in external_locations {
+        changes
+            .entry(location.uri)
+            .or_default()
+            .push(TextEdit::new(location.range, new_name.to_owned()));
+    }
+    for edits in changes.values_mut() {
+        edits.sort_by_key(|edit| {
+            (
+                edit.range.start.line,
+                edit.range.start.character,
+                edit.range.end.line,
+                edit.range.end.character,
+            )
+        });
+    }
+
+    Ok(Some(WorkspaceEdit::new(changes)))
+}
+
 fn normalize_reference_locations_with_definition(
     locations: &mut Vec<Location>,
     source_definition: &Location,
@@ -4038,6 +4219,20 @@ impl LanguageServer for Backend {
         if let Some(package) = self.package_analysis_for_uri(&uri) {
             let analysis = analyze_source(&source).ok();
             let open_docs = self.open_file_documents().await;
+            if let Some(analysis) = analysis.as_ref()
+                && let Some(edit) = rename_for_local_source_dependency_with_open_docs(
+                    &uri,
+                    &source,
+                    analysis,
+                    &package,
+                    &open_docs,
+                    position,
+                    &params.new_name,
+                )
+                .map_err(|error| Error::invalid_params(error.to_string()))?
+            {
+                return Ok(Some(edit));
+            }
             if let Some(edit) = rename_for_workspace_source_dependency_with_open_docs(
                 &uri,
                 &source,
@@ -4101,15 +4296,18 @@ mod tests {
     use super::{
         GotoTypeDefinitionResponse, completion_for_dependency_member_fields,
         completion_for_dependency_methods, completion_for_dependency_struct_fields,
-        completion_for_dependency_variants, completion_options,
+        completion_for_dependency_variants, completion_options, dependency_definition_target_at,
         document_highlights_for_analysis_at, fallback_document_highlights_for_package_at,
         fallback_document_highlights_for_package_at_with_open_docs, file_open_documents,
-        package_analysis_for_path, prepare_rename_for_dependency_imports,
+        local_source_dependency_target_with_analysis, package_analysis_for_path,
+        prepare_rename_for_dependency_imports,
         prepare_rename_for_workspace_import_in_broken_source, rename_for_dependency_imports,
+        rename_for_local_source_dependency_with_open_docs,
         rename_for_workspace_import_in_broken_source,
-        rename_for_workspace_source_dependency_with_open_docs,
+        rename_for_workspace_source_dependency_with_open_docs, same_dependency_definition_target,
         semantic_tokens_for_workspace_dependency_fallback,
         semantic_tokens_for_workspace_package_analysis, workspace_dependency_document_highlights,
+        workspace_dependency_reference_locations_with_open_docs,
         workspace_import_document_highlights, workspace_source_definition_for_dependency,
         workspace_source_definition_for_dependency_with_open_docs,
         workspace_source_definition_for_import,
@@ -13551,6 +13749,424 @@ impl Config {
                             "count".to_owned(),
                         ),
                     ],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn local_dependency_method_rename_updates_workspace_consumers_from_source_definition() {
+        let temp = TempDir::new("ql-lsp-local-dependency-method-rename-source-definition");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    return config.ping()
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as OtherCfg
+
+pub fn task(config: OtherCfg) -> Int {
+    return config.ping()
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+
+    pub fn repeat(self) -> Int {
+        return self.ping()
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+        );
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_analysis = analyze_source(&app_source).expect("app source should analyze");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let app_package =
+            package_analysis_for_path(&app_path).expect("app package analysis should succeed");
+        let open_docs = file_open_documents(vec![
+            (app_uri.clone(), app_source.clone()),
+            (task_uri.clone(), task_source.clone()),
+            (core_uri.clone(), core_source.clone()),
+        ]);
+        let local_target = local_source_dependency_target_with_analysis(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &open_docs,
+            offset_to_position(&core_source, nth_offset(&core_source, "ping", 1)),
+        )
+        .expect("local dependency target should exist");
+        let app_target = dependency_definition_target_at(
+            &app_source,
+            Some(&app_analysis),
+            &app_package,
+            offset_to_position(&app_source, nth_offset(&app_source, "ping", 1)),
+        )
+        .expect("app dependency target should exist");
+        assert!(
+            same_dependency_definition_target(&local_target, &app_target),
+            "local source target should match app dependency target: left={local_target:?} right={app_target:?}",
+        );
+        let external_locations = workspace_dependency_reference_locations_with_open_docs(
+            &package,
+            Some(core_source_path.as_path()),
+            &open_docs,
+            &local_target,
+            false,
+        );
+        assert!(
+            !external_locations.is_empty(),
+            "workspace dependency references should exist for local source target: {local_target:?}",
+        );
+
+        let edit = rename_for_local_source_dependency_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &open_docs,
+            offset_to_position(&core_source, nth_offset(&core_source, "ping", 1)),
+            "probe",
+        )
+        .expect("rename should succeed")
+        .expect("rename should produce workspace edits");
+
+        assert_workspace_edit_changes(
+            edit,
+            vec![
+                (
+                    core_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "ping", 1),
+                                    nth_offset(&core_source, "ping", 1) + "ping".len(),
+                                ),
+                            ),
+                            "probe".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "ping", 2),
+                                    nth_offset(&core_source, "ping", 2) + "ping".len(),
+                                ),
+                            ),
+                            "probe".to_owned(),
+                        ),
+                    ],
+                ),
+                (
+                    app_uri,
+                    vec![TextEdit::new(
+                        span_to_range(
+                            &app_source,
+                            Span::new(
+                                nth_offset(&app_source, "ping", 1),
+                                nth_offset(&app_source, "ping", 1) + "ping".len(),
+                            ),
+                        ),
+                        "probe".to_owned(),
+                    )],
+                ),
+                (
+                    task_uri,
+                    vec![TextEdit::new(
+                        span_to_range(
+                            &task_source,
+                            Span::new(
+                                nth_offset(&task_source, "ping", 1),
+                                nth_offset(&task_source, "ping", 1) + "ping".len(),
+                            ),
+                        ),
+                        "probe".to_owned(),
+                    )],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn local_dependency_field_rename_updates_workspace_consumers_from_source_definition() {
+        let temp = TempDir::new("ql-lsp-local-dependency-field-rename-source-definition");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    return config.value
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as OtherCfg
+
+pub fn task(config: OtherCfg) -> Int {
+    return config.value
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+impl Config {
+    pub fn total(self) -> Int {
+        return self.value + self.limit
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+    limit: Int,
+}
+
+impl Config {
+    pub fn total(self) -> Int
+}
+"#,
+        );
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_analysis = analyze_source(&app_source).expect("app source should analyze");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let app_package =
+            package_analysis_for_path(&app_path).expect("app package analysis should succeed");
+        let open_docs = file_open_documents(vec![
+            (app_uri.clone(), app_source.clone()),
+            (task_uri.clone(), task_source.clone()),
+            (core_uri.clone(), core_source.clone()),
+        ]);
+        let local_target = local_source_dependency_target_with_analysis(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &open_docs,
+            offset_to_position(&core_source, nth_offset(&core_source, "value", 1)),
+        )
+        .expect("local dependency target should exist");
+        let app_target = dependency_definition_target_at(
+            &app_source,
+            Some(&app_analysis),
+            &app_package,
+            offset_to_position(&app_source, nth_offset(&app_source, "value", 1)),
+        )
+        .expect("app dependency target should exist");
+        assert!(
+            same_dependency_definition_target(&local_target, &app_target),
+            "local source target should match app dependency target: left={local_target:?} right={app_target:?}",
+        );
+        let external_locations = workspace_dependency_reference_locations_with_open_docs(
+            &package,
+            Some(core_source_path.as_path()),
+            &open_docs,
+            &local_target,
+            false,
+        );
+        assert!(
+            !external_locations.is_empty(),
+            "workspace dependency references should exist for local source target: {local_target:?}",
+        );
+
+        let edit = rename_for_local_source_dependency_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &open_docs,
+            offset_to_position(&core_source, nth_offset(&core_source, "value", 1)),
+            "count",
+        )
+        .expect("rename should succeed")
+        .expect("rename should produce workspace edits");
+
+        assert_workspace_edit_changes(
+            edit,
+            vec![
+                (
+                    core_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "value", 1),
+                                    nth_offset(&core_source, "value", 1) + "value".len(),
+                                ),
+                            ),
+                            "count".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "value", 2),
+                                    nth_offset(&core_source, "value", 2) + "value".len(),
+                                ),
+                            ),
+                            "count".to_owned(),
+                        ),
+                    ],
+                ),
+                (
+                    app_uri,
+                    vec![TextEdit::new(
+                        span_to_range(
+                            &app_source,
+                            Span::new(
+                                nth_offset(&app_source, "value", 1),
+                                nth_offset(&app_source, "value", 1) + "value".len(),
+                            ),
+                        ),
+                        "count".to_owned(),
+                    )],
+                ),
+                (
+                    task_uri,
+                    vec![TextEdit::new(
+                        span_to_range(
+                            &task_source,
+                            Span::new(
+                                nth_offset(&task_source, "value", 1),
+                                nth_offset(&task_source, "value", 1) + "value".len(),
+                            ),
+                        ),
+                        "count".to_owned(),
+                    )],
                 ),
             ],
         );

@@ -71,7 +71,7 @@
 - `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问和点分 dependency 路径时可直接自动触发补全。
 - broken-source / parse-error 下，当前只保留保守子集，不等于完整恢复；workspace 外本地路径依赖的 import references fallback、direct imported-result member hover / completion / query / `documentHighlight`（如 `build().ping()` / `build().value`）、dependency struct field label completion、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight`、dependency value/member semantic tokens fallback 都会继续走源码优先路径；其中 dependency references / current-document `documentHighlight` / method completion 现在也会直接读取已打开但未落盘的本地依赖源码；同名本地依赖按 manifest 身份区分，不会串到兄弟依赖实例。
 - broken-source 下的同名本地依赖 `workspace/symbol` 现在也补上了 `[dependencies]` 路径依赖入口；open document 和 `workspace_roots` 都已锁住顶层 type / interface / enum symbol、enum member，以及 method / trait method / extend method 的“源码优先 + 兄弟依赖 `.qi` 保留”合同。
-- source-backed dependency `method / field / enum variant` 现在已开放 workspace rename：会同时改写依赖源码定义点、源码内部引用、当前文件和同 workspace 其他使用文件；healthy / broken-source 两条路径都已有最小回归保护，同名本地依赖继续按 manifest 身份区分，不会串改兄弟依赖实例。
+- source-backed dependency `method / field / enum variant` 现在已开放 workspace rename：可从依赖使用点或导出包源码侧发起，并会同时改写依赖源码定义点、源码内部引用、当前文件和同 workspace 其他使用文件；healthy / broken-source 两条路径都已有最小回归保护，同名本地依赖继续按 manifest 身份区分，不会串改兄弟依赖实例。
 - rename 仍然以 same-file 为主；import / local / root item 等其余符号仍未开放更广义的 cross-file rename / workspace edits。
 
 ## 当前明确未支持
