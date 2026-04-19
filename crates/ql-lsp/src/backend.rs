@@ -4100,9 +4100,76 @@ beta = { path = "../../vendor/dep-interface" }
             container_name: Some(package_name.to_owned()),
         };
 
-        assert_eq!(symbols.len(), 2);
-        assert!(symbols.contains(&source_symbol));
-        assert!(symbols.contains(&dependency_symbol));
+        assert_eq!(symbols.len(), 2, "actual symbols: {symbols:#?}");
+        assert!(
+            symbols.contains(&source_symbol),
+            "actual symbols: {symbols:#?}\nexpected source symbol: {source_symbol:#?}",
+        );
+        assert!(
+            symbols.contains(&dependency_symbol),
+            "actual symbols: {symbols:#?}\nexpected dependency symbol: {dependency_symbol:#?}",
+        );
+    }
+
+    fn assert_source_and_dependency_symbols(
+        symbols: Vec<SymbolInformation>,
+        name: &str,
+        kind: SymbolKind,
+        source_path: &Path,
+        source: &str,
+        source_occurrence: usize,
+        interface_path: &Path,
+        start_line: u32,
+        start_character: u32,
+        end_line: u32,
+        end_character: u32,
+        package_name: &str,
+    ) {
+        let source_symbol = SymbolInformation {
+            name: name.to_owned(),
+            kind,
+            tags: None,
+            deprecated: None,
+            location: Location::new(
+                Url::from_file_path(source_path).expect("source path should convert to URI"),
+                tower_lsp::lsp_types::Range::new(
+                    offset_to_position(source, nth_offset(source, name, source_occurrence)),
+                    offset_to_position(
+                        source,
+                        nth_offset(source, name, source_occurrence) + name.len(),
+                    ),
+                ),
+            ),
+            container_name: None,
+        };
+        let dependency_symbol = SymbolInformation {
+            name: name.to_owned(),
+            kind,
+            tags: None,
+            deprecated: None,
+            location: Location::new(
+                Url::from_file_path(
+                    fs::canonicalize(interface_path)
+                        .expect("dependency interface path should canonicalize"),
+                )
+                .expect("dependency interface path should convert to URI"),
+                tower_lsp::lsp_types::Range::new(
+                    tower_lsp::lsp_types::Position::new(start_line, start_character),
+                    tower_lsp::lsp_types::Position::new(end_line, end_character),
+                ),
+            ),
+            container_name: Some(package_name.to_owned()),
+        };
+
+        assert_eq!(symbols.len(), 2, "actual symbols: {symbols:#?}");
+        assert!(
+            symbols.contains(&source_symbol),
+            "actual symbols: {symbols:#?}\nexpected source symbol: {source_symbol:#?}",
+        );
+        assert!(
+            symbols.contains(&dependency_symbol),
+            "actual symbols: {symbols:#?}\nexpected dependency symbol: {dependency_symbol:#?}",
+        );
     }
 
     #[allow(deprecated)]
@@ -7357,6 +7424,71 @@ fn main() -> Int {
 
     #[allow(deprecated)]
     #[test]
+    fn workspace_symbol_search_keeps_same_named_dependency_type_symbols_for_broken_open_packages_with_local_dependencies()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-broken-same-name-local-dependency-types");
+        let fixture = setup_same_named_dependency_method_symbols_broken_fixture(&temp);
+        let open_source = fs::read_to_string(&fixture.open_path).expect("open file should read");
+        let open_uri =
+            Url::from_file_path(&fixture.open_path).expect("open path should convert to URI");
+
+        let config_symbols = workspace_symbols_for_documents(
+            vec![(open_uri.clone(), open_source.clone())],
+            "Config",
+        );
+        let reader_symbols = workspace_symbols_for_documents(
+            vec![(open_uri.clone(), open_source.clone())],
+            "Reader",
+        );
+        let buffer_symbols =
+            workspace_symbols_for_documents(vec![(open_uri, open_source)], "Buffer");
+
+        assert_source_and_dependency_symbols(
+            config_symbols,
+            "Config",
+            SymbolKind::STRUCT,
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            7,
+            0,
+            9,
+            1,
+            "dep",
+        );
+        assert_source_and_dependency_symbols(
+            reader_symbols,
+            "Reader",
+            SymbolKind::INTERFACE,
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            15,
+            0,
+            17,
+            1,
+            "dep",
+        );
+        assert_source_and_dependency_symbols(
+            buffer_symbols,
+            "Buffer",
+            SymbolKind::STRUCT,
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            19,
+            0,
+            21,
+            1,
+            "dep",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
     fn workspace_symbol_search_keeps_available_dependency_trait_and_extend_methods_when_one_package_interface_is_missing()
      {
         let temp =
@@ -8587,6 +8719,74 @@ pub fn exported(value: Int) -> Int
             7,
             4,
             20,
+            "dep",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_uses_workspace_roots_and_keeps_same_named_dependency_type_symbols_for_broken_members_with_local_dependencies()
+     {
+        let temp =
+            TempDir::new("ql-lsp-workspace-symbol-root-broken-same-name-local-dependency-types");
+        let fixture = setup_same_named_dependency_method_symbols_broken_fixture(&temp);
+
+        let config_symbols = workspace_symbols_for_documents_and_roots(
+            Vec::new(),
+            &[fixture.workspace_root.clone()],
+            "Config",
+        );
+        let reader_symbols = workspace_symbols_for_documents_and_roots(
+            Vec::new(),
+            &[fixture.workspace_root.clone()],
+            "Reader",
+        );
+        let buffer_symbols = workspace_symbols_for_documents_and_roots(
+            Vec::new(),
+            &[fixture.workspace_root],
+            "Buffer",
+        );
+
+        assert_source_and_dependency_symbols(
+            config_symbols,
+            "Config",
+            SymbolKind::STRUCT,
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            7,
+            0,
+            9,
+            1,
+            "dep",
+        );
+        assert_source_and_dependency_symbols(
+            reader_symbols,
+            "Reader",
+            SymbolKind::INTERFACE,
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            15,
+            0,
+            17,
+            1,
+            "dep",
+        );
+        assert_source_and_dependency_symbols(
+            buffer_symbols,
+            "Buffer",
+            SymbolKind::STRUCT,
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            19,
+            0,
+            21,
+            1,
             "dep",
         );
     }
