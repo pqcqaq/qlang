@@ -33,7 +33,7 @@
 - `qlang.toml` 已支持最小本地依赖、target path 和默认 profile。
 - 第一版 `qlang.lock`、`ql.check --json`、`ql.build --json`、`ql.run --json`、`ql.test --json` 已落地。
 - `ql project lock --json` 已补齐，真实项目现在可以在写锁文件和 `--check` 两条路径上稳定拿到机器可消费结果，而不必继续解析终端文本。
-- project-aware `ql build/run/test` 已补上 direct local dependency 受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）的最小执行桥接；当前 root target 只会为实际导入的受限 public free function / `extern "c"` 符号注入 wrapper，未导入 sibling dependency 的同名符号不会再把 `ql build/run/test` 卡死在 target-prep，但实际导入的同名直依赖函数 / extern 仍会分别触发 `dependency-function-conflict` / `dependency-extern-conflict`。
+- project-aware `ql build/run/test` 已补上 direct local dependency 的两条最小执行桥接：一条是受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）的 wrapper bridge，另一条是 bridgeable public `const/static` value declaration bridge。当前 root target 只会为实际导入的 bridgeable public `const/static` values、受限 public free function / `extern "c"` 符号注入声明或 wrapper；未导入 sibling dependency 的同名符号不会再把 `ql build/run/test` 卡死在 target-prep，但实际导入的同名直依赖 value/function/extern 仍会分别触发 `dependency-value-conflict` / `dependency-function-conflict` / `dependency-extern-conflict`。
 - healthy workspace 下的 dependency-backed LSP 已有一批可依赖能力：workspace symbol、source-preferred navigation、semantic tokens、保守 same-file rename；source-preferred navigation 现在同时覆盖 workspace members 和 workspace 外本地路径依赖，`workspace/symbol` 对本地依赖源码里的 methods / trait methods / extend methods 也已有源码优先回归保护。
 - `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问和点分 dependency 路径时可直接自动弹出补全，而不必继续手动触发 completion。
 - `workspace` 外本地路径依赖的 import references 现在也走源码优先路径；broken-source fallback 已补齐到这一条路径。

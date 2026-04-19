@@ -1125,3 +1125,90 @@ dep = "../dep"
     )
     .expect("dependency public function run should still emit the executable artifact");
 }
+
+#[test]
+fn run_package_path_supports_direct_dependency_public_values() {
+    if !toolchain_available("`ql run` dependency public value test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-dependency-public-value");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub const VALUE: Int = 7\npub static READY: Bool = true\npub static VALUES: [Int; 3] = [1, 3, 5]\n",
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        "use dep.VALUE as THRESHOLD\nuse dep.READY as ENABLED\nuse dep.VALUES as ITEMS\n\nfn main() -> Int {\n    if ENABLED {\n        return THRESHOLD + ITEMS[1]\n    }\n    return 0\n}\n",
+    );
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let executable_output = executable_output_path(&project_root.join("target/ql/debug"), "main");
+    assert!(
+        !interface_output.exists(),
+        "dependency interface should start missing for direct dependency public value test"
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql run` dependency public value");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-dependency-public-value",
+        "package path run with dependency public value",
+        &output,
+        10,
+    )
+    .expect("package-path `ql run` should support direct dependency public values");
+    expect_silent_output(
+        "project-run-dependency-public-value",
+        "package path run with dependency public value",
+        &stdout,
+        &stderr,
+    )
+    .expect("dependency public value run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-dependency-public-value",
+        &interface_output,
+        "synced dependency interface",
+        "package path run with dependency public value",
+    )
+    .expect("dependency public value run should emit the dependency interface");
+    expect_file_exists(
+        "project-run-dependency-public-value",
+        &dependency_output,
+        "dependency package artifact",
+        "package path run with dependency public value",
+    )
+    .expect("dependency public value run should also build the dependency package artifact");
+    expect_file_exists(
+        "project-run-dependency-public-value",
+        &executable_output,
+        "package executable",
+        "package path run with dependency public value",
+    )
+    .expect("dependency public value run should still emit the executable artifact");
+}

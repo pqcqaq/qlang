@@ -9,7 +9,7 @@ use ql_analysis::{
     PackageAnalysisError, analyze_package, analyze_source as analyze_semantics,
     parse_errors_to_diagnostics,
 };
-use ql_ast::{FunctionDecl, ItemKind, Module, Param, Visibility};
+use ql_ast::{Expr, ExprKind, FunctionDecl, GlobalDecl, ItemKind, Module, Param, Visibility};
 use ql_diagnostics::{Diagnostic, render_diagnostics};
 use ql_driver::{
     BuildArtifact, BuildCHeaderOptions, BuildEmit, BuildError, BuildOptions, BuildProfile,
@@ -2670,6 +2670,24 @@ fn build_json_target_prep_failure(
             json!(normalize_path(conflicting_manifest_path)),
             JsonValue::Null,
         ),
+        PrepareProjectTargetBuildFailureKind::DependencySource {
+            dependency_manifest_path,
+            dependency_package,
+            source_path,
+            message,
+        } => (
+            "dependency-source",
+            message.clone(),
+            json!(normalize_path(dependency_manifest_path)),
+            json!(dependency_package),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            json!(normalize_path(source_path)),
+        ),
         PrepareProjectTargetBuildFailureKind::DependencyFunctionLocalConflict {
             symbol,
             dependency_package,
@@ -2678,6 +2696,44 @@ fn build_json_target_prep_failure(
             "dependency-function-local-conflict",
             format!(
                 "cannot synthesize direct dependency public function bridge for `{symbol}` because the root source already defines the same top-level name"
+            ),
+            json!(normalize_path(dependency_manifest_path)),
+            json!(dependency_package),
+            JsonValue::Null,
+            json!(symbol),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+        ),
+        PrepareProjectTargetBuildFailureKind::DependencyValueConflict {
+            symbol,
+            first_package,
+            first_manifest_path,
+            conflicting_package,
+            conflicting_manifest_path,
+        } => (
+            "dependency-value-conflict",
+            format!("found conflicting direct dependency public value imports for `{symbol}`"),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            json!(symbol),
+            json!(first_package),
+            json!(normalize_path(first_manifest_path)),
+            json!(conflicting_package),
+            json!(normalize_path(conflicting_manifest_path)),
+            JsonValue::Null,
+        ),
+        PrepareProjectTargetBuildFailureKind::DependencyValueLocalConflict {
+            symbol,
+            dependency_package,
+            dependency_manifest_path,
+        } => (
+            "dependency-value-local-conflict",
+            format!(
+                "cannot synthesize direct dependency public value bridge for `{symbol}` because the root source already defines the same top-level name"
             ),
             json!(normalize_path(dependency_manifest_path)),
             json!(dependency_package),
@@ -5264,6 +5320,12 @@ enum PrepareProjectTargetBuildFailureKind {
         interface_path: PathBuf,
         message: String,
     },
+    DependencySource {
+        dependency_manifest_path: PathBuf,
+        dependency_package: String,
+        source_path: PathBuf,
+        message: String,
+    },
     DependencyExternConflict {
         symbol: String,
         first_package: String,
@@ -5279,6 +5341,18 @@ enum PrepareProjectTargetBuildFailureKind {
         conflicting_manifest_path: PathBuf,
     },
     DependencyFunctionLocalConflict {
+        symbol: String,
+        dependency_package: String,
+        dependency_manifest_path: PathBuf,
+    },
+    DependencyValueConflict {
+        symbol: String,
+        first_package: String,
+        first_manifest_path: PathBuf,
+        conflicting_package: String,
+        conflicting_manifest_path: PathBuf,
+    },
+    DependencyValueLocalConflict {
         symbol: String,
         dependency_package: String,
         dependency_manifest_path: PathBuf,
@@ -6126,6 +6200,13 @@ fn dependency_interface_module_import_path(
         .unwrap_or_else(|| dependency_package.split('.').map(str::to_owned).collect())
 }
 
+fn dependency_module_source_path(dependency_manifest_path: &Path, source_path: &str) -> PathBuf {
+    dependency_manifest_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(source_path)
+}
+
 fn collect_imported_dependency_externs(
     root_module: &Module,
     module_paths: &BTreeSet<Vec<String>>,
@@ -6200,6 +6281,12 @@ fn render_direct_dependency_bridge_items(
     source: &str,
     report_failure: bool,
 ) -> Result<String, u8> {
+    let value_declarations = render_direct_dependency_public_value_declarations(
+        command_label,
+        manifest_path,
+        source,
+        report_failure,
+    )?;
     let extern_declarations = render_direct_dependency_extern_declarations(
         command_label,
         manifest_path,
@@ -6212,8 +6299,9 @@ fn render_direct_dependency_bridge_items(
         source,
         report_failure,
     )?;
+    let declarations = join_dependency_bridge_sections(&value_declarations, &extern_declarations);
     Ok(join_dependency_bridge_sections(
-        &extern_declarations,
+        &declarations,
         &function_forwarders,
     ))
 }
@@ -6222,12 +6310,15 @@ fn render_direct_dependency_bridge_items_quiet(
     manifest_path: &Path,
     source: &str,
 ) -> Result<String, PrepareProjectTargetBuildError> {
+    let value_declarations =
+        render_direct_dependency_public_value_declarations_quiet(manifest_path, source)?;
     let extern_declarations =
         render_direct_dependency_extern_declarations_quiet(manifest_path, source)?;
     let function_forwarders =
         render_direct_dependency_public_function_forwarders_quiet(manifest_path, source)?;
+    let declarations = join_dependency_bridge_sections(&value_declarations, &extern_declarations);
     Ok(join_dependency_bridge_sections(
-        &extern_declarations,
+        &declarations,
         &function_forwarders,
     ))
 }
@@ -6406,6 +6497,278 @@ fn render_direct_dependency_extern_declarations_quiet(
                     conflicting_package: dependency_package.clone(),
                     conflicting_manifest_path: dependency_manifest.manifest_path.clone(),
                 },
+            })?;
+        }
+    }
+
+    Ok(declarations.join("\n\n"))
+}
+
+fn render_direct_dependency_public_value_declarations(
+    command_label: &str,
+    manifest_path: &Path,
+    source: &str,
+    report_failure: bool,
+) -> Result<String, u8> {
+    let manifest = load_project_manifest(manifest_path).map_err(|error| {
+        if report_failure {
+            report_project_build_dependency_error(command_label, None, &error);
+        }
+        1
+    })?;
+    let direct_dependencies = load_reference_manifests(&manifest).map_err(|error| {
+        if report_failure {
+            report_project_build_dependency_error(command_label, Some(manifest_path), &error);
+        }
+        1
+    })?;
+    let root_source_module = match parse_source(source) {
+        Ok(module) => module,
+        Err(_) => return Ok(String::new()),
+    };
+    let occupied_root_names = collect_top_level_definition_names(&root_source_module);
+
+    let mut declarations = Vec::new();
+    let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
+
+    for dependency in direct_dependencies {
+        let dependency_package = match package_name(&dependency) {
+            Ok(name) => name.to_owned(),
+            Err(error) => {
+                if report_failure {
+                    report_project_build_dependency_error(
+                        command_label,
+                        Some(manifest_path),
+                        &error,
+                    );
+                }
+                return Err(1);
+            }
+        };
+        let interface_path = default_interface_path(&dependency).map_err(|error| {
+            if report_failure {
+                report_project_build_dependency_error(command_label, Some(manifest_path), &error);
+            }
+            1
+        })?;
+        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+            if report_failure {
+                eprintln!(
+                    "error: {command_label} failed to load referenced package interface `{}`: {error}",
+                    normalize_path(&interface_path)
+                );
+                eprintln!(
+                    "note: while preparing dependency public value bridges for `{}`",
+                    normalize_path(manifest_path)
+                );
+            }
+            1
+        })?;
+        let module_import_paths =
+            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
+        let imported_externs =
+            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
+
+        for module in &artifact.modules {
+            let dependency_source_path =
+                dependency_module_source_path(&dependency.manifest_path, &module.source_path);
+            let dependency_source = fs::read_to_string(&dependency_source_path).map_err(|error| {
+                if report_failure {
+                    eprintln!(
+                        "error: {command_label} failed to access dependency source `{}`: {error}",
+                        normalize_path(&dependency_source_path)
+                    );
+                    eprintln!(
+                        "note: while preparing dependency public value bridges for `{}`",
+                        normalize_path(manifest_path)
+                    );
+                }
+                1
+            })?;
+            let source_module = match parse_source(&dependency_source) {
+                Ok(module) => module,
+                Err(_) => {
+                    if report_failure {
+                        eprintln!(
+                            "error: {command_label} failed to parse dependency source `{}` while preparing public value bridges",
+                            normalize_path(&dependency_source_path)
+                        );
+                        eprintln!("note: dependency package: `{dependency_package}`");
+                    }
+                    return Err(1);
+                }
+            };
+            collect_dependency_module_public_value_declarations(
+                &dependency_package,
+                &dependency.manifest_path,
+                &source_module,
+                &dependency_source,
+                Some(&imported_externs),
+                &occupied_root_names,
+                &mut owners_by_symbol,
+                &mut declarations,
+            )
+            .map_err(|error| {
+                if report_failure {
+                    match error {
+                        DependencyPublicValueBridgeError::DependencyConflict { symbol, owner } => {
+                            eprintln!(
+                                "error: {command_label} found conflicting direct dependency public value imports for `{symbol}`"
+                            );
+                            eprintln!("note: first package: `{}`", owner.package_name);
+                            eprintln!("note: conflicting package: `{dependency_package}`");
+                            eprintln!(
+                                "hint: keep direct dependency public value names unique until package-qualified dependency value lowering lands"
+                            );
+                        }
+                        DependencyPublicValueBridgeError::LocalConflict { symbol } => {
+                            eprintln!(
+                                "error: {command_label} cannot synthesize direct dependency public value bridge for `{symbol}` because the root source already defines the same top-level name"
+                            );
+                            eprintln!("note: conflicting direct dependency package: `{dependency_package}`");
+                            eprintln!(
+                                "hint: rename the local top-level item or avoid importing a direct dependency public value with the same original symbol name"
+                            );
+                        }
+                    }
+                }
+                1
+            })?;
+        }
+    }
+
+    Ok(declarations.join("\n\n"))
+}
+
+fn render_direct_dependency_public_value_declarations_quiet(
+    manifest_path: &Path,
+    source: &str,
+) -> Result<String, PrepareProjectTargetBuildError> {
+    let manifest = load_project_manifest(manifest_path)
+        .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
+    let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let root_source_module = match parse_source(source) {
+        Ok(module) => module,
+        Err(_) => return Ok(String::new()),
+    };
+    let occupied_root_names = collect_top_level_definition_names(&root_source_module);
+    let direct_dependencies = manifest
+        .references
+        .packages
+        .iter()
+        .map(|reference| {
+            let reference_manifest_path = reference_manifest_path(&manifest, reference);
+            let dependency_manifest = load_project_manifest(&manifest_dir.join(reference))
+                .map_err(|error| {
+                    target_prep_dependency_manifest_failure(Some(&reference_manifest_path), &error)
+                })?;
+            Ok::<_, PrepareProjectTargetBuildError>(dependency_manifest)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut declarations = Vec::new();
+    let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
+
+    for dependency_manifest in direct_dependencies {
+        let dependency_package = package_name(&dependency_manifest)
+            .map(str::to_owned)
+            .map_err(|error| {
+                target_prep_dependency_manifest_failure(
+                    Some(&dependency_manifest.manifest_path),
+                    &error,
+                )
+            })?;
+        let interface_path = default_interface_path(&dependency_manifest).map_err(|error| {
+            target_prep_dependency_manifest_failure(
+                Some(&dependency_manifest.manifest_path),
+                &error,
+            )
+        })?;
+        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+            PrepareProjectTargetBuildError {
+                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
+                    dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                    dependency_package: dependency_package.clone(),
+                    interface_path: interface_path.clone(),
+                    message: format!(
+                        "failed to load referenced package interface `{}`: {error}",
+                        normalize_path(&interface_path)
+                    ),
+                },
+            }
+        })?;
+        let module_import_paths =
+            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
+        let imported_externs =
+            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
+
+        for module in &artifact.modules {
+            let dependency_source_path = dependency_module_source_path(
+                &dependency_manifest.manifest_path,
+                &module.source_path,
+            );
+            let dependency_source =
+                fs::read_to_string(&dependency_source_path).map_err(|error| {
+                    PrepareProjectTargetBuildError {
+                        failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
+                            dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                            dependency_package: dependency_package.clone(),
+                            source_path: dependency_source_path.clone(),
+                            message: format!(
+                                "failed to access dependency source `{}`: {error}",
+                                normalize_path(&dependency_source_path)
+                            ),
+                        },
+                    }
+                })?;
+            let source_module = parse_source(&dependency_source).map_err(|_| {
+                PrepareProjectTargetBuildError {
+                    failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
+                        dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                        dependency_package: dependency_package.clone(),
+                        source_path: dependency_source_path.clone(),
+                        message: format!(
+                            "failed to parse dependency source `{}` while preparing public value bridges",
+                            normalize_path(&dependency_source_path)
+                        ),
+                    },
+                }
+            })?;
+            collect_dependency_module_public_value_declarations(
+                &dependency_package,
+                &dependency_manifest.manifest_path,
+                &source_module,
+                &dependency_source,
+                Some(&imported_externs),
+                &occupied_root_names,
+                &mut owners_by_symbol,
+                &mut declarations,
+            )
+            .map_err(|error| match error {
+                DependencyPublicValueBridgeError::DependencyConflict { symbol, owner } => {
+                    PrepareProjectTargetBuildError {
+                        failure_kind:
+                            PrepareProjectTargetBuildFailureKind::DependencyValueConflict {
+                                symbol,
+                                first_package: owner.package_name,
+                                first_manifest_path: owner.manifest_path,
+                                conflicting_package: dependency_package.clone(),
+                                conflicting_manifest_path: dependency_manifest
+                                    .manifest_path
+                                    .clone(),
+                            },
+                    }
+                }
+                DependencyPublicValueBridgeError::LocalConflict { symbol } => {
+                    PrepareProjectTargetBuildError {
+                        failure_kind:
+                            PrepareProjectTargetBuildFailureKind::DependencyValueLocalConflict {
+                                symbol,
+                                dependency_package: dependency_package.clone(),
+                                dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                            },
+                    }
+                }
             })?;
         }
     }
@@ -6742,6 +7105,222 @@ fn collect_dependency_module_extern_declarations(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct DependencyPublicGlobalBridgeCandidate<'a> {
+    item: &'a ql_ast::Item,
+    global: &'a GlobalDecl,
+}
+
+fn dependency_public_global_bridge_candidates<'a>(
+    module: &'a Module,
+) -> BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>> {
+    let mut candidates = BTreeMap::new();
+    for item in &module.items {
+        let global = match &item.kind {
+            ItemKind::Const(global) | ItemKind::Static(global)
+                if global.visibility == Visibility::Public =>
+            {
+                global
+            }
+            _ => continue,
+        };
+        candidates.insert(
+            global.name.clone(),
+            DependencyPublicGlobalBridgeCandidate { item, global },
+        );
+    }
+    candidates
+}
+
+fn collect_dependency_public_global_expr_dependencies<'a>(
+    expr: &Expr,
+    candidates: &BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>>,
+    dependencies: &mut BTreeSet<String>,
+) -> bool {
+    match &expr.kind {
+        ExprKind::Integer(_) | ExprKind::String { .. } | ExprKind::Bool(_) => true,
+        ExprKind::Name(name) => {
+            if candidates.contains_key(name) {
+                dependencies.insert(name.clone());
+                true
+            } else {
+                false
+            }
+        }
+        ExprKind::Tuple(items) | ExprKind::Array(items) => items.iter().all(|item| {
+            collect_dependency_public_global_expr_dependencies(item, candidates, dependencies)
+        }),
+        ExprKind::StructLiteral { fields, .. } => fields.iter().all(|field| {
+            field.value.as_ref().is_some_and(|value| {
+                collect_dependency_public_global_expr_dependencies(value, candidates, dependencies)
+            })
+        }),
+        ExprKind::Binary { left, right, .. } => {
+            collect_dependency_public_global_expr_dependencies(left, candidates, dependencies)
+                && collect_dependency_public_global_expr_dependencies(
+                    right,
+                    candidates,
+                    dependencies,
+                )
+        }
+        ExprKind::Unary { expr, .. } | ExprKind::Question(expr) => {
+            collect_dependency_public_global_expr_dependencies(expr, candidates, dependencies)
+        }
+        ExprKind::Member { object, .. } => {
+            collect_dependency_public_global_expr_dependencies(object, candidates, dependencies)
+        }
+        ExprKind::Bracket { target, items } => {
+            collect_dependency_public_global_expr_dependencies(target, candidates, dependencies)
+                && items.iter().all(|item| {
+                    collect_dependency_public_global_expr_dependencies(
+                        item,
+                        candidates,
+                        dependencies,
+                    )
+                })
+        }
+        ExprKind::NoneLiteral
+        | ExprKind::Block(_)
+        | ExprKind::Unsafe(_)
+        | ExprKind::If { .. }
+        | ExprKind::Match { .. }
+        | ExprKind::Closure { .. }
+        | ExprKind::Call { .. } => false,
+    }
+}
+
+fn dependency_public_global_bridge_order<'a>(
+    symbol_name: &str,
+    candidates: &BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>>,
+) -> Option<Vec<String>> {
+    let mut visiting = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    let mut ordered = Vec::new();
+    if collect_dependency_public_global_bridge_order(
+        symbol_name,
+        candidates,
+        &mut visiting,
+        &mut visited,
+        &mut ordered,
+    ) {
+        Some(ordered)
+    } else {
+        None
+    }
+}
+
+fn collect_dependency_public_global_bridge_order<'a>(
+    symbol_name: &str,
+    candidates: &BTreeMap<String, DependencyPublicGlobalBridgeCandidate<'a>>,
+    visiting: &mut BTreeSet<String>,
+    visited: &mut BTreeSet<String>,
+    ordered: &mut Vec<String>,
+) -> bool {
+    if visited.contains(symbol_name) {
+        return true;
+    }
+    let Some(candidate) = candidates.get(symbol_name) else {
+        return false;
+    };
+    if !visiting.insert(symbol_name.to_owned()) {
+        return false;
+    }
+
+    let mut dependencies = BTreeSet::new();
+    let bridgeable = collect_dependency_public_global_expr_dependencies(
+        &candidate.global.value,
+        candidates,
+        &mut dependencies,
+    );
+    if !bridgeable {
+        visiting.remove(symbol_name);
+        return false;
+    }
+
+    for dependency in dependencies {
+        if !collect_dependency_public_global_bridge_order(
+            &dependency,
+            candidates,
+            visiting,
+            visited,
+            ordered,
+        ) {
+            visiting.remove(symbol_name);
+            return false;
+        }
+    }
+
+    visiting.remove(symbol_name);
+    visited.insert(symbol_name.to_owned());
+    ordered.push(symbol_name.to_owned());
+    true
+}
+
+fn collect_dependency_module_public_value_declarations(
+    dependency_package: &str,
+    dependency_manifest_path: &Path,
+    module: &Module,
+    contents: &str,
+    imported_externs: Option<&ImportedDependencyExterns>,
+    occupied_root_names: &BTreeSet<String>,
+    owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
+    declarations: &mut Vec<String>,
+) -> Result<(), DependencyPublicValueBridgeError> {
+    let module_import_path = dependency_interface_module_import_path(dependency_package, module);
+    let candidates = dependency_public_global_bridge_candidates(module);
+    let mut emitted = BTreeSet::new();
+
+    for item in &module.items {
+        let global = match &item.kind {
+            ItemKind::Const(global) | ItemKind::Static(global)
+                if global.visibility == Visibility::Public =>
+            {
+                global
+            }
+            _ => continue,
+        };
+        if imported_externs.is_some_and(|imports| {
+            !dependency_extern_is_imported(imports, &module_import_path, &global.name)
+        }) {
+            continue;
+        }
+
+        let Some(ordered_symbols) =
+            dependency_public_global_bridge_order(&global.name, &candidates)
+        else {
+            continue;
+        };
+
+        for ordered_symbol in ordered_symbols {
+            if emitted.contains(&ordered_symbol) {
+                continue;
+            }
+            if occupied_root_names.contains(&ordered_symbol) {
+                return Err(DependencyPublicValueBridgeError::LocalConflict {
+                    symbol: ordered_symbol,
+                });
+            }
+            let candidate = candidates
+                .get(&ordered_symbol)
+                .expect("ordered dependency public globals should resolve to candidates");
+            record_dependency_extern_declaration(
+                dependency_package,
+                dependency_manifest_path,
+                &ordered_symbol,
+                span_text(contents, candidate.item.span),
+                owners_by_symbol,
+                declarations,
+            )
+            .map_err(|(symbol, owner)| {
+                DependencyPublicValueBridgeError::DependencyConflict { symbol, owner }
+            })?;
+            emitted.insert(ordered_symbol);
+        }
+    }
+
+    Ok(())
+}
+
 fn collect_dependency_module_public_function_forwarders(
     dependency_package: &str,
     dependency_manifest_path: &Path,
@@ -6795,6 +7374,16 @@ fn collect_dependency_module_public_function_forwarders(
 }
 
 enum DependencyPublicFunctionForwarderError {
+    DependencyConflict {
+        symbol: String,
+        owner: DependencyExternOwner,
+    },
+    LocalConflict {
+        symbol: String,
+    },
+}
+
+enum DependencyPublicValueBridgeError {
     DependencyConflict {
         symbol: String,
         owner: DependencyExternOwner,
