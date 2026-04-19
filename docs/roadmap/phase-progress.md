@@ -35,7 +35,7 @@
 - `ql project lock --json` 已补齐，真实项目现在可以在写锁文件和 `--check` 两条路径上稳定拿到机器可消费结果，而不必继续解析终端文本。
 - project-aware `ql build/run/test` 已补上 direct local dependency 的四条最小执行桥接：受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）的 wrapper bridge、bridgeable public `const/static` value declaration bridge、被这些 value/function 签名直接引用的 public 非泛型 `struct` type bridge，以及这些 bridgeable public `struct` 上的受限 public receiver method forwarder。当前 root target 会按实际导入情况注入 public type/value declaration、function wrapper 与 method forwarder；value initializer 若直接命名或调用同模块 bridgeable public free function，会隐式补齐所需 function wrapper；导入的 value/function/method 签名若依赖同模块 bridgeable public `struct`，也会隐式补齐所需 type bridge。未导入 sibling dependency 的同名符号不会再把 `ql build/run/test` 卡死在 target-prep，但实际导入的同名直依赖 type/value/function/extern 仍会分别触发 `dependency-type-conflict` / `dependency-value-conflict` / `dependency-function-conflict` / `dependency-extern-conflict`。
 - 本地与 direct local dependency 的 `impl` / `extend` / 唯一 trait `impl for` receiver method 直接调用现在都已打通到 LLVM 执行链路；`ql build` / `ql run` 已能真实执行 `value.read()`，以及 `let add = value.add; add(1)` 这类经不可变局部 alias 的 method value direct call。当前边界仍然很窄：更广义的 escaping / higher-order method value 仍未打通。
-- healthy workspace 下的 dependency-backed LSP 已有一批可依赖能力：workspace symbol、source-preferred navigation、dependency completion、current-document `documentHighlight`、semantic tokens、保守 same-file rename；source-preferred navigation 现在同时覆盖 workspace members 和 workspace 外本地路径依赖，dependency enum variant / struct field / member field / method completion 与 `workspace/symbol` 对本地依赖源码都已有源码优先回归保护，definition / typeDefinition / references / `documentHighlight` / method completion 也已补上 open unsaved local dependency source 合同。
+- healthy workspace 下的 dependency-backed LSP 已有一批可依赖能力：workspace symbol、source-preferred navigation、dependency completion、current-document `documentHighlight`、semantic tokens，以及 source-backed dependency `method / field / enum variant` workspace rename；source-preferred navigation 现在同时覆盖 workspace members 和 workspace 外本地路径依赖，dependency enum variant / struct field / member field / method completion、workspace rename 与 `workspace/symbol` 对本地依赖源码都已有源码优先回归保护，definition / typeDefinition / references / `documentHighlight` / method completion / workspace rename 也已补上 open unsaved local dependency source 合同。
 - `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问和点分 dependency 路径时可直接自动弹出补全，而不必继续手动触发 completion。
 - `workspace` 外本地路径依赖的 import references 现在也走源码优先路径；broken-source fallback 已补齐到这一条路径。
 - `workspace/symbol` 现在也会对 workspace 外本地路径依赖做源码优先返回，并保留 `.qi` 回退；这条能力已补到 `workspace_roots` / 无打开文档入口，当前已锁住 value / method / trait / extend symbol。
@@ -45,7 +45,7 @@
 - broken-source 下，direct imported-result member hover / completion / query / `documentHighlight`、dependency struct field label completion、dependency semantic tokens fallback、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight` fallback 已补齐到源码优先路径；dependency references / current-document `documentHighlight` / method completion 也已补上 open unsaved local dependency source 合同。
 - 同名本地依赖在这条 broken-source 路径上继续按 manifest 身份区分；`build().ping()` / `build().value`、dependency struct field label completion，以及 enum variant query / completion 都不会再串到兄弟依赖实例。
 - broken-source 下的同名本地依赖 `workspace/symbol` 现在也补到了 `[dependencies]` 本地路径依赖入口；open document 和 `workspace_roots` 的顶层 type / interface / enum symbol、enum member，以及 method / trait method / extend method 都已锁住“源码优先 + 兄弟依赖 `.qi` 保留”这条组合场景。
-- parse-error 下的 current-document rename 也已有保守回归保护；最近新增的几条包括 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field，以及 dependency method / struct field / enum variant rename；同名本地依赖上的 method / struct field / variant rename 也继续按 manifest 身份隔离。
+- parse-error 下的 dependency rename 也已有保守 workspace-edit 回归保护；当前已锁住的窄 slice 包括 dependency method / struct field / enum variant 的源码定义点、源码内部引用、当前文件与同 workspace 其他使用文件联动改名；同名本地依赖上的 method / struct field / variant rename 也继续按 manifest 身份隔离。
 
 ## 当前主线
 
@@ -55,7 +55,7 @@
 
 ## 明确后置
 
-- cross-file rename / workspace edits / code actions
+- 更广义的 cross-file rename / workspace edits / code actions
 - registry / publish
 - 更宽的 async/runtime/Rust interop 扩面
 - 新语法和更远的类型系统设计
