@@ -2322,6 +2322,52 @@ fn workspace_import_document_highlights_in_broken_source(
     Some(highlights)
 }
 
+fn workspace_import_document_highlights(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Vec<DocumentHighlight>> {
+    let offset = position_to_offset(source, position)?;
+    let (binding, _) = analysis.import_binding_at(offset)?;
+    let locations =
+        workspace_source_references_for_import(uri, source, analysis, package, position, true)?;
+    let mut highlights = document_highlights_from_locations(uri, locations).unwrap_or_default();
+    let definition_range = span_to_range(source, binding.definition_span);
+    if !highlights
+        .iter()
+        .any(|highlight| highlight.range == definition_range)
+    {
+        highlights.insert(
+            0,
+            DocumentHighlight {
+                range: definition_range,
+                kind: None,
+            },
+        );
+    }
+    Some(highlights)
+}
+
+fn workspace_dependency_document_highlights(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Vec<DocumentHighlight>> {
+    let locations = workspace_source_references_for_dependency(
+        uri,
+        source,
+        Some(analysis),
+        package,
+        position,
+        true,
+    )?;
+    document_highlights_from_locations(uri, locations)
+}
+
 fn workspace_dependency_document_highlights_in_broken_source(
     uri: &Url,
     source: &str,
@@ -3228,6 +3274,16 @@ impl LanguageServer for Backend {
                     &uri, &source, &package, position,
                 ));
             };
+            if let Some(highlights) =
+                workspace_import_document_highlights(&uri, &source, &analysis, &package, position)
+            {
+                return Ok(Some(highlights));
+            }
+            if let Some(highlights) = workspace_dependency_document_highlights(
+                &uri, &source, &analysis, &package, position,
+            ) {
+                return Ok(Some(highlights));
+            }
             return Ok(document_highlights_for_package_analysis_at(
                 &uri, &source, &analysis, &package, position,
             ));
@@ -3440,13 +3496,13 @@ mod tests {
         GotoTypeDefinitionResponse, completion_for_dependency_member_fields,
         completion_for_dependency_methods, completion_for_dependency_struct_fields,
         completion_for_dependency_variants, completion_options,
-        document_highlights_for_analysis_at, document_highlights_for_package_analysis_at,
-        fallback_document_highlights_for_package_at, package_analysis_for_path,
-        prepare_rename_for_dependency_imports,
+        document_highlights_for_analysis_at, fallback_document_highlights_for_package_at,
+        package_analysis_for_path, prepare_rename_for_dependency_imports,
         prepare_rename_for_workspace_import_in_broken_source, rename_for_dependency_imports,
         rename_for_workspace_import_in_broken_source,
         semantic_tokens_for_workspace_dependency_fallback,
-        semantic_tokens_for_workspace_package_analysis, workspace_source_definition_for_dependency,
+        semantic_tokens_for_workspace_package_analysis, workspace_dependency_document_highlights,
+        workspace_import_document_highlights, workspace_source_definition_for_dependency,
         workspace_source_definition_for_import,
         workspace_source_definition_for_import_in_broken_source,
         workspace_source_hover_for_dependency, workspace_source_hover_for_import,
@@ -14183,6 +14239,196 @@ pub struct Settings {
     }
 
     #[test]
+    fn same_named_local_dependency_member_document_highlights_prefer_matching_dependency_source() {
+        let temp = TempDir::new("ql-lsp-same-named-local-dependency-member-document-highlights");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+use demo.shared.beta.build as other
+
+pub fn main() -> Int {
+    return build().ping() + build().value + build().ping() + build().value + other().ping() + other().value
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config {
+    return Config { value: 1 }
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/src/lib.ql",
+            r#"
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+
+pub fn build() -> Config {
+    return Config { value: true }
+}
+
+impl Config {
+    pub fn ping(self) -> Bool {
+        return self.value
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Bool
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let alpha_source =
+            fs::read_to_string(&alpha_source_path).expect("alpha source should read");
+
+        let method_highlights = workspace_dependency_document_highlights(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "ping", 1)),
+        )
+        .expect("same-named dependency method document highlight should exist");
+        let method_actual = method_highlights
+            .into_iter()
+            .map(|highlight| highlight.range.start)
+            .collect::<Vec<_>>();
+        let method_expected = vec![
+            offset_to_position(&source, nth_offset(&source, "ping", 1)),
+            offset_to_position(&source, nth_offset(&source, "ping", 2)),
+        ];
+        assert_eq!(method_actual, method_expected);
+
+        let field_highlights = workspace_dependency_document_highlights(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "value", 1)),
+        )
+        .expect("same-named dependency field document highlight should exist");
+        let field_actual = field_highlights
+            .into_iter()
+            .map(|highlight| highlight.range.start)
+            .collect::<Vec<_>>();
+        let field_expected = vec![
+            offset_to_position(&source, nth_offset(&source, "value", 1)),
+            offset_to_position(&source, nth_offset(&source, "value", 2)),
+        ];
+        assert_eq!(field_actual, field_expected);
+
+        assert!(
+            !method_expected.contains(&offset_to_position(&source, nth_offset(&source, "ping", 3))),
+            "alpha highlights should not include beta member occurrence",
+        );
+        assert!(
+            !field_expected.contains(&offset_to_position(
+                &source,
+                nth_offset(&source, "value", 3)
+            )),
+            "alpha highlights should not include beta field occurrence",
+        );
+        assert!(
+            alpha_source.contains("pub fn ping(self) -> Int"),
+            "fixture should keep alpha source distinct for disambiguation",
+        );
+    }
+
+    #[test]
     fn same_named_local_dependency_broken_source_member_document_highlights_prefer_matching_dependency_source()
      {
         let temp = TempDir::new(
@@ -14885,7 +15131,7 @@ pub fn exported(value: Int) -> Int
             package_analysis_for_path(&app_path).expect("package analysis should succeed");
         let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
 
-        let highlights = document_highlights_for_package_analysis_at(
+        let highlights = workspace_import_document_highlights(
             &uri,
             &source,
             &analysis,

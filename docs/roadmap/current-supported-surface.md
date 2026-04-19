@@ -60,10 +60,10 @@
 - same-file 语义已经接通：hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semanticTokens、documentSymbol、rename。
 - `workspace/symbol` 已落地。
 - healthy package/workspace 下，dependency-backed navigation 已能提供一批可依赖能力：
-  - import root / dependency value / enum variant / struct field / method member 的 hover / definition / declaration / references / typeDefinition
+  - import root / dependency value / enum variant / struct field / method member 的 hover / definition / declaration / references / typeDefinition / current-document `documentHighlight`
   - source-preferred navigation：对 workspace members 和 workspace 外本地路径依赖，能唯一回溯到源码时优先跳源码而不是 `.qi`
   - package-aware semantic tokens
-- source-preferred dependency navigation 现在按 manifest 身份区分同名本地依赖；definition / typeDefinition / references / `workspace/symbol` 不会再串到另一个依赖实例。
+- source-preferred dependency navigation 现在按 manifest 身份区分同名本地依赖；definition / typeDefinition / references / current-document `documentHighlight` / `workspace/symbol` 不会再串到另一个依赖实例。
 - `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时会优先返回源码里的 value / method / trait / extend symbols；源码不可用时仍回退到 `.qi`。这条行为现在也覆盖 `workspace_roots` / 无打开文档入口；同名本地依赖也不会再因为 source-preferred 排除而误丢另一个依赖的 `.qi` 符号。
 - 同名本地依赖的 type / enum / enum member、method / trait method / extend method 组合场景现在也有显式回归保护；`[dependencies]` 本地路径依赖在 open document 和 `workspace_roots` 入口上也都锁住了“源码优先 + 兄弟依赖 `.qi` 保留”这条 `workspace/symbol` 合同。
 - `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问和点分 dependency 路径时可直接自动触发补全。
