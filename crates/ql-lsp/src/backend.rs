@@ -3654,6 +3654,212 @@ mod tests {
         );
     }
 
+    struct SameNamedDependencyMethodSymbolsFixture {
+        workspace_root: PathBuf,
+        open_path: PathBuf,
+        dependency_source_path: PathBuf,
+        dependency_source: String,
+        dependency_interface_path: PathBuf,
+    }
+
+    fn setup_same_named_dependency_method_symbols_fixture(
+        temp: &TempDir,
+    ) -> SameNamedDependencyMethodSymbolsFixture {
+        let workspace_root = temp.path().join("workspace");
+        let open_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+pub fn main() -> Int {
+    return 0
+}
+"#,
+        );
+
+        temp.write(
+            "workspace/vendor/dep-source/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_source_path = temp.write(
+            "workspace/vendor/dep-source/src/lib.ql",
+            r#"
+package demo.dep.source
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int {
+        return self.value
+    }
+}
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int {
+        return 2
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/dep-source/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep.source
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/dep-interface/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/vendor/dep-interface/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep.interface
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../../vendor/dep-source", "../../vendor/dep-interface"]
+"#,
+        );
+
+        SameNamedDependencyMethodSymbolsFixture {
+            workspace_root,
+            open_path,
+            dependency_source: fs::read_to_string(&dependency_source_path)
+                .expect("dependency source should read"),
+            dependency_source_path,
+            dependency_interface_path,
+        }
+    }
+
+    fn assert_source_and_dependency_method_symbols(
+        symbols: Vec<SymbolInformation>,
+        name: &str,
+        source_path: &Path,
+        source: &str,
+        source_occurrence: usize,
+        interface_path: &Path,
+        line: u32,
+        start: u32,
+        end: u32,
+        package_name: &str,
+    ) {
+        let source_symbol = SymbolInformation {
+            name: name.to_owned(),
+            kind: SymbolKind::METHOD,
+            tags: None,
+            deprecated: None,
+            location: Location::new(
+                Url::from_file_path(source_path).expect("source path should convert to URI"),
+                tower_lsp::lsp_types::Range::new(
+                    offset_to_position(source, nth_offset(source, name, source_occurrence)),
+                    offset_to_position(
+                        source,
+                        nth_offset(source, name, source_occurrence) + name.len(),
+                    ),
+                ),
+            ),
+            container_name: None,
+        };
+        let dependency_symbol = SymbolInformation {
+            name: name.to_owned(),
+            kind: SymbolKind::METHOD,
+            tags: None,
+            deprecated: None,
+            location: Location::new(
+                Url::from_file_path(
+                    fs::canonicalize(interface_path)
+                        .expect("dependency interface path should canonicalize"),
+                )
+                .expect("dependency interface path should convert to URI"),
+                tower_lsp::lsp_types::Range::new(
+                    tower_lsp::lsp_types::Position::new(line, start),
+                    tower_lsp::lsp_types::Position::new(line, end),
+                ),
+            ),
+            container_name: Some(package_name.to_owned()),
+        };
+
+        assert_eq!(symbols.len(), 2);
+        assert!(symbols.contains(&source_symbol));
+        assert!(symbols.contains(&dependency_symbol));
+    }
+
     #[allow(deprecated)]
     #[test]
     fn workspace_symbol_search_includes_package_modules_for_open_documents() {
@@ -5010,6 +5216,60 @@ fn main() -> Int {
             7,
             4,
             20,
+            "dep",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_keeps_same_named_dependency_method_symbols_for_open_packages() {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-same-name-local-dependency-methods-open");
+        let fixture = setup_same_named_dependency_method_symbols_fixture(&temp);
+        let open_source = fs::read_to_string(&fixture.open_path).expect("open file should read");
+        let open_uri =
+            Url::from_file_path(&fixture.open_path).expect("open path should convert to URI");
+
+        let get_symbols =
+            workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "get");
+        let trait_symbols =
+            workspace_symbols_for_documents(vec![(open_uri.clone(), open_source.clone())], "poll");
+        let extend_symbols =
+            workspace_symbols_for_documents(vec![(open_uri, open_source)], "twice");
+
+        assert_source_and_dependency_method_symbols(
+            get_symbols,
+            "get",
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            12,
+            8,
+            27,
+            "dep",
+        );
+        assert_source_and_dependency_method_symbols(
+            trait_symbols,
+            "poll",
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            16,
+            4,
+            24,
+            "dep",
+        );
+        assert_source_and_dependency_method_symbols(
+            extend_symbols,
+            "twice",
+            &fixture.dependency_source_path,
+            &fixture.dependency_source,
+            1,
+            &fixture.dependency_interface_path,
+            24,
+            8,
+            29,
             "dep",
         );
     }
@@ -7426,6 +7686,193 @@ pub fn main() -> Int {
             7,
             4,
             20,
+            "dep",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_uses_workspace_roots_and_keeps_same_named_dependency_method_symbols()
+    {
+        let temp = TempDir::new("ql-lsp-workspace-symbol-root-same-name-local-dependency-methods");
+        let workspace_root = temp.path().join("workspace");
+
+        temp.write(
+            "workspace/vendor/dep-source/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_source_path = temp.write(
+            "workspace/vendor/dep-source/src/lib.ql",
+            r#"
+package demo.dep.source
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int {
+        return self.value
+    }
+}
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int {
+        return 2
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/dep-source/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep.source
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/dep-interface/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/vendor/dep-interface/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep.interface
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+
+pub trait Reader {
+    fn poll(self) -> Int
+}
+
+pub struct Buffer {
+    value: Int,
+}
+
+extend Buffer {
+    pub fn twice(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../../vendor/dep-source", "../../vendor/dep-interface"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+pub fn main() -> Int {
+    return 0
+}
+"#,
+        );
+
+        let dependency_source =
+            fs::read_to_string(&dependency_source_path).expect("dependency source should read");
+        let get_symbols =
+            workspace_symbols_for_documents_and_roots(Vec::new(), &[workspace_root.clone()], "get");
+        let trait_symbols = workspace_symbols_for_documents_and_roots(
+            Vec::new(),
+            &[workspace_root.clone()],
+            "poll",
+        );
+        let extend_symbols =
+            workspace_symbols_for_documents_and_roots(Vec::new(), &[workspace_root], "twice");
+
+        assert_source_and_dependency_method_symbols(
+            get_symbols,
+            "get",
+            &dependency_source_path,
+            &dependency_source,
+            1,
+            &dependency_interface_path,
+            12,
+            8,
+            27,
+            "dep",
+        );
+        assert_source_and_dependency_method_symbols(
+            trait_symbols,
+            "poll",
+            &dependency_source_path,
+            &dependency_source,
+            1,
+            &dependency_interface_path,
+            16,
+            4,
+            24,
+            "dep",
+        );
+        assert_source_and_dependency_method_symbols(
+            extend_symbols,
+            "twice",
+            &dependency_source_path,
+            &dependency_source,
+            1,
+            &dependency_interface_path,
+            24,
+            8,
+            29,
             "dep",
         );
     }

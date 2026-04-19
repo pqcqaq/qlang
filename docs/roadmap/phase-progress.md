@@ -39,6 +39,7 @@
 - `workspace` 外本地路径依赖的 import references 现在也走源码优先路径；broken-source fallback 已补齐到这一条路径。
 - `workspace/symbol` 现在也会对 workspace 外本地路径依赖做源码优先返回，并保留 `.qi` 回退；这条能力已补到 `workspace_roots` / 无打开文档入口，当前已锁住 value / method / trait / extend symbol。
 - `workspace/symbol` 对 source-preferred 本地依赖的排除现在按 manifest 身份而不是 package name 执行；真实项目里即使存在同名本地依赖，也不会再把另一个依赖的 `.qi` symbol 一起过滤掉。
+- 同名本地依赖的 method / trait method / extend method `workspace/symbol` 现在也有 open-documents 与 `workspace_roots` 回归保护；`[dependencies]` 本地路径依赖入口也已锁住“源码优先返回当前依赖，同时保留兄弟依赖 `.qi` 符号”这条组合场景。
 - source-preferred dependency definition / typeDefinition / references 现在也按 manifest 身份区分同名本地依赖；真实项目里不会再把 navigation 或 references 解析到另一个同名依赖实例。
 - broken-source 下，direct imported-result member hover / completion / query / `documentHighlight`、dependency struct field label completion、dependency semantic tokens fallback、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight` fallback 已补齐到源码优先路径。
 - 同名本地依赖在这条 broken-source 路径上继续按 manifest 身份区分；`build().ping()` / `build().value`、dependency struct field label completion，以及 enum variant query / completion 都不会再串到兄弟依赖实例。
