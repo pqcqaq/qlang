@@ -847,7 +847,7 @@ fn run() -> Result<(), u8> {
 }
 
 fn check_path(path: &Path, sync_interfaces: bool, json: bool) -> Result<(), u8> {
-    let request_root = resolve_project_command_request_root(path);
+    let request_root = resolve_project_source_command_request_root(path);
     let manifest_request_path = request_root.as_deref().unwrap_or(path);
     let use_package_check = should_use_package_check(manifest_request_path)
         || (is_ql_source_file(path) && load_project_manifest(manifest_request_path).is_ok());
@@ -3227,7 +3227,19 @@ fn load_project_target_members_for_path(
     path: &Path,
     command_label: &str,
 ) -> Result<Vec<WorkspaceBuildTargets>, u8> {
-    let request_root = resolve_project_command_request_root(path);
+    let request_root = resolve_project_source_command_request_root(path);
+    load_workspace_build_targets_for_command_from_request_root(
+        path,
+        request_root.as_deref().unwrap_or(path),
+        command_label,
+    )
+}
+
+fn load_project_target_members_for_workspace_member_path(
+    path: &Path,
+    command_label: &str,
+) -> Result<Vec<WorkspaceBuildTargets>, u8> {
+    let request_root = resolve_project_workspace_member_command_request_root(path);
     load_workspace_build_targets_for_command_from_request_root(
         path,
         request_root.as_deref().unwrap_or(path),
@@ -8637,7 +8649,7 @@ fn default_package_test_source() -> &'static str {
     "fn main() -> Int {\n    return 0\n}\n"
 }
 
-fn resolve_project_command_request_root(path: &Path) -> Option<PathBuf> {
+fn resolve_project_source_command_request_root(path: &Path) -> Option<PathBuf> {
     if !is_ql_source_file(path) {
         return None;
     }
@@ -8646,8 +8658,23 @@ fn resolve_project_command_request_root(path: &Path) -> Option<PathBuf> {
     Some(resolve_project_member_request_root(&manifest.manifest_path))
 }
 
+fn resolve_project_workspace_member_command_request_root(path: &Path) -> Option<PathBuf> {
+    if !path.is_dir()
+        && !is_ql_source_file(path)
+        && !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("qlang.toml"))
+    {
+        return None;
+    }
+
+    let manifest = load_project_manifest(path).ok()?;
+    Some(resolve_project_member_request_root(&manifest.manifest_path))
+}
+
 fn project_graph_path(path: &Path, json: bool) -> Result<(), u8> {
-    let request_root = resolve_project_command_request_root(path);
+    let request_root = resolve_project_workspace_member_command_request_root(path);
     let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path)).map_err(|error| {
         if let ql_project::ProjectError::ManifestNotFound { start } = &error {
             eprintln!(
@@ -8776,7 +8803,7 @@ fn project_lock_path(path: &Path, check_only: bool, json: bool) -> Result<(), u8
         "`ql project lock`"
     };
 
-    let request_root = resolve_project_command_request_root(path);
+    let request_root = resolve_project_workspace_member_command_request_root(path);
     let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path)).map_err(|error| {
         if let ql_project::ProjectError::ManifestNotFound { start } = &error {
             eprintln!(
@@ -9008,7 +9035,8 @@ fn load_workspace_build_targets_for_command_from_request_root(
 }
 
 fn project_targets_path(path: &Path, json: bool) -> Result<(), u8> {
-    let members = load_project_target_members_for_path(path, "`ql project targets`")?;
+    let members =
+        load_project_target_members_for_workspace_member_path(path, "`ql project targets`")?;
     render_project_target_members(&members, json);
     Ok(())
 }
@@ -9112,7 +9140,7 @@ fn project_emit_interface_path(
         format_project_emit_interface_command_label(output, changed_only, false);
     let check_command_label = format_project_emit_interface_command_label(None, changed_only, true);
     let request_root = if output.is_none() {
-        resolve_project_command_request_root(path)
+        resolve_project_source_command_request_root(path)
     } else {
         None
     };

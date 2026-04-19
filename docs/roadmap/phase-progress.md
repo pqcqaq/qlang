@@ -28,7 +28,7 @@
 - `ql build` / `ql run` 现在也可直接从 project 源码 target 路径进入 project-aware 流程；package 内源码路径和 workspace member 源码路径都不再掉回裸单文件输出语义。
 - `ql build --list` / `ql run --list` 已落地，真实 workspace 里现在可以直接在命令内查看 discovered build targets；`ql run --list` 只展示 runnable targets，`--json` 复用 `ql.project.targets.v1`。
 - `ql test` 新增 exact target rerun：`--target` 可精确选择已发现测试，直接运行 project `tests/` 下的单个测试文件时也会保留 project-aware 语义，workspace member 入口也不再掉回 package-only profile。
-- `ql project graph` / `ql project targets` / `ql project lock` 现在也会在 workspace member 源码路径入口上继承外层 workspace 上下文。
+- `ql project graph` / `ql project targets` / `ql project lock` 现在也会在 workspace member 目录或源码路径入口上继承外层 workspace 上下文。
 - `ql project emit-interface` 现在也支持从 workspace member `.ql` 路径恢复外层 workspace 视角；当前保守边界是不带 `--output`。
 - `qlang.toml` 已支持最小本地依赖、target path 和默认 profile。
 - 第一版 `qlang.lock`、`ql.check --json`、`ql.build --json`、`ql.run --json`、`ql.test --json` 已落地。

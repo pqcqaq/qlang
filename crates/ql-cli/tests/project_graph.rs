@@ -757,6 +757,119 @@ pub fn exported() -> Int
 }
 
 #[test]
+fn project_graph_member_directory_uses_workspace_root_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-workspace-member-dir");
+    let member_dir = temp.path().join("workspace").join("packages").join("app");
+    std::fs::create_dir_all(member_dir.join("src")).expect("create workspace app directory");
+    std::fs::create_dir_all(
+        temp.path()
+            .join("workspace")
+            .join("packages")
+            .join("tool")
+            .join("src"),
+    )
+    .expect("create workspace tool directory");
+    std::fs::create_dir_all(temp.path().join("workspace").join("dep"))
+        .expect("create dependency directory");
+
+    let manifest_path = temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+pub fn run() -> Int {
+    return 0
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/app.qi",
+        r#"
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn run() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "graph"]).arg(&member_dir);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-graph-workspace-member-dir",
+        "workspace member directory project graph rendering",
+        &output,
+    )
+    .expect("workspace member directory project graph rendering should succeed");
+    expect_empty_stderr(
+        "project-graph-workspace-member-dir",
+        "workspace member directory project graph rendering",
+        &stderr,
+    )
+    .expect("workspace member directory project graph rendering should stay silent on stderr");
+
+    let expected = format!(
+        "manifest: {}\npackage: <none>\nworkspace_members:\n  - packages/app\n  - packages/tool\nreferences: []\nworkspace_packages:\n  - member: packages/app\n    manifest: packages/app/qlang.toml\n    package: app\n    interface:\n      path: packages/app/app.qi\n      status: valid\n    references:\n      - ../../dep\n    reference_interfaces:\n      - reference: ../../dep\n        manifest: dep/qlang.toml\n        package: dep\n        path: dep/dep.qi\n        status: valid\n  - member: packages/tool\n    manifest: packages/tool/qlang.toml\n    package: tool\n    interface:\n      path: packages/tool/tool.qi\n      status: missing\n    references: []\n    reference_interfaces: []\n",
+        manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-graph-workspace-member-dir",
+        "workspace member directory project graph stdout",
+        &expected,
+        &stdout,
+    )
+    .expect("workspace member directory project graph stdout should match workspace root graph");
+}
+
+#[test]
 fn project_graph_supports_json_output_for_workspace_root() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-graph-workspace-root-json");

@@ -37,7 +37,7 @@
 
 - 新脚手架能开箱进入 `graph/check/build/run/test`。
 - 已创建的 workspace 能继续用 `ql project add/remove` 维护成员；新增 member 时可直接接入 workspace 内本地依赖，移除 member 时也不必手改 manifest。
-- target 发现、member 源码路径入口语义、profile 规则、默认输出目录和测试入口都有明确文档和回归保护。
+- target 发现、member 目录/源码路径入口语义、profile 规则、默认输出目录和测试入口都有明确文档和回归保护。
 
 ### B. manifest 与 dependency-aware build
 
