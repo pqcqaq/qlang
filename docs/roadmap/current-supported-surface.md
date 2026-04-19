@@ -75,6 +75,7 @@
 - broken-source 下的同名本地依赖 `workspace/symbol` 现在也补上了 `[dependencies]` 路径依赖入口；open document 和 `workspace_roots` 都已锁住顶层 type / interface / enum symbol、enum member，以及 method / trait method / extend method 的“源码优先 + 兄弟依赖 `.qi` 保留”合同。
 - source-backed dependency `method / field / enum variant` 现在已开放 workspace rename：可从依赖使用点或导出包源码侧发起，并会同时改写依赖源码定义点、源码内部引用、当前文件和同 workspace 其他使用文件；healthy / broken-source 两条路径都已有最小回归保护，同名本地依赖继续按 manifest 身份区分，不会串改兄弟依赖实例。
 - healthy source 下，workspace root `function / const / static / struct / enum / trait / type alias` 也已开放 workspace rename：当前可从 root 源码定义点、同文件使用点，以及 import/use 位置发起（包含 alias import/use），并会同时改写当前文件引用、同 package 其他源码引用，以及 workspace import path/direct-use；其中 alias import 只更新导入路径，不改本地 alias/use。
+- broken-source 下，workspace root `function / const / static / struct / enum / trait / type alias` 现在也允许从当前 consumer 的 import/use 位置发起 workspace rename（包含 alias import/use）；当前保守联动范围是当前 broken 文件、当前 package 内仍可解析的其他源码文件，以及导出包源码；alias import 仍只更新导入路径，不改本地 alias/use。
 - rename 仍然以 same-file 为主；import / local 等其余符号仍未开放更广义的 cross-file rename / workspace edits。
 
 ## 当前明确未支持
