@@ -43,7 +43,7 @@
 - source-preferred dependency definition / typeDefinition / references 现在也按 manifest 身份区分同名本地依赖；真实项目里不会再把 navigation 或 references 解析到另一个同名依赖实例。
 - broken-source 下，direct imported-result member hover / completion / query / `documentHighlight`、dependency struct field label completion、dependency semantic tokens fallback、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight` fallback 已补齐到源码优先路径。
 - 同名本地依赖在这条 broken-source 路径上继续按 manifest 身份区分；`build().ping()` / `build().value`、dependency struct field label completion，以及 enum variant query / completion 都不会再串到兄弟依赖实例。
-- broken-source 下的同名本地依赖 `workspace/symbol` 现在也补到了 `[dependencies]` 本地路径依赖入口；open document 和 `workspace_roots` 的 method / trait method / extend method 都已锁住“源码优先 + 兄弟依赖 `.qi` 保留”这条组合场景。
+- broken-source 下的同名本地依赖 `workspace/symbol` 现在也补到了 `[dependencies]` 本地路径依赖入口；open document 和 `workspace_roots` 的 interface symbol，以及 method / trait method / extend method 都已锁住“源码优先 + 兄弟依赖 `.qi` 保留”这条组合场景。
 - parse-error 下的 current-document rename 也已有保守回归保护；最近新增的两条是 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field，以及 dependency enum variant rename；同名本地依赖上的 variant rename 也继续按 manifest 身份隔离。
 
 ## 当前主线

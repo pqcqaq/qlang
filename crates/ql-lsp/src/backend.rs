@@ -3662,6 +3662,102 @@ mod tests {
         dependency_interface_path: PathBuf,
     }
 
+    struct SameNamedDependencyInterfaceSymbolsFixture {
+        workspace_root: PathBuf,
+        open_path: PathBuf,
+        dependency_interface_path: PathBuf,
+    }
+
+    fn setup_same_named_dependency_interface_symbols_broken_fixture(
+        temp: &TempDir,
+    ) -> SameNamedDependencyInterfaceSymbolsFixture {
+        let workspace_root = temp.path().join("workspace");
+        let open_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+pub fn main() -> Int {
+    let broken: Int = "oops"
+    return 0
+}
+"#,
+        );
+
+        temp.write(
+            "workspace/vendor/dep-source/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/dep-source/src/lib.ql",
+            r#"
+package demo.dep.source
+
+pub fn alpha() -> Int {
+    return 1
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/dep-source/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep.source
+
+pub fn alpha() -> Int
+"#,
+        );
+        temp.write(
+            "workspace/vendor/dep-interface/qlang.toml",
+            r#"
+[package]
+name = "dep"
+"#,
+        );
+        let dependency_interface_path = temp.write(
+            "workspace/vendor/dep-interface/dep.qi",
+            r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep.interface
+
+pub fn beta() -> Int
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/dep-source" }
+beta = { path = "../../vendor/dep-interface" }
+"#,
+        );
+
+        SameNamedDependencyInterfaceSymbolsFixture {
+            workspace_root,
+            open_path,
+            dependency_interface_path,
+        }
+    }
+
     fn setup_same_named_dependency_method_symbols_fixture(
         temp: &TempDir,
     ) -> SameNamedDependencyMethodSymbolsFixture {
@@ -7236,6 +7332,31 @@ fn main() -> Int {
 
     #[allow(deprecated)]
     #[test]
+    fn workspace_symbol_search_keeps_same_named_dependency_interface_symbols_for_broken_open_packages_with_local_dependencies()
+     {
+        let temp =
+            TempDir::new("ql-lsp-workspace-symbol-broken-same-name-local-dependency-interface");
+        let fixture = setup_same_named_dependency_interface_symbols_broken_fixture(&temp);
+        let open_source = fs::read_to_string(&fixture.open_path).expect("open file should read");
+        let open_uri =
+            Url::from_file_path(&fixture.open_path).expect("open path should convert to URI");
+
+        let symbols = workspace_symbols_for_documents(vec![(open_uri, open_source)], "beta");
+
+        assert_single_dependency_symbol(
+            symbols,
+            "beta",
+            SymbolKind::FUNCTION,
+            &fixture.dependency_interface_path,
+            7,
+            4,
+            20,
+            "dep",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
     fn workspace_symbol_search_keeps_available_dependency_trait_and_extend_methods_when_one_package_interface_is_missing()
      {
         let temp =
@@ -8439,6 +8560,33 @@ pub fn exported(value: Int) -> Int
             24,
             8,
             29,
+            "dep",
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn workspace_symbol_search_uses_workspace_roots_and_keeps_same_named_dependency_interface_symbols_for_broken_members_with_local_dependencies()
+     {
+        let temp = TempDir::new(
+            "ql-lsp-workspace-symbol-root-broken-same-name-local-dependency-interface",
+        );
+        let fixture = setup_same_named_dependency_interface_symbols_broken_fixture(&temp);
+
+        let symbols = workspace_symbols_for_documents_and_roots(
+            Vec::new(),
+            &[fixture.workspace_root],
+            "beta",
+        );
+
+        assert_single_dependency_symbol(
+            symbols,
+            "beta",
+            SymbolKind::FUNCTION,
+            &fixture.dependency_interface_path,
+            7,
+            4,
+            20,
             "dep",
         );
     }
