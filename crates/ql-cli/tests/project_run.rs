@@ -1518,3 +1518,86 @@ dep = "../dep"
     )
     .expect("dependency public struct method run should still emit the executable artifact");
 }
+
+#[test]
+fn run_package_path_supports_direct_dependency_public_trait_methods() {
+    if !toolchain_available("`ql run` dependency public trait method test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-dependency-public-trait-method");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub trait Reader {\n    fn read(self) -> Int\n}\n\npub struct Box { value: Int }\n\nimpl Reader for Box {\n    pub fn read(self) -> Int {\n        return self.value\n    }\n}\n\npub fn make_box() -> Box { return Box { value: 7 } }\n",
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        "use dep.make_box as make\n\nfn main() -> Int {\n    let value = make()\n    return value.read()\n}\n",
+    );
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let executable_output = executable_output_path(&project_root.join("target/ql/debug"), "main");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql run` dependency public trait method");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-dependency-public-trait-method",
+        "package path run with dependency public trait method",
+        &output,
+        7,
+    )
+    .expect("package-path `ql run` should support direct dependency public trait methods");
+    expect_silent_output(
+        "project-run-dependency-public-trait-method",
+        "package path run with dependency public trait method",
+        &stdout,
+        &stderr,
+    )
+    .expect("dependency public trait method run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-dependency-public-trait-method",
+        &interface_output,
+        "synced dependency interface",
+        "package path run with dependency public trait method",
+    )
+    .expect("dependency public trait method run should emit the dependency interface");
+    expect_file_exists(
+        "project-run-dependency-public-trait-method",
+        &dependency_output,
+        "dependency package artifact",
+        "package path run with dependency public trait method",
+    )
+    .expect("dependency public trait method run should also build the dependency package artifact");
+    expect_file_exists(
+        "project-run-dependency-public-trait-method",
+        &executable_output,
+        "package executable",
+        "package path run with dependency public trait method",
+    )
+    .expect("dependency public trait method run should still emit the executable artifact");
+}

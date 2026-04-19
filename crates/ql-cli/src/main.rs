@@ -7702,6 +7702,7 @@ fn dependency_public_struct_method_bridge_candidates<'a>(
 ) -> BTreeMap<String, &'a FunctionDecl> {
     let mut impl_candidates = BTreeMap::<String, Vec<&'a FunctionDecl>>::new();
     let mut extend_candidates = BTreeMap::<String, Vec<&'a FunctionDecl>>::new();
+    let mut trait_impl_candidates = BTreeMap::<String, Vec<&'a FunctionDecl>>::new();
 
     for item in &module.items {
         match &item.kind {
@@ -7715,6 +7716,21 @@ fn dependency_public_struct_method_bridge_candidates<'a>(
                     .filter(|method| supports_dependency_public_method_import_bridge(method))
                 {
                     impl_candidates
+                        .entry(method.name.clone())
+                        .or_default()
+                        .push(method);
+                }
+            }
+            ItemKind::Impl(impl_block)
+                if impl_block.trait_ty.is_some()
+                    && dependency_type_expr_targets_struct(&impl_block.target, struct_name) =>
+            {
+                for method in impl_block
+                    .methods
+                    .iter()
+                    .filter(|method| supports_dependency_public_method_import_bridge(method))
+                {
+                    trait_impl_candidates
                         .entry(method.name.clone())
                         .or_default()
                         .push(method);
@@ -7745,6 +7761,12 @@ fn dependency_public_struct_method_bridge_candidates<'a>(
         }
     }
     for (name, candidates) in extend_candidates {
+        if methods.contains_key(&name) || candidates.len() != 1 {
+            continue;
+        }
+        methods.insert(name, candidates.into_iter().next().unwrap());
+    }
+    for (name, candidates) in trait_impl_candidates {
         if methods.contains_key(&name) || candidates.len() != 1 {
             continue;
         }
@@ -8669,19 +8691,25 @@ fn render_imported_dependency_public_function_forwarder(
     let params = render_dependency_bridge_param_list(function, contents);
     let args = render_dependency_bridge_arg_list(function);
     let return_suffix = render_dependency_bridge_return_suffix(function, contents);
+    let callable_type = render_dependency_bridge_callable_type(function, contents);
     let export_name =
         dependency_public_function_export_name(module_import_path, function.name.as_str());
+    let local_forwarder_name =
+        dependency_public_function_local_forwarder_name(module_import_path, function.name.as_str());
     let mut rendered = format!("extern \"c\" fn {export_name}({params}){return_suffix}\n\n");
     rendered.push_str(&format!(
-        "fn {}({params}){return_suffix} {{\n",
-        function.name
+        "fn {local_forwarder_name}({params}){return_suffix} {{\n",
     ));
     if function.return_type.is_some() {
         rendered.push_str(&format!("    return {export_name}({args})\n"));
     } else {
         rendered.push_str(&format!("    {export_name}({args})\n"));
     }
-    rendered.push('}');
+    rendered.push_str("\n}\n\n");
+    rendered.push_str(&format!(
+        "const {}: {callable_type} = {local_forwarder_name}",
+        function.name
+    ));
     Some(rendered)
 }
 
@@ -8826,6 +8854,24 @@ fn render_dependency_bridge_param_list(function: &FunctionDecl, contents: &str) 
         .join(", ")
 }
 
+fn render_dependency_bridge_callable_type(function: &FunctionDecl, contents: &str) -> String {
+    let params = function
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            Param::Regular { ty, .. } => Some(span_text(contents, ty.span).trim().to_owned()),
+            Param::Receiver { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let return_ty = function
+        .return_type
+        .as_ref()
+        .map(|ty| span_text(contents, ty.span).trim().to_owned())
+        .unwrap_or_else(|| "()".to_owned());
+    format!("({params}) -> {return_ty}")
+}
+
 fn dependency_bridge_receiver_kind(function: &FunctionDecl) -> Option<ReceiverKind> {
     match function.params.first()? {
         Param::Receiver { kind, .. } => Some(*kind),
@@ -8909,6 +8955,19 @@ fn dependency_public_function_export_name(
     symbol_name: &str,
 ) -> String {
     let mut rendered = String::from("__ql_bridge_");
+    for segment in module_import_path {
+        rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(segment));
+        rendered.push('_');
+    }
+    rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(symbol_name));
+    rendered
+}
+
+fn dependency_public_function_local_forwarder_name(
+    module_import_path: &[String],
+    symbol_name: &str,
+) -> String {
+    let mut rendered = String::from("__ql_bridge_local_");
     for segment in module_import_path {
         rendered.push_str(&sanitize_dependency_bridge_identifier_fragment(segment));
         rendered.push('_');
@@ -13370,7 +13429,8 @@ mod tests {
 
     use super::{
         ProjectTargetSelector, analyze_semantics, analyze_source, build_path, collect_ql_files,
-        render_mir_path, render_ownership_path, render_runtime_requirements,
+        dependency_public_struct_method_bridge_candidates, parse_source, render_mir_path,
+        render_ownership_path, render_runtime_requirements,
     };
 
     struct TestDir {
@@ -13445,6 +13505,37 @@ mod tests {
         let files = collect_ql_files(&root).expect("collect explicit fail fixture files");
 
         assert_eq!(relative_paths(&root, files), vec!["bad.ql"]);
+    }
+
+    #[test]
+    fn dependency_public_struct_method_bridge_candidates_include_trait_impl_methods() {
+        let module = parse_source(
+            r#"
+pub trait Reader {
+    fn read(self) -> Int
+}
+
+pub struct Box {
+    value: Int,
+}
+
+impl Reader for Box {
+    pub fn read(self) -> Int {
+        return self.value
+    }
+}
+"#,
+        )
+        .expect("source should parse");
+
+        let methods = dependency_public_struct_method_bridge_candidates(&module, "Box");
+        let read = methods
+            .get("read")
+            .expect("trait receiver method should be bridgeable");
+
+        assert_eq!(methods.len(), 1);
+        assert_eq!(read.name, "read");
+        assert!(read.body.is_some());
     }
 
     #[test]
