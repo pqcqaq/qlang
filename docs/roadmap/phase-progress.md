@@ -48,9 +48,9 @@
 
 ## 当前主线
 
-1. 继续把 manifest 和 dependency-aware build 做实，不再停留在窄的 `extern "c"` 跨包路径。
-2. 继续把基础 LSP 做到真实项目可依赖，优先是 definition / references / workspace symbol / semantic tokens。
-3. 在现有 lock / JSON 输出基础上补 CI、分发和可复现构建约定。
+1. 先把 qlang 做到“可真实使用的最小项目语言”，而不是继续扩语言表面。
+2. 主线先做 manifest、dependency-aware build/backend、真实 workspace LSP、安装与分发；P0 未完成前，不再把新语法和更宽 runtime 当主线。
+3. 每一轮功能推进必须先落生产代码，再补测试和文档；只有测试或文档改动，不再计作一轮功能迭代。
 
 ## 明确后置
 
