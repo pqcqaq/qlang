@@ -42,7 +42,7 @@
 - `ql test` 已支持对已发现测试使用 `--target` 做精确 rerun；直接执行 package `tests/` 下的单个 `.ql` 文件，或执行 workspace member 下对应测试文件时，也会保留 package/workspace-aware smoke / UI test 语义。
 - `ql project graph` / `ql project targets` / `ql project lock` 直接指向 workspace member 目录或源码文件时，会解析外层 workspace，而不是退化成单 package 视图。
 - `ql project emit-interface` 在不带 `--output` 时，直接指向 workspace member 目录或 `.ql` 文件也会解析外层 workspace；plain、`--changed-only`、`--check` 都按 workspace member 集合执行发射/检查。
-- `ql build --list` / `ql run --list` 已可直接列出当前 package / workspace 下的 discovered build targets；`--json` 复用 `ql.project.targets.v1`，`ql run --list` 只展示 runnable targets。
+- `ql build --list` / `ql run --list` 已可直接列出当前 package / workspace 下的 discovered build targets；直接指向 workspace member 目录或源码路径时，也会回到外层 workspace；`--json` 复用 `ql.project.targets.v1`，`ql run --list` 只展示 runnable targets。
 - `ql check` / `ql build` / `ql run` / `ql test` 都已有第一版 `--json` 输出；其中 `ql run --json` 当前稳定导出 `ql.run.v1`，包含 built target、程序参数、捕获到的 stdout/stderr 和子进程退出码。更早的 selector / project preflight 失败仍保留既有 stderr failure surface。
 - `ql project lock --json` 当前稳定导出 `ql.project.lock.result.v1`，覆盖写锁文件成功、`--check` 命中 up-to-date，以及 stale / missing / read / write 失败；最早的 package-context / manifest preflight 失败仍保留既有 stderr surface。
 - 当前真正打通的跨包执行路径仍然很窄：只稳定覆盖 direct local dependency 的受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）与 public `extern "c"` 符号。

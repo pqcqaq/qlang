@@ -3223,18 +3223,6 @@ fn filter_workspace_build_targets(
         .collect()
 }
 
-fn load_project_target_members_for_path(
-    path: &Path,
-    command_label: &str,
-) -> Result<Vec<WorkspaceBuildTargets>, u8> {
-    let request_root = resolve_project_source_command_request_root(path);
-    load_workspace_build_targets_for_command_from_request_root(
-        path,
-        request_root.as_deref().unwrap_or(path),
-        command_label,
-    )
-}
-
 fn load_project_target_members_for_workspace_member_path(
     path: &Path,
     command_label: &str,
@@ -3273,7 +3261,7 @@ fn list_build_targets_path(
     selector: &ProjectTargetSelector,
     json: bool,
 ) -> Result<(), u8> {
-    let members = load_project_target_members_for_path(path, "`ql build --list`")?;
+    let members = load_project_target_members_for_workspace_member_path(path, "`ql build --list`")?;
     let members = select_workspace_build_targets(
         path,
         &members,
@@ -3290,7 +3278,7 @@ fn list_runnable_targets_path(
     selector: &ProjectTargetSelector,
     json: bool,
 ) -> Result<(), u8> {
-    let members = load_project_target_members_for_path(path, "`ql run --list`")?;
+    let members = load_project_target_members_for_workspace_member_path(path, "`ql run --list`")?;
     let selected = if selector.is_active() {
         select_workspace_build_targets(
             path,
@@ -8647,15 +8635,6 @@ fn default_package_main_source() -> &'static str {
 
 fn default_package_test_source() -> &'static str {
     "fn main() -> Int {\n    return 0\n}\n"
-}
-
-fn resolve_project_source_command_request_root(path: &Path) -> Option<PathBuf> {
-    if !is_ql_source_file(path) {
-        return None;
-    }
-
-    let manifest = load_project_manifest(path).ok()?;
-    Some(resolve_project_member_request_root(&manifest.manifest_path))
 }
 
 fn resolve_project_workspace_member_command_request_root(path: &Path) -> Option<PathBuf> {
