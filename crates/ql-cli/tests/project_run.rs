@@ -165,6 +165,47 @@ fn run_single_file_supports_local_receiver_methods() {
 }
 
 #[test]
+fn run_single_file_supports_local_method_value_calls() {
+    if !toolchain_available("`ql run` local method value test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-file-local-method-value");
+    let source_path = temp.write(
+        "demo.ql",
+        "struct Box { value: Int }\n\nimpl Box {\n    fn add(self, delta: Int) -> Int {\n        return self.value + delta\n    }\n}\n\nfn main() -> Int {\n    let value = Box { value: 7 }\n    let add = value.add\n    return add(5)\n}\n",
+    );
+    let output_path = executable_output_path(&temp.path().join("target/ql/debug"), "demo");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&source_path);
+    let output = run_command_capture(&mut command, "`ql run` local method value");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-file-local-method-value",
+        "single-file local method value run",
+        &output,
+        12,
+    )
+    .expect("single-file `ql run` should execute local method values");
+    expect_silent_output(
+        "project-run-file-local-method-value",
+        "single-file local method value run",
+        &stdout,
+        &stderr,
+    )
+    .expect("single-file `ql run` local method value should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-file-local-method-value",
+        &output_path,
+        "single-file local method value executable",
+        "single-file local method value run",
+    )
+    .expect("single-file `ql run` local method value should leave the built executable in the default path");
+}
+
+#[test]
 fn run_package_path_executes_the_only_runnable_target_with_program_args() {
     if !toolchain_available("`ql run` package test") {
         return;
@@ -1517,6 +1558,94 @@ dep = "../dep"
         "package path run with dependency public struct method",
     )
     .expect("dependency public struct method run should still emit the executable artifact");
+}
+
+#[test]
+fn run_package_path_supports_direct_dependency_public_struct_method_values() {
+    if !toolchain_available("`ql run` dependency public struct method value test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-dependency-public-struct-method-value");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub struct Box { value: Int }\n\nimpl Box {\n    pub fn add(self, delta: Int) -> Int {\n        return self.value + delta\n    }\n}\n\npub fn make_box() -> Box { return Box { value: 7 } }\n",
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        "use dep.make_box as make\n\nfn main() -> Int {\n    let value = make()\n    let add = value.add\n    return add(5)\n}\n",
+    );
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let executable_output = executable_output_path(&project_root.join("target/ql/debug"), "main");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql run` dependency public struct method value",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-dependency-public-struct-method-value",
+        "package path run with dependency public struct method value",
+        &output,
+        12,
+    )
+    .expect("package-path `ql run` should support direct dependency public struct method values");
+    expect_silent_output(
+        "project-run-dependency-public-struct-method-value",
+        "package path run with dependency public struct method value",
+        &stdout,
+        &stderr,
+    )
+    .expect("dependency public struct method value run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-dependency-public-struct-method-value",
+        &interface_output,
+        "synced dependency interface",
+        "package path run with dependency public struct method value",
+    )
+    .expect("dependency public struct method value run should emit the dependency interface");
+    expect_file_exists(
+        "project-run-dependency-public-struct-method-value",
+        &dependency_output,
+        "dependency package artifact",
+        "package path run with dependency public struct method value",
+    )
+    .expect(
+        "dependency public struct method value run should also build the dependency package artifact",
+    );
+    expect_file_exists(
+        "project-run-dependency-public-struct-method-value",
+        &executable_output,
+        "package executable",
+        "package path run with dependency public struct method value",
+    )
+    .expect("dependency public struct method value run should still emit the executable artifact");
 }
 
 #[test]

@@ -7344,6 +7344,49 @@ fn main() -> Int {
     }
 
     #[test]
+    fn build_file_writes_llvm_ir_with_method_value_local_calls() {
+        let dir = TestDir::new("ql-driver-method-values");
+        let source = dir.write(
+            "method_values.ql",
+            r#"
+struct Box { value: Int }
+
+impl Box {
+    fn add(self, delta: Int) -> Int {
+        return self.value + delta
+    }
+}
+
+fn main() -> Int {
+    let value = Box { value: 7 }
+    let add = value.add
+    return add(5)
+}
+"#,
+        );
+        let output = dir.path().join("artifacts/method_values.ll");
+        let artifact = build_file(
+            &source,
+            &BuildOptions {
+                emit: BuildEmit::LlvmIr,
+                profile: BuildProfile::Debug,
+                output: Some(output.clone()),
+                c_header: None,
+                toolchain: ToolchainOptions::default(),
+            },
+        )
+        .expect("method value local calls should emit LLVM IR");
+        let rendered = fs::read_to_string(&artifact.path).expect("read generated LLVM IR");
+
+        assert_eq!(artifact.path, output);
+        assert!(rendered.contains("store ptr @ql_"));
+        assert!(rendered.contains("_add, ptr"));
+        assert!(rendered.contains("call i64 @ql_"));
+        assert!(rendered.contains("_add("));
+        assert!(!rendered.contains("does not support first-class function values yet"));
+    }
+
+    #[test]
     fn build_file_writes_llvm_ir_with_async_function_value_local_calls() {
         let dir = TestDir::new("ql-driver-async-function-values");
         let source = dir.write(

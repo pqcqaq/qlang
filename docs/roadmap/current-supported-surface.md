@@ -19,7 +19,7 @@
 
 - lexer、parser、formatter、diagnostics、HIR、resolve、typeck、MIR、borrowck 已在主路径工作。
 - LLVM 产物当前稳定开放：`llvm-ir`、`asm`、`obj`、`exe`、`dylib`、`staticlib`。
-- LLVM 可执行主路径现在已支持本地 `impl` / `extend` receiver method 的直接调用（如 `value.read()`）；当前只覆盖 direct call position。
+- LLVM 可执行主路径现在已支持本地 `impl` / `extend` receiver method 的直接调用，以及经不可变局部 alias 的 method value 直接调用（如 `let add = value.add; add(1)`）；更广义的 escaping / higher-order method value 仍未打通。
 - 当前稳定互操作边界仍是 C ABI。
 
 ### CLI 与项目工作流
@@ -47,7 +47,7 @@
 - `ql check` / `ql build` / `ql run` / `ql test` 都已有第一版 `--json` 输出；其中 `ql run --json` 当前稳定导出 `ql.run.v1`，包含 built target、程序参数、捕获到的 stdout/stderr 和子进程退出码。更早的 selector / project preflight 失败仍保留既有 stderr failure surface。
 - `ql project lock --json` 当前稳定导出 `ql.project.lock.result.v1`，覆盖写锁文件成功、`--check` 命中 up-to-date，以及 stale / missing / read / write 失败；最早的 package-context / manifest preflight 失败仍保留既有 stderr surface。
 - 当前真正打通的跨包执行路径仍然很窄：只稳定覆盖 direct local dependency 的 bridgeable public `const/static` values、受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）、public `extern "c"` 符号、被这些 value/function 签名直接引用的 public 非泛型 `struct`，以及这些 bridgeable public `struct` 上的受限 public receiver method。
-- root target 的 dependency bridge 现在会按实际导入情况为直依赖注入 public type declaration、value declaration、function wrapper 和受限 method forwarder。当前稳定覆盖 data-only public `struct`、data-only initializer、递归引用同模块其他 public `const/static`、value initializer 对同模块 bridgeable public free function 的直接命名或直接调用，以及 bridgeable public `struct` 上的 public `impl` / `extend` / 唯一 trait `impl for` receiver method direct call；当导入的 value/function/method 签名依赖同模块 bridgeable public `struct` 时，root target 也会隐式补齐所需 type bridge。未导入 sibling dependency 的同名符号不会再提前打断 `ql build/run/test`，但实际导入的同名直依赖 type/value/function/extern 仍会分别触发 `dependency-type-conflict` / `dependency-value-conflict` / `dependency-function-conflict` / `dependency-extern-conflict`；root source 的同名顶层定义也会分别触发 `dependency-type-local-conflict` / `dependency-value-local-conflict` / `dependency-function-local-conflict`。
+- root target 的 dependency bridge 现在会按实际导入情况为直依赖注入 public type declaration、value declaration、function wrapper 和受限 method forwarder。当前稳定覆盖 data-only public `struct`、data-only initializer、递归引用同模块其他 public `const/static`、value initializer 对同模块 bridgeable public free function 的直接命名或直接调用，以及 bridgeable public `struct` 上的 public `impl` / `extend` / 唯一 trait `impl for` receiver method direct call，与经不可变局部 alias 的 method value direct call；当导入的 value/function/method 签名依赖同模块 bridgeable public `struct` 时，root target 也会隐式补齐所需 type bridge。未导入 sibling dependency 的同名符号不会再提前打断 `ql build/run/test`，但实际导入的同名直依赖 type/value/function/extern 仍会分别触发 `dependency-type-conflict` / `dependency-value-conflict` / `dependency-function-conflict` / `dependency-extern-conflict`；root source 的同名顶层定义也会分别触发 `dependency-type-local-conflict` / `dependency-value-local-conflict` / `dependency-function-local-conflict`。
 
 ### async / runtime
 
@@ -77,7 +77,7 @@
 ## 当前明确未支持
 
 - 普通跨包 Qlang free function / member / const 的完整 dependency-aware backend
-- dependency method values、超出当前 direct-call bridge 的 dependency receiver method codegen
+- escaping / higher-order dependency method values、超出当前不可变局部 alias direct-call slice 的 dependency receiver method codegen
 - registry / version solving / publish workflow
 - cross-file rename / workspace edits
 - 更宽的 project-scale references / refactor / code actions / inlay hints

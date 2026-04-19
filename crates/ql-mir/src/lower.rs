@@ -1248,7 +1248,21 @@ impl<'a> BodyBuilder<'a> {
             ),
             ExprKind::Bool(value) => (current, Operand::Constant(Constant::Bool(*value))),
             ExprKind::NoneLiteral => (current, Operand::Constant(Constant::None)),
-            ExprKind::Member { .. } | ExprKind::Bracket { .. } => {
+            ExprKind::Member { field, .. } => {
+                if let Some(MemberTarget::Method(target)) = self.typeck.member_target(expr_id) {
+                    (
+                        current,
+                        Operand::Constant(Constant::Function {
+                            function: method_function_ref(self.hir, target),
+                            name: field.clone(),
+                        }),
+                    )
+                } else {
+                    let (current, place) = self.lower_expr_to_place(expr_id, current, scope);
+                    (current, Operand::Place(place))
+                }
+            }
+            ExprKind::Bracket { .. } => {
                 let (current, place) = self.lower_expr_to_place(expr_id, current, scope);
                 (current, Operand::Place(place))
             }
@@ -1650,29 +1664,29 @@ impl<'a> BodyBuilder<'a> {
         current: BasicBlockId,
         scope: ScopeId,
     ) -> (BasicBlockId, Rvalue) {
-        let (mut current, callee, mut lowered) = if let Some(MemberTarget::Method(target)) =
-            self.typeck.member_target(callee)
-        {
-            let hir::ExprKind::Member { object, field, .. } = &self.hir.expr(callee).kind else {
-                unreachable!("method member targets should lower from member expressions");
+        let (mut current, callee, mut lowered) =
+            if let Some((member_expr, target)) = self.resolve_method_value_expr(callee) {
+                let hir::ExprKind::Member { object, field, .. } = &self.hir.expr(member_expr).kind
+                else {
+                    unreachable!("method value targets should lower from member expressions");
+                };
+                let (current, receiver) = self.lower_expr_to_operand(*object, current, scope);
+                let callee = Operand::Constant(Constant::Function {
+                    function: method_function_ref(self.hir, target),
+                    name: field.clone(),
+                });
+                (
+                    current,
+                    callee,
+                    vec![CallArgument {
+                        name: None,
+                        value: receiver,
+                    }],
+                )
+            } else {
+                let (current, callee) = self.lower_expr_to_operand(callee, current, scope);
+                (current, callee, Vec::with_capacity(args.len()))
             };
-            let (current, receiver) = self.lower_expr_to_operand(*object, current, scope);
-            let callee = Operand::Constant(Constant::Function {
-                function: method_function_ref(self.hir, target),
-                name: field.clone(),
-            });
-            (
-                current,
-                callee,
-                vec![CallArgument {
-                    name: None,
-                    value: receiver,
-                }],
-            )
-        } else {
-            let (current, callee) = self.lower_expr_to_operand(callee, current, scope);
-            (current, callee, Vec::with_capacity(args.len()))
-        };
 
         for arg in args {
             match arg {
@@ -1699,6 +1713,41 @@ impl<'a> BodyBuilder<'a> {
                 args: lowered,
             },
         )
+    }
+
+    fn resolve_method_value_expr(&self, expr_id: ExprId) -> Option<(ExprId, MethodTarget)> {
+        let mut current = expr_id;
+        let mut visited = HashSet::new();
+
+        loop {
+            if !visited.insert(current) {
+                return None;
+            }
+
+            if let Some(MemberTarget::Method(target)) = self.typeck.member_target(current) {
+                return Some((current, target));
+            }
+
+            current = match &self.hir.expr(current).kind {
+                ExprKind::Name(_) => {
+                    let ValueResolution::Local(local_id) =
+                        self.resolution.expr_resolution(current)?
+                    else {
+                        return None;
+                    };
+                    *self.immutable_local_values.get(local_id)?
+                }
+                ExprKind::Question(inner) => *inner,
+                ExprKind::Block(block_id) | ExprKind::Unsafe(block_id) => {
+                    let block = self.hir.block(*block_id);
+                    if !block.statements.is_empty() {
+                        return None;
+                    }
+                    block.tail?
+                }
+                _ => return None,
+            };
+        }
     }
 
     fn lower_operands(

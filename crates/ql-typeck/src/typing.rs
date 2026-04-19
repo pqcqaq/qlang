@@ -1766,7 +1766,7 @@ impl<'a> Checker<'a> {
             SelectedMember::Method(target) => {
                 self.member_targets
                     .insert(expr_id, MemberTarget::Method(target));
-                Ty::Unknown
+                Ty::from_function(self.module, self.resolution, self.method(target))
             }
             SelectedMember::AmbiguousMethod => {
                 self.diagnostics.push(
