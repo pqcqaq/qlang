@@ -46,7 +46,7 @@
 - 同名本地依赖在这条 broken-source 路径上继续按 manifest 身份区分；`build().ping()` / `build().value`、dependency struct field label completion，以及 enum variant query / completion 都不会再串到兄弟依赖实例。
 - broken-source 下的同名本地依赖 `workspace/symbol` 现在也补到了 `[dependencies]` 本地路径依赖入口；open document 和 `workspace_roots` 的顶层 type / interface / enum symbol、enum member，以及 method / trait method / extend method 都已锁住“源码优先 + 兄弟依赖 `.qi` 保留”这条组合场景。
 - parse-error 下的 dependency rename 也已有保守 workspace-edit 回归保护；当前已锁住的窄 slice 包括 dependency method / struct field / enum variant 的源码定义点、源码内部引用、当前文件与同 workspace 其他使用文件联动改名；同名本地依赖上的 method / struct field / variant rename 也继续按 manifest 身份隔离。
-- parse-error 下，workspace root `function / const / static / struct / enum / trait / type alias` 现在也允许从当前 consumer 的 import/use 发起 rename（包含 alias import/use）；当前保守联动范围是当前 broken 文件、当前 package 内仍可解析的其他源码文件，以及导出包源码；alias import 仍只更新导入路径。
+- parse-error 下，workspace root `function / const / static / struct / enum / trait / type alias` 现在也允许从当前 consumer 的 import/use 发起 rename（包含 alias import/use）；当前保守联动范围是当前 broken 文件、当前 package 其他源码文件、当前 package 可见的 workspace members / 本地路径依赖里的其他 consumer 源码，以及导出包源码；alias import 仍只更新导入路径。
 
 ## 当前主线
 
