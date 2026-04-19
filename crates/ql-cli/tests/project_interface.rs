@@ -2571,6 +2571,279 @@ pub struct Config {
 }
 
 #[test]
+fn project_emit_interface_changed_only_member_directory_uses_workspace_root_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-changed-only-member-dir");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let tool_root = project_root.join("packages").join("tool");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for changed-only member dir test");
+    std::fs::create_dir_all(tool_root.join("src"))
+        .expect("create tool package source directory for changed-only member dir test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/app.qi",
+        "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+",
+    );
+    temp.write(
+        "workspace-only/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/tool.qi",
+        "\
+// qlang interface v1
+// package: tool
+
+// source: src/lib.ql
+package demo.tool
+
+pub fn exported() -> Int
+",
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    temp.write(
+        "workspace-only/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn exported() -> Int {
+    return 1
+}
+
+pub fn newer() -> Int {
+    return 2
+}
+"#,
+    );
+    let app_interface = app_root.join("app.qi");
+    let tool_interface = tool_root.join("tool.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--changed-only"])
+        .arg(&app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --changed-only` workspace member directory",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-interface-changed-only-member-dir",
+        "changed-only workspace member directory interface emission",
+        &output,
+    )
+    .expect("changed-only workspace member directory interface emission should succeed");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
+    let normalized_tool_interface = tool_interface.display().to_string().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-changed-only-member-dir",
+        &normalized_stdout,
+        &[
+            &format!("up-to-date interface: {normalized_app_interface}"),
+            &format!("wrote interface: {normalized_tool_interface}"),
+        ],
+    )
+    .expect(
+        "changed-only workspace member directory interface emission should keep the outer workspace context",
+    );
+    expect_snapshot_matches(
+        "project-interface-changed-only-member-dir",
+        "changed-only workspace member directory interface emission stderr",
+        "",
+        &stderr,
+    )
+    .expect(
+        "changed-only workspace member directory interface emission should stay silent on stderr",
+    );
+    let tool_actual = read_normalized_file(
+        &tool_interface,
+        "changed-only workspace member directory regenerated qi artifact",
+    );
+    assert!(
+        tool_actual.contains("pub fn newer() -> Int"),
+        "expected changed-only workspace member directory emission to regenerate the stale workspace member interface, got:\n{tool_actual}"
+    );
+}
+
+#[test]
+fn project_emit_interface_check_member_directory_uses_workspace_root_context() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-check-member-dir");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let tool_root = project_root.join("packages").join("tool");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for check member dir test");
+    std::fs::create_dir_all(tool_root.join("src"))
+        .expect("create tool package source directory for check member dir test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/app.qi",
+        "\
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn exported() -> Int
+",
+    );
+    temp.write(
+        "workspace-only/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn exported() -> Int {
+    return 2
+}
+"#,
+    );
+    let app_interface = app_root.join("app.qi");
+    let missing_tool_interface = tool_root.join("tool.qi");
+    let normalized_missing_tool_interface = missing_tool_interface
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let normalized_tool_manifest = tool_root
+        .join("qlang.toml")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface", "--check"])
+        .arg(&app_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface --check` workspace member directory",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-check-member-dir",
+        "workspace member directory interface check with missing sibling artifact",
+        &output,
+        1,
+    )
+    .expect("workspace member directory interface check should fail when another workspace member artifact is missing");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-check-member-dir",
+        &normalized_stdout,
+        &[&format!("ok interface: {normalized_app_interface}")],
+    )
+    .expect("workspace member directory interface check should still report healthy members");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-check-member-dir",
+        "workspace member directory interface check with missing sibling artifact",
+        &normalized_stderr,
+        &format!(
+            "error: `ql project emit-interface --check` interface artifact `{normalized_missing_tool_interface}` is missing"
+        ),
+    )
+    .expect("workspace member directory interface check should surface missing sibling member artifacts");
+    expect_stderr_contains(
+        "project-interface-check-member-dir",
+        "workspace member directory interface check with missing sibling artifact",
+        &normalized_stderr,
+        &format!("note: failing package manifest: {normalized_tool_manifest}"),
+    )
+    .expect("workspace member directory interface check should point failures at the sibling package manifest");
+    expect_stderr_contains(
+        "project-interface-check-member-dir",
+        "workspace member directory interface check with missing sibling artifact",
+        &normalized_stderr,
+        &format!("note: failing workspace member manifest: {normalized_tool_manifest}"),
+    )
+    .expect("workspace member directory interface check should keep the sibling workspace member boundary visible");
+    expect_stderr_contains(
+        "project-interface-check-member-dir",
+        "workspace member directory interface check with missing sibling artifact",
+        &normalized_stderr,
+        "error: `ql project emit-interface --check` found 1 failing member(s)",
+    )
+    .expect("workspace member directory interface check should still summarize failing members");
+}
+
+#[test]
 fn project_emit_interface_keeps_writing_other_workspace_members_when_one_member_fails() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-workspace-partial-failure");

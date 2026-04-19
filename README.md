@@ -16,7 +16,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里安全摘除，并保留磁盘上的包目录，便于渐进式重构。
 - `ql check` / `ql build` / `ql run` / `ql test` 与 `ql project targets` / `graph` / `lock` 已提供第一版 `--json` 机器输出；`ql run --json` 当前输出 `ql.run.v1`，`ql project lock --json` 当前输出 `ql.project.lock.result.v1`。
 - `ql check` 现在也会在 workspace member 目录或源码路径入口上恢复外层 workspace 语义，不再悄悄退回单 package 检查。
-- `ql test` 直接执行 project `tests/*.ql` 文件时会保留 package/workspace-aware smoke 或 UI test 语义；`ql project graph` / `ql project targets` / `ql project lock` 指向 workspace member 目录或源码文件时都会回到外层 workspace 上下文；`ql project emit-interface` 在不带 `--output` 时也会对 workspace member 目录或 `.ql` 源码路径恢复这一视角。
+- `ql test` 直接执行 project `tests/*.ql` 文件时会保留 package/workspace-aware smoke 或 UI test 语义；`ql project graph` / `ql project targets` / `ql project lock` 指向 workspace member 目录或源码文件时都会回到外层 workspace 上下文；`ql project emit-interface` 在不带 `--output` 时，无论 plain / `--changed-only` / `--check`，都会对 workspace member 目录或 `.ql` 源码路径恢复这一视角。
 - healthy package/workspace 下，LSP 的 source-preferred navigation 已覆盖 workspace members 和 workspace 外本地路径依赖；definition、typeDefinition、references、`workspace/symbol` 会按 manifest 身份区分同名本地依赖，且 `workspace/symbol` 在源码可用时优先返回源码符号。
 - broken-source / parse-error 下，import references fallback、direct imported-result member hover / completion / 查询 / `documentHighlight`、dependency struct field label completion、dependency enum variant 的 `completion/definition/typeDefinition/references/documentHighlight`、dependency value/member semantic tokens fallback，以及 current-document dependency enum variant rename 都会继续走保守可用路径；同名本地依赖仍按 manifest 身份区分。
 - `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问或点分路径时可直接自动弹出补全。
@@ -55,6 +55,8 @@ cargo run -p ql-cli -- check path/to/workspace/packages/app/src/lib.ql
 cargo run -p ql-cli -- project graph demo-workspace
 cargo run -p ql-cli -- project lock demo-workspace --json
 cargo run -p ql-cli -- project emit-interface path/to/workspace/packages/app
+cargo run -p ql-cli -- project emit-interface path/to/workspace/packages/app --changed-only
+cargo run -p ql-cli -- project emit-interface path/to/workspace/packages/app --check
 cargo run -p ql-cli -- build demo-workspace --list
 cargo run -p ql-cli -- build demo-workspace
 cargo run -p ql-cli -- run demo-workspace --list
