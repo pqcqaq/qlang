@@ -116,6 +116,108 @@ name = "app"
 }
 
 #[test]
+fn test_package_path_supports_direct_dependency_public_struct_functions() {
+    if !toolchain_available("`ql test` dependency public struct function test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-test-dependency-public-struct-function");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub struct Box { value: Int }\npub fn make_box() -> Box { return Box { value: 7 } }\n",
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn helper() -> Int { return 1 }\n");
+    temp.write(
+        "app/tests/smoke.ql",
+        "use dep.make_box as make\n\nfn main() -> Int {\n    let value = make()\n    return value.value - 7\n}\n",
+    );
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let smoke_output = executable_output_path(&project_root.join("target/ql/debug/tests"), "smoke");
+    assert!(
+        !interface_output.exists(),
+        "dependency interface should start missing for dependency public struct function test"
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["test"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql test` dependency public struct function");
+    let (stdout, stderr) = expect_success(
+        "project-test-dependency-public-struct-function",
+        "package dependency public struct function test",
+        &output,
+    )
+    .expect("package-path `ql test` should support direct dependency public struct functions");
+    expect_empty_stderr(
+        "project-test-dependency-public-struct-function",
+        "package dependency public struct function test",
+        &stderr,
+    )
+    .expect("dependency public struct function test should not print stderr");
+    expect_stdout_contains_all(
+        "project-test-dependency-public-struct-function",
+        &stdout.replace('\\', "/"),
+        &[
+            "test tests/smoke.ql ... ok",
+            "test result: ok. 1 passed; 0 failed",
+        ],
+    )
+    .expect("dependency public struct function test should report one passing smoke test");
+    expect_file_exists(
+        "project-test-dependency-public-struct-function",
+        &interface_output,
+        "synced dependency interface",
+        "package dependency public struct function test",
+    )
+    .expect("dependency public struct function test should emit the dependency interface");
+    expect_file_exists(
+        "project-test-dependency-public-struct-function",
+        &dependency_output,
+        "dependency package artifact",
+        "package dependency public struct function test",
+    )
+    .expect(
+        "dependency public struct function test should also build the dependency package artifact",
+    );
+    expect_file_exists(
+        "project-test-dependency-public-struct-function",
+        &smoke_output,
+        "smoke test executable",
+        "package dependency public struct function test",
+    )
+    .expect("dependency public struct function test should emit the smoke test executable");
+    assert!(
+        dep_manifest.exists(),
+        "dependency manifest should remain present after dependency public struct function test"
+    );
+}
+
+#[test]
 fn test_package_path_selects_requested_target() {
     if !toolchain_available("`ql test --target` package test") {
         return;

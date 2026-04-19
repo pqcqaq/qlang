@@ -2709,6 +2709,44 @@ fn build_json_target_prep_failure(
             JsonValue::Null,
             JsonValue::Null,
         ),
+        PrepareProjectTargetBuildFailureKind::DependencyTypeConflict {
+            symbol,
+            first_package,
+            first_manifest_path,
+            conflicting_package,
+            conflicting_manifest_path,
+        } => (
+            "dependency-type-conflict",
+            format!("found conflicting direct dependency public type imports for `{symbol}`"),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            json!(symbol),
+            json!(first_package),
+            json!(normalize_path(first_manifest_path)),
+            json!(conflicting_package),
+            json!(normalize_path(conflicting_manifest_path)),
+            JsonValue::Null,
+        ),
+        PrepareProjectTargetBuildFailureKind::DependencyTypeLocalConflict {
+            symbol,
+            dependency_package,
+            dependency_manifest_path,
+        } => (
+            "dependency-type-local-conflict",
+            format!(
+                "cannot synthesize direct dependency public type bridge for `{symbol}` because the root source already defines the same top-level name"
+            ),
+            json!(normalize_path(dependency_manifest_path)),
+            json!(dependency_package),
+            JsonValue::Null,
+            json!(symbol),
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+            JsonValue::Null,
+        ),
         PrepareProjectTargetBuildFailureKind::DependencyValueConflict {
             symbol,
             first_package,
@@ -5347,6 +5385,18 @@ enum PrepareProjectTargetBuildFailureKind {
         dependency_package: String,
         dependency_manifest_path: PathBuf,
     },
+    DependencyTypeConflict {
+        symbol: String,
+        first_package: String,
+        first_manifest_path: PathBuf,
+        conflicting_package: String,
+        conflicting_manifest_path: PathBuf,
+    },
+    DependencyTypeLocalConflict {
+        symbol: String,
+        dependency_package: String,
+        dependency_manifest_path: PathBuf,
+    },
     DependencyValueConflict {
         symbol: String,
         first_package: String,
@@ -6277,6 +6327,18 @@ fn dependency_extern_is_imported(
             .is_some_and(|symbols| symbols.contains(symbol_name))
 }
 
+fn extend_dependency_bridge_name_requirements(
+    destination: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
+    source: &BTreeMap<Vec<String>, BTreeSet<String>>,
+) {
+    for (module_path, symbols) in source {
+        destination
+            .entry(module_path.clone())
+            .or_default()
+            .extend(symbols.iter().cloned());
+    }
+}
+
 fn render_direct_dependency_bridge_items(
     command_label: &str,
     manifest_path: &Path,
@@ -6289,12 +6351,6 @@ fn render_direct_dependency_bridge_items(
         source,
         report_failure,
     )?;
-    let extern_declarations = render_direct_dependency_extern_declarations(
-        command_label,
-        manifest_path,
-        source,
-        report_failure,
-    )?;
     let function_forwarders = render_direct_dependency_public_function_forwarders(
         command_label,
         manifest_path,
@@ -6302,11 +6358,30 @@ fn render_direct_dependency_bridge_items(
         &value_declarations.required_functions_by_module_path,
         report_failure,
     )?;
+    let mut required_types_by_module_path = value_declarations.required_types_by_module_path;
+    extend_dependency_bridge_name_requirements(
+        &mut required_types_by_module_path,
+        &function_forwarders.required_types_by_module_path,
+    );
+    let type_declarations = render_direct_dependency_public_type_declarations(
+        command_label,
+        manifest_path,
+        source,
+        &required_types_by_module_path,
+        report_failure,
+    )?;
+    let extern_declarations = render_direct_dependency_extern_declarations(
+        command_label,
+        manifest_path,
+        source,
+        report_failure,
+    )?;
     let declarations =
-        join_dependency_bridge_sections(&value_declarations.declarations, &extern_declarations);
+        join_dependency_bridge_sections(&type_declarations, &value_declarations.declarations);
+    let declarations = join_dependency_bridge_sections(&declarations, &extern_declarations);
     Ok(join_dependency_bridge_sections(
         &declarations,
-        &function_forwarders,
+        &function_forwarders.forwarders,
     ))
 }
 
@@ -6316,18 +6391,29 @@ fn render_direct_dependency_bridge_items_quiet(
 ) -> Result<String, PrepareProjectTargetBuildError> {
     let value_declarations =
         render_direct_dependency_public_value_declarations_quiet(manifest_path, source)?;
-    let extern_declarations =
-        render_direct_dependency_extern_declarations_quiet(manifest_path, source)?;
     let function_forwarders = render_direct_dependency_public_function_forwarders_quiet(
         manifest_path,
         source,
         &value_declarations.required_functions_by_module_path,
     )?;
+    let mut required_types_by_module_path = value_declarations.required_types_by_module_path;
+    extend_dependency_bridge_name_requirements(
+        &mut required_types_by_module_path,
+        &function_forwarders.required_types_by_module_path,
+    );
+    let type_declarations = render_direct_dependency_public_type_declarations_quiet(
+        manifest_path,
+        source,
+        &required_types_by_module_path,
+    )?;
+    let extern_declarations =
+        render_direct_dependency_extern_declarations_quiet(manifest_path, source)?;
     let declarations =
-        join_dependency_bridge_sections(&value_declarations.declarations, &extern_declarations);
+        join_dependency_bridge_sections(&type_declarations, &value_declarations.declarations);
+    let declarations = join_dependency_bridge_sections(&declarations, &extern_declarations);
     Ok(join_dependency_bridge_sections(
         &declarations,
-        &function_forwarders,
+        &function_forwarders.forwarders,
     ))
 }
 
@@ -6516,6 +6602,13 @@ fn render_direct_dependency_extern_declarations_quiet(
 struct RenderedDependencyPublicValueDeclarations {
     declarations: String,
     required_functions_by_module_path: BTreeMap<Vec<String>, BTreeSet<String>>,
+    required_types_by_module_path: BTreeMap<Vec<String>, BTreeSet<String>>,
+}
+
+#[derive(Default)]
+struct RenderedDependencyPublicFunctionForwarders {
+    forwarders: String,
+    required_types_by_module_path: BTreeMap<Vec<String>, BTreeSet<String>>,
 }
 
 fn render_direct_dependency_public_value_declarations(
@@ -6545,6 +6638,7 @@ fn render_direct_dependency_public_value_declarations(
     let mut declarations = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
     let mut required_functions_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
+    let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
 
     for dependency in direct_dependencies {
         let dependency_package = match package_name(&dependency) {
@@ -6621,6 +6715,7 @@ fn render_direct_dependency_public_value_declarations(
                 Some(&imported_externs),
                 &occupied_root_names,
                 &mut required_functions_by_module_path,
+                &mut required_types_by_module_path,
                 &mut owners_by_symbol,
                 &mut declarations,
             )
@@ -6656,6 +6751,7 @@ fn render_direct_dependency_public_value_declarations(
     Ok(RenderedDependencyPublicValueDeclarations {
         declarations: declarations.join("\n\n"),
         required_functions_by_module_path,
+        required_types_by_module_path,
     })
 }
 
@@ -6688,6 +6784,7 @@ fn render_direct_dependency_public_value_declarations_quiet(
     let mut declarations = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
     let mut required_functions_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
+    let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
 
     for dependency_manifest in direct_dependencies {
         let dependency_package = package_name(&dependency_manifest)
@@ -6762,6 +6859,7 @@ fn render_direct_dependency_public_value_declarations_quiet(
                 Some(&imported_externs),
                 &occupied_root_names,
                 &mut required_functions_by_module_path,
+                &mut required_types_by_module_path,
                 &mut owners_by_symbol,
                 &mut declarations,
             )
@@ -6797,6 +6895,7 @@ fn render_direct_dependency_public_value_declarations_quiet(
     Ok(RenderedDependencyPublicValueDeclarations {
         declarations: declarations.join("\n\n"),
         required_functions_by_module_path,
+        required_types_by_module_path,
     })
 }
 
@@ -6806,7 +6905,7 @@ fn render_direct_dependency_public_function_forwarders(
     source: &str,
     required_functions_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
     report_failure: bool,
-) -> Result<String, u8> {
+) -> Result<RenderedDependencyPublicFunctionForwarders, u8> {
     let manifest = load_project_manifest(manifest_path).map_err(|error| {
         if report_failure {
             report_project_build_dependency_error(command_label, None, &error);
@@ -6821,12 +6920,13 @@ fn render_direct_dependency_public_function_forwarders(
     })?;
     let root_source_module = match parse_source(source) {
         Ok(module) => module,
-        Err(_) => return Ok(String::new()),
+        Err(_) => return Ok(RenderedDependencyPublicFunctionForwarders::default()),
     };
     let occupied_root_names = collect_top_level_definition_names(&root_source_module);
 
     let mut forwarders = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
+    let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
 
     for dependency in direct_dependencies {
         let dependency_package = match package_name(&dependency) {
@@ -6867,16 +6967,45 @@ fn render_direct_dependency_public_function_forwarders(
             collect_imported_dependency_externs(&root_source_module, &module_import_paths);
 
         for module in &artifact.modules {
+            let dependency_source_path =
+                dependency_module_source_path(&dependency.manifest_path, &module.source_path);
+            let dependency_source = fs::read_to_string(&dependency_source_path).map_err(|error| {
+                if report_failure {
+                    eprintln!(
+                        "error: {command_label} failed to access dependency source `{}`: {error}",
+                        normalize_path(&dependency_source_path)
+                    );
+                    eprintln!(
+                        "note: while preparing dependency public function wrappers for `{}`",
+                        normalize_path(manifest_path)
+                    );
+                }
+                1
+            })?;
+            let source_module = match parse_source(&dependency_source) {
+                Ok(module) => module,
+                Err(_) => {
+                    if report_failure {
+                        eprintln!(
+                            "error: {command_label} failed to parse dependency source `{}` while preparing public function wrappers",
+                            normalize_path(&dependency_source_path)
+                        );
+                        eprintln!("note: dependency package: `{dependency_package}`");
+                    }
+                    return Err(1);
+                }
+            };
             let module_import_path =
-                dependency_interface_module_import_path(&dependency_package, &module.syntax);
+                dependency_interface_module_import_path(&dependency_package, &source_module);
             collect_dependency_module_public_function_forwarders(
                 &dependency_package,
                 &dependency.manifest_path,
-                &module.syntax,
-                &module.contents,
+                &source_module,
+                &dependency_source,
                 Some(&imported_externs),
                 required_functions_by_module_path.get(&module_import_path),
                 &occupied_root_names,
+                &mut required_types_by_module_path,
                 &mut owners_by_symbol,
                 &mut forwarders,
             )
@@ -6912,20 +7041,23 @@ fn render_direct_dependency_public_function_forwarders(
         }
     }
 
-    Ok(forwarders.join("\n\n"))
+    Ok(RenderedDependencyPublicFunctionForwarders {
+        forwarders: forwarders.join("\n\n"),
+        required_types_by_module_path,
+    })
 }
 
 fn render_direct_dependency_public_function_forwarders_quiet(
     manifest_path: &Path,
     source: &str,
     required_functions_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
-) -> Result<String, PrepareProjectTargetBuildError> {
+) -> Result<RenderedDependencyPublicFunctionForwarders, PrepareProjectTargetBuildError> {
     let manifest = load_project_manifest(manifest_path)
         .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
     let root_source_module = match parse_source(source) {
         Ok(module) => module,
-        Err(_) => return Ok(String::new()),
+        Err(_) => return Ok(RenderedDependencyPublicFunctionForwarders::default()),
     };
     let occupied_root_names = collect_top_level_definition_names(&root_source_module);
     let direct_dependencies = manifest
@@ -6944,6 +7076,7 @@ fn render_direct_dependency_public_function_forwarders_quiet(
 
     let mut forwarders = Vec::new();
     let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
+    let mut required_types_by_module_path = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
 
     for dependency_manifest in direct_dependencies {
         let dependency_package = package_name(&dependency_manifest)
@@ -6979,16 +7112,48 @@ fn render_direct_dependency_public_function_forwarders_quiet(
             collect_imported_dependency_externs(&root_source_module, &module_import_paths);
 
         for module in &artifact.modules {
+            let dependency_source_path = dependency_module_source_path(
+                &dependency_manifest.manifest_path,
+                &module.source_path,
+            );
+            let dependency_source =
+                fs::read_to_string(&dependency_source_path).map_err(|error| {
+                    PrepareProjectTargetBuildError {
+                        failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
+                            dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                            dependency_package: dependency_package.clone(),
+                            source_path: dependency_source_path.clone(),
+                            message: format!(
+                                "failed to access dependency source `{}`: {error}",
+                                normalize_path(&dependency_source_path)
+                            ),
+                        },
+                    }
+                })?;
+            let source_module = parse_source(&dependency_source).map_err(|_| {
+                PrepareProjectTargetBuildError {
+                    failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
+                        dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                        dependency_package: dependency_package.clone(),
+                        source_path: dependency_source_path.clone(),
+                        message: format!(
+                            "failed to parse dependency source `{}` while preparing public function wrappers",
+                            normalize_path(&dependency_source_path)
+                        ),
+                    },
+                }
+            })?;
             let module_import_path =
-                dependency_interface_module_import_path(&dependency_package, &module.syntax);
+                dependency_interface_module_import_path(&dependency_package, &source_module);
             collect_dependency_module_public_function_forwarders(
                 &dependency_package,
                 &dependency_manifest.manifest_path,
-                &module.syntax,
-                &module.contents,
+                &source_module,
+                &dependency_source,
                 Some(&imported_externs),
                 required_functions_by_module_path.get(&module_import_path),
                 &occupied_root_names,
+                &mut required_types_by_module_path,
                 &mut owners_by_symbol,
                 &mut forwarders,
             )
@@ -7021,7 +7186,10 @@ fn render_direct_dependency_public_function_forwarders_quiet(
         }
     }
 
-    Ok(forwarders.join("\n\n"))
+    Ok(RenderedDependencyPublicFunctionForwarders {
+        forwarders: forwarders.join("\n\n"),
+        required_types_by_module_path,
+    })
 }
 
 fn render_public_dependency_function_export_wrappers(
@@ -7143,6 +7311,12 @@ struct DependencyPublicGlobalBridgeCandidate<'a> {
     global: &'a GlobalDecl,
 }
 
+#[derive(Clone, Copy)]
+struct DependencyPublicTypeBridgeCandidate<'a> {
+    item: &'a ql_ast::Item,
+    struct_decl: &'a ql_ast::StructDecl,
+}
+
 #[derive(Default)]
 struct DependencyPublicGlobalExprDependencies {
     globals: BTreeSet<String>,
@@ -7170,6 +7344,28 @@ fn dependency_public_global_bridge_candidates<'a>(
     candidates
 }
 
+fn dependency_public_type_bridge_candidates<'a>(
+    module: &'a Module,
+) -> BTreeMap<String, DependencyPublicTypeBridgeCandidate<'a>> {
+    let mut candidates = BTreeMap::new();
+    for item in &module.items {
+        let struct_decl = match &item.kind {
+            ItemKind::Struct(struct_decl)
+                if struct_decl.visibility == Visibility::Public
+                    && struct_decl.generics.is_empty() =>
+            {
+                struct_decl
+            }
+            _ => continue,
+        };
+        candidates.insert(
+            struct_decl.name.clone(),
+            DependencyPublicTypeBridgeCandidate { item, struct_decl },
+        );
+    }
+    candidates
+}
+
 fn dependency_public_function_bridge_candidates(module: &Module) -> BTreeSet<String> {
     module
         .items
@@ -7183,6 +7379,160 @@ fn dependency_public_function_bridge_candidates(module: &Module) -> BTreeSet<Str
             _ => None,
         })
         .collect()
+}
+
+fn collect_dependency_public_type_expr_dependencies<'a>(
+    ty: &ql_ast::TypeExpr,
+    type_candidates: &BTreeMap<String, DependencyPublicTypeBridgeCandidate<'a>>,
+    dependencies: &mut BTreeSet<String>,
+) {
+    match &ty.kind {
+        ql_ast::TypeExprKind::Pointer { inner, .. } => {
+            collect_dependency_public_type_expr_dependencies(inner, type_candidates, dependencies);
+        }
+        ql_ast::TypeExprKind::Array { element, .. } => {
+            collect_dependency_public_type_expr_dependencies(
+                element,
+                type_candidates,
+                dependencies,
+            );
+        }
+        ql_ast::TypeExprKind::Named { path, args } => {
+            if let [name] = path.segments.as_slice() {
+                if type_candidates.contains_key(name) {
+                    dependencies.insert(name.clone());
+                }
+            }
+            for arg in args {
+                collect_dependency_public_type_expr_dependencies(
+                    arg,
+                    type_candidates,
+                    dependencies,
+                );
+            }
+        }
+        ql_ast::TypeExprKind::Tuple(items) => {
+            for item in items {
+                collect_dependency_public_type_expr_dependencies(
+                    item,
+                    type_candidates,
+                    dependencies,
+                );
+            }
+        }
+        ql_ast::TypeExprKind::Callable { params, ret } => {
+            for param in params {
+                collect_dependency_public_type_expr_dependencies(
+                    param,
+                    type_candidates,
+                    dependencies,
+                );
+            }
+            collect_dependency_public_type_expr_dependencies(ret, type_candidates, dependencies);
+        }
+    }
+}
+
+fn dependency_public_type_dependencies<'a>(
+    symbol_name: &str,
+    type_candidates: &BTreeMap<String, DependencyPublicTypeBridgeCandidate<'a>>,
+) -> Option<BTreeSet<String>> {
+    let candidate = type_candidates.get(symbol_name)?;
+    let mut dependencies = BTreeSet::new();
+    for field in &candidate.struct_decl.fields {
+        collect_dependency_public_type_expr_dependencies(
+            &field.ty,
+            type_candidates,
+            &mut dependencies,
+        );
+    }
+    Some(dependencies)
+}
+
+fn dependency_public_type_bridge_order<'a>(
+    symbol_name: &str,
+    type_candidates: &BTreeMap<String, DependencyPublicTypeBridgeCandidate<'a>>,
+) -> Option<Vec<String>> {
+    let mut visiting = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    let mut ordered = Vec::new();
+    if collect_dependency_public_type_bridge_order(
+        symbol_name,
+        type_candidates,
+        &mut visiting,
+        &mut visited,
+        &mut ordered,
+    ) {
+        Some(ordered)
+    } else {
+        None
+    }
+}
+
+fn collect_dependency_public_type_bridge_order<'a>(
+    symbol_name: &str,
+    type_candidates: &BTreeMap<String, DependencyPublicTypeBridgeCandidate<'a>>,
+    visiting: &mut BTreeSet<String>,
+    visited: &mut BTreeSet<String>,
+    ordered: &mut Vec<String>,
+) -> bool {
+    if visited.contains(symbol_name) {
+        return true;
+    }
+    let Some(_) = type_candidates.get(symbol_name) else {
+        return false;
+    };
+    if !visiting.insert(symbol_name.to_owned()) {
+        return false;
+    }
+
+    let Some(dependencies) = dependency_public_type_dependencies(symbol_name, type_candidates)
+    else {
+        visiting.remove(symbol_name);
+        return false;
+    };
+
+    for dependency in dependencies {
+        if !collect_dependency_public_type_bridge_order(
+            &dependency,
+            type_candidates,
+            visiting,
+            visited,
+            ordered,
+        ) {
+            visiting.remove(symbol_name);
+            return false;
+        }
+    }
+
+    visiting.remove(symbol_name);
+    visited.insert(symbol_name.to_owned());
+    ordered.push(symbol_name.to_owned());
+    true
+}
+
+fn collect_dependency_public_function_type_dependencies<'a>(
+    function: &FunctionDecl,
+    type_candidates: &BTreeMap<String, DependencyPublicTypeBridgeCandidate<'a>>,
+) -> BTreeSet<String> {
+    let mut dependencies = BTreeSet::new();
+    for param in &function.params {
+        if let Param::Regular { ty, .. } = param {
+            collect_dependency_public_type_expr_dependencies(
+                ty,
+                type_candidates,
+                &mut dependencies,
+            );
+        }
+    }
+    if let Some(return_type) = &function.return_type {
+        collect_dependency_public_type_expr_dependencies(
+            return_type,
+            type_candidates,
+            &mut dependencies,
+        );
+    }
+    dependencies
 }
 
 fn collect_dependency_public_global_expr_dependencies<'a>(
@@ -7385,12 +7735,14 @@ fn collect_dependency_module_public_value_declarations(
     imported_externs: Option<&ImportedDependencyExterns>,
     occupied_root_names: &BTreeSet<String>,
     required_functions_by_module_path: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
+    required_types_by_module_path: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     declarations: &mut Vec<String>,
 ) -> Result<(), DependencyPublicValueBridgeError> {
     let module_import_path = dependency_interface_module_import_path(dependency_package, module);
     let global_candidates = dependency_public_global_bridge_candidates(module);
     let function_candidates = dependency_public_function_bridge_candidates(module);
+    let type_candidates = dependency_public_type_bridge_candidates(module);
     let mut emitted = BTreeSet::new();
 
     for item in &module.items {
@@ -7451,6 +7803,18 @@ fn collect_dependency_module_public_value_declarations(
                     .or_default()
                     .extend(dependencies.functions);
             }
+            let mut type_dependencies = BTreeSet::new();
+            collect_dependency_public_type_expr_dependencies(
+                &candidate.global.ty,
+                &type_candidates,
+                &mut type_dependencies,
+            );
+            if !type_dependencies.is_empty() {
+                required_types_by_module_path
+                    .entry(module_import_path.clone())
+                    .or_default()
+                    .extend(type_dependencies);
+            }
             emitted.insert(ordered_symbol);
         }
     }
@@ -7466,10 +7830,12 @@ fn collect_dependency_module_public_function_forwarders(
     imported_externs: Option<&ImportedDependencyExterns>,
     required_function_names: Option<&BTreeSet<String>>,
     occupied_root_names: &BTreeSet<String>,
+    required_types_by_module_path: &mut BTreeMap<Vec<String>, BTreeSet<String>>,
     owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
     forwarders: &mut Vec<String>,
 ) -> Result<(), DependencyPublicFunctionForwarderError> {
     let module_import_path = dependency_interface_module_import_path(dependency_package, module);
+    let type_candidates = dependency_public_type_bridge_candidates(module);
 
     for item in &module.items {
         let ItemKind::Function(function) = &item.kind else {
@@ -7487,6 +7853,8 @@ fn collect_dependency_module_public_function_forwarders(
         if !imported && !required_by_value {
             continue;
         }
+        let type_dependencies =
+            collect_dependency_public_function_type_dependencies(function, &type_candidates);
         if occupied_root_names.contains(&function.name) {
             return Err(DependencyPublicFunctionForwarderError::LocalConflict {
                 symbol: function.name.clone(),
@@ -7510,9 +7878,375 @@ fn collect_dependency_module_public_function_forwarders(
         .map_err(|(symbol, owner)| {
             DependencyPublicFunctionForwarderError::DependencyConflict { symbol, owner }
         })?;
+        if !type_dependencies.is_empty() {
+            required_types_by_module_path
+                .entry(module_import_path.clone())
+                .or_default()
+                .extend(type_dependencies);
+        }
     }
 
     Ok(())
+}
+
+fn render_direct_dependency_public_type_declarations(
+    command_label: &str,
+    manifest_path: &Path,
+    source: &str,
+    required_types_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
+    report_failure: bool,
+) -> Result<String, u8> {
+    let manifest = load_project_manifest(manifest_path).map_err(|error| {
+        if report_failure {
+            report_project_build_dependency_error(command_label, None, &error);
+        }
+        1
+    })?;
+    let direct_dependencies = load_reference_manifests(&manifest).map_err(|error| {
+        if report_failure {
+            report_project_build_dependency_error(command_label, Some(manifest_path), &error);
+        }
+        1
+    })?;
+    let root_source_module = match parse_source(source) {
+        Ok(module) => module,
+        Err(_) => return Ok(String::new()),
+    };
+    let occupied_root_names = collect_top_level_definition_names(&root_source_module);
+
+    let mut declarations = Vec::new();
+    let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
+
+    for dependency in direct_dependencies {
+        let dependency_package = match package_name(&dependency) {
+            Ok(name) => name.to_owned(),
+            Err(error) => {
+                if report_failure {
+                    report_project_build_dependency_error(
+                        command_label,
+                        Some(manifest_path),
+                        &error,
+                    );
+                }
+                return Err(1);
+            }
+        };
+        let interface_path = default_interface_path(&dependency).map_err(|error| {
+            if report_failure {
+                report_project_build_dependency_error(command_label, Some(manifest_path), &error);
+            }
+            1
+        })?;
+        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+            if report_failure {
+                eprintln!(
+                    "error: {command_label} failed to load referenced package interface `{}`: {error}",
+                    normalize_path(&interface_path)
+                );
+                eprintln!(
+                    "note: while preparing dependency public type bridges for `{}`",
+                    normalize_path(manifest_path)
+                );
+            }
+            1
+        })?;
+        let module_import_paths =
+            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
+        let imported_externs =
+            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
+
+        for module in &artifact.modules {
+            let dependency_source_path =
+                dependency_module_source_path(&dependency.manifest_path, &module.source_path);
+            let dependency_source = fs::read_to_string(&dependency_source_path).map_err(|error| {
+                if report_failure {
+                    eprintln!(
+                        "error: {command_label} failed to access dependency source `{}`: {error}",
+                        normalize_path(&dependency_source_path)
+                    );
+                    eprintln!(
+                        "note: while preparing dependency public type bridges for `{}`",
+                        normalize_path(manifest_path)
+                    );
+                }
+                1
+            })?;
+            let source_module = match parse_source(&dependency_source) {
+                Ok(module) => module,
+                Err(_) => {
+                    if report_failure {
+                        eprintln!(
+                            "error: {command_label} failed to parse dependency source `{}` while preparing public type bridges",
+                            normalize_path(&dependency_source_path)
+                        );
+                        eprintln!("note: dependency package: `{dependency_package}`");
+                    }
+                    return Err(1);
+                }
+            };
+            let module_import_path =
+                dependency_interface_module_import_path(&dependency_package, &source_module);
+            collect_dependency_module_public_type_declarations(
+                &dependency_package,
+                &dependency.manifest_path,
+                &source_module,
+                &dependency_source,
+                Some(&imported_externs),
+                required_types_by_module_path.get(&module_import_path),
+                &occupied_root_names,
+                &mut owners_by_symbol,
+                &mut declarations,
+            )
+            .map_err(|error| {
+                if report_failure {
+                    match error {
+                        DependencyPublicTypeBridgeError::DependencyConflict { symbol, owner } => {
+                            eprintln!(
+                                "error: {command_label} found conflicting direct dependency public type imports for `{symbol}`"
+                            );
+                            eprintln!("note: first package: `{}`", owner.package_name);
+                            eprintln!("note: conflicting package: `{dependency_package}`");
+                            eprintln!(
+                                "hint: keep direct dependency public type names unique until package-qualified dependency type lowering lands"
+                            );
+                        }
+                        DependencyPublicTypeBridgeError::LocalConflict { symbol } => {
+                            eprintln!(
+                                "error: {command_label} cannot synthesize direct dependency public type bridge for `{symbol}` because the root source already defines the same top-level name"
+                            );
+                            eprintln!("note: conflicting direct dependency package: `{dependency_package}`");
+                            eprintln!(
+                                "hint: rename the local top-level item or avoid importing a direct dependency public type with the same original symbol name"
+                            );
+                        }
+                    }
+                }
+                1
+            })?;
+        }
+    }
+
+    Ok(declarations.join("\n\n"))
+}
+
+fn render_direct_dependency_public_type_declarations_quiet(
+    manifest_path: &Path,
+    source: &str,
+    required_types_by_module_path: &BTreeMap<Vec<String>, BTreeSet<String>>,
+) -> Result<String, PrepareProjectTargetBuildError> {
+    let manifest = load_project_manifest(manifest_path)
+        .map_err(|error| target_prep_dependency_manifest_failure(None, &error))?;
+    let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let root_source_module = match parse_source(source) {
+        Ok(module) => module,
+        Err(_) => return Ok(String::new()),
+    };
+    let occupied_root_names = collect_top_level_definition_names(&root_source_module);
+    let direct_dependencies = manifest
+        .references
+        .packages
+        .iter()
+        .map(|reference| {
+            let reference_manifest_path = reference_manifest_path(&manifest, reference);
+            let dependency_manifest = load_project_manifest(&manifest_dir.join(reference))
+                .map_err(|error| {
+                    target_prep_dependency_manifest_failure(Some(&reference_manifest_path), &error)
+                })?;
+            Ok::<_, PrepareProjectTargetBuildError>(dependency_manifest)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut declarations = Vec::new();
+    let mut owners_by_symbol = BTreeMap::<String, DependencyExternOwner>::new();
+
+    for dependency_manifest in direct_dependencies {
+        let dependency_package = package_name(&dependency_manifest)
+            .map(str::to_owned)
+            .map_err(|error| {
+                target_prep_dependency_manifest_failure(
+                    Some(&dependency_manifest.manifest_path),
+                    &error,
+                )
+            })?;
+        let interface_path = default_interface_path(&dependency_manifest).map_err(|error| {
+            target_prep_dependency_manifest_failure(
+                Some(&dependency_manifest.manifest_path),
+                &error,
+            )
+        })?;
+        let artifact = load_interface_artifact(&interface_path).map_err(|error| {
+            PrepareProjectTargetBuildError {
+                failure_kind: PrepareProjectTargetBuildFailureKind::DependencyInterface {
+                    dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                    dependency_package: dependency_package.clone(),
+                    interface_path: interface_path.clone(),
+                    message: format!(
+                        "failed to load referenced package interface `{}`: {error}",
+                        normalize_path(&interface_path)
+                    ),
+                },
+            }
+        })?;
+        let module_import_paths =
+            dependency_interface_module_import_paths(&dependency_package, &artifact.modules);
+        let imported_externs =
+            collect_imported_dependency_externs(&root_source_module, &module_import_paths);
+
+        for module in &artifact.modules {
+            let dependency_source_path = dependency_module_source_path(
+                &dependency_manifest.manifest_path,
+                &module.source_path,
+            );
+            let dependency_source =
+                fs::read_to_string(&dependency_source_path).map_err(|error| {
+                    PrepareProjectTargetBuildError {
+                        failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
+                            dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                            dependency_package: dependency_package.clone(),
+                            source_path: dependency_source_path.clone(),
+                            message: format!(
+                                "failed to access dependency source `{}`: {error}",
+                                normalize_path(&dependency_source_path)
+                            ),
+                        },
+                    }
+                })?;
+            let source_module = parse_source(&dependency_source).map_err(|_| {
+                PrepareProjectTargetBuildError {
+                    failure_kind: PrepareProjectTargetBuildFailureKind::DependencySource {
+                        dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                        dependency_package: dependency_package.clone(),
+                        source_path: dependency_source_path.clone(),
+                        message: format!(
+                            "failed to parse dependency source `{}` while preparing public type bridges",
+                            normalize_path(&dependency_source_path)
+                        ),
+                    },
+                }
+            })?;
+            let module_import_path =
+                dependency_interface_module_import_path(&dependency_package, &source_module);
+            collect_dependency_module_public_type_declarations(
+                &dependency_package,
+                &dependency_manifest.manifest_path,
+                &source_module,
+                &dependency_source,
+                Some(&imported_externs),
+                required_types_by_module_path.get(&module_import_path),
+                &occupied_root_names,
+                &mut owners_by_symbol,
+                &mut declarations,
+            )
+            .map_err(|error| match error {
+                DependencyPublicTypeBridgeError::DependencyConflict { symbol, owner } => {
+                    PrepareProjectTargetBuildError {
+                        failure_kind:
+                            PrepareProjectTargetBuildFailureKind::DependencyTypeConflict {
+                                symbol,
+                                first_package: owner.package_name,
+                                first_manifest_path: owner.manifest_path,
+                                conflicting_package: dependency_package.clone(),
+                                conflicting_manifest_path: dependency_manifest
+                                    .manifest_path
+                                    .clone(),
+                            },
+                    }
+                }
+                DependencyPublicTypeBridgeError::LocalConflict { symbol } => {
+                    PrepareProjectTargetBuildError {
+                        failure_kind:
+                            PrepareProjectTargetBuildFailureKind::DependencyTypeLocalConflict {
+                                symbol,
+                                dependency_package: dependency_package.clone(),
+                                dependency_manifest_path: dependency_manifest.manifest_path.clone(),
+                            },
+                    }
+                }
+            })?;
+        }
+    }
+
+    Ok(declarations.join("\n\n"))
+}
+
+fn collect_dependency_module_public_type_declarations(
+    dependency_package: &str,
+    dependency_manifest_path: &Path,
+    module: &Module,
+    contents: &str,
+    imported_externs: Option<&ImportedDependencyExterns>,
+    required_type_names: Option<&BTreeSet<String>>,
+    occupied_root_names: &BTreeSet<String>,
+    owners_by_symbol: &mut BTreeMap<String, DependencyExternOwner>,
+    declarations: &mut Vec<String>,
+) -> Result<(), DependencyPublicTypeBridgeError> {
+    let module_import_path = dependency_interface_module_import_path(dependency_package, module);
+    let type_candidates = dependency_public_type_bridge_candidates(module);
+    let mut emitted = BTreeSet::new();
+
+    for item in &module.items {
+        let struct_decl = match &item.kind {
+            ItemKind::Struct(struct_decl)
+                if struct_decl.visibility == Visibility::Public
+                    && struct_decl.generics.is_empty() =>
+            {
+                struct_decl
+            }
+            _ => continue,
+        };
+        let imported = imported_externs.is_none_or(|imports| {
+            dependency_extern_is_imported(imports, &module_import_path, &struct_decl.name)
+        });
+        let required_by_bridge = required_type_names
+            .is_some_and(|required_type_names| required_type_names.contains(&struct_decl.name));
+        if !imported && !required_by_bridge {
+            continue;
+        }
+
+        let Some(ordered_symbols) =
+            dependency_public_type_bridge_order(&struct_decl.name, &type_candidates)
+        else {
+            continue;
+        };
+
+        for ordered_symbol in ordered_symbols {
+            if emitted.contains(&ordered_symbol) {
+                continue;
+            }
+            if occupied_root_names.contains(&ordered_symbol) {
+                return Err(DependencyPublicTypeBridgeError::LocalConflict {
+                    symbol: ordered_symbol,
+                });
+            }
+            let candidate = type_candidates
+                .get(&ordered_symbol)
+                .expect("ordered dependency public types should resolve to candidates");
+            record_dependency_extern_declaration(
+                dependency_package,
+                dependency_manifest_path,
+                &ordered_symbol,
+                span_text(contents, candidate.item.span),
+                owners_by_symbol,
+                declarations,
+            )
+            .map_err(|(symbol, owner)| {
+                DependencyPublicTypeBridgeError::DependencyConflict { symbol, owner }
+            })?;
+            emitted.insert(ordered_symbol);
+        }
+    }
+
+    Ok(())
+}
+
+enum DependencyPublicTypeBridgeError {
+    DependencyConflict {
+        symbol: String,
+        owner: DependencyExternOwner,
+    },
+    LocalConflict {
+        symbol: String,
+    },
 }
 
 enum DependencyPublicFunctionForwarderError {

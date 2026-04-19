@@ -921,6 +921,140 @@ dep = "../dep"
 }
 
 #[test]
+fn build_project_source_file_supports_direct_dependency_public_struct_functions() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-source-file-public-struct-function");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub struct Box { value: Int }\npub fn make_box() -> Box { return Box { value: 7 } }\n",
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    let app_main = temp.write(
+        "app/src/main.ql",
+        "use dep.Box as Box\nuse dep.make_box as make\n\nfn main() -> Int {\n    let value: Box = make()\n    return value.value\n}\n",
+    );
+
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let app_output = project_root.join("target/ql/debug/main.ll");
+    let interface_output = dep_root.join("dep.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&app_main).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` direct project source file dependency public struct function",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-build-source-file-public-struct-function",
+        "direct project source file dependency public struct function json build",
+        &output,
+    )
+    .expect(
+        "direct project source file `ql build --json` should support direct dependency public struct functions",
+    );
+    expect_empty_stderr(
+        "project-build-source-file-public-struct-function",
+        "direct project source file dependency public struct function json build",
+        &stderr,
+    )
+    .expect("direct dependency public struct function json build should not print stderr");
+
+    let json = parse_json_output("project-build-source-file-public-struct-function", &stdout);
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["path"],
+        app_main.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "ok");
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("dependency public struct function json build should expose built targets");
+    assert_eq!(built_targets.len(), 2);
+    assert_eq!(
+        built_targets[0],
+        serde_json::json!({
+            "manifest_path": dep_manifest.display().to_string().replace('\\', "/"),
+            "package_name": "dep",
+            "selected": false,
+            "dependency_only": true,
+            "kind": "lib",
+            "path": "src/lib.ql",
+            "emit": "staticlib",
+            "profile": "debug",
+            "artifact_path": dep_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
+    );
+    assert_eq!(
+        built_targets[1],
+        serde_json::json!({
+            "manifest_path": app_manifest.display().to_string().replace('\\', "/"),
+            "package_name": "app",
+            "selected": true,
+            "dependency_only": false,
+            "kind": "bin",
+            "path": "src/main.ql",
+            "emit": "llvm-ir",
+            "profile": "debug",
+            "artifact_path": app_output.display().to_string().replace('\\', "/"),
+            "c_header_path": JsonValue::Null,
+        })
+    );
+    expect_file_exists(
+        "project-build-source-file-public-struct-function",
+        &dep_output,
+        "dependency package artifact",
+        "direct project source file dependency public struct function json build",
+    )
+    .expect("direct dependency public struct function json build should emit dependency artifacts");
+    expect_file_exists(
+        "project-build-source-file-public-struct-function",
+        &app_output,
+        "selected package artifact",
+        "direct project source file dependency public struct function json build",
+    )
+    .expect(
+        "direct dependency public struct function json build should emit the selected package artifact",
+    );
+    expect_file_exists(
+        "project-build-source-file-public-struct-function",
+        &interface_output,
+        "synced dependency interface",
+        "direct project source file dependency public struct function json build",
+    )
+    .expect(
+        "direct dependency public struct function json build should keep dependency interface sync",
+    );
+}
+
+#[test]
 fn build_package_path_supports_json_output_for_dependency_build_plan() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-package-json");
@@ -2947,6 +3081,139 @@ dep = "../dep"
         "package build json implicit dependency public function local conflict",
     )
     .expect("implicit local conflict should preserve the dependency package artifact");
+}
+
+#[test]
+fn build_package_path_json_reports_implicit_dependency_public_type_local_conflict() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-package-json-implicit-public-type-local-conflict");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src"))
+        .expect("create dep source tree for implicit dependency public type local conflict");
+    std::fs::create_dir_all(project_root.join("src"))
+        .expect("create app source tree for implicit dependency public type local conflict");
+
+    let dep_manifest = temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub struct Box { value: Int }\npub fn make_box() -> Box { return Box { value: 7 } }\n",
+    );
+    let app_manifest = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        "use dep.make_box as make\n\nstruct Box { value: Int }\n\nfn main() -> Int {\n    let value = make()\n    return value.value\n}\n",
+    );
+
+    let dep_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&project_root).arg("--json");
+    let output = run_command_capture(
+        &mut command,
+        "`ql build --json` implicit dependency public type local conflict",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-build-package-json-implicit-public-type-local-conflict",
+        "package build json implicit dependency public type local conflict",
+        &output,
+        1,
+    )
+    .expect(
+        "package-path `ql build --json` should fail when an implicit dependency type bridge collides with a local top-level type",
+    );
+    expect_empty_stderr(
+        "project-build-package-json-implicit-public-type-local-conflict",
+        "package build json implicit dependency public type local conflict",
+        &stderr,
+    )
+    .expect("implicit dependency public type local conflicts should stay on stdout in json mode");
+
+    let json = parse_json_output(
+        "project-build-package-json-implicit-public-type-local-conflict",
+        &stdout,
+    );
+    assert_eq!(json["schema"], "ql.build.v1");
+    assert_eq!(
+        json["path"],
+        project_root.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["scope"], "project");
+    assert_eq!(
+        json["project_manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["status"], "failed");
+
+    let built_targets = json["built_targets"]
+        .as_array()
+        .expect("implicit type local conflict json should expose built_targets");
+    assert_eq!(built_targets.len(), 1);
+    assert_eq!(
+        built_targets[0]["manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(built_targets[0]["package_name"], "dep");
+    assert_eq!(built_targets[0]["selected"], false);
+    assert_eq!(built_targets[0]["dependency_only"], true);
+    assert_eq!(built_targets[0]["kind"], "lib");
+    assert_eq!(
+        built_targets[0]["artifact_path"],
+        dep_output.display().to_string().replace('\\', "/")
+    );
+
+    assert_eq!(json["interfaces"], serde_json::json!([]));
+    assert_eq!(
+        json["failure"]["manifest_path"],
+        app_manifest.display().to_string().replace('\\', "/")
+    );
+    assert_eq!(json["failure"]["package_name"], "app");
+    assert_eq!(json["failure"]["selected"], true);
+    assert_eq!(json["failure"]["dependency_only"], false);
+    assert_eq!(json["failure"]["kind"], "bin");
+    assert_eq!(json["failure"]["path"], "src/main.ql");
+    assert_eq!(json["failure"]["stage"], "target-prep");
+    assert_eq!(
+        json["failure"]["error_kind"],
+        "dependency-type-local-conflict"
+    );
+    assert_eq!(json["failure"]["symbol"], "Box");
+    assert_eq!(json["failure"]["dependency_package"], "dep");
+    assert_eq!(
+        json["failure"]["dependency_manifest_path"],
+        dep_manifest.display().to_string().replace('\\', "/")
+    );
+    assert!(
+        json["failure"]["message"]
+            .as_str()
+            .expect("implicit type local conflict json should expose a message")
+            .contains("already defines the same top-level name"),
+        "implicit type local conflict json should preserve the bridge-name collision detail: {json}"
+    );
+
+    expect_file_exists(
+        "project-build-package-json-implicit-public-type-local-conflict",
+        &dep_output,
+        "dependency package artifact",
+        "package build json implicit dependency public type local conflict",
+    )
+    .expect("implicit type local conflict should preserve the dependency package artifact");
 }
 
 #[test]
