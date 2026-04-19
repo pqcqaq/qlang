@@ -1274,3 +1274,169 @@ pub fn main() -> Int {
         }))
     );
 }
+
+#[test]
+fn package_analysis_preserves_same_named_local_dependency_member_rename_in_broken_source() {
+    let temp = TempDir::new("ql-analysis-package-same-named-local-dependency-member-rename");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/vendor/alpha/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+    );
+    temp.write(
+        "workspace/vendor/beta/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Bool
+}
+"#,
+    );
+    let source = r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+use demo.shared.beta.build as other
+
+pub fn main() -> Int {
+    let first = build().ping()
+    let second = build().ping()
+    let third = build().value
+    let fourth = build().value
+    let fifth = other().ping() + other().value
+    let broken = other(
+"#;
+    temp.write("workspace/packages/app/src/main.ql", source);
+
+    assert!(analyze_package(&app_root).is_err());
+    let package = analyze_package_dependencies(&app_root)
+        .expect("dependency-only package analysis should survive parse errors");
+
+    let method_use = nth_offset(source, "ping", 2);
+    assert_eq!(
+        package.dependency_prepare_rename_in_source_at(source, method_use),
+        Some(RenameTarget {
+            kind: SymbolKind::Method,
+            name: "ping".to_owned(),
+            span: Span::new(method_use, method_use + "ping".len()),
+        })
+    );
+    assert_eq!(
+        package.dependency_rename_in_source_at(source, method_use, "probe"),
+        Ok(Some(RenameResult {
+            kind: SymbolKind::Method,
+            old_name: "ping".to_owned(),
+            new_name: "probe".to_owned(),
+            edits: vec![
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "ping", 1),
+                        nth_offset(source, "ping", 1) + "ping".len(),
+                    ),
+                    replacement: "probe".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "ping", 2),
+                        nth_offset(source, "ping", 2) + "ping".len(),
+                    ),
+                    replacement: "probe".to_owned(),
+                },
+            ],
+        }))
+    );
+
+    let field_use = nth_offset(source, "value", 2);
+    assert_eq!(
+        package.dependency_prepare_rename_in_source_at(source, field_use),
+        Some(RenameTarget {
+            kind: SymbolKind::Field,
+            name: "value".to_owned(),
+            span: Span::new(field_use, field_use + "value".len()),
+        })
+    );
+    assert_eq!(
+        package.dependency_rename_in_source_at(source, field_use, "count"),
+        Ok(Some(RenameResult {
+            kind: SymbolKind::Field,
+            old_name: "value".to_owned(),
+            new_name: "count".to_owned(),
+            edits: vec![
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "value", 1),
+                        nth_offset(source, "value", 1) + "value".len(),
+                    ),
+                    replacement: "count".to_owned(),
+                },
+                RenameEdit {
+                    span: Span::new(
+                        nth_offset(source, "value", 2),
+                        nth_offset(source, "value", 2) + "value".len(),
+                    ),
+                    replacement: "count".to_owned(),
+                },
+            ],
+        }))
+    );
+}

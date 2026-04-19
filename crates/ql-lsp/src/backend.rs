@@ -13696,6 +13696,245 @@ pub enum Command {
     }
 
     #[test]
+    fn same_named_local_dependency_broken_source_member_prepare_rename_and_rename_prefer_matching_dependency_source()
+     {
+        let temp = TempDir::new("ql-lsp-same-named-local-dependency-broken-source-member-rename");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+use demo.shared.beta.build as other
+
+pub fn main() -> Int {
+    let first = build().ping()
+    let second = build().ping()
+    let third = build().value
+    let fourth = build().value
+    let fifth = other().ping() + other().value
+    let broken = other(
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config {
+    return Config { value: 1 }
+}
+
+impl Config {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/src/lib.ql",
+            r#"
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+
+pub fn build() -> Config {
+    return Config { value: true }
+}
+
+impl Config {
+    pub fn ping(self) -> Bool {
+        return self.value
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+beta = { path = "../../vendor/beta" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Int
+}
+"#,
+        );
+        temp.write(
+            "workspace/vendor/beta/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.beta
+
+pub struct Config {
+    value: Bool,
+}
+
+pub fn build() -> Config
+
+impl Config {
+    pub fn ping(self) -> Bool
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let method_use = nth_offset(&source, "ping", 2);
+        assert_eq!(
+            prepare_rename_for_dependency_imports(
+                &source,
+                &package,
+                offset_to_position(&source, method_use),
+            ),
+            Some(PrepareRenameResponse::RangeWithPlaceholder {
+                range: span_to_range(&source, Span::new(method_use, method_use + "ping".len())),
+                placeholder: "ping".to_owned(),
+            }),
+        );
+
+        let method_edit = rename_for_dependency_imports(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, method_use),
+            "probe",
+        )
+        .expect("rename should succeed")
+        .expect("rename should return workspace edits");
+        assert_workspace_edit(
+            method_edit,
+            &uri,
+            vec![
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "ping", 1),
+                            nth_offset(&source, "ping", 1) + "ping".len(),
+                        ),
+                    ),
+                    "probe".to_owned(),
+                ),
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "ping", 2),
+                            nth_offset(&source, "ping", 2) + "ping".len(),
+                        ),
+                    ),
+                    "probe".to_owned(),
+                ),
+            ],
+        );
+
+        let field_use = nth_offset(&source, "value", 2);
+        assert_eq!(
+            prepare_rename_for_dependency_imports(
+                &source,
+                &package,
+                offset_to_position(&source, field_use),
+            ),
+            Some(PrepareRenameResponse::RangeWithPlaceholder {
+                range: span_to_range(&source, Span::new(field_use, field_use + "value".len())),
+                placeholder: "value".to_owned(),
+            }),
+        );
+
+        let field_edit = rename_for_dependency_imports(
+            &uri,
+            &source,
+            &package,
+            offset_to_position(&source, field_use),
+            "count",
+        )
+        .expect("rename should succeed")
+        .expect("rename should return workspace edits");
+        assert_workspace_edit(
+            field_edit,
+            &uri,
+            vec![
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "value", 1),
+                            nth_offset(&source, "value", 1) + "value".len(),
+                        ),
+                    ),
+                    "count".to_owned(),
+                ),
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "value", 2),
+                            nth_offset(&source, "value", 2) + "value".len(),
+                        ),
+                    ),
+                    "count".to_owned(),
+                ),
+            ],
+        );
+    }
+
+    #[test]
     fn same_named_local_dependency_broken_source_variant_completion_prefers_matching_dependency_source()
      {
         let temp =
