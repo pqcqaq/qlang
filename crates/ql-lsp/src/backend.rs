@@ -2791,14 +2791,15 @@ fn workspace_dependency_document_highlights_with_open_docs(
     document_highlights_from_locations(uri, locations)
 }
 
-fn workspace_dependency_document_highlights_in_broken_source(
+fn workspace_dependency_document_highlights_in_broken_source_with_open_docs(
     uri: &Url,
     source: &str,
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
+    open_docs: &OpenDocuments,
 ) -> Option<Vec<DocumentHighlight>> {
-    let locations = workspace_source_references_for_dependency_in_broken_source(
-        uri, source, package, position, true,
+    let locations = workspace_source_references_for_dependency_in_broken_source_with_open_docs(
+        uri, source, package, open_docs, position, true,
     )?;
     document_highlights_from_locations(uri, locations)
 }
@@ -3221,11 +3222,31 @@ fn workspace_source_references_for_dependency_in_broken_source(
     position: tower_lsp::lsp_types::Position,
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
-    workspace_source_references_for_dependency(
+    let open_docs = OpenDocuments::new();
+    workspace_source_references_for_dependency_in_broken_source_with_open_docs(
+        uri,
+        source,
+        package,
+        &open_docs,
+        position,
+        include_declaration,
+    )
+}
+
+fn workspace_source_references_for_dependency_in_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    workspace_source_references_for_dependency_with_open_docs(
         uri,
         source,
         None,
         package,
+        open_docs,
         position,
         include_declaration,
     )
@@ -3274,13 +3295,28 @@ fn fallback_document_highlights_for_package_at(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<Vec<DocumentHighlight>> {
+    let open_docs = OpenDocuments::new();
+    fallback_document_highlights_for_package_at_with_open_docs(
+        uri, source, package, position, &open_docs,
+    )
+}
+
+fn fallback_document_highlights_for_package_at_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+    open_docs: &OpenDocuments,
+) -> Option<Vec<DocumentHighlight>> {
     if let Some(highlights) =
         workspace_import_document_highlights_in_broken_source(uri, source, package, position)
     {
         return Some(highlights);
     }
     if let Some(highlights) =
-        workspace_dependency_document_highlights_in_broken_source(uri, source, package, position)
+        workspace_dependency_document_highlights_in_broken_source_with_open_docs(
+            uri, source, package, position, open_docs,
+        )
     {
         return Some(highlights);
     }
@@ -3683,10 +3719,11 @@ impl LanguageServer for Backend {
             }
             if analysis.is_none()
                 && let Some(references) =
-                    workspace_source_references_for_dependency_in_broken_source(
+                    workspace_source_references_for_dependency_in_broken_source_with_open_docs(
                         &uri,
                         &source,
                         &package,
+                        &open_docs,
                         position,
                         params.context.include_declaration,
                     )
@@ -3743,8 +3780,8 @@ impl LanguageServer for Backend {
         if let Some(package) = self.package_analysis_for_uri(&uri) {
             let open_docs = self.open_file_documents().await;
             let Ok(analysis) = analyze_source(&source) else {
-                return Ok(fallback_document_highlights_for_package_at(
-                    &uri, &source, &package, position,
+                return Ok(fallback_document_highlights_for_package_at_with_open_docs(
+                    &uri, &source, &package, position, &open_docs,
                 ));
             };
             if let Some(highlights) =
@@ -3991,7 +4028,8 @@ mod tests {
         completion_for_dependency_methods, completion_for_dependency_struct_fields,
         completion_for_dependency_variants, completion_options,
         document_highlights_for_analysis_at, fallback_document_highlights_for_package_at,
-        file_open_documents, package_analysis_for_path, prepare_rename_for_dependency_imports,
+        fallback_document_highlights_for_package_at_with_open_docs, file_open_documents,
+        package_analysis_for_path, prepare_rename_for_dependency_imports,
         prepare_rename_for_workspace_import_in_broken_source, rename_for_dependency_imports,
         rename_for_workspace_import_in_broken_source,
         semantic_tokens_for_workspace_dependency_fallback,
@@ -4006,6 +4044,7 @@ mod tests {
         workspace_source_method_completions_with_open_docs,
         workspace_source_references_for_dependency,
         workspace_source_references_for_dependency_in_broken_source,
+        workspace_source_references_for_dependency_in_broken_source_with_open_docs,
         workspace_source_references_for_dependency_with_open_docs,
         workspace_source_references_for_import,
         workspace_source_references_for_import_in_broken_source,
@@ -15357,6 +15396,297 @@ pub fn build() -> Counter {
 
         let CompletionResponse::Array(items) = completion else {
             panic!("method completion should resolve to a plain item array")
+        };
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "pulse");
+        assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
+        assert_eq!(items[0].detail.as_deref(), Some("fn pulse(self) -> Int"));
+    }
+
+    #[test]
+    fn workspace_dependency_broken_source_queries_use_unsaved_open_local_dependency_source() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-broken-queries");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    return build().ping()
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn forward(counter: Counter) -> Int {
+    return counter.ping()
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let open_docs =
+            file_open_documents(vec![(alpha_uri.clone(), open_alpha_source.to_owned())]);
+        let ping_position = offset_to_position(&source, nth_offset(&source, "ping", 1) + 1);
+
+        let references =
+            workspace_source_references_for_dependency_in_broken_source_with_open_docs(
+                &uri,
+                &source,
+                &package,
+                &open_docs,
+                ping_position,
+                true,
+            )
+            .expect("broken-source dependency references should use open dependency source");
+
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == alpha_uri
+                    && reference.range.start
+                        == offset_to_position(
+                            open_alpha_source,
+                            nth_offset(open_alpha_source, "ping", 1),
+                        )
+            }),
+            "references should include open dependency source definition",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == alpha_uri
+                    && reference.range.start
+                        == offset_to_position(
+                            open_alpha_source,
+                            nth_offset(open_alpha_source, "ping", 2),
+                        )
+            }),
+            "references should include open dependency source method use",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == uri
+                    && reference.range.start
+                        == offset_to_position(&source, nth_offset(&source, "ping", 1))
+            }),
+            "references should include broken-source local method occurrence",
+        );
+
+        let highlights = fallback_document_highlights_for_package_at_with_open_docs(
+            &uri,
+            &source,
+            &package,
+            ping_position,
+            &open_docs,
+        )
+        .expect("broken-source document highlights should use open dependency source");
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(
+            highlights[0].range.start,
+            offset_to_position(&source, nth_offset(&source, "ping", 1)),
+        );
+    }
+
+    #[test]
+    fn workspace_dependency_broken_source_method_completion_uses_unsaved_open_local_dependency_source()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-broken-method-completion");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    return build().pu(
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let open_docs = file_open_documents(vec![(alpha_uri, open_alpha_source.to_owned())]);
+        let offset = nth_offset(&source, "build().pu", 1) + "build().pu".len();
+
+        let completion = workspace_source_method_completions_with_open_docs(
+            &source,
+            &package,
+            &open_docs,
+            offset_to_position(&source, offset),
+        )
+        .expect("broken-source method completion should use open dependency source");
+
+        let CompletionResponse::Array(items) = completion else {
+            panic!("broken-source method completion should resolve to a plain item array")
         };
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "pulse");
