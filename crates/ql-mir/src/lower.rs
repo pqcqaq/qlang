@@ -6,6 +6,7 @@ use ql_hir::{
     PatternKind, StmtKind,
 };
 use ql_resolve::{ImportBinding, ResolutionMap, ValueResolution};
+use ql_typeck::{MemberTarget, MethodTarget, TypeckResult, analyze_module as analyze_types};
 
 use crate::{
     AggregateField, BasicBlock, BasicBlockId, BodyOwner, CallArgument, CleanupAction, CleanupKind,
@@ -15,6 +16,15 @@ use crate::{
 };
 
 pub fn lower_module(hir: &hir::Module, resolution: &ResolutionMap) -> MirModule {
+    let typeck = analyze_types(hir, resolution);
+    lower_module_with_typeck(hir, resolution, &typeck)
+}
+
+pub fn lower_module_with_typeck(
+    hir: &hir::Module,
+    resolution: &ResolutionMap,
+    typeck: &TypeckResult,
+) -> MirModule {
     let mut mir = MirModule::default();
 
     for &item_id in &hir.items {
@@ -25,6 +35,7 @@ pub fn lower_module(hir: &hir::Module, resolution: &ResolutionMap) -> MirModule 
                         &mut mir,
                         hir,
                         resolution,
+                        typeck,
                         BodyOwner::Item(item_id),
                         function,
                     );
@@ -37,6 +48,7 @@ pub fn lower_module(hir: &hir::Module, resolution: &ResolutionMap) -> MirModule 
                             &mut mir,
                             hir,
                             resolution,
+                            typeck,
                             BodyOwner::TraitMethod {
                                 item: item_id,
                                 index,
@@ -53,6 +65,7 @@ pub fn lower_module(hir: &hir::Module, resolution: &ResolutionMap) -> MirModule 
                             &mut mir,
                             hir,
                             resolution,
+                            typeck,
                             BodyOwner::ImplMethod {
                                 item: item_id,
                                 index,
@@ -69,6 +82,7 @@ pub fn lower_module(hir: &hir::Module, resolution: &ResolutionMap) -> MirModule 
                             &mut mir,
                             hir,
                             resolution,
+                            typeck,
                             BodyOwner::ExtendMethod {
                                 item: item_id,
                                 index,
@@ -88,6 +102,7 @@ pub fn lower_module(hir: &hir::Module, resolution: &ResolutionMap) -> MirModule 
 pub fn lower_standalone_non_capturing_closure_body(
     hir: &hir::Module,
     resolution: &ResolutionMap,
+    typeck: &TypeckResult,
     owner: BodyOwner,
     name: String,
     span: ql_span::Span,
@@ -97,6 +112,7 @@ pub fn lower_standalone_non_capturing_closure_body(
     BodyBuilder::new_closure(
         hir,
         resolution,
+        typeck,
         owner,
         name,
         span,
@@ -111,10 +127,11 @@ fn lower_function_body(
     mir: &mut MirModule,
     hir: &hir::Module,
     resolution: &ResolutionMap,
+    typeck: &TypeckResult,
     owner: BodyOwner,
     function: &Function,
 ) {
-    let body = BodyBuilder::new(hir, resolution, owner, function).lower();
+    let body = BodyBuilder::new(hir, resolution, typeck, owner, function).lower();
     mir.alloc_body(owner, body);
 }
 
@@ -600,6 +617,24 @@ fn local_item_for_value_resolution(
     }
 }
 
+fn method_function_ref(module: &hir::Module, target: MethodTarget) -> hir::FunctionRef {
+    match &module.item(target.item_id).kind {
+        ItemKind::Trait(_) => hir::FunctionRef::TraitMethod {
+            item: target.item_id,
+            index: target.method_index,
+        },
+        ItemKind::Impl(_) => hir::FunctionRef::ImplMethod {
+            item: target.item_id,
+            index: target.method_index,
+        },
+        ItemKind::Extend(_) => hir::FunctionRef::ExtendMethod {
+            item: target.item_id,
+            index: target.method_index,
+        },
+        other => panic!("expected method-bearing item, got {other:?}"),
+    }
+}
+
 fn local_item_for_import_binding(
     module: &hir::Module,
     import_binding: &ImportBinding,
@@ -632,6 +667,7 @@ struct LoopFrame {
 struct BodyBuilder<'a> {
     hir: &'a hir::Module,
     resolution: &'a ResolutionMap,
+    typeck: &'a TypeckResult,
     function: Option<&'a Function>,
     callable_name: String,
     callable_span: ql_span::Span,
@@ -651,6 +687,7 @@ impl<'a> BodyBuilder<'a> {
     fn new(
         hir: &'a hir::Module,
         resolution: &'a ResolutionMap,
+        typeck: &'a TypeckResult,
         owner: BodyOwner,
         function: &'a Function,
     ) -> Self {
@@ -661,6 +698,7 @@ impl<'a> BodyBuilder<'a> {
         Self {
             hir,
             resolution,
+            typeck,
             function: Some(function),
             callable_name: function.name.clone(),
             callable_span: function.span,
@@ -694,6 +732,7 @@ impl<'a> BodyBuilder<'a> {
     fn new_closure(
         hir: &'a hir::Module,
         resolution: &'a ResolutionMap,
+        typeck: &'a TypeckResult,
         owner: BodyOwner,
         name: String,
         span: ql_span::Span,
@@ -708,6 +747,7 @@ impl<'a> BodyBuilder<'a> {
         Self {
             hir,
             resolution,
+            typeck,
             function: None,
             callable_name: name.clone(),
             callable_span: span,
@@ -866,6 +906,7 @@ impl<'a> BodyBuilder<'a> {
         BodyBuilder::new_closure(
             self.hir,
             self.resolution,
+            self.typeck,
             self.body.owner,
             format!(
                 "{}::closure{}",
@@ -1609,8 +1650,29 @@ impl<'a> BodyBuilder<'a> {
         current: BasicBlockId,
         scope: ScopeId,
     ) -> (BasicBlockId, Rvalue) {
-        let (mut current, callee) = self.lower_expr_to_operand(callee, current, scope);
-        let mut lowered = Vec::with_capacity(args.len());
+        let (mut current, callee, mut lowered) = if let Some(MemberTarget::Method(target)) =
+            self.typeck.member_target(callee)
+        {
+            let hir::ExprKind::Member { object, field, .. } = &self.hir.expr(callee).kind else {
+                unreachable!("method member targets should lower from member expressions");
+            };
+            let (current, receiver) = self.lower_expr_to_operand(*object, current, scope);
+            let callee = Operand::Constant(Constant::Function {
+                function: method_function_ref(self.hir, target),
+                name: field.clone(),
+            });
+            (
+                current,
+                callee,
+                vec![CallArgument {
+                    name: None,
+                    value: receiver,
+                }],
+            )
+        } else {
+            let (current, callee) = self.lower_expr_to_operand(callee, current, scope);
+            (current, callee, Vec::with_capacity(args.len()))
+        };
 
         for arg in args {
             match arg {

@@ -548,6 +548,7 @@ dependencies = [
  "ql-parser",
  "ql-resolve",
  "ql-span",
+ "ql-typeck",
 ]
 
 [[package]]

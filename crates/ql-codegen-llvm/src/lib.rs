@@ -933,12 +933,7 @@ impl<'a> ModuleEmitter<'a> {
             .items
             .iter()
             .copied()
-            .filter_map(|item_id| match &self.input.hir.item(item_id).kind {
-                ItemKind::Function(function) if function.body.is_some() => {
-                    Some(FunctionRef::Item(item_id))
-                }
-                _ => None,
-            })
+            .flat_map(|item_id| library_function_refs(self.input.hir, item_id))
             .collect::<Vec<_>>();
         roots.sort_by_key(|function_ref| function_sort_key(*function_ref));
         self.collect_reachable_functions(roots)
@@ -970,8 +965,11 @@ impl<'a> ModuleEmitter<'a> {
             else {
                 continue;
             };
-            let owner = self.input.hir.function_owner_item(function_ref);
-            let Some(body) = self.input.mir.body_for_owner(BodyOwner::Item(owner)) else {
+            let Some(body) = self
+                .input
+                .mir
+                .body_for_owner(function_body_owner(function_ref))
+            else {
                 continue;
             };
 
@@ -1360,10 +1358,25 @@ impl<'a> ModuleEmitter<'a> {
                         Err(error) => diagnostics.push(error),
                     }
                 }
-                Param::Receiver(receiver) => diagnostics.push(unsupported(
-                    receiver.span,
-                    "LLVM IR backend foundation does not support receiver methods yet",
-                )),
+                Param::Receiver(receiver) => {
+                    let Some(ty) =
+                        receiver_param_type(self.input.hir, self.input.resolution, function_ref)
+                    else {
+                        diagnostics.push(unsupported(
+                            receiver.span,
+                            "LLVM IR backend foundation only supports receiver methods with a concrete impl/extend target type",
+                        ));
+                        continue;
+                    };
+                    match self.lower_llvm_type(&ty, receiver.span, "receiver parameter type") {
+                        Ok(llvm_ty) => params.push(ParamSignature {
+                            name: "self".to_owned(),
+                            ty,
+                            llvm_ty,
+                        }),
+                        Err(error) => diagnostics.push(error),
+                    }
+                }
             }
         }
 
@@ -1536,9 +1549,7 @@ impl<'a> ModuleEmitter<'a> {
         let body = self
             .input
             .mir
-            .body_for_owner(BodyOwner::Item(
-                self.input.hir.function_owner_item(function_ref),
-            ))
+            .body_for_owner(function_body_owner(function_ref))
             .ok_or_else(|| {
                 vec![
                     Diagnostic::error(format!(
@@ -1733,6 +1744,7 @@ impl<'a> ModuleEmitter<'a> {
         let body = ql_mir::lower_standalone_non_capturing_closure_body(
             self.input.hir,
             self.input.resolution,
+            self.input.typeck,
             BodyOwner::Item(item_id),
             format!("{}::closure0", global.name),
             self.input.hir.expr(closure_expr).span,
@@ -3256,7 +3268,7 @@ impl<'a> ModuleEmitter<'a> {
         body: &mir::MirBody,
     ) -> Result<PreparedFunction, Vec<Diagnostic>> {
         let mut diagnostics = Vec::new();
-        let mut local_types = self.seed_local_types(body, &signature, &mut diagnostics);
+        let mut local_types = self.seed_local_types(body, &signature);
         let async_task_handles = self.collect_async_task_handles(body);
         let immutable_place_aliases = collect_immutable_place_aliases(self.input.hir, body);
         let task_handle_place_aliases =
@@ -5560,7 +5572,6 @@ impl<'a> ModuleEmitter<'a> {
         &self,
         body: &mir::MirBody,
         signature: &FunctionSignature,
-        diagnostics: &mut Vec<Diagnostic>,
     ) -> HashMap<mir::LocalId, Ty> {
         let mut local_types = HashMap::new();
 
@@ -5572,13 +5583,7 @@ impl<'a> ModuleEmitter<'a> {
                     signature.params.get(*index).map(|param| param.ty.clone())
                 }
                 LocalOrigin::Binding(hir_local) => self.input.typeck.local_ty(*hir_local).cloned(),
-                LocalOrigin::Receiver => {
-                    diagnostics.push(unsupported(
-                        local.span,
-                        "LLVM IR backend foundation does not support receiver locals yet",
-                    ));
-                    None
-                }
+                LocalOrigin::Receiver => signature.params.first().map(|param| param.ty.clone()),
                 LocalOrigin::Temp { .. } => None,
             };
 
@@ -6680,6 +6685,42 @@ impl<'a> ModuleEmitter<'a> {
                     .with_label(Label::new(self.input.hir.item(item_id).span)),
                 ]),
             },
+            FunctionRef::TraitMethod { item, index } => match &self.input.hir.item(item).kind {
+                ItemKind::Trait(trait_decl) => Ok(trait_decl
+                    .methods
+                    .get(index)
+                    .expect("trait method index should be valid")),
+                _ => Err(vec![
+                    Diagnostic::error(
+                        "LLVM IR backend foundation expected a trait method declaration",
+                    )
+                    .with_label(Label::new(self.input.hir.item(item).span)),
+                ]),
+            },
+            FunctionRef::ImplMethod { item, index } => match &self.input.hir.item(item).kind {
+                ItemKind::Impl(impl_block) => Ok(impl_block
+                    .methods
+                    .get(index)
+                    .expect("impl method index should be valid")),
+                _ => Err(vec![
+                    Diagnostic::error(
+                        "LLVM IR backend foundation expected an impl method declaration",
+                    )
+                    .with_label(Label::new(self.input.hir.item(item).span)),
+                ]),
+            },
+            FunctionRef::ExtendMethod { item, index } => match &self.input.hir.item(item).kind {
+                ItemKind::Extend(extend_block) => Ok(extend_block
+                    .methods
+                    .get(index)
+                    .expect("extend method index should be valid")),
+                _ => Err(vec![
+                    Diagnostic::error(
+                        "LLVM IR backend foundation expected an extend method declaration",
+                    )
+                    .with_label(Label::new(self.input.hir.item(item).span)),
+                ]),
+            },
             FunctionRef::ExternBlockMember { block, index } => {
                 match &self.input.hir.item(block).kind {
                     ItemKind::ExternBlock(extern_block) => Ok(extern_block
@@ -7282,7 +7323,7 @@ impl<'a> ModuleEmitter<'a> {
 
         for local_id in body.local_ids() {
             let local = body.local(local_id);
-            let LocalOrigin::Param { index } = local.origin else {
+            let Some(index) = lowered_param_index(local) else {
                 continue;
             };
             if let Some(layout) = &function.signature.async_frame_layout {
@@ -21936,10 +21977,88 @@ fn llvm_symbol_name(item_id: ItemId, name: &str) -> String {
     format!("ql_{}_{}", item_id.index(), sanitize_symbol(name))
 }
 
-fn function_sort_key(function_ref: FunctionRef) -> (usize, usize) {
+fn library_function_refs(module: &hir::Module, item_id: ItemId) -> Vec<FunctionRef> {
+    match &module.item(item_id).kind {
+        ItemKind::Function(function) if function.body.is_some() => vec![FunctionRef::Item(item_id)],
+        ItemKind::Trait(trait_decl) => trait_decl
+            .methods
+            .iter()
+            .enumerate()
+            .filter(|(_, method)| method.body.is_some())
+            .map(|(index, _)| FunctionRef::TraitMethod {
+                item: item_id,
+                index,
+            })
+            .collect(),
+        ItemKind::Impl(impl_block) => impl_block
+            .methods
+            .iter()
+            .enumerate()
+            .filter(|(_, method)| method.body.is_some())
+            .map(|(index, _)| FunctionRef::ImplMethod {
+                item: item_id,
+                index,
+            })
+            .collect(),
+        ItemKind::Extend(extend_block) => extend_block
+            .methods
+            .iter()
+            .enumerate()
+            .filter(|(_, method)| method.body.is_some())
+            .map(|(index, _)| FunctionRef::ExtendMethod {
+                item: item_id,
+                index,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn function_body_owner(function_ref: FunctionRef) -> BodyOwner {
     match function_ref {
-        FunctionRef::Item(item_id) => (item_id.index(), 0),
-        FunctionRef::ExternBlockMember { block, index } => (block.index(), index + 1),
+        FunctionRef::Item(item) => BodyOwner::Item(item),
+        FunctionRef::TraitMethod { item, index } => BodyOwner::TraitMethod { item, index },
+        FunctionRef::ImplMethod { item, index } => BodyOwner::ImplMethod { item, index },
+        FunctionRef::ExtendMethod { item, index } => BodyOwner::ExtendMethod { item, index },
+        FunctionRef::ExternBlockMember { block, .. } => BodyOwner::Item(block),
+    }
+}
+
+fn receiver_param_type(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    function_ref: FunctionRef,
+) -> Option<Ty> {
+    match function_ref {
+        FunctionRef::ImplMethod { item, .. } => match &module.item(item).kind {
+            ItemKind::Impl(impl_block) => Some(lower_type(module, resolution, impl_block.target)),
+            _ => None,
+        },
+        FunctionRef::ExtendMethod { item, .. } => match &module.item(item).kind {
+            ItemKind::Extend(extend_block) => {
+                Some(lower_type(module, resolution, extend_block.target))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn lowered_param_index(local: &mir::LocalDecl) -> Option<usize> {
+    match local.origin {
+        LocalOrigin::Param { index } => Some(index),
+        LocalOrigin::Receiver => Some(0),
+        LocalOrigin::ReturnSlot | LocalOrigin::Binding(_) | LocalOrigin::Temp { .. } => None,
+    }
+}
+
+fn function_sort_key(function_ref: FunctionRef) -> (usize, usize, usize) {
+    match function_ref {
+        FunctionRef::Item(item_id) => (item_id.index(), 0, 0),
+        FunctionRef::TraitMethod { item, index } => (item.index(), 1, index),
+        FunctionRef::ImplMethod { item, index } => (item.index(), 2, index),
+        FunctionRef::ExtendMethod { item, index } => (item.index(), 3, index),
+        FunctionRef::ExternBlockMember { block, index } => (block.index(), 4, index),
     }
 }
 

@@ -1,6 +1,6 @@
 # P1-P8 阶段总览
 
-> 最后同步：2026-04-19
+> 最后同步：2026-04-20
 
 这页只保留阶段级结论和当前焦点。
 
@@ -34,6 +34,7 @@
 - 第一版 `qlang.lock`、`ql.check --json`、`ql.build --json`、`ql.run --json`、`ql.test --json` 已落地。
 - `ql project lock --json` 已补齐，真实项目现在可以在写锁文件和 `--check` 两条路径上稳定拿到机器可消费结果，而不必继续解析终端文本。
 - project-aware `ql build/run/test` 已补上 direct local dependency 的三条最小执行桥接：受限 public top-level free function（非 `async` / 非 `unsafe`、无 generics / `where`、仅普通参数）的 wrapper bridge、bridgeable public `const/static` value declaration bridge，以及被这些 value/function 签名直接引用的 public 非泛型 `struct` type bridge。当前 root target 会按实际导入情况注入 public type/value declaration 与 function wrapper；value initializer 若直接命名或调用同模块 bridgeable public free function，会隐式补齐所需 function wrapper；导入的 value/function 签名若依赖同模块 bridgeable public `struct`，也会隐式补齐所需 type bridge。未导入 sibling dependency 的同名符号不会再把 `ql build/run/test` 卡死在 target-prep，但实际导入的同名直依赖 type/value/function/extern 仍会分别触发 `dependency-type-conflict` / `dependency-value-conflict` / `dependency-function-conflict` / `dependency-extern-conflict`。
+- 本地 `impl` / `extend` receiver method 的直接调用现在已打通到 LLVM 执行链路；`ql build` / `ql run` 已能真实执行 `value.read()` 这类 direct call。当前边界仍然很窄：不包含 method value、trait receiver method，也不包含 dependency receiver method bridge。
 - healthy workspace 下的 dependency-backed LSP 已有一批可依赖能力：workspace symbol、source-preferred navigation、semantic tokens、保守 same-file rename；source-preferred navigation 现在同时覆盖 workspace members 和 workspace 外本地路径依赖，`workspace/symbol` 对本地依赖源码里的 methods / trait methods / extend methods 也已有源码优先回归保护。
 - `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问和点分 dependency 路径时可直接自动弹出补全，而不必继续手动触发 completion。
 - `workspace` 外本地路径依赖的 import references 现在也走源码优先路径；broken-source fallback 已补齐到这一条路径。

@@ -124,6 +124,47 @@ fn run_single_file_supports_json_output() {
 }
 
 #[test]
+fn run_single_file_supports_local_receiver_methods() {
+    if !toolchain_available("`ql run` local receiver method test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-file-local-receiver-method");
+    let source_path = temp.write(
+        "demo.ql",
+        "struct Box { value: Int }\n\nimpl Box {\n    fn read(self) -> Int {\n        return self.value\n    }\n}\n\nfn main() -> Int {\n    let value = Box { value: 7 }\n    return value.read()\n}\n",
+    );
+    let output_path = executable_output_path(&temp.path().join("target/ql/debug"), "demo");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&source_path);
+    let output = run_command_capture(&mut command, "`ql run` local receiver method");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-file-local-receiver-method",
+        "single-file local receiver method run",
+        &output,
+        7,
+    )
+    .expect("single-file `ql run` should execute local receiver methods");
+    expect_silent_output(
+        "project-run-file-local-receiver-method",
+        "single-file local receiver method run",
+        &stdout,
+        &stderr,
+    )
+    .expect("single-file `ql run` local receiver method should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-file-local-receiver-method",
+        &output_path,
+        "single-file local receiver method executable",
+        "single-file local receiver method run",
+    )
+    .expect("single-file `ql run` local receiver method should leave the built executable in the default path");
+}
+
+#[test]
 fn run_package_path_executes_the_only_runnable_target_with_program_args() {
     if !toolchain_available("`ql run` package test") {
         return;

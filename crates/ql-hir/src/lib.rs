@@ -10,6 +10,9 @@ pub use lower::lower_module;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FunctionRef {
     Item(ItemId),
+    TraitMethod { item: ItemId, index: usize },
+    ImplMethod { item: ItemId, index: usize },
+    ExtendMethod { item: ItemId, index: usize },
     ExternBlockMember { block: ItemId, index: usize },
 }
 
@@ -63,6 +66,27 @@ impl Module {
                 ItemKind::Function(function) => function,
                 _ => panic!("HIR function reference must point at a top-level function item"),
             },
+            FunctionRef::TraitMethod { item, index } => match &self.item(item).kind {
+                ItemKind::Trait(trait_decl) => trait_decl
+                    .methods
+                    .get(index)
+                    .expect("HIR trait method reference index must be valid"),
+                _ => panic!("HIR trait method reference must point at a trait item"),
+            },
+            FunctionRef::ImplMethod { item, index } => match &self.item(item).kind {
+                ItemKind::Impl(impl_block) => impl_block
+                    .methods
+                    .get(index)
+                    .expect("HIR impl method reference index must be valid"),
+                _ => panic!("HIR impl method reference must point at an impl item"),
+            },
+            FunctionRef::ExtendMethod { item, index } => match &self.item(item).kind {
+                ItemKind::Extend(extend_block) => extend_block
+                    .methods
+                    .get(index)
+                    .expect("HIR extend method reference index must be valid"),
+                _ => panic!("HIR extend method reference must point at an extend item"),
+            },
             FunctionRef::ExternBlockMember { block, index } => match &self.item(block).kind {
                 ItemKind::ExternBlock(extern_block) => extern_block
                     .functions
@@ -75,9 +99,11 @@ impl Module {
 
     pub const fn function_owner_item(&self, function_ref: FunctionRef) -> ItemId {
         match function_ref {
-            FunctionRef::Item(item_id) | FunctionRef::ExternBlockMember { block: item_id, .. } => {
-                item_id
-            }
+            FunctionRef::Item(item_id)
+            | FunctionRef::TraitMethod { item: item_id, .. }
+            | FunctionRef::ImplMethod { item: item_id, .. }
+            | FunctionRef::ExtendMethod { item: item_id, .. }
+            | FunctionRef::ExternBlockMember { block: item_id, .. } => item_id,
         }
     }
 

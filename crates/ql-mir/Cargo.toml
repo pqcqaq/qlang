@@ -10,6 +10,7 @@ ql-ast.workspace = true
 ql-hir.workspace = true
 ql-resolve.workspace = true
 ql-span.workspace = true
+ql-typeck.workspace = true
 
 [dev-dependencies]
 ql-parser.workspace = true

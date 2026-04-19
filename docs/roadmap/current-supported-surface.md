@@ -1,6 +1,6 @@
 # 当前支持基线
 
-> 最后同步：2026-04-19
+> 最后同步：2026-04-20
 
 这页只记录今天真实可依赖的能力边界。
 
@@ -19,6 +19,7 @@
 
 - lexer、parser、formatter、diagnostics、HIR、resolve、typeck、MIR、borrowck 已在主路径工作。
 - LLVM 产物当前稳定开放：`llvm-ir`、`asm`、`obj`、`exe`、`dylib`、`staticlib`。
+- LLVM 可执行主路径现在已支持本地 `impl` / `extend` receiver method 的直接调用（如 `value.read()`）；当前只覆盖 direct call position。
 - 当前稳定互操作边界仍是 C ABI。
 
 ### CLI 与项目工作流
@@ -74,6 +75,7 @@
 ## 当前明确未支持
 
 - 普通跨包 Qlang free function / member / const 的完整 dependency-aware backend
+- dependency public receiver method bridge、method values、trait receiver method codegen
 - registry / version solving / publish workflow
 - cross-file rename / workspace edits
 - 更宽的 project-scale references / refactor / code actions / inlay hints

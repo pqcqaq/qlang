@@ -12,7 +12,10 @@ use ql_borrowck::{
 use ql_diagnostics::{Diagnostic, Label, render_diagnostics};
 use ql_hir::{ExprId, LocalId, PatternId, lower_module};
 use ql_lexer::{Token, TokenKind, is_keyword, is_valid_identifier, lex};
-use ql_mir::{MirModule, lower_module as lower_mir, render_module as render_mir_module};
+use ql_mir::{
+    MirModule, lower_module_with_typeck as lower_mir_with_typeck,
+    render_module as render_mir_module,
+};
 use ql_parser::{ParseError, parse_source};
 use ql_project::{
     InterfaceArtifact, InterfaceError, InterfaceModule, ProjectError, ProjectManifest,
@@ -936,8 +939,11 @@ impl PackageAnalysis {
         match parse_source(source) {
             Ok(module) => {
                 let site = dependency_struct_field_completion_site(&module, offset)?;
-                let (dependency, symbol) =
-                    dependency_struct_import_binding_for_local_name(self, &module, &site.root_name)?;
+                let (dependency, symbol) = dependency_struct_import_binding_for_local_name(
+                    self,
+                    &module,
+                    &site.root_name,
+                )?;
                 dependency_struct_field_completion_items(
                     dependency,
                     symbol,
@@ -946,8 +952,9 @@ impl PackageAnalysis {
             }
             Err(_) => {
                 let (tokens, _) = lex(source);
-                let site =
-                    dependency_struct_field_completion_site_in_broken_source_tokens(&tokens, offset)?;
+                let site = dependency_struct_field_completion_site_in_broken_source_tokens(
+                    &tokens, offset,
+                )?;
                 let (_, target) = dependency_resolved_import_targets_in_tokens(self, &tokens)
                     .get(site.root_name.as_str())?
                     .clone();
@@ -3260,8 +3267,8 @@ pub fn analyze_source(source: &str) -> Result<Analysis, Vec<Diagnostic>> {
     let ast = parse_source(source).map_err(parse_errors_to_diagnostics)?;
     let hir = lower_module(&ast);
     let resolution = resolve_module(&hir);
-    let mir = lower_mir(&hir, &resolution);
     let typeck = analyze_types(&hir, &resolution);
+    let mir = lower_mir_with_typeck(&hir, &resolution, &typeck);
     let borrowck = analyze_borrowck(&hir, &resolution, &typeck, &mir);
     let index = QueryIndex::build(source, &hir, &resolution, &typeck);
     let runtime_requirements = runtime::collect_runtime_requirements(source, &hir);
@@ -3950,11 +3957,7 @@ fn dependency_struct_field_completion_items(
         .struct_decl_for(symbol)?
         .fields
         .iter()
-        .filter(|field| {
-            !excluded_field_names
-                .iter()
-                .any(|name| name == &field.name)
-        })
+        .filter(|field| !excluded_field_names.iter().any(|name| name == &field.name))
         .map(|field| CompletionItem {
             label: field.name.clone(),
             insert_text: field.name.clone(),

@@ -101,6 +101,47 @@ fn build_single_file_supports_json_output() {
 }
 
 #[test]
+fn build_single_file_supports_local_receiver_methods() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-build-file-local-receiver-method");
+    let source_path = temp.write(
+        "sample.ql",
+        "struct Box { value: Int }\n\nimpl Box {\n    fn read(self) -> Int {\n        return self.value\n    }\n}\n\nfn main() -> Int {\n    let value = Box { value: 7 }\n    return value.read()\n}\n",
+    );
+    let artifact_path = temp.path().join("target/ql/debug/sample.ll");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["build"]).arg(&source_path);
+    let output = run_command_capture(&mut command, "`ql build` local receiver method");
+    let (stdout, stderr) = expect_success(
+        "project-build-file-local-receiver-method",
+        "single-file local receiver method build",
+        &output,
+    )
+    .expect("single-file `ql build` should support local receiver methods");
+    expect_empty_stderr(
+        "project-build-file-local-receiver-method",
+        "single-file local receiver method build",
+        &stderr,
+    )
+    .expect("single-file `ql build` local receiver method should keep stderr empty");
+    expect_stdout_contains_all(
+        "project-build-file-local-receiver-method",
+        &stdout.replace('\\', "/"),
+        &[&format!("wrote llvm-ir: {}", artifact_path.display()).replace('\\', "/")],
+    )
+    .expect("single-file `ql build` local receiver method should report the LLVM IR artifact");
+    expect_file_exists(
+        "project-build-file-local-receiver-method",
+        &artifact_path,
+        "single-file local receiver method build artifact",
+        "single-file local receiver method build",
+    )
+    .expect("single-file `ql build` local receiver method should write the LLVM IR artifact");
+}
+
+#[test]
 fn build_single_file_json_reports_diagnostics_failure() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-build-file-json-failure");
