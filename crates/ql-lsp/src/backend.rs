@@ -2941,10 +2941,6 @@ fn prepare_rename_for_workspace_source_root_symbol_from_import(
 ) -> Option<PrepareRenameResponse> {
     let offset = position_to_offset(source, position)?;
     let occurrence = analyzed_import_binding_at(source, analysis, offset)?;
-    if occurrence.definition_span != occurrence.imported_span {
-        return None;
-    }
-
     let (imported_name, import_prefix) = occurrence.path_segments.split_last()?;
     let source_location = workspace_source_location_for_import_binding(
         uri,
@@ -2966,9 +2962,13 @@ fn prepare_rename_for_workspace_source_root_symbol_from_import(
         return None;
     }
 
+    let placeholder = source
+        .get(occurrence.occurrence_span.start..occurrence.occurrence_span.end)?
+        .to_owned();
+
     Some(PrepareRenameResponse::RangeWithPlaceholder {
         range: span_to_range(source, occurrence.occurrence_span),
-        placeholder: imported_name.to_owned(),
+        placeholder,
     })
 }
 
@@ -3222,10 +3222,6 @@ fn rename_for_workspace_source_root_symbol_from_import_with_open_docs(
     let Some(occurrence) = analyzed_import_binding_at(source, analysis, offset) else {
         return Ok(None);
     };
-    if occurrence.definition_span != occurrence.imported_span {
-        return Ok(None);
-    }
-
     let Some((imported_name, import_prefix)) = occurrence.path_segments.split_last() else {
         return Ok(None);
     };
@@ -13297,6 +13293,96 @@ pub fn measure(value: Int) -> Int
     }
 
     #[test]
+    fn workspace_root_function_prepare_rename_from_aliased_import_use_prefers_root_symbol() {
+        let temp =
+            TempDir::new("ql-lsp-workspace-root-function-prepare-rename-from-aliased-import-use");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.measure as run
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#,
+        );
+        let _core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn measure(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn measure(value: Int) -> Int
+"#,
+        );
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_analysis = analyze_source(&app_source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        assert_eq!(
+            prepare_rename_for_workspace_source_root_symbol_from_import(
+                &app_uri,
+                &app_source,
+                &app_analysis,
+                &package,
+                offset_to_position(&app_source, nth_offset(&app_source, "run", 2)),
+            ),
+            Some(PrepareRenameResponse::RangeWithPlaceholder {
+                range: span_to_range(
+                    &app_source,
+                    Span::new(
+                        nth_offset(&app_source, "run", 2),
+                        nth_offset(&app_source, "run", 2) + "run".len(),
+                    ),
+                ),
+                placeholder: "run".to_owned(),
+            }),
+        );
+    }
+
+    #[test]
     fn workspace_root_function_rename_from_direct_import_use_updates_workspace() {
         let temp = TempDir::new("ql-lsp-workspace-root-function-rename-from-import-use");
         let app_path = temp.write(
@@ -13428,6 +13514,181 @@ pub fn measure(value: Int) -> Int
                             "score".to_owned(),
                         ),
                     ],
+                ),
+                (
+                    task_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                &task_source,
+                                Span::new(
+                                    nth_offset(&task_source, "measure", 1),
+                                    nth_offset(&task_source, "measure", 1) + "measure".len(),
+                                ),
+                            ),
+                            "score".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &task_source,
+                                Span::new(
+                                    nth_offset(&task_source, "measure", 2),
+                                    nth_offset(&task_source, "measure", 2) + "measure".len(),
+                                ),
+                            ),
+                            "score".to_owned(),
+                        ),
+                    ],
+                ),
+                (
+                    core_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "measure", 1),
+                                    nth_offset(&core_source, "measure", 1) + "measure".len(),
+                                ),
+                            ),
+                            "score".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "measure", 2),
+                                    nth_offset(&core_source, "measure", 2) + "measure".len(),
+                                ),
+                            ),
+                            "score".to_owned(),
+                        ),
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn workspace_root_function_rename_from_aliased_import_use_updates_workspace() {
+        let temp = TempDir::new("ql-lsp-workspace-root-function-rename-from-aliased-import-use");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.measure as run
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.measure
+
+pub fn task() -> Int {
+    return measure(2)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn measure(value: Int) -> Int {
+    return value
+}
+
+pub fn wrap(value: Int) -> Int {
+    return measure(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn measure(value: Int) -> Int
+"#,
+        );
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_analysis = analyze_source(&app_source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+
+        let edit = rename_for_workspace_source_root_symbol_from_import_with_open_docs(
+            &app_uri,
+            &app_source,
+            &app_analysis,
+            &package,
+            &file_open_documents(vec![
+                (app_uri.clone(), app_source.clone()),
+                (task_uri.clone(), task_source.clone()),
+                (core_uri.clone(), core_source.clone()),
+            ]),
+            offset_to_position(&app_source, nth_offset(&app_source, "run", 2)),
+            "score",
+        )
+        .expect("rename should succeed")
+        .expect("rename should return workspace edits");
+
+        assert_workspace_edit_changes(
+            edit,
+            vec![
+                (
+                    app_uri,
+                    vec![TextEdit::new(
+                        span_to_range(
+                            &app_source,
+                            Span::new(
+                                nth_offset(&app_source, "measure", 1),
+                                nth_offset(&app_source, "measure", 1) + "measure".len(),
+                            ),
+                        ),
+                        "score".to_owned(),
+                    )],
                 ),
                 (
                     task_uri,
@@ -13617,6 +13878,203 @@ pub struct Config {
                             "Settings".to_owned(),
                         ),
                     ],
+                ),
+                (
+                    task_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                &task_source,
+                                Span::new(
+                                    nth_offset(&task_source, "Config", 1),
+                                    nth_offset(&task_source, "Config", 1) + "Config".len(),
+                                ),
+                            ),
+                            "Settings".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &task_source,
+                                Span::new(
+                                    nth_offset(&task_source, "Config", 2),
+                                    nth_offset(&task_source, "Config", 2) + "Config".len(),
+                                ),
+                            ),
+                            "Settings".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &task_source,
+                                Span::new(
+                                    nth_offset(&task_source, "Config", 3),
+                                    nth_offset(&task_source, "Config", 3) + "Config".len(),
+                                ),
+                            ),
+                            "Settings".to_owned(),
+                        ),
+                    ],
+                ),
+                (
+                    core_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "Config", 1),
+                                    nth_offset(&core_source, "Config", 1) + "Config".len(),
+                                ),
+                            ),
+                            "Settings".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "Config", 2),
+                                    nth_offset(&core_source, "Config", 2) + "Config".len(),
+                                ),
+                            ),
+                            "Settings".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "Config", 3),
+                                    nth_offset(&core_source, "Config", 3) + "Config".len(),
+                                ),
+                            ),
+                            "Settings".to_owned(),
+                        ),
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn workspace_root_struct_rename_from_aliased_type_import_use_updates_workspace() {
+        let temp = TempDir::new("ql-lsp-workspace-root-struct-rename-from-aliased-type-import-use");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    return config.value
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn task(config: Config) -> Config {
+    return config
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn copy(config: Config) -> Config {
+    return config
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_analysis = analyze_source(&app_source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+
+        let edit = rename_for_workspace_source_root_symbol_from_import_with_open_docs(
+            &app_uri,
+            &app_source,
+            &app_analysis,
+            &package,
+            &file_open_documents(vec![
+                (app_uri.clone(), app_source.clone()),
+                (task_uri.clone(), task_source.clone()),
+                (core_uri.clone(), core_source.clone()),
+            ]),
+            offset_to_position(&app_source, nth_offset(&app_source, "Cfg", 2)),
+            "Settings",
+        )
+        .expect("rename should succeed")
+        .expect("rename should return workspace edits");
+
+        assert_workspace_edit_changes(
+            edit,
+            vec![
+                (
+                    app_uri,
+                    vec![TextEdit::new(
+                        span_to_range(
+                            &app_source,
+                            Span::new(
+                                nth_offset(&app_source, "Config", 1),
+                                nth_offset(&app_source, "Config", 1) + "Config".len(),
+                            ),
+                        ),
+                        "Settings".to_owned(),
+                    )],
                 ),
                 (
                     task_uri,
