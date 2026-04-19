@@ -1015,6 +1015,10 @@ fn supports_workspace_source_root_definition_references(kind: ql_analysis::Symbo
         ql_analysis::SymbolKind::Function
             | ql_analysis::SymbolKind::Const
             | ql_analysis::SymbolKind::Static
+            | ql_analysis::SymbolKind::Struct
+            | ql_analysis::SymbolKind::Enum
+            | ql_analysis::SymbolKind::Trait
+            | ql_analysis::SymbolKind::TypeAlias
     )
 }
 
@@ -1287,6 +1291,39 @@ fn workspace_source_kind_for_import_binding(
     (matches.len() == 1).then(|| matches[0].kind)
 }
 
+#[derive(Clone, Debug)]
+struct AnalyzedImportOccurrence {
+    path_segments: Vec<String>,
+    definition_span: Span,
+    occurrence_span: Span,
+}
+
+fn analyzed_import_binding_at(
+    source: &str,
+    analysis: &Analysis,
+    offset: usize,
+) -> Option<AnalyzedImportOccurrence> {
+    if let Some((binding, span)) = analysis.import_binding_at(offset) {
+        return Some(AnalyzedImportOccurrence {
+            path_segments: binding.path.segments,
+            definition_span: binding.definition_span,
+            occurrence_span: span,
+        });
+    }
+
+    let binding = analysis.type_import_binding_at(offset)?;
+    let token = lex(source).0.into_iter().find(|token| {
+        token.kind == TokenKind::Ident
+            && token.text == binding.local_name
+            && token.span.contains(offset)
+    })?;
+    Some(AnalyzedImportOccurrence {
+        path_segments: binding.path.segments,
+        definition_span: binding.definition_span,
+        occurrence_span: token.span,
+    })
+}
+
 fn extend_workspace_import_reference_locations(
     package: &ql_analysis::PackageAnalysis,
     current_path: Option<&Path>,
@@ -1312,12 +1349,18 @@ fn extend_workspace_import_reference_locations(
             .iter()
             .filter(|token| token.kind == TokenKind::Ident)
             .filter_map(|token| {
-                let (binding, occurrence_span) =
-                    module.analysis().import_binding_at(token.span.start)?;
-                (binding.path.segments.as_slice() == import_path
-                    && occurrence_span == token.span
-                    && (include_declaration || occurrence_span != binding.definition_span))
-                    .then(|| Location::new(uri.clone(), span_to_range(&source, occurrence_span)))
+                let occurrence =
+                    analyzed_import_binding_at(&source, module.analysis(), token.span.start)?;
+                (occurrence.path_segments.as_slice() == import_path
+                    && occurrence.occurrence_span == token.span
+                    && (include_declaration
+                        || occurrence.occurrence_span != occurrence.definition_span))
+                    .then(|| {
+                        Location::new(
+                            uri.clone(),
+                            span_to_range(&source, occurrence.occurrence_span),
+                        )
+                    })
             })
             .collect::<Vec<_>>();
         module_locations.sort_by_key(|location| {
@@ -2589,8 +2632,8 @@ fn workspace_source_references_for_import(
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
     let offset = position_to_offset(source, position)?;
-    let (binding, _) = analysis.import_binding_at(offset)?;
-    let (imported_name, import_prefix) = binding.path.segments.split_last()?;
+    let occurrence = analyzed_import_binding_at(source, analysis, offset)?;
+    let (imported_name, import_prefix) = occurrence.path_segments.split_last()?;
     let source_matches = workspace_source_locations_for_import_binding(
         uri,
         source,
@@ -2631,7 +2674,7 @@ fn workspace_source_references_for_import(
         workspace_import_reference_locations(
             package,
             current_path.as_deref(),
-            &binding.path.segments,
+            &occurrence.path_segments,
             include_declaration,
         ),
     );
@@ -12216,6 +12259,284 @@ pub fn exported(value: Int) -> Int
         assert_eq!(
             references[5].range.start,
             offset_to_position(&task_source, nth_offset(&task_source, "call", 2)),
+        );
+    }
+
+    #[test]
+    fn workspace_type_import_references_include_other_workspace_uses() {
+        let temp = TempDir::new("ql-lsp-workspace-type-import-references");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    return config.value
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as OtherCfg
+
+pub fn task(config: OtherCfg) -> Int {
+    return config.value
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read for assertions");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+        let references = workspace_source_references_for_import(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "Cfg", 2)),
+            true,
+        )
+        .expect("workspace type import references should exist");
+
+        assert_eq!(references.len(), 5);
+        assert_eq!(
+            references[0]
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "Config", 1)),
+        );
+        assert_eq!(references[1].uri, uri);
+        assert_eq!(
+            references[1].range.start,
+            offset_to_position(&source, nth_offset(&source, "Cfg", 1)),
+        );
+        assert_eq!(references[2].uri, uri);
+        assert_eq!(
+            references[2].range.start,
+            offset_to_position(&source, nth_offset(&source, "Cfg", 2)),
+        );
+        assert_eq!(references[3].uri, task_uri);
+        assert_eq!(
+            references[3].range.start,
+            offset_to_position(&task_source, nth_offset(&task_source, "OtherCfg", 1)),
+        );
+        assert_eq!(references[4].uri, task_uri);
+        assert_eq!(
+            references[4].range.start,
+            offset_to_position(&task_source, nth_offset(&task_source, "OtherCfg", 2)),
+        );
+    }
+
+    #[test]
+    fn workspace_root_struct_usage_references_include_workspace_type_imports() {
+        let temp = TempDir::new("ql-lsp-workspace-root-struct-usage-references");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    return config.value
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.Config as OtherCfg
+
+pub fn task(config: OtherCfg) -> Int {
+    return config.value
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+pub fn copy(config: Config) -> Config {
+    return config
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+
+        let references = workspace_source_references_for_root_symbol_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &file_open_documents(vec![
+                (core_uri.clone(), core_source.clone()),
+                (app_uri.clone(), app_source.clone()),
+                (task_uri.clone(), task_source.clone()),
+            ]),
+            offset_to_position(&core_source, nth_offset(&core_source, "Config", 2)),
+            true,
+        )
+        .expect("workspace root struct usage references should exist");
+
+        assert_eq!(references.len(), 7);
+        assert_eq!(references[0].uri, core_uri);
+        assert_eq!(
+            references[0].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "Config", 1)),
+        );
+        assert_eq!(references[1].uri, core_uri);
+        assert_eq!(
+            references[1].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "Config", 2)),
+        );
+        assert_eq!(references[2].uri, core_uri);
+        assert_eq!(
+            references[2].range.start,
+            offset_to_position(&core_source, nth_offset(&core_source, "Config", 3)),
+        );
+        assert_eq!(references[3].uri, app_uri);
+        assert_eq!(
+            references[3].range.start,
+            offset_to_position(&app_source, nth_offset(&app_source, "Cfg", 1)),
+        );
+        assert_eq!(references[4].uri, app_uri);
+        assert_eq!(
+            references[4].range.start,
+            offset_to_position(&app_source, nth_offset(&app_source, "Cfg", 2)),
+        );
+        assert_eq!(references[5].uri, task_uri);
+        assert_eq!(
+            references[5].range.start,
+            offset_to_position(&task_source, nth_offset(&task_source, "OtherCfg", 1)),
+        );
+        assert_eq!(references[6].uri, task_uri);
+        assert_eq!(
+            references[6].range.start,
+            offset_to_position(&task_source, nth_offset(&task_source, "OtherCfg", 2)),
         );
     }
 
