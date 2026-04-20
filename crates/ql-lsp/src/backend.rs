@@ -1339,28 +1339,6 @@ fn workspace_source_symbol_matches_for_import_binding_with_open_docs(
     matches
 }
 
-fn workspace_source_locations_for_import_binding(
-    uri: &Url,
-    source: &str,
-    analysis: Option<&Analysis>,
-    package: &ql_analysis::PackageAnalysis,
-    import_prefix: &[String],
-    imported_name: &str,
-    supports_kind: fn(ql_analysis::SymbolKind) -> bool,
-) -> Vec<Location> {
-    let open_docs = OpenDocuments::new();
-    workspace_source_locations_for_import_binding_with_open_docs(
-        uri,
-        source,
-        analysis,
-        package,
-        &open_docs,
-        import_prefix,
-        imported_name,
-        supports_kind,
-    )
-}
-
 fn workspace_source_locations_for_import_binding_with_open_docs(
     uri: &Url,
     source: &str,
@@ -3351,12 +3329,26 @@ fn prepare_rename_for_workspace_import_in_broken_source(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<PrepareRenameResponse> {
+    let open_docs = OpenDocuments::new();
+    prepare_rename_for_workspace_import_in_broken_source_with_open_docs(
+        uri, source, package, &open_docs, position,
+    )
+}
+
+fn prepare_rename_for_workspace_import_in_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<PrepareRenameResponse> {
     let binding = broken_source_import_binding_at(source, position)?;
-    if workspace_source_locations_for_import_binding(
+    if workspace_source_locations_for_import_binding_with_open_docs(
         uri,
         source,
         None,
         package,
+        open_docs,
         &binding.import_prefix,
         binding.imported_name.as_str(),
         supports_workspace_import_definition,
@@ -3387,20 +3379,41 @@ fn prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<PrepareRenameResponse> {
+    let open_docs = OpenDocuments::new();
+    prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source_with_open_docs(
+        uri, source, package, &open_docs, position,
+    )
+}
+
+fn prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<PrepareRenameResponse> {
     let binding = broken_source_import_binding_at(source, position)?;
     let occurrence_span =
         broken_source_import_occurrence_span_at(source, position, binding.local_name.as_str())?;
-    let source_location = workspace_source_location_for_import_binding(
+    let source_location = workspace_source_location_for_import_binding_with_open_docs(
         uri,
         source,
         None,
         package,
+        open_docs,
         &binding.import_prefix,
         binding.imported_name.as_str(),
     )?;
     let source_path = source_location.uri.to_file_path().ok()?;
-    let definition_source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
-    let analysis = analyze_source(&definition_source).ok()?;
+    let (definition_source, analysis) = if let Some((_, open_source, open_analysis)) =
+        open_document_snapshot(open_docs, &source_path)
+    {
+        (open_source, open_analysis)
+    } else {
+        let definition_source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
+        let analysis = analyze_source(&definition_source).ok()?;
+        (definition_source, analysis)
+    };
     let definition_target = definition_target_for_source_location(
         &analysis,
         &definition_source,
@@ -3426,20 +3439,42 @@ fn prepare_rename_for_workspace_source_root_symbol_from_import(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<PrepareRenameResponse> {
+    let open_docs = OpenDocuments::new();
+    prepare_rename_for_workspace_source_root_symbol_from_import_with_open_docs(
+        uri, source, analysis, package, &open_docs, position,
+    )
+}
+
+fn prepare_rename_for_workspace_source_root_symbol_from_import_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<PrepareRenameResponse> {
     let offset = position_to_offset(source, position)?;
     let occurrence = analyzed_import_binding_at(source, analysis, offset)?;
     let (imported_name, import_prefix) = occurrence.path_segments.split_last()?;
-    let source_location = workspace_source_location_for_import_binding(
+    let source_location = workspace_source_location_for_import_binding_with_open_docs(
         uri,
         source,
         Some(analysis),
         package,
+        open_docs,
         import_prefix,
         imported_name,
     )?;
     let source_path = source_location.uri.to_file_path().ok()?;
-    let definition_source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
-    let analysis = analyze_source(&definition_source).ok()?;
+    let (definition_source, analysis) = if let Some((_, open_source, open_analysis)) =
+        open_document_snapshot(open_docs, &source_path)
+    {
+        (open_source, open_analysis)
+    } else {
+        let definition_source = fs::read_to_string(source_path).ok()?.replace("\r\n", "\n");
+        let analysis = analyze_source(&definition_source).ok()?;
+        (definition_source, analysis)
+    };
     let definition_target = definition_target_for_source_location(
         &analysis,
         &definition_source,
@@ -3466,16 +3501,31 @@ fn rename_for_workspace_import_in_broken_source(
     position: tower_lsp::lsp_types::Position,
     new_name: &str,
 ) -> std::result::Result<Option<WorkspaceEdit>, RenameError> {
+    let open_docs = OpenDocuments::new();
+    rename_for_workspace_import_in_broken_source_with_open_docs(
+        uri, source, package, &open_docs, position, new_name,
+    )
+}
+
+fn rename_for_workspace_import_in_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+    new_name: &str,
+) -> std::result::Result<Option<WorkspaceEdit>, RenameError> {
     validate_rename_text(new_name)?;
 
     let Some(binding) = broken_source_import_binding_at(source, position) else {
         return Ok(None);
     };
-    if workspace_source_locations_for_import_binding(
+    if workspace_source_locations_for_import_binding_with_open_docs(
         uri,
         source,
         None,
         package,
+        open_docs,
         &binding.import_prefix,
         binding.imported_name.as_str(),
         supports_workspace_import_definition,
@@ -5516,6 +5566,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         if let Some(package) = self.package_analysis_for_uri(&uri) {
+            let open_docs = self.open_file_documents().await;
             if let Some(rename) = prepare_rename_for_dependency_imports(&source, &package, position)
             {
                 return Ok(Some(rename));
@@ -5523,15 +5574,21 @@ impl LanguageServer for Backend {
             let analysis = analyze_source(&source).ok();
             if analysis.is_none() {
                 if let Some(rename) =
-                    prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source(
-                        &uri, &source, &package, position,
+                    prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source_with_open_docs(
+                        &uri,
+                        &source,
+                        &package,
+                        &open_docs,
+                        position,
                     )
                 {
                     return Ok(Some(rename));
                 }
-                if let Some(rename) = prepare_rename_for_workspace_import_in_broken_source(
-                    &uri, &source, &package, position,
-                ) {
+                if let Some(rename) =
+                    prepare_rename_for_workspace_import_in_broken_source_with_open_docs(
+                        &uri, &source, &package, &open_docs, position,
+                    )
+                {
                     return Ok(Some(rename));
                 }
                 if position_to_offset(&source, position)
@@ -5542,13 +5599,16 @@ impl LanguageServer for Backend {
                 }
                 return Ok(None);
             }
-            if let Some(rename) = prepare_rename_for_workspace_source_root_symbol_from_import(
-                &uri,
-                &source,
-                analysis.as_ref().expect("analysis checked above"),
-                &package,
-                position,
-            ) {
+            if let Some(rename) =
+                prepare_rename_for_workspace_source_root_symbol_from_import_with_open_docs(
+                    &uri,
+                    &source,
+                    analysis.as_ref().expect("analysis checked above"),
+                    &package,
+                    &open_docs,
+                    position,
+                )
+            {
                 return Ok(Some(rename));
             }
 
@@ -5650,10 +5710,11 @@ impl LanguageServer for Backend {
                 {
                     return Ok(Some(edit));
                 }
-                if let Some(edit) = rename_for_workspace_import_in_broken_source(
+                if let Some(edit) = rename_for_workspace_import_in_broken_source_with_open_docs(
                     &uri,
                     &source,
                     &package,
+                    &open_docs,
                     position,
                     &params.new_name,
                 )
@@ -5701,8 +5762,11 @@ mod tests {
         prepare_rename_for_workspace_import_in_broken_source,
         prepare_rename_for_workspace_source_root_symbol_from_import,
         prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source,
+        prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source_with_open_docs,
+        prepare_rename_for_workspace_source_root_symbol_from_import_with_open_docs,
         rename_for_dependency_imports, rename_for_local_source_dependency_with_open_docs,
         rename_for_workspace_import_in_broken_source,
+        rename_for_workspace_import_in_broken_source_with_open_docs,
         rename_for_workspace_source_dependency_with_open_docs,
         rename_for_workspace_source_root_symbol_from_import_in_broken_source_with_open_docs,
         rename_for_workspace_source_root_symbol_from_import_with_open_docs,
@@ -15122,6 +15186,123 @@ pub fn measure(value: Int) -> Int
     }
 
     #[test]
+    fn workspace_root_function_prepare_rename_from_import_use_prefers_open_workspace_source() {
+        let temp =
+            TempDir::new("ql-lsp-workspace-root-function-prepare-rename-from-import-use-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.measure
+
+pub fn main() -> Int {
+    return measure(1)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn measure(value: Int) -> Int
+"#,
+        );
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let app_analysis = analyze_source(&app_source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+
+pub fn measure(value: Int) -> Int {
+    return value
+}
+"#
+        .to_owned();
+        let use_offset = nth_offset(&app_source, "measure", 2);
+
+        assert_eq!(
+            prepare_rename_for_workspace_source_root_symbol_from_import(
+                &app_uri,
+                &app_source,
+                &app_analysis,
+                &package,
+                offset_to_position(&app_source, use_offset),
+            ),
+            None,
+            "disk-only prepare rename should miss unsaved workspace source",
+        );
+        assert_eq!(
+            prepare_rename_for_workspace_source_root_symbol_from_import_with_open_docs(
+                &app_uri,
+                &app_source,
+                &app_analysis,
+                &package,
+                &file_open_documents(vec![
+                    (app_uri.clone(), app_source.clone()),
+                    (core_uri, open_core_source),
+                ]),
+                offset_to_position(&app_source, use_offset),
+            ),
+            Some(PrepareRenameResponse::RangeWithPlaceholder {
+                range: span_to_range(
+                    &app_source,
+                    Span::new(use_offset, use_offset + "measure".len()),
+                ),
+                placeholder: "measure".to_owned(),
+            }),
+        );
+    }
+
+    #[test]
     fn workspace_root_function_rename_from_direct_import_use_updates_workspace() {
         let temp = TempDir::new("ql-lsp-workspace-root-function-rename-from-import-use");
         let app_path = temp.write(
@@ -17135,6 +17316,118 @@ pub fn measure(value: Int) -> Int
     }
 
     #[test]
+    fn workspace_root_function_prepare_rename_from_import_use_survives_parse_errors_with_open_workspace_source()
+     {
+        let temp =
+            TempDir::new("ql-lsp-workspace-root-function-prepare-rename-parse-errors-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.measure as run
+
+pub fn main() -> Int {
+    return run(1)
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn measure(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+
+pub fn measure(value: Int) -> Int {
+    return value
+}
+"#
+        .to_owned();
+        let use_offset = nth_offset(&source, "run", 2);
+
+        assert_eq!(
+            prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source(
+                &uri,
+                &source,
+                &package,
+                offset_to_position(&source, use_offset),
+            ),
+            None,
+            "disk-only prepare rename should miss unsaved workspace source",
+        );
+        assert_eq!(
+            prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source_with_open_docs(
+                &uri,
+                &source,
+                &package,
+                &file_open_documents(vec![
+                    (uri.clone(), source.clone()),
+                    (core_uri, open_core_source),
+                ]),
+                offset_to_position(&source, use_offset),
+            ),
+            Some(PrepareRenameResponse::RangeWithPlaceholder {
+                range: span_to_range(&source, Span::new(use_offset, use_offset + "run".len())),
+                placeholder: "run".to_owned(),
+            }),
+        );
+    }
+
+    #[test]
     fn workspace_import_rename_survives_parse_errors_and_inserts_alias() {
         let temp = TempDir::new("ql-lsp-workspace-import-rename-parse-errors");
         let app_path = temp.write(
@@ -17260,6 +17553,154 @@ pub fn exported(value: Int) -> Int
                 "match",
             ),
             Err(RenameError::Keyword("match".to_owned())),
+        );
+    }
+
+    #[test]
+    fn workspace_import_rename_in_broken_source_prefers_open_workspace_source() {
+        let temp = TempDir::new("ql-lsp-workspace-import-rename-parse-errors-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported
+
+pub fn main() -> Int {
+    let first = exported(1)
+    return exported(first)
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#
+        .to_owned();
+        let use_offset = nth_offset(&source, "exported", 2);
+
+        assert_eq!(
+            rename_for_workspace_import_in_broken_source(
+                &uri,
+                &source,
+                &package,
+                offset_to_position(&source, use_offset),
+                "run",
+            )
+            .expect("rename should validate"),
+            None,
+            "disk-only rename should miss unsaved workspace source",
+        );
+
+        let edit = rename_for_workspace_import_in_broken_source_with_open_docs(
+            &uri,
+            &source,
+            &package,
+            &file_open_documents(vec![
+                (uri.clone(), source.clone()),
+                (core_uri, open_core_source),
+            ]),
+            offset_to_position(&source, use_offset),
+            "run",
+        )
+        .expect("rename should validate")
+        .expect("broken-source workspace import rename should produce edits");
+
+        assert_workspace_edit(
+            edit,
+            &uri,
+            vec![
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "exported", 1),
+                            nth_offset(&source, "exported", 1) + "exported".len(),
+                        ),
+                    ),
+                    "exported as run".to_owned(),
+                ),
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "exported", 2),
+                            nth_offset(&source, "exported", 2) + "exported".len(),
+                        ),
+                    ),
+                    "run".to_owned(),
+                ),
+                TextEdit::new(
+                    span_to_range(
+                        &source,
+                        Span::new(
+                            nth_offset(&source, "exported", 3),
+                            nth_offset(&source, "exported", 3) + "exported".len(),
+                        ),
+                    ),
+                    "run".to_owned(),
+                ),
+            ],
         );
     }
 

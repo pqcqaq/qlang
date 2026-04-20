@@ -67,6 +67,7 @@
 - healthy workspace 下，source-preferred dependency definition / typeDefinition / references / current-document `documentHighlight` / method completion 现在会直接读取已打开但未落盘的本地依赖源码，而不是只看磁盘文件。
 - healthy workspace 下，workspace import references 现在同时覆盖 value import 和 analyzed-source type import 的 alias/use；当前文件、已打开但未落盘的导出源码，以及同 workspace 其他 consumer 文件的 import/use 都会一起回收。
 - workspace root `function / const / static / struct / enum / trait / type alias` 现在也补上了 references 聚合：无论从源码定义点还是同文件使用点发起，都会保留当前文件内引用，并联动返回 workspace 中对应 import alias/use 位置；这条 import/use 聚合会读取 open docs；对当前 package 可见的 broken consumers，也会保守补回 import/use。
+- healthy source 下，workspace root import/use 的 `prepareRename` 现在也会读取已打开但未落盘的导出 workspace 源码，不再要求先保存文件。
 - source-preferred dependency tooling 现在按 manifest 身份区分同名本地依赖；definition / typeDefinition / references / current-document `documentHighlight` / dependency completion / `workspace/symbol` 不会再串到另一个依赖实例。
 - `workspace/symbol` 对 workspace 外本地路径依赖在源码可用时会优先返回源码里的 value / method / trait / extend symbols；源码不可用时仍回退到 `.qi`。这条行为现在也覆盖 `workspace_roots` / 无打开文档入口；同名本地依赖也不会再因为 source-preferred 排除而误丢另一个依赖的 `.qi` 符号。
 - 同名本地依赖的 type / enum / enum member、method / trait method / extend method 组合场景现在也有显式回归保护；`[dependencies]` 本地路径依赖在 open document 和 `workspace_roots` 入口上也都锁住了“源码优先 + 兄弟依赖 `.qi` 保留”这条 `workspace/symbol` 合同。
@@ -77,6 +78,7 @@
 - healthy source 下，workspace root `function / const / static / struct / enum / trait / type alias` 也已开放 workspace rename：当前可从 root 源码定义点、同文件使用点，以及 import/use 位置发起（包含 alias import/use），并会同时改写当前文件引用、同 package 其他源码引用、workspace import path/direct-use，以及当前 package / workspace 中可见 broken consumers 的 import/use；其中 alias import 只更新导入路径，不改本地 alias/use。
 - broken-source 下，workspace root `function / const / static / struct / enum / trait / type alias` 的 import/use references 现在也会做保守聚合：除当前文件和导出包源码外，还会补回当前 package 可见的 workspace members / 本地路径依赖里的其他 broken consumer import/use。
 - broken-source 下，workspace root `function / const / static / struct / enum / trait / type alias` 现在也允许从当前 consumer 的 import/use 位置发起 workspace rename（包含 alias import/use）；当前保守联动范围是当前 broken 文件、当前 package 其他源码文件、当前 package 可见的 workspace members / 本地路径依赖里的其他 consumer 源码，以及导出包源码；alias import 仍只更新导入路径，不改本地 alias/use。
+- broken-source 下，workspace root import/use 的 `prepareRename` 与 workspace import alias rename 现在也会读取已打开但未落盘的 workspace 源码；consumer 文件暂时可不保存就能继续做这两条重命名路径。
 - rename 仍然以 same-file 为主；import / local 等其余符号仍未开放更广义的 cross-file rename / workspace edits。
 
 ## 当前明确未支持
