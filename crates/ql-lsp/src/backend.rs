@@ -3631,26 +3631,61 @@ fn rename_for_workspace_source_root_symbol_with_open_docs(
             let Some(location_path) = location.uri.to_file_path().ok() else {
                 continue;
             };
-            if same_package_sources.contains(&canonicalize_or_clone(&location_path)) {
-                changes
-                    .entry(location.uri)
-                    .or_default()
-                    .push(TextEdit::new(location.range, new_name.to_owned()));
-                continue;
-            }
+            let same_package_source =
+                same_package_sources.contains(&canonicalize_or_clone(&location_path));
 
             let Some(import_path) = import_path.as_ref() else {
+                if same_package_source {
+                    changes
+                        .entry(location.uri)
+                        .or_default()
+                        .push(TextEdit::new(location.range, new_name.to_owned()));
+                }
                 continue;
             };
-            let Some(edit) = workspace_root_import_rename_edit_for_location(
+
+            if let Some(edit) = workspace_root_import_rename_edit_for_location(
                 &location,
                 import_path,
                 new_name,
                 open_docs,
-            ) else {
+            ) {
+                changes.entry(location.uri).or_default().push(edit);
+                continue;
+            }
+
+            let Some((candidate_uri, candidate_source)) =
+                open_or_disk_source_snapshot(open_docs, &location_path)
+            else {
+                if same_package_source {
+                    changes
+                        .entry(location.uri)
+                        .or_default()
+                        .push(TextEdit::new(location.range, new_name.to_owned()));
+                }
                 continue;
             };
-            changes.entry(location.uri).or_default().push(edit);
+            if analyze_source(&candidate_source).is_err() {
+                let broken_edits = broken_source_root_symbol_rename_edits_for_import_path_in_source(
+                    &candidate_source,
+                    import_path,
+                    new_name,
+                );
+                if !broken_edits.is_empty() {
+                    changes
+                        .entry(candidate_uri)
+                        .or_default()
+                        .extend(broken_edits);
+                    continue;
+                }
+            }
+
+            if same_package_source {
+                changes
+                    .entry(location.uri)
+                    .or_default()
+                    .push(TextEdit::new(location.range, new_name.to_owned()));
+            }
         }
     }
 
@@ -13851,6 +13886,194 @@ pub fn measure(value: Int) -> Int
                                 Span::new(
                                     nth_offset(&task_source, "measure", 2),
                                     nth_offset(&task_source, "measure", 2) + "measure".len(),
+                                ),
+                            ),
+                            "score".to_owned(),
+                        ),
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn workspace_root_function_rename_updates_visible_broken_consumers() {
+        let temp = TempDir::new("ql-lsp-workspace-root-function-rename-visible-broken-consumers");
+        let broken_core_path = temp.write(
+            "workspace/packages/core/src/broken.ql",
+            r#"
+package demo.core
+
+use demo.core.measure as run
+
+pub fn broken_local() -> Int {
+    return run(1)
+"#,
+        );
+        let jobs_path = temp.write(
+            "workspace/packages/jobs/src/job.ql",
+            r#"
+package demo.jobs
+
+use demo.core.measure
+
+pub fn job() -> Int {
+    let first = measure(2)
+    return measure(first)
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn measure(value: Int) -> Int {
+    return value
+}
+
+pub fn wrap(value: Int) -> Int {
+    return measure(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/core", "packages/jobs"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/jobs/qlang.toml",
+            r#"
+[package]
+name = "jobs"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn measure(value: Int) -> Int
+"#,
+        );
+
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let broken_core_source =
+            fs::read_to_string(&broken_core_path).expect("broken core source should read");
+        assert!(analyze_source(&broken_core_source).is_err());
+        let broken_core_uri =
+            Url::from_file_path(&broken_core_path).expect("broken core path should convert to URI");
+        let jobs_source = fs::read_to_string(&jobs_path).expect("jobs source should read");
+        assert!(analyze_source(&jobs_source).is_err());
+        let jobs_uri = Url::from_file_path(&jobs_path).expect("jobs path should convert to URI");
+
+        let edit = rename_for_workspace_source_root_symbol_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &file_open_documents(vec![
+                (core_uri.clone(), core_source.clone()),
+                (broken_core_uri.clone(), broken_core_source.clone()),
+                (jobs_uri.clone(), jobs_source.clone()),
+            ]),
+            offset_to_position(&core_source, nth_offset(&core_source, "measure", 1)),
+            "score",
+        )
+        .expect("rename should succeed")
+        .expect("rename should return workspace edits");
+
+        assert_workspace_edit_changes(
+            edit,
+            vec![
+                (
+                    core_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "measure", 1),
+                                    nth_offset(&core_source, "measure", 1) + "measure".len(),
+                                ),
+                            ),
+                            "score".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &core_source,
+                                Span::new(
+                                    nth_offset(&core_source, "measure", 2),
+                                    nth_offset(&core_source, "measure", 2) + "measure".len(),
+                                ),
+                            ),
+                            "score".to_owned(),
+                        ),
+                    ],
+                ),
+                (
+                    broken_core_uri,
+                    vec![TextEdit::new(
+                        span_to_range(
+                            &broken_core_source,
+                            Span::new(
+                                nth_offset(&broken_core_source, "measure", 1),
+                                nth_offset(&broken_core_source, "measure", 1) + "measure".len(),
+                            ),
+                        ),
+                        "score".to_owned(),
+                    )],
+                ),
+                (
+                    jobs_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                &jobs_source,
+                                Span::new(
+                                    nth_offset(&jobs_source, "measure", 1),
+                                    nth_offset(&jobs_source, "measure", 1) + "measure".len(),
+                                ),
+                            ),
+                            "score".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &jobs_source,
+                                Span::new(
+                                    nth_offset(&jobs_source, "measure", 2),
+                                    nth_offset(&jobs_source, "measure", 2) + "measure".len(),
+                                ),
+                            ),
+                            "score".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                &jobs_source,
+                                Span::new(
+                                    nth_offset(&jobs_source, "measure", 3),
+                                    nth_offset(&jobs_source, "measure", 3) + "measure".len(),
                                 ),
                             ),
                             "score".to_owned(),
