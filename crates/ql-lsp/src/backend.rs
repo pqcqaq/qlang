@@ -3102,11 +3102,12 @@ fn workspace_source_references_for_import_in_broken_source_with_open_docs(
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
     let binding = broken_source_import_binding_at(source, position)?;
-    let source_matches = workspace_source_locations_for_import_binding(
+    let source_matches = workspace_source_locations_for_import_binding_with_open_docs(
         uri,
         source,
         None,
         package,
+        open_docs,
         &binding.import_prefix,
         binding.imported_name.as_str(),
         supports_workspace_import_definition,
@@ -5692,6 +5693,7 @@ mod tests {
         workspace_source_references_for_dependency_with_open_docs,
         workspace_source_references_for_import,
         workspace_source_references_for_import_in_broken_source,
+        workspace_source_references_for_import_in_broken_source_with_open_docs,
         workspace_source_references_for_root_symbol_with_open_docs,
         workspace_source_struct_field_completions, workspace_source_type_definition_for_dependency,
         workspace_source_type_definition_for_import,
@@ -16082,6 +16084,155 @@ pub fn exported(value: Int) -> Int
         assert_eq!(
             references[3].range.start,
             offset_to_position(&core_source, nth_offset(&core_source, "exported", 2)),
+        );
+    }
+
+    #[test]
+    fn workspace_import_references_in_broken_source_prefer_open_workspace_member_source() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-references-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    let first = run(1)
+    return run(first)
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let disk_core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read from disk");
+        let open_core_source = r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
+"#
+        .to_owned();
+
+        let references = workspace_source_references_for_import_in_broken_source_with_open_docs(
+            &uri,
+            &source,
+            &package,
+            &file_open_documents(vec![(core_uri.clone(), open_core_source.clone())]),
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+            true,
+        )
+        .expect("broken-source workspace import references should exist");
+
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == core_uri
+                    && reference.range.start
+                        == offset_to_position(
+                            &open_core_source,
+                            nth_offset(&open_core_source, "exported", 1),
+                        )
+            }),
+            "references should include open workspace source definition",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == core_uri
+                    && reference.range.start
+                        == offset_to_position(
+                            &open_core_source,
+                            nth_offset(&open_core_source, "exported", 2),
+                        )
+            }),
+            "references should include open workspace source use",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == uri
+                    && reference.range.start
+                        == offset_to_position(&source, nth_offset(&source, "run", 2))
+            }),
+            "references should include broken-source local use",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == uri
+                    && reference.range.start
+                        == offset_to_position(&source, nth_offset(&source, "run", 3))
+            }),
+            "references should include second broken-source local use",
+        );
+        assert!(
+            !references.iter().any(|reference| {
+                reference.uri == core_uri
+                    && reference.range.start
+                        == offset_to_position(
+                            &disk_core_source,
+                            nth_offset(&disk_core_source, "exported", 1),
+                        )
+            }),
+            "references should not fall back to disk definition position",
         );
     }
 
