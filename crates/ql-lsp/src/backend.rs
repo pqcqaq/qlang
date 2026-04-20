@@ -1406,26 +1406,6 @@ fn workspace_source_location_for_import_binding_with_open_docs(
     (matches.len() == 1).then(|| matches[0].clone())
 }
 
-fn workspace_source_type_definition_location_for_import_binding(
-    uri: &Url,
-    source: &str,
-    analysis: Option<&Analysis>,
-    package: &ql_analysis::PackageAnalysis,
-    import_prefix: &[String],
-    imported_name: &str,
-) -> Option<Location> {
-    let open_docs = OpenDocuments::new();
-    workspace_source_type_definition_location_for_import_binding_with_open_docs(
-        uri,
-        source,
-        analysis,
-        package,
-        &open_docs,
-        import_prefix,
-        imported_name,
-    )
-}
-
 fn workspace_source_type_definition_location_for_import_binding_with_open_docs(
     uri: &Url,
     source: &str,
@@ -1640,14 +1620,29 @@ fn workspace_source_definition_for_import(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoDefinitionResponse> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_definition_for_import_with_open_docs(
+        uri, source, analysis, package, &open_docs, position,
+    )
+}
+
+fn workspace_source_definition_for_import_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoDefinitionResponse> {
     let offset = position_to_offset(source, position)?;
     let (binding, _) = analysis.import_binding_at(offset)?;
     let (imported_name, import_prefix) = binding.path.segments.split_last()?;
-    workspace_source_location_for_import_binding(
+    workspace_source_location_for_import_binding_with_open_docs(
         uri,
         source,
         Some(analysis),
         package,
+        open_docs,
         import_prefix,
         imported_name,
     )
@@ -1661,32 +1656,33 @@ fn workspace_source_type_definition_for_import(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoTypeDefinitionResponse> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_type_definition_for_import_with_open_docs(
+        uri, source, analysis, package, &open_docs, position,
+    )
+}
+
+fn workspace_source_type_definition_for_import_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoTypeDefinitionResponse> {
     let offset = position_to_offset(source, position)?;
     let binding = analysis.type_import_binding_at(offset)?;
     let (imported_name, import_prefix) = binding.path.segments.split_last()?;
-    workspace_source_type_definition_location_for_import_binding(
+    workspace_source_type_definition_location_for_import_binding_with_open_docs(
         uri,
         source,
         Some(analysis),
         package,
+        open_docs,
         import_prefix,
         imported_name,
     )
     .map(GotoTypeDefinitionResponse::Scalar)
-}
-
-fn hover_from_workspace_source_location(
-    current_source: &str,
-    current_span: Span,
-    source_location: Location,
-) -> Option<Hover> {
-    let open_docs = OpenDocuments::new();
-    hover_from_workspace_source_location_with_open_docs(
-        current_source,
-        current_span,
-        source_location,
-        &open_docs,
-    )
 }
 
 fn hover_from_workspace_source_location_with_open_docs(
@@ -1720,19 +1716,39 @@ fn workspace_source_hover_for_import(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<Hover> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_hover_for_import_with_open_docs(
+        uri, source, analysis, package, &open_docs, position,
+    )
+}
+
+fn workspace_source_hover_for_import_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Hover> {
     let offset = position_to_offset(source, position)?;
     let (binding, occurrence_span) = analysis.import_binding_at(offset)?;
     let (imported_name, import_prefix) = binding.path.segments.split_last()?;
-    let source_location = workspace_source_location_for_import_binding(
+    let source_location = workspace_source_location_for_import_binding_with_open_docs(
         uri,
         source,
         Some(analysis),
         package,
+        open_docs,
         import_prefix,
         imported_name,
     )?;
 
-    hover_from_workspace_source_location(source, occurrence_span, source_location)
+    hover_from_workspace_source_location_with_open_docs(
+        source,
+        occurrence_span,
+        source_location,
+        open_docs,
+    )
 }
 
 fn workspace_source_definition_for_import_in_broken_source(
@@ -5054,9 +5070,9 @@ impl LanguageServer for Backend {
             let open_docs = self.open_file_documents().await;
             let analysis = analyze_source(&source).ok();
             if let Some(analysis) = analysis.as_ref() {
-                if let Some(hover) =
-                    workspace_source_hover_for_import(&uri, &source, analysis, &package, position)
-                {
+                if let Some(hover) = workspace_source_hover_for_import_with_open_docs(
+                    &uri, &source, analysis, &package, &open_docs, position,
+                ) {
                     return Ok(Some(hover));
                 }
             } else if let Some(hover) =
@@ -5118,8 +5134,8 @@ impl LanguageServer for Backend {
             let open_docs = self.open_file_documents().await;
             let analysis = analyze_source(&source).ok();
             if let Some(analysis) = analysis.as_ref()
-                && let Some(definition) = workspace_source_definition_for_import(
-                    &uri, &source, analysis, &package, position,
+                && let Some(definition) = workspace_source_definition_for_import_with_open_docs(
+                    &uri, &source, analysis, &package, &open_docs, position,
                 )
             {
                 return Ok(Some(definition));
@@ -5181,8 +5197,8 @@ impl LanguageServer for Backend {
             let analysis = analyze_source(&source).ok();
             if let Some(analysis) = analysis.as_ref()
                 && let Some(GotoDefinitionResponse::Scalar(location)) =
-                    workspace_source_definition_for_import(
-                        &uri, &source, analysis, &package, position,
+                    workspace_source_definition_for_import_with_open_docs(
+                        &uri, &source, analysis, &package, &open_docs, position,
                     )
             {
                 return Ok(Some(GotoDeclarationResponse::Scalar(location)));
@@ -5245,8 +5261,8 @@ impl LanguageServer for Backend {
             let open_docs = self.open_file_documents().await;
             let analysis = analyze_source(&source).ok();
             if let Some(analysis) = analysis.as_ref() {
-                if let Some(definition) = workspace_source_type_definition_for_import(
-                    &uri, &source, analysis, &package, position,
+                if let Some(definition) = workspace_source_type_definition_for_import_with_open_docs(
+                    &uri, &source, analysis, &package, &open_docs, position,
                 ) {
                     return Ok(Some(definition));
                 }
@@ -5779,9 +5795,11 @@ mod tests {
         workspace_source_definition_for_import,
         workspace_source_definition_for_import_in_broken_source,
         workspace_source_definition_for_import_in_broken_source_with_open_docs,
+        workspace_source_definition_for_import_with_open_docs,
         workspace_source_hover_for_dependency, workspace_source_hover_for_import,
         workspace_source_hover_for_import_in_broken_source,
         workspace_source_hover_for_import_in_broken_source_with_open_docs,
+        workspace_source_hover_for_import_with_open_docs,
         workspace_source_member_field_completions, workspace_source_method_completions,
         workspace_source_method_completions_with_open_docs,
         workspace_source_references_for_dependency,
@@ -5796,6 +5814,7 @@ mod tests {
         workspace_source_struct_field_completions, workspace_source_type_definition_for_dependency,
         workspace_source_type_definition_for_import,
         workspace_source_type_definition_for_import_in_broken_source,
+        workspace_source_type_definition_for_import_with_open_docs,
         workspace_source_variant_completions, workspace_symbols_for_documents,
         workspace_symbols_for_documents_and_roots,
     };
@@ -11993,6 +12012,129 @@ pub fn exported(value: Int) -> Int
     }
 
     #[test]
+    fn workspace_import_definition_prefers_open_workspace_source() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-definition-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.measure as run
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn measure(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+
+pub fn measure(value: Int) -> Int {
+    return value
+}
+"#
+        .to_owned();
+
+        assert_eq!(
+            workspace_source_definition_for_import(
+                &uri,
+                &source,
+                &analysis,
+                &package,
+                offset_to_position(&source, nth_offset(&source, "run", 2)),
+            ),
+            None,
+            "disk-only definition should miss unsaved workspace source",
+        );
+
+        let definition = workspace_source_definition_for_import_with_open_docs(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            &file_open_documents(vec![
+                (uri.clone(), source.clone()),
+                (core_uri, open_core_source),
+            ]),
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        )
+        .expect("workspace import definition should use open workspace source");
+
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("workspace import definition should resolve to one location")
+        };
+        assert_eq!(
+            location
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+    }
+
+    #[test]
     fn workspace_import_hover_prefers_workspace_member_source_over_interface_artifact() {
         let temp = TempDir::new("ql-lsp-workspace-import-source-hover");
         let app_path = temp.write(
@@ -12077,6 +12219,123 @@ pub fn exported(value: Int) -> Int
                 .contains("fn exported(value: Int, extra: Int) -> Int")
         );
         assert!(!markup.value.contains("fn exported(value: Int) -> Int"));
+    }
+
+    #[test]
+    fn workspace_import_hover_prefers_open_workspace_source() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-hover-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.measure as run
+
+pub fn main() -> Int {
+    return 0
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn measure(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+
+pub fn measure(value: Int, extra: Int) -> Int {
+    return value + extra
+}
+"#
+        .to_owned();
+
+        assert_eq!(
+            workspace_source_hover_for_import(
+                &uri,
+                &source,
+                &analysis,
+                &package,
+                offset_to_position(&source, nth_offset(&source, "run", 1)),
+            ),
+            None,
+            "disk-only hover should miss unsaved workspace source",
+        );
+
+        let hover = workspace_source_hover_for_import_with_open_docs(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            &file_open_documents(vec![
+                (uri.clone(), source.clone()),
+                (core_uri, open_core_source),
+            ]),
+            offset_to_position(&source, nth_offset(&source, "run", 1)),
+        )
+        .expect("workspace import hover should use open workspace source");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(
+            markup
+                .value
+                .contains("fn measure(value: Int, extra: Int) -> Int")
+        );
+        assert!(!markup.value.contains("fn measure(value: Int) -> Int"));
     }
 
     #[test]
@@ -12570,6 +12829,132 @@ pub struct Config {
             offset_to_position(&source, nth_offset(&source, "Config", 2)),
         )
         .expect("workspace import type definition should exist");
+
+        let GotoTypeDefinitionResponse::Scalar(location) = definition else {
+            panic!("workspace import type definition should resolve to one location")
+        };
+        assert_eq!(
+            location
+                .uri
+                .to_file_path()
+                .expect("definition URI should convert to a file path")
+                .canonicalize()
+                .expect("definition path should canonicalize"),
+            core_source_path
+                .canonicalize()
+                .expect("core source path should canonicalize"),
+        );
+    }
+
+    #[test]
+    fn workspace_type_import_type_definition_prefers_open_workspace_source() {
+        let temp = TempDir::new("ql-lsp-workspace-type-import-source-type-definition-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(value: Config) -> Config {
+    return value
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+
+pub struct Config {
+    value: Int,
+    extra: Int,
+}
+"#
+        .to_owned();
+
+        assert_eq!(
+            workspace_source_type_definition_for_import(
+                &uri,
+                &source,
+                &analysis,
+                &package,
+                offset_to_position(&source, nth_offset(&source, "Config", 2)),
+            ),
+            None,
+            "disk-only type definition should miss unsaved workspace source",
+        );
+
+        let definition = workspace_source_type_definition_for_import_with_open_docs(
+            &uri,
+            &source,
+            &analysis,
+            &package,
+            &file_open_documents(vec![
+                (uri.clone(), source.clone()),
+                (core_uri, open_core_source),
+            ]),
+            offset_to_position(&source, nth_offset(&source, "Config", 2)),
+        )
+        .expect("workspace import type definition should use open workspace source");
 
         let GotoTypeDefinitionResponse::Scalar(location) = definition else {
             panic!("workspace import type definition should resolve to one location")
