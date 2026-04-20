@@ -1356,36 +1356,51 @@ fn extend_workspace_import_reference_locations(
         let Ok(uri) = Url::from_file_path(module.path()) else {
             continue;
         };
-        let (tokens, _) = lex(&source);
-        let mut module_locations = tokens
-            .iter()
-            .filter(|token| token.kind == TokenKind::Ident)
-            .filter_map(|token| {
-                let occurrence =
-                    analyzed_import_binding_at(&source, module.analysis(), token.span.start)?;
-                (occurrence.path_segments.as_slice() == import_path
-                    && occurrence.occurrence_span == token.span
-                    && (include_declaration
-                        || occurrence.occurrence_span != occurrence.definition_span))
-                    .then(|| {
-                        Location::new(
-                            uri.clone(),
-                            span_to_range(&source, occurrence.occurrence_span),
-                        )
-                    })
-            })
-            .collect::<Vec<_>>();
-        module_locations.sort_by_key(|location| {
-            (
-                location.range.start.line,
-                location.range.start.character,
-                location.range.end.line,
-                location.range.end.character,
-            )
-        });
-        module_locations.dedup_by(|left, right| same_location_anchor(left, right));
-        locations.extend(module_locations);
+        locations.extend(workspace_import_reference_locations_in_source(
+            &uri,
+            &source,
+            module.analysis(),
+            import_path,
+            include_declaration,
+        ));
     }
+}
+
+fn workspace_import_reference_locations_in_source(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    import_path: &[String],
+    include_declaration: bool,
+) -> Vec<Location> {
+    let (tokens, _) = lex(source);
+    let mut locations = tokens
+        .iter()
+        .filter(|token| token.kind == TokenKind::Ident)
+        .filter_map(|token| {
+            let occurrence = analyzed_import_binding_at(source, analysis, token.span.start)?;
+            (occurrence.path_segments.as_slice() == import_path
+                && occurrence.occurrence_span == token.span
+                && (include_declaration
+                    || occurrence.occurrence_span != occurrence.definition_span))
+                .then(|| {
+                    Location::new(
+                        uri.clone(),
+                        span_to_range(source, occurrence.occurrence_span),
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    locations.sort_by_key(|location| {
+        (
+            location.range.start.line,
+            location.range.start.character,
+            location.range.end.line,
+            location.range.end.character,
+        )
+    });
+    locations.dedup_by(|left, right| same_location_anchor(left, right));
+    locations
 }
 
 fn workspace_import_reference_locations(
@@ -2696,10 +2711,147 @@ fn workspace_source_references_for_import(
     Some(locations)
 }
 
+fn broken_source_import_reference_locations_in_source(
+    uri: &Url,
+    source: &str,
+    import_path: &[String],
+    include_declaration: bool,
+) -> Vec<Location> {
+    let (tokens, _) = lex(source);
+    let bindings = broken_source_import_bindings_in_tokens(&tokens);
+    let mut local_name_counts = HashMap::<String, usize>::new();
+    for binding in &bindings {
+        *local_name_counts
+            .entry(binding.local_name.clone())
+            .or_insert(0usize) += 1;
+    }
+
+    let mut locations = Vec::new();
+    for binding in bindings
+        .into_iter()
+        .filter(|binding| broken_source_import_binding_matches_path(binding, import_path))
+    {
+        if include_declaration {
+            locations.push(Location::new(
+                uri.clone(),
+                span_to_range(source, binding.definition_span),
+            ));
+        }
+        if local_name_counts.get(binding.local_name.as_str()) != Some(&1usize) {
+            continue;
+        }
+
+        locations.extend(
+            tokens
+                .iter()
+                .enumerate()
+                .filter(|(_, token)| {
+                    token.kind == TokenKind::Ident && token.text == binding.local_name
+                })
+                .filter(|(index, token)| {
+                    token.span != binding.definition_span
+                        && broken_source_import_token_matches_reference_context(&tokens, *index)
+                })
+                .map(|(_, token)| Location::new(uri.clone(), span_to_range(source, token.span))),
+        );
+    }
+
+    locations.sort_by_key(|location| {
+        (
+            location.range.start.line,
+            location.range.start.character,
+            location.range.end.line,
+            location.range.end.character,
+        )
+    });
+    locations.dedup_by(|left, right| same_location_anchor(left, right));
+    locations
+}
+
+fn workspace_broken_import_reference_locations_for_visible_sources(
+    package_manifest_path: &Path,
+    current_path: Option<&Path>,
+    import_path: &[String],
+    include_declaration: bool,
+    open_docs: &OpenDocuments,
+) -> Vec<Location> {
+    let current_path = current_path.map(canonicalize_or_clone);
+    let mut locations = Vec::new();
+
+    for candidate_manifest_path in visible_manifest_paths_for_package(package_manifest_path) {
+        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
+            continue;
+        };
+        let Ok(source_paths) = collect_package_sources(candidate_package.manifest()) else {
+            continue;
+        };
+
+        for candidate_path in source_paths {
+            let candidate_canonical = canonicalize_or_clone(&candidate_path);
+            if current_path
+                .as_ref()
+                .is_some_and(|current_path| current_path == &candidate_canonical)
+            {
+                continue;
+            }
+
+            let Some((candidate_uri, candidate_source)) =
+                open_or_disk_source_snapshot(open_docs, &candidate_path)
+            else {
+                continue;
+            };
+
+            let candidate_locations = if let Some((_, _, candidate_analysis)) =
+                open_document_snapshot(open_docs, &candidate_path)
+            {
+                workspace_import_reference_locations_in_source(
+                    &candidate_uri,
+                    &candidate_source,
+                    &candidate_analysis,
+                    import_path,
+                    include_declaration,
+                )
+            } else if analyze_source(&candidate_source).is_ok() {
+                Vec::new()
+            } else {
+                broken_source_import_reference_locations_in_source(
+                    &candidate_uri,
+                    &candidate_source,
+                    import_path,
+                    include_declaration,
+                )
+            };
+
+            merge_unique_reference_locations(&mut locations, candidate_locations);
+        }
+    }
+
+    locations
+}
+
 fn workspace_source_references_for_import_in_broken_source(
     uri: &Url,
     source: &str,
     package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_references_for_import_in_broken_source_with_open_docs(
+        uri,
+        source,
+        package,
+        &open_docs,
+        position,
+        include_declaration,
+    )
+}
+
+fn workspace_source_references_for_import_in_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
@@ -2746,7 +2898,7 @@ fn workspace_source_references_for_import_in_broken_source(
 
     if let Some(source_definition) = source_definition.as_ref()
         && let Some(mut source_locations) =
-            same_file_references_for_source_location(source_definition)
+            same_file_references_for_source_location_with_open_docs(source_definition, open_docs)
     {
         if !include_declaration {
             source_locations.retain(|location| !same_location_anchor(location, source_definition));
@@ -2765,19 +2917,30 @@ fn workspace_source_references_for_import_in_broken_source(
             include_declaration,
         ),
     );
+    merge_unique_reference_locations(
+        &mut locations,
+        workspace_broken_import_reference_locations_for_visible_sources(
+            package.manifest().manifest_path.as_path(),
+            current_path.as_deref(),
+            &import_path,
+            include_declaration,
+            open_docs,
+        ),
+    );
 
     (!locations.is_empty()).then_some(locations)
 }
 
-fn workspace_import_document_highlights_in_broken_source(
+fn workspace_import_document_highlights_in_broken_source_with_open_docs(
     uri: &Url,
     source: &str,
     package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<Vec<DocumentHighlight>> {
     let binding = broken_source_import_binding_at(source, position)?;
-    let locations = workspace_source_references_for_import_in_broken_source(
-        uri, source, package, position, true,
+    let locations = workspace_source_references_for_import_in_broken_source_with_open_docs(
+        uri, source, package, open_docs, position, true,
     )?;
     let mut highlights = document_highlights_from_locations(uri, locations).unwrap_or_default();
     let definition_range = span_to_range(source, binding.definition_span);
@@ -4385,9 +4548,9 @@ fn fallback_document_highlights_for_package_at_with_open_docs(
     position: tower_lsp::lsp_types::Position,
     open_docs: &OpenDocuments,
 ) -> Option<Vec<DocumentHighlight>> {
-    if let Some(highlights) =
-        workspace_import_document_highlights_in_broken_source(uri, source, package, position)
-    {
+    if let Some(highlights) = workspace_import_document_highlights_in_broken_source_with_open_docs(
+        uri, source, package, open_docs, position,
+    ) {
         return Some(highlights);
     }
     if let Some(highlights) =
@@ -4795,13 +4958,15 @@ impl LanguageServer for Backend {
                 }
             }
             if analysis.is_none()
-                && let Some(references) = workspace_source_references_for_import_in_broken_source(
-                    &uri,
-                    &source,
-                    &package,
-                    position,
-                    params.context.include_declaration,
-                )
+                && let Some(references) =
+                    workspace_source_references_for_import_in_broken_source_with_open_docs(
+                        &uri,
+                        &source,
+                        &package,
+                        &open_docs,
+                        position,
+                        params.context.include_declaration,
+                    )
             {
                 return Ok(Some(references));
             }
@@ -15056,6 +15221,273 @@ pub struct Config {
             references[3].range.start,
             offset_to_position(&source, nth_offset(&source, "Config", 5)),
         );
+    }
+
+    #[test]
+    fn workspace_import_references_include_other_broken_consumers_in_workspace() {
+        let temp =
+            TempDir::new("ql-lsp-workspace-import-source-references-parse-errors-broken-peers");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.measure
+
+pub fn main() -> Int {
+    let first = measure(1)
+    let second = measure(first)
+    return second
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.core.measure
+
+pub fn task() -> Int {
+    return measure(2)
+"#,
+        );
+        let jobs_path = temp.write(
+            "workspace/packages/jobs/src/job.ql",
+            r#"
+package demo.jobs
+
+use demo.core.measure
+
+pub fn job() -> Int {
+    return measure(3)
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn measure(value: Int) -> Int {
+    return value
+}
+
+pub fn wrap(value: Int) -> Int {
+    return measure(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/jobs", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/jobs/qlang.toml",
+            r#"
+[package]
+name = "jobs"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn measure(value: Int) -> Int
+"#,
+        );
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let jobs_source = fs::read_to_string(&jobs_path).expect("jobs source should read");
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        assert!(analyze_source(&app_source).is_err());
+        assert!(analyze_source(&task_source).is_err());
+        assert!(analyze_source(&jobs_source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let jobs_uri = Url::from_file_path(&jobs_path).expect("jobs path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+
+        let references = workspace_source_references_for_import_in_broken_source(
+            &app_uri,
+            &app_source,
+            &package,
+            offset_to_position(&app_source, nth_offset(&app_source, "measure", 2)),
+            true,
+        )
+        .expect("broken-source workspace import references should exist");
+
+        let contains = |uri: &Url, source: &str, needle: &str, occurrence: usize| {
+            references.iter().any(|location| {
+                location.uri == *uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, needle, occurrence))
+            })
+        };
+
+        assert_eq!(references.len(), 8);
+        assert!(contains(&core_uri, &core_source, "measure", 1));
+        assert!(contains(&app_uri, &app_source, "measure", 2));
+        assert!(contains(&app_uri, &app_source, "measure", 3));
+        assert!(contains(&core_uri, &core_source, "measure", 2));
+        assert!(contains(&task_uri, &task_source, "measure", 1));
+        assert!(contains(&task_uri, &task_source, "measure", 2));
+        assert!(contains(&jobs_uri, &jobs_source, "measure", 1));
+        assert!(contains(&jobs_uri, &jobs_source, "measure", 2));
+    }
+
+    #[test]
+    fn workspace_import_references_include_broken_local_dependency_consumers() {
+        let temp = TempDir::new(
+            "ql-lsp-workspace-import-source-references-parse-errors-broken-local-deps",
+        );
+        let app_path = temp.write(
+            "workspace/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.measure
+
+pub fn main() -> Int {
+    return measure(1)
+"#,
+        );
+        let helper_path = temp.write(
+            "workspace/vendor/helper/src/lib.ql",
+            r#"
+package demo.helper
+
+use demo.core.measure
+
+pub fn helper() -> Int {
+    return measure(2)
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/vendor/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn measure(value: Int) -> Int {
+    return value
+}
+
+pub fn wrap(value: Int) -> Int {
+    return measure(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+core = { path = "../vendor/core" }
+helper = { path = "../vendor/helper" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/helper/qlang.toml",
+            r#"
+[package]
+name = "helper"
+
+[dependencies]
+core = { path = "../core" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn measure(value: Int) -> Int
+"#,
+        );
+
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        let helper_source = fs::read_to_string(&helper_path).expect("helper source should read");
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        assert!(analyze_source(&app_source).is_err());
+        assert!(analyze_source(&helper_source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let references = workspace_source_references_for_import_in_broken_source(
+            &app_uri,
+            &app_source,
+            &package,
+            offset_to_position(&app_source, nth_offset(&app_source, "measure", 2)),
+            true,
+        )
+        .expect("broken-source local dependency import references should exist");
+
+        let contains = |path: &Path, source: &str, needle: &str, occurrence: usize| {
+            let path = path
+                .canonicalize()
+                .expect("expected path should canonicalize");
+            references.iter().any(|location| {
+                location
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|location_path| location_path.canonicalize().ok())
+                    == Some(path.clone())
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, needle, occurrence))
+            })
+        };
+
+        assert_eq!(references.len(), 5);
+        assert!(contains(&core_source_path, &core_source, "measure", 1));
+        assert!(contains(&app_path, &app_source, "measure", 2));
+        assert!(contains(&core_source_path, &core_source, "measure", 2));
+        assert!(contains(&helper_path, &helper_source, "measure", 1));
+        assert!(contains(&helper_path, &helper_source, "measure", 2));
     }
 
     #[test]
