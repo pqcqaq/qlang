@@ -4384,6 +4384,16 @@ fn workspace_source_references_for_root_symbol_with_open_docs(
             include_declaration,
         ),
     );
+    merge_unique_reference_locations(
+        &mut locations,
+        workspace_broken_import_reference_locations_for_visible_sources(
+            package.manifest().manifest_path.as_path(),
+            current_path.as_deref(),
+            &import_path,
+            include_declaration,
+            open_docs,
+        ),
+    );
 
     (!locations.is_empty()).then_some(locations)
 }
@@ -13133,6 +13143,269 @@ pub fn exported(value: Int) -> Int
             references[5].range.start,
             offset_to_position(&task_source, nth_offset(&task_source, "call", 2)),
         );
+    }
+
+    #[test]
+    fn workspace_root_function_definition_references_include_broken_consumers() {
+        let temp =
+            TempDir::new("ql-lsp-workspace-root-function-definition-import-references-broken");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return run(1)
+"#,
+        );
+        let jobs_path = temp.write(
+            "workspace/packages/jobs/src/job.ql",
+            r#"
+package demo.jobs
+
+use demo.core.exported as exec
+
+pub fn job() -> Int {
+    return exec(2)
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/jobs", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/jobs/qlang.toml",
+            r#"
+[package]
+name = "jobs"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&app_source).is_err());
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let jobs_source = fs::read_to_string(&jobs_path).expect("jobs source should read");
+        assert!(analyze_source(&jobs_source).is_err());
+        let jobs_uri = Url::from_file_path(&jobs_path).expect("jobs path should convert to URI");
+
+        let references = workspace_source_references_for_root_symbol_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &file_open_documents(vec![
+                (core_uri.clone(), core_source.clone()),
+                (app_uri.clone(), app_source.clone()),
+                (jobs_uri.clone(), jobs_source.clone()),
+            ]),
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 1)),
+            true,
+        )
+        .expect("workspace root definition references should exist");
+
+        let contains = |uri: &Url, source: &str, needle: &str, occurrence: usize| {
+            references.iter().any(|location| {
+                location.uri == *uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, needle, occurrence))
+            })
+        };
+
+        assert_eq!(references.len(), 6);
+        assert!(contains(&core_uri, &core_source, "exported", 1));
+        assert!(contains(&core_uri, &core_source, "exported", 2));
+        assert!(contains(&app_uri, &app_source, "run", 1));
+        assert!(contains(&app_uri, &app_source, "run", 2));
+        assert!(contains(&jobs_uri, &jobs_source, "exec", 1));
+        assert!(contains(&jobs_uri, &jobs_source, "exec", 2));
+    }
+
+    #[test]
+    fn workspace_root_function_usage_references_include_broken_consumers() {
+        let temp = TempDir::new("ql-lsp-workspace-root-function-usage-import-references-broken");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return run(1)
+"#,
+        );
+        let jobs_path = temp.write(
+            "workspace/packages/jobs/src/job.ql",
+            r#"
+package demo.jobs
+
+use demo.core.exported as exec
+
+pub fn job() -> Int {
+    return exec(2)
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+
+pub fn wrapper(value: Int) -> Int {
+    return exported(value)
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/jobs", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/jobs/qlang.toml",
+            r#"
+[package]
+name = "jobs"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&app_source).is_err());
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let jobs_source = fs::read_to_string(&jobs_path).expect("jobs source should read");
+        assert!(analyze_source(&jobs_source).is_err());
+        let jobs_uri = Url::from_file_path(&jobs_path).expect("jobs path should convert to URI");
+
+        let references = workspace_source_references_for_root_symbol_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &file_open_documents(vec![
+                (core_uri.clone(), core_source.clone()),
+                (app_uri.clone(), app_source.clone()),
+                (jobs_uri.clone(), jobs_source.clone()),
+            ]),
+            offset_to_position(&core_source, nth_offset(&core_source, "exported", 2)),
+            true,
+        )
+        .expect("workspace root usage references should exist");
+
+        let contains = |uri: &Url, source: &str, needle: &str, occurrence: usize| {
+            references.iter().any(|location| {
+                location.uri == *uri
+                    && location.range.start
+                        == offset_to_position(source, nth_offset(source, needle, occurrence))
+            })
+        };
+
+        assert_eq!(references.len(), 6);
+        assert!(contains(&core_uri, &core_source, "exported", 1));
+        assert!(contains(&core_uri, &core_source, "exported", 2));
+        assert!(contains(&app_uri, &app_source, "run", 1));
+        assert!(contains(&app_uri, &app_source, "run", 2));
+        assert!(contains(&jobs_uri, &jobs_source, "exec", 1));
+        assert!(contains(&jobs_uri, &jobs_source, "exec", 2));
     }
 
     #[test]
