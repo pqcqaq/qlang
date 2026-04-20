@@ -1097,27 +1097,103 @@ fn extend_workspace_import_symbol_matches(
     supports_kind: fn(ql_analysis::SymbolKind) -> bool,
     matches: &mut Vec<WorkspaceSourceSymbolMatch>,
 ) {
+    let open_docs = OpenDocuments::new();
+    extend_workspace_import_symbol_matches_with_open_docs(
+        package,
+        current_path,
+        current_source,
+        current_analysis,
+        &open_docs,
+        import_prefix,
+        imported_name,
+        supports_kind,
+        matches,
+    );
+}
+
+fn extend_workspace_import_symbol_matches_with_open_docs(
+    package: &ql_analysis::PackageAnalysis,
+    current_path: Option<&Path>,
+    current_source: Option<&str>,
+    current_analysis: Option<&Analysis>,
+    open_docs: &OpenDocuments,
+    import_prefix: &[String],
+    imported_name: &str,
+    supports_kind: fn(ql_analysis::SymbolKind) -> bool,
+    matches: &mut Vec<WorkspaceSourceSymbolMatch>,
+) {
     for module in package.modules() {
         let module_path = module.path();
-        let owned_source = if current_path
+        if current_path
             .is_some_and(|path| canonicalize_or_clone(path) == canonicalize_or_clone(module_path))
         {
-            None
-        } else {
-            let Ok(source) = fs::read_to_string(module_path) else {
+            let Some(module_source) = current_source else {
                 continue;
             };
-            Some(source.replace("\r\n", "\n"))
+            let module_analysis = current_analysis.unwrap_or(module.analysis());
+            let Some(package_segments) = package_path_segments(module_source) else {
+                continue;
+            };
+            if package_segments.len() != import_prefix.len()
+                || !package_segments
+                    .iter()
+                    .zip(import_prefix)
+                    .all(|(left, right)| *left == right)
+            {
+                continue;
+            }
+            let Ok(module_uri) = Url::from_file_path(module_path) else {
+                continue;
+            };
+            for symbol in module_analysis.document_symbols() {
+                if symbol.name != imported_name || !supports_kind(symbol.kind) {
+                    continue;
+                }
+                matches.push(WorkspaceSourceSymbolMatch {
+                    location: Location::new(
+                        module_uri.clone(),
+                        span_to_range(module_source, symbol.span),
+                    ),
+                    kind: symbol.kind,
+                });
+            }
+            continue;
+        }
+
+        if let Some((module_uri, module_source, module_analysis)) =
+            open_document_snapshot(open_docs, module_path)
+        {
+            let Some(package_segments) = package_path_segments(&module_source) else {
+                continue;
+            };
+            if package_segments.len() != import_prefix.len()
+                || !package_segments
+                    .iter()
+                    .zip(import_prefix)
+                    .all(|(left, right)| *left == right)
+            {
+                continue;
+            }
+            for symbol in module_analysis.document_symbols() {
+                if symbol.name != imported_name || !supports_kind(symbol.kind) {
+                    continue;
+                }
+                matches.push(WorkspaceSourceSymbolMatch {
+                    location: Location::new(
+                        module_uri.clone(),
+                        span_to_range(&module_source, symbol.span),
+                    ),
+                    kind: symbol.kind,
+                });
+            }
+            continue;
+        }
+
+        let Ok(source) = fs::read_to_string(module_path) else {
+            continue;
         };
-        let module_source = owned_source
-            .as_deref()
-            .unwrap_or_else(|| current_source.unwrap_or_default());
-        let module_analysis = if owned_source.is_some() {
-            module.analysis()
-        } else {
-            current_analysis.unwrap_or(module.analysis())
-        };
-        let Some(package_segments) = package_path_segments(module_source) else {
+        let module_source = source.replace("\r\n", "\n");
+        let Some(package_segments) = package_path_segments(&module_source) else {
             continue;
         };
         if package_segments.len() != import_prefix.len()
@@ -1132,14 +1208,14 @@ fn extend_workspace_import_symbol_matches(
         let Ok(module_uri) = Url::from_file_path(module_path) else {
             continue;
         };
-        for symbol in module_analysis.document_symbols() {
+        for symbol in module.analysis().document_symbols() {
             if symbol.name != imported_name || !supports_kind(symbol.kind) {
                 continue;
             }
             matches.push(WorkspaceSourceSymbolMatch {
                 location: Location::new(
                     module_uri.clone(),
-                    span_to_range(module_source, symbol.span),
+                    span_to_range(&module_source, symbol.span),
                 ),
                 kind: symbol.kind,
             });
@@ -1208,6 +1284,61 @@ fn workspace_source_symbol_matches_for_import_binding(
     matches
 }
 
+fn workspace_source_symbol_matches_for_import_binding_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    import_prefix: &[String],
+    imported_name: &str,
+    supports_kind: fn(ql_analysis::SymbolKind) -> bool,
+) -> Vec<WorkspaceSourceSymbolMatch> {
+    let current_path = uri.to_file_path().ok();
+    let mut matches = Vec::new();
+
+    extend_workspace_import_symbol_matches_with_open_docs(
+        package,
+        current_path.as_deref(),
+        Some(source),
+        analysis,
+        open_docs,
+        import_prefix,
+        imported_name,
+        supports_kind,
+        &mut matches,
+    );
+
+    for candidate_manifest_path in
+        source_preferred_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(member_package) = package_analysis_for_path(&candidate_manifest_path) else {
+            continue;
+        };
+        extend_workspace_import_symbol_matches_with_open_docs(
+            &member_package,
+            None,
+            None,
+            None,
+            open_docs,
+            import_prefix,
+            imported_name,
+            supports_kind,
+            &mut matches,
+        );
+    }
+
+    matches.sort_by_key(|symbol| {
+        (
+            symbol.location.uri.to_string(),
+            symbol.location.range.start.line,
+            symbol.location.range.start.character,
+        )
+    });
+    matches.dedup_by(|left, right| left.location == right.location && left.kind == right.kind);
+    matches
+}
+
 fn workspace_source_locations_for_import_binding(
     uri: &Url,
     source: &str,
@@ -1217,11 +1348,35 @@ fn workspace_source_locations_for_import_binding(
     imported_name: &str,
     supports_kind: fn(ql_analysis::SymbolKind) -> bool,
 ) -> Vec<Location> {
-    workspace_source_symbol_matches_for_import_binding(
+    let open_docs = OpenDocuments::new();
+    workspace_source_locations_for_import_binding_with_open_docs(
         uri,
         source,
         analysis,
         package,
+        &open_docs,
+        import_prefix,
+        imported_name,
+        supports_kind,
+    )
+}
+
+fn workspace_source_locations_for_import_binding_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    import_prefix: &[String],
+    imported_name: &str,
+    supports_kind: fn(ql_analysis::SymbolKind) -> bool,
+) -> Vec<Location> {
+    workspace_source_symbol_matches_for_import_binding_with_open_docs(
+        uri,
+        source,
+        analysis,
+        package,
+        open_docs,
         import_prefix,
         imported_name,
         supports_kind,
@@ -1239,11 +1394,33 @@ fn workspace_source_location_for_import_binding(
     import_prefix: &[String],
     imported_name: &str,
 ) -> Option<Location> {
-    let matches = workspace_source_locations_for_import_binding(
+    let open_docs = OpenDocuments::new();
+    workspace_source_location_for_import_binding_with_open_docs(
         uri,
         source,
         analysis,
         package,
+        &open_docs,
+        import_prefix,
+        imported_name,
+    )
+}
+
+fn workspace_source_location_for_import_binding_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    import_prefix: &[String],
+    imported_name: &str,
+) -> Option<Location> {
+    let matches = workspace_source_locations_for_import_binding_with_open_docs(
+        uri,
+        source,
+        analysis,
+        package,
+        open_docs,
         import_prefix,
         imported_name,
         supports_workspace_import_definition,
@@ -1259,11 +1436,33 @@ fn workspace_source_type_definition_location_for_import_binding(
     import_prefix: &[String],
     imported_name: &str,
 ) -> Option<Location> {
-    let matches = workspace_source_locations_for_import_binding(
+    let open_docs = OpenDocuments::new();
+    workspace_source_type_definition_location_for_import_binding_with_open_docs(
         uri,
         source,
         analysis,
         package,
+        &open_docs,
+        import_prefix,
+        imported_name,
+    )
+}
+
+fn workspace_source_type_definition_location_for_import_binding_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    import_prefix: &[String],
+    imported_name: &str,
+) -> Option<Location> {
+    let matches = workspace_source_locations_for_import_binding_with_open_docs(
+        uri,
+        source,
+        analysis,
+        package,
+        open_docs,
         import_prefix,
         imported_name,
         supports_workspace_import_type_definition,
@@ -1552,12 +1751,26 @@ fn workspace_source_definition_for_import_in_broken_source(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoDefinitionResponse> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_definition_for_import_in_broken_source_with_open_docs(
+        uri, source, package, &open_docs, position,
+    )
+}
+
+fn workspace_source_definition_for_import_in_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoDefinitionResponse> {
     let binding = broken_source_import_binding_at(source, position)?;
-    workspace_source_location_for_import_binding(
+    workspace_source_location_for_import_binding_with_open_docs(
         uri,
         source,
         None,
         package,
+        open_docs,
         &binding.import_prefix,
         binding.imported_name.as_str(),
     )
@@ -1570,12 +1783,26 @@ fn workspace_source_type_definition_for_import_in_broken_source(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoTypeDefinitionResponse> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_type_definition_for_import_in_broken_source_with_open_docs(
+        uri, source, package, &open_docs, position,
+    )
+}
+
+fn workspace_source_type_definition_for_import_in_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoTypeDefinitionResponse> {
     let binding = broken_source_import_binding_at(source, position)?;
-    workspace_source_type_definition_location_for_import_binding(
+    workspace_source_type_definition_location_for_import_binding_with_open_docs(
         uri,
         source,
         None,
         package,
+        open_docs,
         &binding.import_prefix,
         binding.imported_name.as_str(),
     )
@@ -1605,19 +1832,38 @@ fn workspace_source_hover_for_import_in_broken_source(
     package: &ql_analysis::PackageAnalysis,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<Hover> {
+    let open_docs = OpenDocuments::new();
+    workspace_source_hover_for_import_in_broken_source_with_open_docs(
+        uri, source, package, &open_docs, position,
+    )
+}
+
+fn workspace_source_hover_for_import_in_broken_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Hover> {
     let binding = broken_source_import_binding_at(source, position)?;
     let occurrence_span =
         broken_source_import_occurrence_span_at(source, position, binding.local_name.as_str())?;
-    let source_location = workspace_source_location_for_import_binding(
+    let source_location = workspace_source_location_for_import_binding_with_open_docs(
         uri,
         source,
         None,
         package,
+        open_docs,
         &binding.import_prefix,
         binding.imported_name.as_str(),
     )?;
 
-    hover_from_workspace_source_location(source, occurrence_span, source_location)
+    hover_from_workspace_source_location_with_open_docs(
+        source,
+        occurrence_span,
+        source_location,
+        open_docs,
+    )
 }
 
 fn workspace_import_semantic_tokens_in_analysis(
@@ -4730,9 +4976,11 @@ impl LanguageServer for Backend {
                 {
                     return Ok(Some(hover));
                 }
-            } else if let Some(hover) = workspace_source_hover_for_import_in_broken_source(
-                &uri, &source, &package, position,
-            ) {
+            } else if let Some(hover) =
+                workspace_source_hover_for_import_in_broken_source_with_open_docs(
+                    &uri, &source, &package, &open_docs, position,
+                )
+            {
                 return Ok(Some(hover));
             }
             if let Some(hover) = workspace_source_hover_for_dependency_with_open_docs(
@@ -4794,9 +5042,10 @@ impl LanguageServer for Backend {
                 return Ok(Some(definition));
             }
             if analysis.is_none()
-                && let Some(definition) = workspace_source_definition_for_import_in_broken_source(
-                    &uri, &source, &package, position,
-                )
+                && let Some(definition) =
+                    workspace_source_definition_for_import_in_broken_source_with_open_docs(
+                        &uri, &source, &package, &open_docs, position,
+                    )
             {
                 return Ok(Some(definition));
             }
@@ -4857,8 +5106,8 @@ impl LanguageServer for Backend {
             }
             if analysis.is_none()
                 && let Some(GotoDefinitionResponse::Scalar(location)) =
-                    workspace_source_definition_for_import_in_broken_source(
-                        &uri, &source, &package, position,
+                    workspace_source_definition_for_import_in_broken_source_with_open_docs(
+                        &uri, &source, &package, &open_docs, position,
                     )
             {
                 return Ok(Some(GotoDeclarationResponse::Scalar(location)));
@@ -4919,8 +5168,8 @@ impl LanguageServer for Backend {
                     return Ok(Some(definition));
                 }
             } else if let Some(definition) =
-                workspace_source_type_definition_for_import_in_broken_source(
-                    &uri, &source, &package, position,
+                workspace_source_type_definition_for_import_in_broken_source_with_open_docs(
+                    &uri, &source, &package, &open_docs, position,
                 )
             {
                 return Ok(Some(definition));
@@ -5431,8 +5680,10 @@ mod tests {
         workspace_source_definition_for_dependency_with_open_docs,
         workspace_source_definition_for_import,
         workspace_source_definition_for_import_in_broken_source,
+        workspace_source_definition_for_import_in_broken_source_with_open_docs,
         workspace_source_hover_for_dependency, workspace_source_hover_for_import,
         workspace_source_hover_for_import_in_broken_source,
+        workspace_source_hover_for_import_in_broken_source_with_open_docs,
         workspace_source_member_field_completions, workspace_source_method_completions,
         workspace_source_method_completions_with_open_docs,
         workspace_source_references_for_dependency,
@@ -12333,6 +12584,119 @@ pub fn exported(value: Int) -> Int
     }
 
     #[test]
+    fn workspace_import_definition_in_broken_source_prefers_open_workspace_member_source() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-definition-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    let next = run(1)
+    return next
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let disk_core_source =
+            fs::read_to_string(&core_source_path).expect("core source should read from disk");
+        let open_core_source = r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#
+        .to_owned();
+
+        let definition = workspace_source_definition_for_import_in_broken_source_with_open_docs(
+            &uri,
+            &source,
+            &package,
+            &file_open_documents(vec![(core_uri.clone(), open_core_source.clone())]),
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        )
+        .expect("broken-source workspace import definition should exist");
+
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("workspace import definition should resolve to one location")
+        };
+        assert_eq!(location.uri, core_uri);
+        assert_eq!(
+            location.range.start,
+            offset_to_position(
+                &open_core_source,
+                nth_offset(&open_core_source, "exported", 1)
+            ),
+        );
+        assert_ne!(
+            location.range.start,
+            offset_to_position(
+                &disk_core_source,
+                nth_offset(&disk_core_source, "exported", 1)
+            ),
+        );
+    }
+
+    #[test]
     fn workspace_type_import_type_definition_survives_parse_errors_and_prefers_workspace_member_source()
      {
         let temp = TempDir::new("ql-lsp-workspace-type-import-source-type-definition-parse-errors");
@@ -12592,6 +12956,107 @@ pub fn exported(value: Int) -> Int
             &uri,
             &source,
             &package,
+            offset_to_position(&source, nth_offset(&source, "run", 2)),
+        )
+        .expect("broken-source workspace import hover should exist");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(
+            markup
+                .value
+                .contains("fn exported(value: Int, extra: Int) -> Int")
+        );
+        assert!(!markup.value.contains("fn exported(value: Int) -> Int"));
+    }
+
+    #[test]
+    fn workspace_import_hover_in_broken_source_prefers_open_workspace_member_source() {
+        let temp = TempDir::new("ql-lsp-workspace-import-source-hover-open-docs");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    let next = run(1)
+    return next
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub fn exported(value: Int) -> Int
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&source).is_err());
+        let package = package_analysis_for_path(&app_path)
+            .expect("package analysis should survive parse errors");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let open_core_source = r#"
+package demo.core
+
+pub fn helper() -> Int {
+    return 0
+}
+
+pub fn exported(value: Int, extra: Int) -> Int {
+    return value + extra
+}
+"#
+        .to_owned();
+
+        let hover = workspace_source_hover_for_import_in_broken_source_with_open_docs(
+            &uri,
+            &source,
+            &package,
+            &file_open_documents(vec![(core_uri, open_core_source)]),
             offset_to_position(&source, nth_offset(&source, "run", 2)),
         )
         .expect("broken-source workspace import hover should exist");
