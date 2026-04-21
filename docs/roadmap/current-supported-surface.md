@@ -59,6 +59,7 @@
 
 - same-file 语义已经接通：hover、definition、declaration、typeDefinition、references、documentHighlight、completion、semanticTokens、documentSymbol、rename。
 - `workspace/symbol` 已落地。
+- `textDocument/codeAction` 第一版已落地：当前会对 unresolved value/type 提供 auto-import quick fix，并从 workspace member / 本地依赖源码或 `.qi` 的 `package ...` 声明推导完整 `use ...` 路径。
 - healthy package/workspace 下，dependency-backed navigation 已能提供一批可依赖能力：
   - import root / dependency value / enum variant / struct field / method member 的 hover / definition / declaration / references / typeDefinition / current-document `documentHighlight`
   - dependency enum variant / struct field / member field / method completion 的源码优先返回
@@ -91,7 +92,7 @@
 - escaping / higher-order dependency method values、超出当前不可变局部 alias direct-call slice 的 dependency receiver method codegen
 - registry / version solving / publish workflow
 - 更广义的 cross-file rename / workspace edits（超出 source-backed dependency `method / field / enum variant`）
-- 更宽的 project-scale references / refactor / code actions / inlay hints
+- 更宽的 project-scale references / refactor、补齐 `match` 分支等更完整 code actions / inlay hints
 - 超出当前保守 slice 的广义 parse-error member 语义
 - 完整 trait solver、完整 monomorphization、更完整 effect system
 

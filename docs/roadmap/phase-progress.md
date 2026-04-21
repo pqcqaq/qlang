@@ -62,7 +62,7 @@
 
 ## 明确后置
 
-- 更广义的 cross-file rename / workspace edits / code actions
+- 更广义的 cross-file rename / workspace edits / 更完整 code actions
 - registry / publish
 - 更宽的 async/runtime/Rust interop 扩面
 - 新语法和更远的类型系统设计

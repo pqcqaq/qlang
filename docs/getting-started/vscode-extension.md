@@ -19,13 +19,15 @@
 - completion
 - documentSymbol / workspaceSymbol
 - semanticTokens
-- conservative rename
+- codeAction（unresolved symbol auto-import quick fix）
+- conservative rename / narrow workspace rename
 
 ## 当前边界
 
 - 当前最可靠的仍是 same-file 语义，以及 healthy package/workspace 下已经接通的 dependency-backed 导航与高亮。
 - workspace/source-preferred navigation 已经落地，但还不是完整的 workspace-wide index。
-- rename 仍然只做 same-file。
+- codeAction 当前只覆盖 unresolved value/type 的 auto-import quick fix，不含 match 分支补齐等更宽 refactor。
+- rename 已开放 same-file，以及一批 source-backed dependency / workspace root 的保守 workspace rename；其余符号仍未开放更广 cross-file rename。
 - parse-error 下只保留保守子集；当前已锁住的 rename slice 包括 `config.child()?.leaf().value` 这类 question-unwrapped method-result member field。
 - 插件内置了最小 TextMate grammar fallback，但更细粒度高亮仍主要依赖 `qlsp` 的 semantic tokens。
 - 还不提供 Marketplace 发布流，只提供本地 VSIX 打包。

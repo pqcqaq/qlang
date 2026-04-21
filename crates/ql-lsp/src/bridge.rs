@@ -16,9 +16,9 @@ use tower_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind, CompletionResponse,
     CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
     DocumentSymbol, DocumentSymbolResponse, Documentation, GotoDefinitionResponse, Hover,
-    HoverContents, Location, MarkupContent, MarkupKind, Position, PrepareRenameResponse, Range,
-    SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend, SemanticTokensResult,
-    SymbolInformation, TextEdit, Url, WorkspaceEdit,
+    HoverContents, Location, MarkupContent, MarkupKind, NumberOrString, Position,
+    PrepareRenameResponse, Range, SemanticToken, SemanticTokenType, SemanticTokens,
+    SemanticTokensLegend, SemanticTokensResult, SymbolInformation, TextEdit, Url, WorkspaceEdit,
 };
 
 pub fn position_to_offset(source: &str, position: Position) -> Option<usize> {
@@ -1260,6 +1260,9 @@ fn diagnostic_to_lsp(uri: &Url, source: &str, diagnostic: &CompilerDiagnostic) -
 
     Diagnostic {
         range,
+        code: diagnostic
+            .code
+            .map(|code| NumberOrString::String(code.to_owned())),
         severity: Some(severity(diagnostic.severity)),
         source: Some("ql".to_owned()),
         message,

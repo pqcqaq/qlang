@@ -24,7 +24,7 @@
 | P1 | dependency-aware build/backend | 把跨包执行和依赖装载从窄的 demo slice 扩到真实项目需要的核心路径 |
 | P2 | 基础 LSP / VSCode 可用性 | 把真实 workspace 里的导航、高亮、补全做到可依赖 |
 | P3 | 分发 / CI / 团队接入 | 补齐安装、锁文件、JSON、CI、VSIX 分发 |
-| P4 | 高级 IDE 与语言扩面 | cross-file rename / workspace edits / code actions，以及更宽 async/runtime/语言能力后置 |
+| P4 | 高级 IDE 与语言扩面 | cross-file rename / workspace edits / 更完整 code actions，以及更宽 async/runtime/语言能力后置 |
 
 ## P0 完成定义
 
@@ -98,7 +98,7 @@
 
 ## 明确后置
 
-- cross-file rename / workspace edits / code actions
+- cross-file rename / workspace edits / 更完整 code actions
 - 更宽的 async/runtime/Rust interop 扩面
 - 新语法糖和更远的类型系统能力
 - registry / publish workflow

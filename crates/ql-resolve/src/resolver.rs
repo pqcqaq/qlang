@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use ql_ast::Path;
-use ql_diagnostics::{Diagnostic, Label};
+use ql_diagnostics::{Diagnostic, Label, UNRESOLVED_TYPE_CODE, UNRESOLVED_VALUE_CODE};
 use ql_hir::{
     BlockId, CallArg, EnumVariant, ExprId, ExprKind, Field, Function, FunctionRef, GenericParam,
     Global, ItemId, ItemKind, MatchArm, Module, Param, PatternId, PatternKind, StmtKind,
@@ -768,15 +768,19 @@ fn invalid_self_diagnostic(span: ql_span::Span) -> Diagnostic {
 }
 
 fn unresolved_value_diagnostic(name: &str, span: ql_span::Span) -> Diagnostic {
-    Diagnostic::error(format!("unresolved value `{name}`")).with_label(
-        Label::new(span).with_message("could not resolve this value in the current scope"),
-    )
+    Diagnostic::error(format!("unresolved value `{name}`"))
+        .with_code(UNRESOLVED_VALUE_CODE)
+        .with_label(
+            Label::new(span).with_message("could not resolve this value in the current scope"),
+        )
 }
 
 fn unresolved_type_diagnostic(name: &str, span: ql_span::Span) -> Diagnostic {
-    Diagnostic::error(format!("unresolved type `{name}`")).with_label(
-        Label::new(span).with_message("could not resolve this type in the current scope"),
-    )
+    Diagnostic::error(format!("unresolved type `{name}`"))
+        .with_code(UNRESOLVED_TYPE_CODE)
+        .with_label(
+            Label::new(span).with_message("could not resolve this type in the current scope"),
+        )
 }
 
 fn task_handle_type_path(path: &Path, args: &[TypeId]) -> bool {

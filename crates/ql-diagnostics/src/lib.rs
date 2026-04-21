@@ -2,6 +2,9 @@ use std::path::Path;
 
 use ql_span::{Span, locate, slice_for_line};
 
+pub const UNRESOLVED_VALUE_CODE: &str = "unresolved-value";
+pub const UNRESOLVED_TYPE_CODE: &str = "unresolved-type";
+
 /// Severity level attached to a rendered compiler diagnostic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiagnosticSeverity {
@@ -52,6 +55,7 @@ impl Label {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
     pub severity: DiagnosticSeverity,
+    pub code: Option<&'static str>,
     pub message: String,
     pub labels: Vec<Label>,
     pub notes: Vec<String>,
@@ -61,6 +65,7 @@ impl Diagnostic {
     pub fn error(message: impl Into<String>) -> Self {
         Self {
             severity: DiagnosticSeverity::Error,
+            code: None,
             message: message.into(),
             labels: Vec::new(),
             notes: Vec::new(),
@@ -70,6 +75,7 @@ impl Diagnostic {
     pub fn warning(message: impl Into<String>) -> Self {
         Self {
             severity: DiagnosticSeverity::Warning,
+            code: None,
             message: message.into(),
             labels: Vec::new(),
             notes: Vec::new(),
@@ -79,10 +85,16 @@ impl Diagnostic {
     pub fn note(message: impl Into<String>) -> Self {
         Self {
             severity: DiagnosticSeverity::Note,
+            code: None,
             message: message.into(),
             labels: Vec::new(),
             notes: Vec::new(),
         }
+    }
+
+    pub fn with_code(mut self, code: &'static str) -> Self {
+        self.code = Some(code);
+        self
     }
 
     pub fn with_label(mut self, label: Label) -> Self {

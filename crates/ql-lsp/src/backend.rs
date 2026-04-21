@@ -7,6 +7,7 @@ use ql_analysis::{
     RenameTarget, analyze_available_package_dependencies, analyze_package,
     analyze_package_with_available_dependencies, analyze_source,
 };
+use ql_diagnostics::{UNRESOLVED_TYPE_CODE, UNRESOLVED_VALUE_CODE};
 use ql_lexer::{Token, TokenKind, is_keyword, is_valid_identifier, lex};
 use ql_project::{collect_package_sources, load_project_manifest};
 use ql_span::Span;
@@ -17,17 +18,18 @@ use tower_lsp::lsp_types::request::{
     GotoTypeDefinitionResponse,
 };
 use tower_lsp::lsp_types::{
-    CompletionOptions, CompletionParams, CompletionResponse, DeclarationCapability,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, HoverProviderCapability,
-    InitializeParams, InitializeResult, InitializedParams, Location, MessageType, OneOf,
-    PrepareRenameResponse, ReferenceParams, RenameOptions, RenameParams, SemanticTokensFullOptions,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SymbolInformation,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextEdit, TypeDefinitionProviderCapability, Url, WorkspaceEdit,
-    WorkspaceSymbolParams,
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
+    CodeActionProviderCapability, CompletionOptions, CompletionParams, CompletionResponse,
+    DeclarationCapability, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams,
+    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
+    HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams, Location,
+    MessageType, NumberOrString, OneOf, PrepareRenameResponse, ReferenceParams, RenameOptions,
+    RenameParams, SemanticTokensFullOptions, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo,
+    SymbolInformation, SymbolKind as LspSymbolKind, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit,
+    TypeDefinitionProviderCapability, Url, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tower_lsp::{Client, LanguageServer};
 
@@ -993,6 +995,324 @@ fn package_path_segments(source: &str) -> Option<Vec<&str>> {
         return (!segments.is_empty()).then_some(segments);
     }
     None
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AutoImportKind {
+    Value,
+    Type,
+}
+
+fn auto_import_code_actions_for_source(
+    uri: &Url,
+    source: &str,
+    diagnostics: &[tower_lsp::lsp_types::Diagnostic],
+    documents: Vec<(Url, String)>,
+    workspace_roots: &[PathBuf],
+) -> Vec<CodeActionOrCommand> {
+    let mut actions = Vec::new();
+    let mut seen_paths = HashSet::<Vec<String>>::new();
+    let document_sources = documents.iter().cloned().collect::<HashMap<Url, String>>();
+
+    for diagnostic in diagnostics {
+        let Some((kind, name)) = unresolved_auto_import_request(diagnostic) else {
+            continue;
+        };
+
+        for symbol in
+            workspace_symbols_for_documents_and_roots(documents.clone(), workspace_roots, &name)
+        {
+            if symbol.name != name
+                || symbol.location.uri == *uri
+                || !supports_auto_import_symbol_kind(symbol.kind, kind)
+            {
+                continue;
+            }
+            let Some(import_path) = auto_import_path_for_symbol(&symbol, &document_sources) else {
+                continue;
+            };
+            if source_already_imports_path(source, &import_path)
+                || !seen_paths.insert(import_path.clone())
+            {
+                continue;
+            }
+
+            let edit = auto_import_insertion_edit(source, &import_path);
+            let mut changes = HashMap::new();
+            changes.insert(uri.clone(), vec![edit]);
+
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: format!("Import `{}`", import_path.join(".")),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diagnostic.clone()]),
+                edit: Some(WorkspaceEdit::new(changes)),
+                command: None,
+                is_preferred: None,
+                disabled: None,
+                data: None,
+            }));
+        }
+    }
+
+    actions.sort_by_key(|action| match action {
+        CodeActionOrCommand::CodeAction(action) => action.title.clone(),
+        CodeActionOrCommand::Command(command) => command.title.clone(),
+    });
+    actions
+}
+
+fn unresolved_auto_import_request(
+    diagnostic: &tower_lsp::lsp_types::Diagnostic,
+) -> Option<(AutoImportKind, String)> {
+    let kind = match diagnostic.code.as_ref()? {
+        NumberOrString::String(code) if code == UNRESOLVED_VALUE_CODE => AutoImportKind::Value,
+        NumberOrString::String(code) if code == UNRESOLVED_TYPE_CODE => AutoImportKind::Type,
+        _ => return None,
+    };
+    let start = diagnostic.message.find('`')?;
+    let rest = &diagnostic.message[start + 1..];
+    let end = rest.find('`')?;
+    Some((kind, rest[..end].to_owned()))
+}
+
+fn supports_auto_import_symbol_kind(kind: LspSymbolKind, unresolved_kind: AutoImportKind) -> bool {
+    match unresolved_kind {
+        AutoImportKind::Value => matches!(
+            kind,
+            LspSymbolKind::FUNCTION | LspSymbolKind::CONSTANT | LspSymbolKind::VARIABLE
+        ),
+        AutoImportKind::Type => matches!(
+            kind,
+            LspSymbolKind::STRUCT
+                | LspSymbolKind::ENUM
+                | LspSymbolKind::INTERFACE
+                | LspSymbolKind::CLASS
+        ),
+    }
+}
+
+fn auto_import_path_for_symbol(
+    symbol: &SymbolInformation,
+    document_sources: &HashMap<Url, String>,
+) -> Option<Vec<String>> {
+    let mut segments = package_path_segments_for_uri(&symbol.location.uri, document_sources)
+        .or_else(|| {
+            symbol.container_name.as_ref().map(|container_name| {
+                container_name
+                    .split('.')
+                    .map(str::trim)
+                    .filter(|segment| !segment.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect::<Vec<_>>()
+            })
+        })?;
+    if segments.is_empty() {
+        return None;
+    }
+    segments.push(symbol.name.clone());
+    Some(segments)
+}
+
+fn package_path_segments_for_uri(
+    uri: &Url,
+    document_sources: &HashMap<Url, String>,
+) -> Option<Vec<String>> {
+    if let Some(source) = document_sources.get(uri) {
+        return package_path_segments(source).map(|segments| {
+            segments
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        });
+    }
+
+    let path = uri.to_file_path().ok()?;
+    let source = fs::read_to_string(path).ok()?;
+    package_path_segments(&source).map(|segments| {
+        segments
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>()
+    })
+}
+
+fn source_already_imports_path(source: &str, import_path: &[String]) -> bool {
+    let (tokens, _) = lex(source);
+    top_level_import_paths_in_tokens(&tokens)
+        .into_iter()
+        .any(|candidate| candidate == import_path)
+}
+
+fn auto_import_insertion_edit(source: &str, import_path: &[String]) -> TextEdit {
+    let offset = auto_import_insert_offset(source);
+    let import_stmt = format!("use {}", import_path.join("."));
+    TextEdit::new(
+        span_to_range(source, Span::new(offset, offset)),
+        auto_import_insert_text(source, offset, &import_stmt),
+    )
+}
+
+fn auto_import_insert_offset(source: &str) -> usize {
+    let (tokens, _) = lex(source);
+    let Some(anchor_end) = top_level_import_anchor_end_in_tokens(&tokens) else {
+        return leading_comment_or_blank_insert_offset(source);
+    };
+    line_break_end_offset(source, anchor_end)
+}
+
+fn top_level_import_anchor_end_in_tokens(tokens: &[Token]) -> Option<usize> {
+    let mut index = 0usize;
+    let mut anchor_end = None;
+
+    if tokens.get(index).map(|token| token.kind) == Some(TokenKind::Package) {
+        let (package_path, next_index) = top_level_import_path_in_tokens(tokens, index + 1)?;
+        anchor_end = package_path.last().map(|segment| segment.1.end);
+        index = next_index;
+    }
+
+    while tokens.get(index).map(|token| token.kind) == Some(TokenKind::Use) {
+        let (next_index, import_paths) = top_level_import_paths_after_use(tokens, index + 1)?;
+        anchor_end = import_paths
+            .last()
+            .and_then(|path| path.last().map(|segment| segment.1.end))
+            .or(anchor_end);
+        index = next_index;
+    }
+
+    anchor_end
+}
+
+fn leading_comment_or_blank_insert_offset(source: &str) -> usize {
+    let mut offset = 0usize;
+    for chunk in source.split_inclusive('\n') {
+        let trimmed = chunk.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            offset += chunk.len();
+            continue;
+        }
+        break;
+    }
+    offset
+}
+
+fn line_break_end_offset(source: &str, offset: usize) -> usize {
+    source[offset..]
+        .find('\n')
+        .map(|relative| offset + relative + 1)
+        .unwrap_or(source.len())
+}
+
+fn auto_import_insert_text(source: &str, offset: usize, import_stmt: &str) -> String {
+    if offset == 0 {
+        return if source.is_empty() {
+            format!("{import_stmt}\n")
+        } else {
+            format!("{import_stmt}\n\n")
+        };
+    }
+
+    let suffix = &source[offset..];
+    if suffix.starts_with('\n') {
+        format!("{import_stmt}\n")
+    } else if suffix.is_empty() {
+        format!("{import_stmt}\n")
+    } else {
+        format!("{import_stmt}\n\n")
+    }
+}
+
+fn top_level_import_paths_in_tokens(tokens: &[Token]) -> Vec<Vec<String>> {
+    let mut paths = Vec::new();
+    let mut index = 0usize;
+
+    if tokens.get(index).map(|token| token.kind) == Some(TokenKind::Package)
+        && let Some((_, next_index)) = top_level_import_path_in_tokens(tokens, index + 1)
+    {
+        index = next_index;
+    }
+
+    while tokens.get(index).map(|token| token.kind) == Some(TokenKind::Use) {
+        let Some((next_index, use_paths)) = top_level_import_paths_after_use(tokens, index + 1)
+        else {
+            break;
+        };
+        paths.extend(
+            use_paths
+                .into_iter()
+                .map(|path| path.into_iter().map(|segment| segment.0).collect()),
+        );
+        index = next_index;
+    }
+
+    paths
+}
+
+fn top_level_import_paths_after_use(
+    tokens: &[Token],
+    index: usize,
+) -> Option<(usize, Vec<Vec<(String, Span)>>)> {
+    let (prefix, mut index) = top_level_import_path_in_tokens(tokens, index)?;
+    if tokens.get(index).map(|token| token.kind) == Some(TokenKind::Dot)
+        && tokens.get(index + 1).map(|token| token.kind) == Some(TokenKind::LBrace)
+    {
+        index += 2;
+        let mut bindings = Vec::new();
+        loop {
+            if tokens.get(index).map(|token| token.kind) == Some(TokenKind::RBrace) {
+                return Some((index + 1, bindings));
+            }
+
+            let item = top_level_import_ident_token(tokens, index)?;
+            let mut path = prefix.clone();
+            path.push((item.text.clone(), item.span));
+            index += 1;
+            index = top_level_import_alias_in_tokens(tokens, index)?;
+            bindings.push(path);
+
+            match tokens.get(index).map(|token| token.kind) {
+                Some(TokenKind::Comma) => index += 1,
+                Some(TokenKind::RBrace) => return Some((index + 1, bindings)),
+                _ => return None,
+            }
+        }
+    }
+
+    let index = top_level_import_alias_in_tokens(tokens, index)?;
+    Some((index, vec![prefix]))
+}
+
+fn top_level_import_path_in_tokens(
+    tokens: &[Token],
+    index: usize,
+) -> Option<(Vec<(String, Span)>, usize)> {
+    let mut index = index;
+    let first = top_level_import_ident_token(tokens, index)?;
+    let mut segments = vec![(first.text.clone(), first.span)];
+    index += 1;
+
+    while tokens.get(index).map(|token| token.kind) == Some(TokenKind::Dot)
+        && tokens.get(index + 1).map(|token| token.kind) == Some(TokenKind::Ident)
+    {
+        let segment = tokens.get(index + 1)?;
+        segments.push((segment.text.clone(), segment.span));
+        index += 2;
+    }
+
+    Some((segments, index))
+}
+
+fn top_level_import_alias_in_tokens(tokens: &[Token], index: usize) -> Option<usize> {
+    if tokens.get(index).map(|token| token.kind) != Some(TokenKind::As) {
+        return Some(index);
+    }
+
+    top_level_import_ident_token(tokens, index + 1)?;
+    Some(index + 2)
+}
+
+fn top_level_import_ident_token(tokens: &[Token], index: usize) -> Option<&Token> {
+    let token = tokens.get(index)?;
+    (token.kind == TokenKind::Ident).then_some(token)
 }
 
 fn supports_workspace_import_definition(kind: ql_analysis::SymbolKind) -> bool {
@@ -5391,6 +5711,7 @@ impl LanguageServer for Backend {
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(completion_options()),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
@@ -5908,6 +6229,26 @@ impl LanguageServer for Backend {
         Ok(completion_for_analysis(&source, &analysis, position))
     }
 
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> Result<Option<Vec<CodeActionOrCommand>>> {
+        let uri = params.text_document.uri;
+        let Some(source) = self.documents.get(&uri).await else {
+            return Ok(None);
+        };
+        let documents = self.documents.entries().await;
+        let workspace_roots = self.workspace_roots.read().await.clone();
+        let actions = auto_import_code_actions_for_source(
+            &uri,
+            &source,
+            &params.context.diagnostics,
+            documents,
+            &workspace_roots,
+        );
+        Ok((!actions.is_empty()).then_some(actions))
+    }
+
     async fn document_symbol(
         &self,
         params: DocumentSymbolParams,
@@ -6173,10 +6514,11 @@ impl LanguageServer for Backend {
 #[cfg(test)]
 mod tests {
     use super::{
-        GotoTypeDefinitionResponse, completion_for_dependency_member_fields,
-        completion_for_dependency_methods, completion_for_dependency_struct_fields,
-        completion_for_dependency_variants, completion_options, dependency_definition_target_at,
-        document_highlights_for_analysis_at, fallback_document_highlights_for_package_at,
+        GotoTypeDefinitionResponse, auto_import_code_actions_for_source,
+        completion_for_dependency_member_fields, completion_for_dependency_methods,
+        completion_for_dependency_struct_fields, completion_for_dependency_variants,
+        completion_options, dependency_definition_target_at, document_highlights_for_analysis_at,
+        fallback_document_highlights_for_package_at,
         fallback_document_highlights_for_package_at_with_open_docs, file_open_documents,
         local_source_dependency_target_with_analysis, package_analysis_for_path,
         prepare_rename_for_dependency_imports,
@@ -6232,15 +6574,17 @@ mod tests {
     };
     use crate::bridge::{semantic_tokens_legend, span_to_range};
     use ql_analysis::{RenameError, SymbolKind as AnalysisSymbolKind, analyze_source};
+    use ql_diagnostics::UNRESOLVED_VALUE_CODE;
     use ql_span::Span;
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower_lsp::lsp_types::{
-        CompletionItemKind, CompletionResponse, GotoDefinitionResponse, HoverContents, Location,
-        Position, PrepareRenameResponse, SemanticTokenType, SemanticTokensResult,
-        SymbolInformation, SymbolKind, TextEdit, Url, WorkspaceEdit,
+        CodeActionOrCommand, CompletionItemKind, CompletionResponse, Diagnostic,
+        GotoDefinitionResponse, HoverContents, Location, NumberOrString, Position,
+        PrepareRenameResponse, Range, SemanticTokenType, SemanticTokensResult, SymbolInformation,
+        SymbolKind, TextEdit, Url, WorkspaceEdit,
     };
 
     struct TempDir {
@@ -6317,6 +6661,138 @@ mod tests {
     fn completion_options_trigger_on_member_access_dot() {
         let options = completion_options();
         assert_eq!(options.trigger_characters, Some(vec![".".to_owned()]));
+    }
+
+    fn setup_auto_import_workspace_fixture(temp: &TempDir, app_source: &str) -> (PathBuf, PathBuf) {
+        let workspace_root = temp.path().join("workspace");
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+core = { path = "../core" }
+"#,
+        );
+        let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        (workspace_root, app_path)
+    }
+
+    fn unresolved_symbol_diagnostic(
+        source: &str,
+        name: &str,
+        code: &str,
+        label: &str,
+    ) -> Diagnostic {
+        let start = nth_offset(source, name, 1);
+        Diagnostic {
+            range: Range::new(
+                offset_to_position(source, start),
+                offset_to_position(source, start + name.len()),
+            ),
+            severity: None,
+            code: Some(NumberOrString::String(code.to_owned())),
+            code_description: None,
+            source: None,
+            message: format!("unresolved {label} `{name}`"),
+            related_information: None,
+            tags: None,
+            data: None,
+        }
+    }
+
+    #[test]
+    fn auto_import_code_actions_offer_workspace_member_source_imports_for_unresolved_values() {
+        let temp = TempDir::new("ql-lsp-auto-import-workspace-member-source-value");
+        let app_source = r#"package demo.app
+
+pub fn main() -> Int {
+    return exported(1)
+}
+"#;
+        let (workspace_root, app_path) = setup_auto_import_workspace_fixture(&temp, app_source);
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let diagnostic =
+            unresolved_symbol_diagnostic(app_source, "exported", UNRESOLVED_VALUE_CODE, "value");
+
+        let actions = auto_import_code_actions_for_source(
+            &app_uri,
+            app_source,
+            &[diagnostic.clone()],
+            vec![(app_uri.clone(), app_source.to_owned())],
+            &[workspace_root],
+        );
+
+        assert_eq!(actions.len(), 1, "actual actions: {actions:#?}");
+        let action = match &actions[0] {
+            CodeActionOrCommand::CodeAction(action) => action,
+            other => panic!("expected code action, got {other:#?}"),
+        };
+        assert_eq!(action.title, "Import `demo.core.exported`");
+        assert_eq!(action.diagnostics, Some(vec![diagnostic]));
+        assert_workspace_edit(
+            action
+                .edit
+                .clone()
+                .expect("code action should contain workspace edit"),
+            &app_uri,
+            vec![TextEdit::new(
+                Range::new(Position::new(1, 0), Position::new(1, 0)),
+                "use demo.core.exported\n".to_owned(),
+            )],
+        );
+    }
+
+    #[test]
+    fn auto_import_code_actions_skip_existing_exact_import_paths() {
+        let temp = TempDir::new("ql-lsp-auto-import-skip-existing-import");
+        let app_source = r#"package demo.app
+
+use demo.core.{exported}
+
+pub fn main() -> Int {
+    return exported(1)
+}
+"#;
+        let (workspace_root, app_path) = setup_auto_import_workspace_fixture(&temp, app_source);
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let diagnostic =
+            unresolved_symbol_diagnostic(app_source, "exported", UNRESOLVED_VALUE_CODE, "value");
+
+        let actions = auto_import_code_actions_for_source(
+            &app_uri,
+            app_source,
+            &[diagnostic],
+            vec![(app_uri.clone(), app_source.to_owned())],
+            &[workspace_root],
+        );
+
+        assert!(actions.is_empty(), "actual actions: {actions:#?}");
     }
 
     fn assert_workspace_edit_changes(edit: WorkspaceEdit, expected: Vec<(Url, Vec<TextEdit>)>) {
