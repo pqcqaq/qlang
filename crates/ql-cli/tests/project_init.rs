@@ -604,6 +604,175 @@ fn project_add_refuses_to_overwrite_existing_member_directory() {
 }
 
 #[test]
+fn project_add_existing_workspace_member_from_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-existing");
+    let project_root = temp.path().join("workspace");
+    let existing_request_path = project_root.join("vendor/core/src/main.ql");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(&mut init, "`ql project init` workspace for existing add");
+    let (_stdout, stderr) = expect_success(
+        "project-add-existing",
+        "workspace init for existing add",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-existing",
+        "workspace init for existing add",
+        &stderr,
+    )
+    .unwrap();
+
+    temp.write(
+        "workspace/vendor/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+    temp.write(
+        "workspace/vendor/core/src/main.ql",
+        "fn main() -> Int {\n    return 0\n}\n",
+    );
+
+    let mut add = ql_command(&workspace_root);
+    add.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--existing",
+        &existing_request_path.to_string_lossy(),
+    ]);
+    let output = run_command_capture(&mut add, "`ql project add --existing` source path");
+    let (stdout, stderr) = expect_success(
+        "project-add-existing",
+        "add existing workspace member from source path",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-existing",
+        "add existing workspace member from source path",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-add-existing",
+        &stdout.replace('\\', "/"),
+        &[
+            &format!(
+                "updated: {}",
+                project_root
+                    .join("qlang.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "added: {}",
+                project_root
+                    .join("vendor/core")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("qlang.toml"),
+            "workspace manifest after existing member add"
+        ),
+        "[workspace]\nmembers = [\"packages/app\", \"vendor/core\"]\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("vendor/core/qlang.toml"),
+            "existing package manifest after workspace add"
+        ),
+        "[package]\nname = \"core\"\n"
+    );
+}
+
+#[test]
+fn project_add_existing_refuses_name_override() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-existing-name");
+    let project_root = temp.path().join("workspace");
+    let existing_member_root = project_root.join("vendor/core");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut init,
+        "`ql project init` workspace for existing add name conflict",
+    );
+    let (_stdout, stderr) = expect_success(
+        "project-add-existing-name",
+        "workspace init for existing add name conflict",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-existing-name",
+        "workspace init for existing add name conflict",
+        &stderr,
+    )
+    .unwrap();
+
+    temp.write(
+        "workspace/vendor/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+
+    let mut add = ql_command(&workspace_root);
+    add.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--existing",
+        &existing_member_root.to_string_lossy(),
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(&mut add, "`ql project add --existing --name`");
+    let (stdout, stderr) = expect_exit_code(
+        "project-add-existing-name",
+        "add existing workspace member with explicit name override",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-add-existing-name",
+        "add existing workspace member with explicit name override",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-add-existing-name",
+        "add existing workspace member with explicit name override",
+        &stderr,
+        "error: `ql project add --existing` does not accept `--name`; package name comes from the existing manifest",
+    )
+    .unwrap();
+}
+
+#[test]
 fn project_add_refuses_unknown_workspace_dependency() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-add-missing-dependency");
