@@ -94,6 +94,48 @@ fn project_dependents_lists_workspace_member_dependents_from_member_source_path(
 }
 
 #[test]
+fn project_dependents_derives_workspace_member_package_name_from_member_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependents-derived-name");
+    let project_root = write_workspace_with_core_dependents(&temp);
+    let request_path = project_root.join("packages/core/src/main.ql");
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "dependents", &request_path.to_string_lossy()]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependents` derived workspace member package name",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependents-derived-name",
+        "derive workspace member package name for dependents",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependents-derived-name",
+        "derive workspace member package name for dependents",
+        &stderr,
+    )
+    .unwrap();
+
+    let expected = format!(
+        "workspace_manifest: {}\npackage: core\ndependents:\n  - packages/app (app)\n  - packages/tools (tools)\n",
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-dependents-derived-name",
+        "project dependents derived-name stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .unwrap();
+}
+
+#[test]
 fn project_dependents_supports_json_output() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-dependents-json");
@@ -131,6 +173,43 @@ fn project_dependents_supports_json_output() {
         "dependents": [],
     });
     assert_eq!(actual, expected, "project dependents json stdout");
+}
+
+#[test]
+fn project_dependents_requires_name_when_workspace_root_is_ambiguous() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependents-derived-name-missing");
+    let project_root = write_workspace_with_core_dependents(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "dependents", &project_root.to_string_lossy()]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependents` ambiguous workspace root package name",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-dependents-derived-name-missing",
+        "derive workspace member package name for dependents from workspace root",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-dependents-derived-name-missing",
+        "derive workspace member package name for dependents from workspace root",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-dependents-derived-name-missing",
+        "derive workspace member package name for dependents from workspace root",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project dependents` could not derive a package name from `{}`; rerun with `--name <package>`",
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
 }
 
 #[test]

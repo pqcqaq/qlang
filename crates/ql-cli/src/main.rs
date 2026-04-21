@@ -703,15 +703,10 @@ fn run() -> Result<(), u8> {
                         index += 1;
                     }
 
-                    let Some(package_name) = package_name else {
-                        eprintln!("error: `ql project dependents` requires `--name <package>`");
-                        return Err(1);
-                    };
-
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_dependents_path(&path, &package_name, json)
+                    project_dependents_path(&path, package_name.as_deref(), json)
                 }
                 "dependencies" => {
                     let remaining = args.collect::<Vec<_>>();
@@ -761,15 +756,10 @@ fn run() -> Result<(), u8> {
                         index += 1;
                     }
 
-                    let Some(package_name) = package_name else {
-                        eprintln!("error: `ql project dependencies` requires `--name <package>`");
-                        return Err(1);
-                    };
-
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_dependencies_path(&path, &package_name, json)
+                    project_dependencies_path(&path, package_name.as_deref(), json)
                 }
                 "lock" => {
                     let remaining = args.collect::<Vec<_>>();
@@ -11242,6 +11232,42 @@ fn resolve_project_package_manifest(path: &Path) -> Result<ql_project::ProjectMa
     Ok(manifest)
 }
 
+fn resolve_project_workspace_member_package_name(
+    path: &Path,
+    selected_package_name: Option<&str>,
+    command_label: &str,
+) -> Result<String, u8> {
+    if let Some(package_name) = selected_package_name {
+        if let Err(message) = validate_project_package_name(package_name) {
+            eprintln!("error: {command_label} {message}");
+            return Err(1);
+        }
+        return Ok(package_name.to_owned());
+    }
+
+    let package_manifest = load_project_manifest(path).map_err(|error| {
+        eprintln!(
+            "error: {command_label} {}",
+            project_workspace_manifest_error(path, &error)
+        );
+        1
+    })?;
+    if package_manifest.package.is_none() {
+        eprintln!(
+            "error: {command_label} could not derive a package name from `{}`; rerun with `--name <package>`",
+            normalize_path(path)
+        );
+        return Err(1);
+    }
+
+    package_name(&package_manifest)
+        .map(str::to_owned)
+        .map_err(|error| {
+            eprintln!("error: {command_label} {error}");
+            1
+        })
+}
+
 fn project_workspace_manifest_error(path: &Path, error: &ql_project::ProjectError) -> String {
     match error {
         ql_project::ProjectError::ManifestNotFound { start } => format!(
@@ -12532,18 +12558,18 @@ fn project_targets_path(
     Ok(())
 }
 
-fn project_dependents_path(path: &Path, package_name: &str, json: bool) -> Result<(), u8> {
-    if let Err(message) = validate_project_package_name(package_name) {
-        eprintln!("error: `ql project dependents` {message}");
-        return Err(1);
-    }
-
+fn project_dependents_path(path: &Path, package_name: Option<&str>, json: bool) -> Result<(), u8> {
     let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
         eprintln!("error: `ql project dependents` {message}");
         1
     })?;
+    let package_name = resolve_project_workspace_member_package_name(
+        path,
+        package_name,
+        "`ql project dependents`",
+    )?;
     let member_entries =
-        find_workspace_member_entries_by_package_name(&workspace_manifest, package_name);
+        find_workspace_member_entries_by_package_name(&workspace_manifest, &package_name);
     if member_entries.is_empty() {
         eprintln!(
             "error: `ql project dependents` workspace manifest `{}` does not contain package `{package_name}`",
@@ -12571,26 +12597,30 @@ fn project_dependents_path(path: &Path, package_name: &str, json: bool) -> Resul
             1
         })?;
     let rendered = if json {
-        render_project_dependents_json(path, &workspace_manifest, package_name, &dependents)
+        render_project_dependents_json(path, &workspace_manifest, &package_name, &dependents)
     } else {
-        render_project_dependents(&workspace_manifest, package_name, &dependents)
+        render_project_dependents(&workspace_manifest, &package_name, &dependents)
     };
     print!("{rendered}");
     Ok(())
 }
 
-fn project_dependencies_path(path: &Path, package_name: &str, json: bool) -> Result<(), u8> {
-    if let Err(message) = validate_project_package_name(package_name) {
-        eprintln!("error: `ql project dependencies` {message}");
-        return Err(1);
-    }
-
+fn project_dependencies_path(
+    path: &Path,
+    package_name: Option<&str>,
+    json: bool,
+) -> Result<(), u8> {
     let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
         eprintln!("error: `ql project dependencies` {message}");
         1
     })?;
+    let package_name = resolve_project_workspace_member_package_name(
+        path,
+        package_name,
+        "`ql project dependencies`",
+    )?;
     let member_entries =
-        find_workspace_member_entries_by_package_name(&workspace_manifest, package_name);
+        find_workspace_member_entries_by_package_name(&workspace_manifest, &package_name);
     if member_entries.is_empty() {
         eprintln!(
             "error: `ql project dependencies` workspace manifest `{}` does not contain package `{package_name}`",
@@ -12620,9 +12650,9 @@ fn project_dependencies_path(path: &Path, package_name: &str, json: bool) -> Res
             },
         )?;
     let rendered = if json {
-        render_project_dependencies_json(path, &workspace_manifest, package_name, &dependencies)
+        render_project_dependencies_json(path, &workspace_manifest, &package_name, &dependencies)
     } else {
-        render_project_dependencies(&workspace_manifest, package_name, &dependencies)
+        render_project_dependencies(&workspace_manifest, &package_name, &dependencies)
     };
     print!("{rendered}");
     Ok(())
@@ -15081,8 +15111,8 @@ fn print_usage() {
     );
     eprintln!("  ql project target add [file-or-dir] [--package <name>] --bin <name>");
     eprintln!("  ql project graph [file-or-dir] [--package <name>] [--json]");
-    eprintln!("  ql project dependents [file-or-dir] --name <package> [--json]");
-    eprintln!("  ql project dependencies [file-or-dir] --name <package> [--json]");
+    eprintln!("  ql project dependents [file-or-dir] [--name <package>] [--json]");
+    eprintln!("  ql project dependencies [file-or-dir] [--name <package>] [--json]");
     eprintln!("  ql project lock [file-or-dir] [--check] [--json]");
     eprintln!("  ql project init [dir] [--workspace] [--name <package>]");
     eprintln!("  ql project add [file-or-dir] --name <package> [--dependency <package> ...]");

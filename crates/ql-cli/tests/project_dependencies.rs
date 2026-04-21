@@ -94,6 +94,48 @@ fn project_dependencies_lists_workspace_member_dependencies_from_member_source_p
 }
 
 #[test]
+fn project_dependencies_derives_workspace_member_package_name_from_member_directory() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-derived-name");
+    let project_root = write_workspace_with_app_dependencies(&temp);
+    let request_path = project_root.join("packages/app");
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "dependencies", &request_path.to_string_lossy()]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies` derived workspace member package name",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-dependencies-derived-name",
+        "derive workspace member package name for dependencies",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-dependencies-derived-name",
+        "derive workspace member package name for dependencies",
+        &stderr,
+    )
+    .unwrap();
+
+    let expected = format!(
+        "workspace_manifest: {}\npackage: app\ndependencies:\n  - packages/core (core)\n  - packages/tools (tools)\n",
+        project_root
+            .join("qlang.toml")
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-dependencies-derived-name",
+        "project dependencies derived-name stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .unwrap();
+}
+
+#[test]
 fn project_dependencies_supports_json_output() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-dependencies-json");
@@ -142,6 +184,43 @@ fn project_dependencies_supports_json_output() {
         ],
     });
     assert_eq!(actual, expected, "project dependencies json stdout");
+}
+
+#[test]
+fn project_dependencies_requires_name_when_workspace_root_is_ambiguous() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-dependencies-derived-name-missing");
+    let project_root = write_workspace_with_app_dependencies(&temp);
+
+    let mut command = ql_command(&workspace_root);
+    command.args(["project", "dependencies", &project_root.to_string_lossy()]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project dependencies` ambiguous workspace root package name",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-dependencies-derived-name-missing",
+        "derive workspace member package name for dependencies from workspace root",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-dependencies-derived-name-missing",
+        "derive workspace member package name for dependencies from workspace root",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-dependencies-derived-name-missing",
+        "derive workspace member package name for dependencies from workspace root",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project dependencies` could not derive a package name from `{}`; rerun with `--name <package>`",
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
 }
 
 #[test]

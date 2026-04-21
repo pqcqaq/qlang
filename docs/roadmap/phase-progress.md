@@ -23,8 +23,8 @@
 - package/workspace 基础能力已落地：`ql project init`、`add`、`targets`、`graph`、`lock`、`emit-interface`。
 - `ql project add` 现在也可在创建 member 时直接写入 workspace 内本地依赖；`--existing` 还能把现有 package 或已移出的 member 重新纳入 workspace，真实 workspace 已不再只能“先手写 manifest 再接依赖图”。
 - `ql project remove` 现在会先审计反向本地依赖；仍被其他 members 引用的包会直接拒绝删除，同时保留磁盘上的包目录；真实项目里 workspace 成员已形成更安全的 `init/add/remove` 闭环。
-- `ql project dependents` 现在也已落地，并支持 `--json`；当 `ql project remove` 因反向依赖阻塞时，CLI 已能直接列出依赖它的 members，便于继续清理依赖边。
-- `ql project dependencies` 现在也已落地，并支持 `--json`；workspace package 当前直接依赖了哪些 members 已可直接查询，正反向依赖审计不必再手读 manifest 或 `project graph`。
+- `ql project dependents` 现在也已落地，并支持 `--json`；当 `ql project remove` 因反向依赖阻塞时，CLI 已能直接列出依赖它的 members，便于继续清理依赖边。从 package / workspace member 路径进入时也可自动推断目标包。
+- `ql project dependencies` 现在也已落地，并支持 `--json`；workspace package 当前直接依赖了哪些 members 已可直接查询，正反向依赖审计不必再手读 manifest 或 `project graph`。从 package / workspace member 路径进入时也可自动推断目标包。
 - `ql project targets` 现在也支持 `--package`、`--lib`、`--bin`、`--target` 过滤；真实 workspace 下排查某个 package 或单一 target 已不必再看全量列表。
 - `ql project target add --bin <name>` 现在也已落地；真实项目里新增 bin target 不必再手建 `src/bin/*.ql` 和手改 `qlang.toml`，第一次显式写入 `[[bin]]` 时也会保留当前默认发现到的 targets。
 - `ql project graph` 现在也支持 `--package` 聚焦到单个 workspace member 的包图；workspace 根图查询已不必再总是展开全部成员。
