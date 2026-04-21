@@ -3512,6 +3512,62 @@ fn workspace_source_location_for_dependency_target_with_open_docs(
     (matches.len() == 1).then(|| matches[0].clone())
 }
 
+fn workspace_source_location_for_dependency_implementation_target(
+    target: &ql_analysis::DependencyImplementationTarget,
+) -> Option<Location> {
+    let package = package_analysis_for_path(target.manifest_path.as_path())?;
+    let module = package.modules().iter().find(|module| {
+        package_module_matches_dependency_source_path(&package, module.path(), &target.source_path)
+    })?;
+    let uri = Url::from_file_path(module.path()).ok()?;
+    let source = fs::read_to_string(module.path())
+        .ok()?
+        .replace("\r\n", "\n");
+    Some(Location::new(uri, span_to_range(&source, target.span)))
+}
+
+fn workspace_source_implementation_for_dependency(
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    let offset = position_to_offset(source, position)?;
+    let mut locations = package
+        .dependency_implementations_at(analysis, offset)?
+        .into_iter()
+        .filter_map(|target| {
+            workspace_source_location_for_dependency_implementation_target(&target)
+        })
+        .collect::<Vec<_>>();
+
+    if locations.is_empty() {
+        return None;
+    }
+
+    locations.sort_by_key(|location| {
+        (
+            location.uri.to_string(),
+            location.range.start.line,
+            location.range.start.character,
+            location.range.end.line,
+            location.range.end.character,
+        )
+    });
+    locations.dedup_by(|left, right| same_location_anchor(left, right));
+
+    if locations.len() == 1 {
+        Some(GotoImplementationResponse::Scalar(
+            locations
+                .into_iter()
+                .next()
+                .expect("single location exists"),
+        ))
+    } else {
+        Some(GotoImplementationResponse::Array(locations))
+    }
+}
+
 fn workspace_source_definition_for_dependency(
     uri: &Url,
     source: &str,
@@ -6448,6 +6504,13 @@ impl LanguageServer for Backend {
         let Ok(analysis) = analyze_source(&source) else {
             return Ok(None);
         };
+        if let Some(package) = self.package_analysis_for_uri(&uri)
+            && let Some(implementation) = workspace_source_implementation_for_dependency(
+                &source, &analysis, &package, position,
+            )
+        {
+            return Ok(Some(implementation));
+        }
         Ok(implementation_for_analysis(
             &uri, &source, &analysis, position,
         ))
@@ -7005,8 +7068,8 @@ mod tests {
         workspace_source_hover_for_import_in_broken_source,
         workspace_source_hover_for_import_in_broken_source_with_open_docs,
         workspace_source_hover_for_import_with_open_docs,
-        workspace_source_member_field_completions, workspace_source_method_completions,
-        workspace_source_method_completions_with_open_docs,
+        workspace_source_implementation_for_dependency, workspace_source_member_field_completions,
+        workspace_source_method_completions, workspace_source_method_completions_with_open_docs,
         workspace_source_references_for_dependency,
         workspace_source_references_for_dependency_in_broken_source,
         workspace_source_references_for_dependency_in_broken_source_with_open_docs,
@@ -7214,6 +7277,146 @@ impl Runner for Helper {
                 ),
                 Location::new(uri, span_to_range(source, nth_span(source, "run", 3))),
             ]
+        );
+    }
+
+    #[test]
+    fn workspace_type_import_implementation_prefers_workspace_member_source_over_interface_artifact()
+     {
+        let temp = TempDir::new("ql-lsp-workspace-type-import-implementation");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Config
+
+pub fn main(value: Config) -> Config {
+    return value
+}
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    fn build(self) -> Int {
+        return self.value
+    }
+}
+
+extend Config {
+    fn label(self) -> Int {
+        return self.value
+    }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub struct Config {
+    value: Int,
+}
+"#,
+        );
+
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+
+        let implementation = workspace_source_implementation_for_dependency(
+            &source,
+            &analysis,
+            &package,
+            offset_to_position(&source, nth_offset(&source, "Config", 2)),
+        )
+        .expect("workspace import implementation should exist");
+
+        let GotoDefinitionResponse::Array(locations) = implementation else {
+            panic!("workspace import implementation should resolve to many locations")
+        };
+        assert_eq!(locations.len(), 2);
+        assert!(
+            locations.iter().all(|location| {
+                location
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| fs::canonicalize(path).ok())
+                    == Some(
+                        fs::canonicalize(&core_source_path)
+                            .expect("core source path should canonicalize"),
+                    )
+            }),
+            "all implementation locations should point at workspace source",
+        );
+        assert_eq!(
+            locations[0].range.start,
+            offset_to_position(
+                &fs::read_to_string(&core_source_path)
+                    .expect("core source should read")
+                    .replace("\r\n", "\n"),
+                nth_offset(
+                    &fs::read_to_string(&core_source_path)
+                        .expect("core source should read")
+                        .replace("\r\n", "\n"),
+                    "impl Config",
+                    1
+                )
+            ),
+        );
+        assert_eq!(
+            locations[1].range.start,
+            offset_to_position(
+                &fs::read_to_string(&core_source_path)
+                    .expect("core source should read")
+                    .replace("\r\n", "\n"),
+                nth_offset(
+                    &fs::read_to_string(&core_source_path)
+                        .expect("core source should read")
+                        .replace("\r\n", "\n"),
+                    "extend Config",
+                    1
+                )
+            ),
         );
     }
 

@@ -84,6 +84,13 @@ pub struct ImplementationTarget {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyImplementationTarget {
+    pub manifest_path: PathBuf,
+    pub source_path: String,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DependencyHoverInfo {
     pub span: Span,
     pub package_name: String,
@@ -705,10 +712,7 @@ impl DependencyInterface {
             for item in &module.syntax.items {
                 match &item.kind {
                     AstItemKind::Impl(impl_block)
-                        if dependency_type_expr_targets_struct(
-                            &impl_block.target,
-                            &symbol.name,
-                        ) =>
+                        if dependency_type_expr_targets_name(&impl_block.target, &symbol.name) =>
                     {
                         for method in impl_block
                             .methods
@@ -766,7 +770,7 @@ impl DependencyInterface {
                         }
                     }
                     AstItemKind::Extend(extend_block)
-                        if dependency_type_expr_targets_struct(
+                        if dependency_type_expr_targets_name(
                             &extend_block.target,
                             &symbol.name,
                         ) =>
@@ -2024,6 +2028,51 @@ impl PackageAnalysis {
             path: dependency.interface_path.clone(),
             span: definition_span,
         })
+    }
+
+    pub fn dependency_implementations_at(
+        &self,
+        analysis: &Analysis,
+        offset: usize,
+    ) -> Option<Vec<DependencyImplementationTarget>> {
+        let target = self.dependency_type_definition_at(analysis, offset)?;
+        if !matches!(
+            target.kind,
+            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait
+        ) {
+            return None;
+        }
+
+        let dependency_package = analyze_package(target.manifest_path.as_path()).ok()?;
+        let mut targets = match target.kind {
+            SymbolKind::Struct | SymbolKind::Enum => {
+                package_implementation_targets_for_type(&dependency_package, &target.name)
+            }
+            SymbolKind::Trait => {
+                package_implementation_targets_for_trait(&dependency_package, &target.name)
+            }
+            _ => Vec::new(),
+        };
+
+        if targets.is_empty() {
+            return None;
+        }
+
+        targets.sort_by_key(|target| {
+            (
+                target.source_path.clone(),
+                target.span.start,
+                target.span.end,
+            )
+        });
+        targets.dedup_by_key(|target| {
+            (
+                target.source_path.clone(),
+                target.span.start,
+                target.span.end,
+            )
+        });
+        Some(targets)
     }
 
     pub fn dependency_hover_in_source_at(
@@ -4436,7 +4485,7 @@ fn public_struct_methods_for_source_path(
         for item in &module_ast.items {
             match &item.kind {
                 AstItemKind::Impl(impl_block)
-                    if dependency_type_expr_targets_struct(&impl_block.target, struct_name) =>
+                    if dependency_type_expr_targets_name(&impl_block.target, struct_name) =>
                 {
                     for method in impl_block
                         .methods
@@ -4500,7 +4549,7 @@ fn public_struct_methods_for_source_path(
                     }
                 }
                 AstItemKind::Extend(extend_block)
-                    if dependency_type_expr_targets_struct(&extend_block.target, struct_name) =>
+                    if dependency_type_expr_targets_name(&extend_block.target, struct_name) =>
                 {
                     for method in extend_block
                         .methods
@@ -12984,13 +13033,80 @@ fn push_dependency_method_occurrence_for_binding(
     });
 }
 
-fn dependency_type_expr_targets_struct(ty: &ql_ast::TypeExpr, struct_name: &str) -> bool {
+fn dependency_type_expr_targets_name(ty: &ql_ast::TypeExpr, name: &str) -> bool {
     let ql_ast::TypeExprKind::Named { path, .. } = &ty.kind else {
         return false;
     };
-    path.segments
-        .last()
-        .is_some_and(|segment| segment == struct_name)
+    path.segments.last().is_some_and(|segment| segment == name)
+}
+
+fn package_implementation_targets_for_type(
+    package: &PackageAnalysis,
+    type_name: &str,
+) -> Vec<DependencyImplementationTarget> {
+    let mut targets = Vec::new();
+
+    for module in &package.modules {
+        let Some(module_source_path) = package_module_source_path(package, module.path()) else {
+            continue;
+        };
+        for item in &module.analysis().ast().items {
+            match &item.kind {
+                AstItemKind::Impl(impl_block)
+                    if dependency_type_expr_targets_name(&impl_block.target, type_name) =>
+                {
+                    targets.push(DependencyImplementationTarget {
+                        manifest_path: package.manifest.manifest_path.clone(),
+                        source_path: module_source_path.clone(),
+                        span: item.span,
+                    });
+                }
+                AstItemKind::Extend(extend_block)
+                    if dependency_type_expr_targets_name(&extend_block.target, type_name) =>
+                {
+                    targets.push(DependencyImplementationTarget {
+                        manifest_path: package.manifest.manifest_path.clone(),
+                        source_path: module_source_path.clone(),
+                        span: item.span,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    targets
+}
+
+fn package_implementation_targets_for_trait(
+    package: &PackageAnalysis,
+    trait_name: &str,
+) -> Vec<DependencyImplementationTarget> {
+    let mut targets = Vec::new();
+
+    for module in &package.modules {
+        let Some(module_source_path) = package_module_source_path(package, module.path()) else {
+            continue;
+        };
+        for item in &module.analysis().ast().items {
+            let AstItemKind::Impl(impl_block) = &item.kind else {
+                continue;
+            };
+            if impl_block
+                .trait_ty
+                .as_ref()
+                .is_some_and(|trait_ty| dependency_type_expr_targets_name(trait_ty, trait_name))
+            {
+                targets.push(DependencyImplementationTarget {
+                    manifest_path: package.manifest.manifest_path.clone(),
+                    source_path: module_source_path.clone(),
+                    span: item.span,
+                });
+            }
+        }
+    }
+
+    targets
 }
 
 fn dependency_import_binding_for_local_name<'a>(

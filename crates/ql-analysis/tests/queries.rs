@@ -5,6 +5,10 @@ use ql_analysis::{
 };
 use ql_runtime::RuntimeCapability;
 use ql_span::Span;
+use std::env;
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use support::{analyzed, nth_offset, nth_span};
 
@@ -13,6 +17,37 @@ fn alias_span(source: &str, alias: &str) -> Span {
         .find(&format!("as {alias}"))
         .map(|offset| Span::new(offset + 3, offset + 3 + alias.len()))
         .expect("import alias definition should exist")
+}
+
+struct TempDir {
+    path: PathBuf,
+}
+
+impl TempDir {
+    fn new(prefix: &str) -> Self {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let path = env::temp_dir().join(format!("{prefix}-{unique}"));
+        fs::create_dir_all(&path).expect("create temporary test directory");
+        Self { path }
+    }
+
+    fn write(&self, relative: &str, contents: &str) -> PathBuf {
+        let path = self.path.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent directories");
+        }
+        fs::write(&path, contents).expect("write file");
+        path
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
 
 #[test]
@@ -3399,6 +3434,164 @@ fn build(account: Account, admin: Admin) -> Int {
                 span: nth_span(source, "mode", 3),
             },
         ])
+    );
+}
+
+#[test]
+fn dependency_implementation_queries_follow_workspace_trait_and_type_surfaces() {
+    let temp = TempDir::new("ql-analysis-dependency-implementations");
+    let app_path = temp.write(
+        "workspace/packages/app/src/main.ql",
+        r#"
+package demo.app
+
+use demo.core.Runner
+use demo.core.Config
+
+struct LocalWorker {}
+
+impl Runner for LocalWorker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+pub fn main(value: Config) -> Config {
+    return value
+}
+"#,
+    );
+    let core_source = r#"
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub struct Worker {}
+
+impl Runner for Worker {
+    fn run(self) -> Int {
+        return 1
+    }
+}
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    fn make(self) -> Int {
+        return self.value
+    }
+}
+
+extend Config {
+    fn label(self) -> Int {
+        return self.value
+    }
+}
+"#;
+    temp.write("workspace/packages/core/src/lib.ql", core_source);
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+    );
+    let core_manifest_path = temp.write(
+        "workspace/packages/core/qlang.toml",
+        r#"
+[package]
+name = "core"
+"#,
+    );
+    temp.write(
+        "workspace/packages/core/core.qi",
+        r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub trait Runner {
+    fn run(self) -> Int
+}
+
+pub struct Config {
+    value: Int,
+}
+"#,
+    );
+
+    let source = fs::read_to_string(&app_path).expect("app source should read");
+    let analysis = ql_analysis::analyze_source(&source).expect("app source should analyze");
+    let package = ql_analysis::analyze_package(&app_path).expect("package analysis should succeed");
+
+    let trait_targets = package
+        .dependency_implementations_at(&analysis, nth_offset(&source, "Runner", 2))
+        .expect("trait dependency implementations should exist");
+    assert_eq!(
+        trait_targets
+            .iter()
+            .map(|target| (
+                fs::canonicalize(&target.manifest_path).expect("manifest path should canonicalize"),
+                target.source_path.clone(),
+                target.span
+            ))
+            .collect::<Vec<_>>(),
+        vec![(
+            fs::canonicalize(&core_manifest_path).expect("manifest path should canonicalize"),
+            "src/lib.ql".to_owned(),
+            Span::new(
+                core_source.find("impl Runner for Worker").unwrap(),
+                core_source.find("}\n\npub struct Config").unwrap() + 1,
+            ),
+        )]
+    );
+
+    let type_targets = package
+        .dependency_implementations_at(&analysis, nth_offset(&source, "Config", 2))
+        .expect("type dependency implementations should exist");
+    assert_eq!(
+        type_targets
+            .iter()
+            .map(|target| (
+                fs::canonicalize(&target.manifest_path).expect("manifest path should canonicalize"),
+                target.source_path.clone(),
+                target.span
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                fs::canonicalize(&core_manifest_path).expect("manifest path should canonicalize"),
+                "src/lib.ql".to_owned(),
+                Span::new(
+                    core_source.find("impl Config").unwrap(),
+                    core_source.find("}\n\nextend Config").unwrap() + 1,
+                ),
+            ),
+            (
+                fs::canonicalize(&core_manifest_path).expect("manifest path should canonicalize"),
+                "src/lib.ql".to_owned(),
+                Span::new(
+                    core_source.find("extend Config").unwrap(),
+                    core_source.len() - 1,
+                ),
+            ),
+        ]
     );
 }
 
