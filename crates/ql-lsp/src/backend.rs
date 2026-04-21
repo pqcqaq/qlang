@@ -1089,6 +1089,126 @@ fn auto_import_code_actions_for_source(
     actions
 }
 
+fn import_missing_dependency_code_actions_for_position(
+    uri: &Url,
+    source: &str,
+    position: tower_lsp::lsp_types::Position,
+    documents: Vec<(Url, String)>,
+    workspace_roots: &[PathBuf],
+) -> Vec<CodeActionOrCommand> {
+    let document_sources = documents.iter().cloned().collect::<HashMap<Url, String>>();
+    let Some(import_path) = import_path_segments_at_position(source, position) else {
+        return Vec::new();
+    };
+    let Some(symbol) = workspace_symbol_for_import_path(
+        uri,
+        &import_path,
+        documents,
+        workspace_roots,
+        &document_sources,
+    ) else {
+        return Vec::new();
+    };
+    let Some(missing_dependency_edit) =
+        auto_import_missing_workspace_dependency_edit(uri, &symbol.location.uri, &document_sources)
+    else {
+        return Vec::new();
+    };
+
+    let mut changes = HashMap::new();
+    changes.insert(
+        missing_dependency_edit.manifest_uri.clone(),
+        vec![missing_dependency_edit.edit],
+    );
+
+    vec![CodeActionOrCommand::CodeAction(CodeAction {
+        title: format!(
+            "Add dependency `{}` for `{}`",
+            missing_dependency_edit.dependency_name,
+            import_path.join(".")
+        ),
+        kind: Some(CodeActionKind::QUICKFIX),
+        diagnostics: None,
+        edit: Some(WorkspaceEdit::new(changes)),
+        command: None,
+        is_preferred: None,
+        disabled: None,
+        data: None,
+    })]
+}
+
+fn import_path_segments_at_position(
+    source: &str,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Vec<String>> {
+    let offset = position_to_offset(source, position)?;
+    let (tokens, _) = lex(source);
+    if let Some(path_segments) = import_path_segments_in_tokens_at_offset(&tokens, offset) {
+        return Some(path_segments);
+    }
+    if let Ok(analysis) = analyze_source(source)
+        && let Some(occurrence) = analyzed_import_binding_at(source, &analysis, offset)
+    {
+        return Some(occurrence.path_segments);
+    }
+
+    let binding = broken_source_import_binding_at(source, position)?;
+    let mut path_segments = binding.import_prefix;
+    path_segments.push(binding.imported_name);
+    Some(path_segments)
+}
+
+fn import_path_segments_in_tokens_at_offset(
+    tokens: &[Token],
+    offset: usize,
+) -> Option<Vec<String>> {
+    let mut index = 0usize;
+
+    if tokens.get(index).map(|token| token.kind) == Some(TokenKind::Package)
+        && let Some((_, next_index)) = top_level_import_path_in_tokens(tokens, index + 1)
+    {
+        index = next_index;
+    }
+
+    while tokens.get(index).map(|token| token.kind) == Some(TokenKind::Use) {
+        let Some((next_index, use_paths)) = top_level_import_paths_after_use(tokens, index + 1)
+        else {
+            break;
+        };
+        for path in use_paths {
+            if path.iter().any(|(_, span)| span.contains(offset)) {
+                return Some(path.into_iter().map(|(segment, _)| segment).collect());
+            }
+        }
+        index = next_index;
+    }
+
+    None
+}
+
+fn workspace_symbol_for_import_path(
+    current_uri: &Url,
+    import_path: &[String],
+    documents: Vec<(Url, String)>,
+    workspace_roots: &[PathBuf],
+    document_sources: &HashMap<Url, String>,
+) -> Option<SymbolInformation> {
+    let imported_name = import_path.last()?;
+    let mut matches =
+        workspace_symbols_for_documents_and_roots(documents, workspace_roots, imported_name)
+            .into_iter()
+            .filter(|symbol| symbol.location.uri != *current_uri)
+            .filter(|symbol| {
+                auto_import_path_for_symbol(symbol, document_sources)
+                    .is_some_and(|candidate| candidate == import_path)
+            })
+            .collect::<Vec<_>>();
+    if matches.len() == 1 {
+        return matches.pop();
+    }
+    None
+}
+
 fn unresolved_auto_import_request(
     diagnostic: &tower_lsp::lsp_types::Diagnostic,
 ) -> Option<(AutoImportKind, String)> {
@@ -6392,9 +6512,17 @@ impl LanguageServer for Backend {
             &uri,
             &source,
             &params.context.diagnostics,
-            documents,
+            documents.clone(),
             &workspace_roots,
         );
+        let mut actions = actions;
+        actions.extend(import_missing_dependency_code_actions_for_position(
+            &uri,
+            &source,
+            params.range.start,
+            documents,
+            &workspace_roots,
+        ));
         Ok((!actions.is_empty()).then_some(actions))
     }
 
@@ -6669,6 +6797,7 @@ mod tests {
         completion_options, dependency_definition_target_at, document_highlights_for_analysis_at,
         fallback_document_highlights_for_package_at,
         fallback_document_highlights_for_package_at_with_open_docs, file_open_documents,
+        import_missing_dependency_code_actions_for_position,
         local_source_dependency_target_with_analysis, package_analysis_for_path,
         prepare_rename_for_dependency_imports,
         prepare_rename_for_workspace_import_in_broken_source,
@@ -7062,6 +7191,98 @@ pub fn main() -> Int {
             "actual manifest edit: {:#?}",
             manifest_edits[0]
         );
+    }
+
+    #[test]
+    fn import_missing_dependency_code_actions_offer_manifest_edit_for_explicit_workspace_import() {
+        let temp = TempDir::new("ql-lsp-import-missing-dependency-explicit-workspace-import");
+        let app_source = r#"package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#;
+        let (workspace_root, app_path, app_manifest_path, app_manifest_source) =
+            setup_auto_import_workspace_missing_dependency_fixture(&temp, app_source);
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let app_manifest_uri =
+            Url::from_file_path(&app_manifest_path).expect("manifest path should convert to URI");
+
+        let actions = import_missing_dependency_code_actions_for_position(
+            &app_uri,
+            app_source,
+            Position::new(2, 14),
+            vec![(app_uri.clone(), app_source.to_owned())],
+            &[workspace_root],
+        );
+
+        assert_eq!(actions.len(), 1, "actual actions: {actions:#?}");
+        let action = match &actions[0] {
+            CodeActionOrCommand::CodeAction(action) => action,
+            other => panic!("expected code action, got {other:#?}"),
+        };
+        assert_eq!(
+            action.title,
+            "Add dependency `core` for `demo.core.exported`"
+        );
+        assert_eq!(action.diagnostics, None);
+
+        let changes = action
+            .edit
+            .clone()
+            .expect("code action should contain workspace edit")
+            .changes
+            .expect("workspace edit should contain direct changes");
+        assert_eq!(changes.len(), 1, "actual changes: {changes:#?}");
+        let manifest_edits = changes
+            .get(&app_manifest_uri)
+            .expect("workspace edit should update the app manifest");
+        assert_eq!(
+            manifest_edits.len(),
+            1,
+            "actual manifest edits: {manifest_edits:#?}"
+        );
+        assert_eq!(
+            manifest_edits[0].range,
+            span_to_range(
+                &app_manifest_source,
+                Span::new(0, app_manifest_source.len())
+            )
+        );
+        assert!(
+            manifest_edits[0]
+                .new_text
+                .contains("[dependencies]\ncore = \"../core\"\n"),
+            "actual manifest edit: {:#?}",
+            manifest_edits[0]
+        );
+    }
+
+    #[test]
+    fn import_missing_dependency_code_actions_skip_existing_workspace_dependency() {
+        let temp = TempDir::new("ql-lsp-import-missing-dependency-skip-existing");
+        let app_source = r#"package demo.app
+
+use demo.core.exported as run
+
+pub fn main() -> Int {
+    return run(1)
+}
+"#;
+        let (workspace_root, app_path) = setup_auto_import_workspace_fixture(&temp, app_source);
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+
+        let actions = import_missing_dependency_code_actions_for_position(
+            &app_uri,
+            app_source,
+            Position::new(2, 14),
+            vec![(app_uri.clone(), app_source.to_owned())],
+            &[workspace_root],
+        );
+
+        assert!(actions.is_empty(), "actual actions: {actions:#?}");
     }
 
     fn assert_workspace_edit_changes(edit: WorkspaceEdit, expected: Vec<(Url, Vec<TextEdit>)>) {
