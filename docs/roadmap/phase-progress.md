@@ -1,6 +1,6 @@
 # P1-P8 阶段总览
 
-> 最后同步：2026-04-20
+> 最后同步：2026-04-21
 
 这页只保留阶段级结论和当前焦点。
 
@@ -39,6 +39,7 @@
 - healthy workspace import `hover/definition/declaration/typeDefinition` 这一轮也补上了 open-doc 路径；未保存的导出 workspace 源码现在会直接参与导航，而不再落回磁盘旧版本。
 - healthy workspace import `documentHighlight` 这一轮也补上了 open-doc 路径；当前文件 import/use 高亮现在会直接跟随未保存的导出 workspace 源码。
 - workspace import semantic tokens 这一轮也补上了 open-doc 路径；healthy 与 parse-error fallback 两条着色路径都会直接跟随未保存的导出 workspace 源码。
+- healthy workspace / 本地路径依赖的 source-backed dependency `method / field` 这一轮也补上了 open-doc 成员解析；当成员只存在于未保存源码、磁盘 `.qi` 尚未更新时，`hover / definition / references / documentHighlight` 仍会继续命中真实源码。
 - `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问和点分 dependency 路径时可直接自动弹出补全，而不必继续手动触发 completion。
 - `workspace` 外本地路径依赖的 import references 现在也走源码优先路径；broken-source fallback 已补齐到这一条路径。
 - `workspace/symbol` 现在也会对 workspace 外本地路径依赖做源码优先返回，并保留 `.qi` 回退；这条能力已补到 `workspace_roots` / 无打开文档入口，当前已锁住 value / method / trait / extend symbol。

@@ -2285,6 +2285,136 @@ fn dependency_definition_target_at(
         .or_else(|| package.dependency_definition_in_source_at(source, offset))
 }
 
+fn dependency_identifier_token_at(
+    source: &str,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Token> {
+    let offset = position_to_offset(source, position)?;
+    let (tokens, _) = lex(source);
+    tokens.into_iter().find(|token| {
+        token.kind == TokenKind::Ident && (token.span.contains(offset) || token.span.end == offset)
+    })
+}
+
+fn workspace_source_dependency_target_from_open_docs<T>(
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target_manifest_path: &Path,
+    target_source_path: &str,
+    f: impl Fn(&ql_analysis::PackageAnalysis, &str) -> Option<T>,
+) -> Option<T> {
+    for candidate_manifest_path in
+        source_preferred_manifest_paths_for_package(package.manifest().manifest_path.as_path())
+    {
+        let Some(candidate_package) = package_analysis_for_path(&candidate_manifest_path) else {
+            continue;
+        };
+        if canonicalize_or_clone(candidate_package.manifest().manifest_path.as_path())
+            != canonicalize_or_clone(target_manifest_path)
+        {
+            continue;
+        }
+        let open_source = open_docs.iter().find_map(|(path, (_, open_source))| {
+            candidate_package.modules().iter().find_map(|module| {
+                (canonicalize_or_clone(module.path()) == canonicalize_or_clone(path)
+                    && package_module_matches_dependency_source_path(
+                        &candidate_package,
+                        module.path(),
+                        target_source_path,
+                    ))
+                .then_some(open_source.as_str())
+            })
+        });
+        if let Some(open_source) = open_source
+            && let Some(target) = f(&candidate_package, open_source)
+        {
+            return Some(target);
+        }
+    }
+    None
+}
+
+fn dependency_method_definition_target_with_open_docs(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<DependencyDefinitionTarget> {
+    let offset = position_to_offset(source, position)?;
+    let token = dependency_identifier_token_at(source, position)?;
+    let target = package
+        .dependency_method_completion_target_in_source_at(source, offset)
+        .or_else(|| {
+            offset.checked_sub(1).and_then(|fallback_offset| {
+                package.dependency_method_completion_target_in_source_at(source, fallback_offset)
+            })
+        })?;
+    workspace_source_dependency_target_from_open_docs(
+        package,
+        open_docs,
+        target.manifest_path.as_path(),
+        &target.source_path,
+        |candidate_package, open_source| {
+            candidate_package.public_struct_method_definition_in_source(
+                &target.source_path,
+                open_source,
+                &target.struct_name,
+                &token.text,
+            )
+        },
+    )
+}
+
+fn dependency_struct_field_definition_target_with_open_docs(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<DependencyDefinitionTarget> {
+    let offset = position_to_offset(source, position)?;
+    let token = dependency_identifier_token_at(source, position)?;
+    let target = package
+        .dependency_member_field_completion_target_in_source_at(source, offset)
+        .or_else(|| {
+            offset.checked_sub(1).and_then(|fallback_offset| {
+                package
+                    .dependency_member_field_completion_target_in_source_at(source, fallback_offset)
+            })
+        })?;
+    workspace_source_dependency_target_from_open_docs(
+        package,
+        open_docs,
+        target.manifest_path.as_path(),
+        &target.source_path,
+        |candidate_package, open_source| {
+            candidate_package.public_struct_member_field_definition_in_source(
+                &target.source_path,
+                open_source,
+                &target.struct_name,
+                &token.text,
+            )
+        },
+    )
+}
+
+fn dependency_definition_target_with_open_docs_at(
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<DependencyDefinitionTarget> {
+    dependency_definition_target_at(source, analysis, package, position)
+        .or_else(|| {
+            dependency_method_definition_target_with_open_docs(source, package, open_docs, position)
+        })
+        .or_else(|| {
+            dependency_struct_field_definition_target_with_open_docs(
+                source, package, open_docs, position,
+            )
+        })
+}
+
 fn dependency_type_definition_target_at(
     source: &str,
     analysis: Option<&Analysis>,
@@ -2309,6 +2439,89 @@ fn dependency_type_definition_target_at(
         .or_else(|| package.dependency_variant_type_definition_in_source_at(source, offset))
         .or_else(|| package.dependency_struct_field_type_definition_in_source_at(source, offset))
         .or_else(|| package.dependency_method_type_definition_in_source_at(source, offset))
+}
+
+fn dependency_method_type_definition_target_with_open_docs(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<DependencyDefinitionTarget> {
+    let offset = position_to_offset(source, position)?;
+    let token = dependency_identifier_token_at(source, position)?;
+    let target = package
+        .dependency_method_completion_target_in_source_at(source, offset)
+        .or_else(|| {
+            offset.checked_sub(1).and_then(|fallback_offset| {
+                package.dependency_method_completion_target_in_source_at(source, fallback_offset)
+            })
+        })?;
+    workspace_source_dependency_target_from_open_docs(
+        package,
+        open_docs,
+        target.manifest_path.as_path(),
+        &target.source_path,
+        |candidate_package, open_source| {
+            candidate_package.public_struct_method_type_definition_in_source(
+                &target.source_path,
+                open_source,
+                &target.struct_name,
+                &token.text,
+            )
+        },
+    )
+}
+
+fn dependency_struct_field_type_definition_target_with_open_docs(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<DependencyDefinitionTarget> {
+    let offset = position_to_offset(source, position)?;
+    let token = dependency_identifier_token_at(source, position)?;
+    let target = package
+        .dependency_member_field_completion_target_in_source_at(source, offset)
+        .or_else(|| {
+            offset.checked_sub(1).and_then(|fallback_offset| {
+                package
+                    .dependency_member_field_completion_target_in_source_at(source, fallback_offset)
+            })
+        })?;
+    workspace_source_dependency_target_from_open_docs(
+        package,
+        open_docs,
+        target.manifest_path.as_path(),
+        &target.source_path,
+        |candidate_package, open_source| {
+            candidate_package.public_struct_member_field_type_definition_in_source(
+                &target.source_path,
+                open_source,
+                &target.struct_name,
+                &token.text,
+            )
+        },
+    )
+}
+
+fn dependency_type_definition_target_with_open_docs_at(
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<DependencyDefinitionTarget> {
+    dependency_type_definition_target_at(source, analysis, package, position)
+        .or_else(|| {
+            dependency_struct_field_type_definition_target_with_open_docs(
+                source, package, open_docs, position,
+            )
+        })
+        .or_else(|| {
+            dependency_method_type_definition_target_with_open_docs(
+                source, package, open_docs, position,
+            )
+        })
 }
 
 fn dependency_occurrence_span_at(
@@ -2340,6 +2553,24 @@ fn dependency_occurrence_span_at(
                 .dependency_hover_in_source_at(source, offset)
                 .map(|info| info.span)
         })
+}
+
+fn dependency_occurrence_span_with_open_docs_at(
+    source: &str,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<Span> {
+    dependency_occurrence_span_at(source, package, position).or_else(|| {
+        let token = dependency_identifier_token_at(source, position)?;
+        dependency_method_definition_target_with_open_docs(source, package, open_docs, position)
+            .or_else(|| {
+                dependency_struct_field_definition_target_with_open_docs(
+                    source, package, open_docs, position,
+                )
+            })
+            .map(|_| token.span)
+    })
 }
 
 fn same_dependency_definition_target(
@@ -2419,15 +2650,18 @@ fn extend_workspace_dependency_reference_locations_with_open_docs(
             .filter(|token| token.kind == TokenKind::Ident)
             .filter_map(|token| {
                 let position = span_to_range(&source, token.span).start;
-                let occurrence_span = dependency_occurrence_span_at(&source, package, position)?;
+                let occurrence_span = dependency_occurrence_span_with_open_docs_at(
+                    &source, package, open_docs, position,
+                )?;
                 if !include_declaration
                     && dependency_reference_is_definition_at(&source, analysis, package, position)
                         == Some(true)
                 {
                     return None;
                 }
-                let occurrence_target =
-                    dependency_definition_target_at(&source, analysis, package, position)?;
+                let occurrence_target = dependency_definition_target_with_open_docs_at(
+                    &source, analysis, package, open_docs, position,
+                )?;
                 (occurrence_span == token.span
                     && same_dependency_definition_target(&occurrence_target, target))
                 .then(|| Location::new(uri.clone(), span_to_range(&source, occurrence_span)))
@@ -2589,7 +2823,9 @@ fn workspace_source_definition_for_dependency_with_open_docs(
     open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoDefinitionResponse> {
-    let target = dependency_definition_target_at(source, analysis, package, position)?;
+    let target = dependency_definition_target_with_open_docs_at(
+        source, analysis, package, open_docs, position,
+    )?;
     workspace_source_location_for_dependency_target_with_open_docs(
         uri, source, analysis, package, open_docs, &target,
     )
@@ -2617,7 +2853,9 @@ fn workspace_source_type_definition_for_dependency_with_open_docs(
     open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<GotoTypeDefinitionResponse> {
-    let target = dependency_type_definition_target_at(source, analysis, package, position)?;
+    let target = dependency_type_definition_target_with_open_docs_at(
+        source, analysis, package, open_docs, position,
+    )?;
     workspace_source_location_for_dependency_target_with_open_docs(
         uri, source, analysis, package, open_docs, &target,
     )
@@ -2645,8 +2883,11 @@ fn workspace_source_hover_for_dependency_with_open_docs(
     open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
 ) -> Option<Hover> {
-    let occurrence_span = dependency_occurrence_span_at(source, package, position)?;
-    let target = dependency_definition_target_at(source, analysis, package, position)?;
+    let occurrence_span =
+        dependency_occurrence_span_with_open_docs_at(source, package, open_docs, position)?;
+    let target = dependency_definition_target_with_open_docs_at(
+        source, analysis, package, open_docs, position,
+    )?;
     let source_location = workspace_source_location_for_dependency_target_with_open_docs(
         uri, source, analysis, package, open_docs, &target,
     )?;
@@ -4259,18 +4500,22 @@ fn local_source_dependency_target_with_analysis(
                 .filter(|token| token.kind == TokenKind::Ident && token.text == definition.name)
             {
                 let position = span_to_range(&candidate_source, token.span).start;
-                let Some(occurrence_span) =
-                    dependency_occurrence_span_at(&candidate_source, &candidate_package, position)
-                else {
+                let Some(occurrence_span) = dependency_occurrence_span_with_open_docs_at(
+                    &candidate_source,
+                    &candidate_package,
+                    open_docs,
+                    position,
+                ) else {
                     continue;
                 };
                 if occurrence_span != token.span {
                     continue;
                 }
-                let Some(target) = dependency_definition_target_at(
+                let Some(target) = dependency_definition_target_with_open_docs_at(
                     &candidate_source,
                     candidate_analysis,
                     &candidate_package,
+                    open_docs,
                     position,
                 ) else {
                     continue;
@@ -4377,8 +4622,8 @@ fn normalize_reference_locations_with_definition(
     {
         locations.swap(0, existing_index);
         locations[0] = source_definition.clone();
-    } else if let Some(first_location) = locations.first_mut() {
-        *first_location = source_definition.clone();
+    } else if !locations.is_empty() {
+        locations.insert(0, source_definition.clone());
     } else {
         locations.push(source_definition.clone());
     }
@@ -4629,6 +4874,51 @@ fn dependency_reference_is_definition_at(
         })
 }
 
+fn dependency_reference_locations_in_source_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    target: &DependencyDefinitionTarget,
+    include_declaration: bool,
+) -> Vec<Location> {
+    let mut locations = lex(source)
+        .0
+        .iter()
+        .filter(|token| token.kind == TokenKind::Ident && token.text == target.name)
+        .filter_map(|token| {
+            let position = span_to_range(source, token.span).start;
+            let occurrence_span =
+                dependency_occurrence_span_with_open_docs_at(source, package, open_docs, position)?;
+            if occurrence_span != token.span {
+                return None;
+            }
+            if !include_declaration
+                && dependency_reference_is_definition_at(source, analysis, package, position)
+                    == Some(true)
+            {
+                return None;
+            }
+            let occurrence_target = dependency_definition_target_with_open_docs_at(
+                source, analysis, package, open_docs, position,
+            )?;
+            same_dependency_definition_target(&occurrence_target, target)
+                .then(|| Location::new(uri.clone(), span_to_range(source, occurrence_span)))
+        })
+        .collect::<Vec<_>>();
+    locations.sort_by_key(|location| {
+        (
+            location.range.start.line,
+            location.range.start.character,
+            location.range.end.line,
+            location.range.end.character,
+        )
+    });
+    locations.dedup_by(|left, right| same_location_anchor(left, right));
+    locations
+}
+
 fn ranges_overlap(lhs: tower_lsp::lsp_types::Range, rhs: tower_lsp::lsp_types::Range) -> bool {
     position_leq(lhs.start, rhs.end) && position_leq(rhs.start, lhs.end)
 }
@@ -4780,7 +5070,9 @@ fn workspace_source_references_for_dependency_with_open_docs(
     position: tower_lsp::lsp_types::Position,
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
-    let target = dependency_definition_target_at(source, analysis, package, position)?;
+    let target = dependency_definition_target_with_open_docs_at(
+        source, analysis, package, open_docs, position,
+    )?;
     let source_definition = workspace_source_location_for_dependency_target_with_open_docs(
         uri, source, analysis, package, open_docs, &target,
     )?;
@@ -4791,7 +5083,21 @@ fn workspace_source_references_for_dependency_with_open_docs(
         package,
         position,
         include_declaration,
-    )?;
+    )
+    .unwrap_or_else(|| {
+        dependency_reference_locations_in_source_with_open_docs(
+            uri,
+            source,
+            analysis,
+            package,
+            open_docs,
+            &target,
+            include_declaration,
+        )
+    });
+    if locations.is_empty() {
+        return None;
+    }
     if include_declaration {
         normalize_reference_locations_with_definition(&mut locations, &source_definition);
     }
@@ -5778,7 +6084,8 @@ mod tests {
         workspace_source_definition_for_import_in_broken_source,
         workspace_source_definition_for_import_in_broken_source_with_open_docs,
         workspace_source_definition_for_import_with_open_docs,
-        workspace_source_hover_for_dependency, workspace_source_hover_for_import,
+        workspace_source_hover_for_dependency,
+        workspace_source_hover_for_dependency_with_open_docs, workspace_source_hover_for_import,
         workspace_source_hover_for_import_in_broken_source,
         workspace_source_hover_for_import_in_broken_source_with_open_docs,
         workspace_source_hover_for_import_with_open_docs,
@@ -23159,6 +23466,353 @@ pub fn build() -> Counter {
         assert_eq!(items[0].label, "pulse");
         assert_eq!(items[0].kind, Some(CompletionItemKind::METHOD));
         assert_eq!(items[0].detail.as_deref(), Some("fn pulse(self) -> Int"));
+    }
+
+    #[test]
+    fn workspace_dependency_definition_and_hover_prefer_open_local_dependency_members() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-member-navigation");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    return build().pulse()
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let open_docs =
+            file_open_documents(vec![(alpha_uri.clone(), open_alpha_source.to_owned())]);
+        let pulse_position = offset_to_position(&source, nth_offset(&source, "pulse", 1) + 1);
+
+        assert_eq!(
+            workspace_source_definition_for_dependency(
+                &uri,
+                &source,
+                Some(&analysis),
+                &package,
+                pulse_position,
+            ),
+            None,
+            "disk-only definition should miss unsaved dependency members",
+        );
+
+        let definition = workspace_source_definition_for_dependency_with_open_docs(
+            &uri,
+            &source,
+            Some(&analysis),
+            &package,
+            &open_docs,
+            pulse_position,
+        )
+        .expect("dependency definition should use open dependency member source");
+        let GotoDefinitionResponse::Scalar(location) = definition else {
+            panic!("dependency definition should resolve to a scalar source location")
+        };
+        assert_eq!(location.uri, alpha_uri);
+        assert_eq!(
+            location.range.start,
+            offset_to_position(open_alpha_source, nth_offset(open_alpha_source, "pulse", 1)),
+        );
+
+        assert_eq!(
+            workspace_source_hover_for_dependency(
+                &uri,
+                &source,
+                Some(&analysis),
+                &package,
+                pulse_position,
+            ),
+            None,
+            "disk-only hover should miss unsaved dependency members",
+        );
+
+        let hover = workspace_source_hover_for_dependency_with_open_docs(
+            &uri,
+            &source,
+            Some(&analysis),
+            &package,
+            &open_docs,
+            pulse_position,
+        )
+        .expect("dependency hover should use open dependency member source");
+        let HoverContents::Markup(markup) = hover.contents else {
+            panic!("hover should use markdown")
+        };
+        assert!(markup.value.contains("fn pulse(self) -> Int"));
+        assert!(!markup.value.contains("fn ping(self) -> Int"));
+    }
+
+    #[test]
+    fn workspace_dependency_references_and_highlights_prefer_open_local_dependency_members() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-member-references");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    return build().pulse()
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn forward(counter: Counter) -> Int {
+    return counter.pulse()
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let open_docs =
+            file_open_documents(vec![(alpha_uri.clone(), open_alpha_source.to_owned())]);
+        let pulse_position = offset_to_position(&source, nth_offset(&source, "pulse", 1) + 1);
+
+        assert_eq!(
+            workspace_source_references_for_dependency(
+                &uri,
+                &source,
+                Some(&analysis),
+                &package,
+                pulse_position,
+                true,
+            ),
+            None,
+            "disk-only references should miss unsaved dependency members",
+        );
+
+        let references = workspace_source_references_for_dependency_with_open_docs(
+            &uri,
+            &source,
+            Some(&analysis),
+            &package,
+            &open_docs,
+            pulse_position,
+            true,
+        )
+        .expect("dependency references should use open dependency member source");
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == alpha_uri
+                    && reference.range.start
+                        == offset_to_position(
+                            open_alpha_source,
+                            nth_offset(open_alpha_source, "pulse", 1),
+                        )
+            }),
+            "references should include open dependency source definition",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == alpha_uri
+                    && reference.range.start
+                        == offset_to_position(
+                            open_alpha_source,
+                            nth_offset(open_alpha_source, "pulse", 2),
+                        )
+            }),
+            "references should include open dependency source member use",
+        );
+        assert!(
+            references.iter().any(|reference| {
+                reference.uri == uri
+                    && reference.range.start
+                        == offset_to_position(&source, nth_offset(&source, "pulse", 1))
+            }),
+            "references should include current source member use",
+        );
+
+        let highlights = fallback_document_highlights_for_package_at_with_open_docs(
+            &uri,
+            &source,
+            &package,
+            pulse_position,
+            &open_docs,
+        )
+        .expect("document highlights should use open dependency member source");
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(
+            highlights[0].range.start,
+            offset_to_position(&source, nth_offset(&source, "pulse", 1)),
+        );
     }
 
     #[test]

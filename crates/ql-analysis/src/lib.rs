@@ -1053,6 +1053,92 @@ impl PackageAnalysis {
         Some(items)
     }
 
+    pub fn public_struct_member_field_definition_in_source(
+        &self,
+        source_path: &str,
+        module_source: &str,
+        struct_name: &str,
+        field_name: &str,
+    ) -> Option<DependencyDefinitionTarget> {
+        let binding = public_struct_completion_binding_in_source(
+            self,
+            source_path,
+            module_source,
+            struct_name,
+        )?;
+        let field = binding.fields.get(field_name)?.clone();
+        Some(DependencyDefinitionTarget {
+            package_name: binding.package_name.clone(),
+            manifest_path: binding.manifest_path.clone(),
+            source_path: binding.source_path.clone(),
+            kind: SymbolKind::Field,
+            name: field.name,
+            path: binding.path.clone(),
+            span: field.definition_span,
+        })
+    }
+
+    pub fn public_struct_member_field_type_definition_in_source(
+        &self,
+        source_path: &str,
+        module_source: &str,
+        struct_name: &str,
+        field_name: &str,
+    ) -> Option<DependencyDefinitionTarget> {
+        let binding = public_struct_completion_binding_in_source(
+            self,
+            source_path,
+            module_source,
+            struct_name,
+        )?;
+        binding.fields.get(field_name)?.type_definition.clone()
+    }
+
+    pub fn public_struct_method_definition_in_source(
+        &self,
+        source_path: &str,
+        module_source: &str,
+        struct_name: &str,
+        method_name: &str,
+    ) -> Option<DependencyDefinitionTarget> {
+        let binding = public_struct_completion_binding_in_source(
+            self,
+            source_path,
+            module_source,
+            struct_name,
+        )?;
+        let method = binding.methods.get(method_name)?.clone();
+        Some(DependencyDefinitionTarget {
+            package_name: binding.package_name.clone(),
+            manifest_path: binding.manifest_path.clone(),
+            source_path: method.source_path,
+            kind: SymbolKind::Method,
+            name: method.name,
+            path: binding.path.clone(),
+            span: method.definition_span,
+        })
+    }
+
+    pub fn public_struct_method_type_definition_in_source(
+        &self,
+        source_path: &str,
+        module_source: &str,
+        struct_name: &str,
+        method_name: &str,
+    ) -> Option<DependencyDefinitionTarget> {
+        let binding = public_struct_completion_binding_in_source(
+            self,
+            source_path,
+            module_source,
+            struct_name,
+        )?;
+        binding
+            .methods
+            .get(method_name)?
+            .return_type_definition
+            .clone()
+    }
+
     pub fn dependency_variant_completion_target_in_source_at(
         &self,
         source: &str,
