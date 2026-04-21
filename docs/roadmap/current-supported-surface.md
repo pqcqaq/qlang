@@ -32,6 +32,7 @@
 - `ql project dependents` 已能直接反查某个 workspace package 的反向本地依赖成员，并支持 `--json`；删除前定位阻塞和脚本化清理路径已不必手扫 manifest。
 - `ql project dependencies` 已能直接正查某个 workspace package 的直接本地依赖成员，并支持 `--json`；正反向依赖排查都不必再手扫 manifest 或解析 `ql project graph`。
 - `ql project targets` 现在也支持 `--package`、`--lib`、`--bin`、`--target` 过滤；项目级 target 查询不再只能全量输出。
+- `ql project target add --bin <name>` 现在也已落地；新增 bin target 会自动创建 `src/bin/<name>.ql`，第一次显式写入 `[[bin]]` 时也会保留当前默认发现到的 `src/main.ql` / `src/bin/**/*.ql` targets，workspace 根可配合 `--package` 直接指定目标 member。
 - `ql project graph` 现在也支持 `--package` 聚焦到单个 workspace member 的包图；workspace 根图查询不再只能全量展开所有 members。
 - `ql project targets`、`ql project graph`、`ql project lock`、`ql project emit-interface` 已落地。
 - `qlang.toml` 当前只稳定支持：

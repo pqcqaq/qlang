@@ -1676,6 +1676,59 @@ pub fn render_manifest_with_added_local_dependency(
     Ok(rendered)
 }
 
+pub fn render_manifest_with_added_binary_target(
+    source: &str,
+    preserved_binary_paths: &[String],
+    binary_path: &str,
+) -> Result<String, String> {
+    validate_manifest_binary_target_path(binary_path)?;
+
+    let mut value = toml::from_str::<Value>(source)
+        .map_err(|error| format!("failed to parse package manifest: {error}"))?;
+    let Some(root) = value.as_table_mut() else {
+        return Err("package manifest must be a TOML table".to_owned());
+    };
+    if root.get("package").and_then(Value::as_table).is_none() {
+        return Err("package manifest must declare `[package]`".to_owned());
+    }
+
+    let bins = root
+        .entry("bin")
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| {
+            "package manifest must declare `[[bin]]` as an array of tables".to_owned()
+        })?;
+
+    let mut declared_paths = bins
+        .iter()
+        .map(manifest_binary_target_path)
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if declared_paths.contains(binary_path) {
+        return Err(format!(
+            "package manifest already declares binary target `{binary_path}`"
+        ));
+    }
+
+    if bins.is_empty() {
+        for preserved_path in preserved_binary_paths {
+            validate_manifest_binary_target_path(preserved_path)?;
+            if declared_paths.insert(preserved_path.clone()) {
+                bins.push(manifest_binary_target_table(preserved_path));
+            }
+        }
+    }
+
+    bins.push(manifest_binary_target_table(binary_path));
+
+    let mut rendered = toml::to_string(&value)
+        .map_err(|error| format!("failed to render package manifest: {error}"))?;
+    if !rendered.ends_with('\n') {
+        rendered.push('\n');
+    }
+    Ok(rendered)
+}
+
 pub fn render_manifest_with_removed_local_dependency(
     source: &str,
     dependency_name: &str,
@@ -1754,6 +1807,47 @@ fn dependency_value_matches_path(value: &Value, dependency_path: &Path) -> bool 
             .is_some_and(|path| normalize_path(Path::new(path)) == dependency_path),
         _ => false,
     }
+}
+
+fn validate_manifest_binary_target_path(binary_path: &str) -> Result<(), String> {
+    let binary_path = binary_path.trim();
+    if binary_path.is_empty() {
+        return Err("binary target path must not be empty".to_owned());
+    }
+
+    let binary_path = Path::new(binary_path);
+    if binary_path.is_absolute() {
+        return Err("binary target path must stay under `src/`".to_owned());
+    }
+    if binary_path.extension().and_then(|ext| ext.to_str()) != Some("ql") {
+        return Err("binary target path must point to a `.ql` source file under `src/`".to_owned());
+    }
+
+    let normalized = normalize_path(binary_path);
+    if !normalized.starts_with("src") {
+        return Err("binary target path must stay under `src/`".to_owned());
+    }
+
+    Ok(())
+}
+
+fn manifest_binary_target_path(value: &Value) -> Result<String, String> {
+    let Some(table) = value.as_table() else {
+        return Err("package manifest must declare `[[bin]]` as TOML tables".to_owned());
+    };
+    if table.keys().any(|key| key != "path") {
+        return Err("package manifest `[[bin]]` entries currently only support `path`".to_owned());
+    }
+    let Some(path) = table.get("path").and_then(Value::as_str) else {
+        return Err("package manifest `[[bin]].path` must be a string".to_owned());
+    };
+    Ok(path.to_owned())
+}
+
+fn manifest_binary_target_table(binary_path: &str) -> Value {
+    let mut table = toml::Table::new();
+    table.insert("path".to_owned(), Value::String(binary_path.to_owned()));
+    Value::Table(table)
 }
 
 fn reference_value_matches_path(value: &Value, dependency_path: &Path) -> bool {
