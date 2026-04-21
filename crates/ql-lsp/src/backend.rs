@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use ql_analysis::{
     Analysis, DependencyDefinitionTarget, DependencyInterface, PackageAnalysisError, RenameError,
-    analyze_available_package_dependencies, analyze_package,
+    RenameTarget, analyze_available_package_dependencies, analyze_package,
     analyze_package_with_available_dependencies, analyze_source,
 };
 use ql_lexer::{Token, TokenKind, is_keyword, is_valid_identifier, lex};
@@ -3621,6 +3621,32 @@ fn supports_workspace_source_dependency_rename(kind: ql_analysis::SymbolKind) ->
     )
 }
 
+fn workspace_source_dependency_prepare_rename_with_open_docs(
+    source: &str,
+    analysis: Option<&Analysis>,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<RenameTarget> {
+    let offset = position_to_offset(source, position)?;
+    package
+        .dependency_prepare_rename_in_source_at(source, offset)
+        .or_else(|| {
+            let occurrence_span =
+                dependency_occurrence_span_with_open_docs_at(source, package, open_docs, position)?;
+            let target = dependency_definition_target_with_open_docs_at(
+                source, analysis, package, open_docs, position,
+            )?;
+            supports_workspace_source_dependency_rename(target.kind).then_some(RenameTarget {
+                kind: target.kind,
+                name: source
+                    .get(occurrence_span.start..occurrence_span.end)?
+                    .to_owned(),
+                span: occurrence_span,
+            })
+        })
+}
+
 fn prepare_rename_for_workspace_import_in_broken_source(
     uri: &Url,
     source: &str,
@@ -3878,10 +3904,9 @@ fn rename_for_workspace_source_dependency_with_open_docs(
 ) -> std::result::Result<Option<WorkspaceEdit>, RenameError> {
     validate_rename_text(new_name)?;
 
-    let Some(offset) = position_to_offset(source, position) else {
-        return Ok(None);
-    };
-    let Some(target) = package.dependency_prepare_rename_in_source_at(source, offset) else {
+    let Some(target) = workspace_source_dependency_prepare_rename_with_open_docs(
+        source, analysis, package, open_docs, position,
+    ) else {
         return Ok(None);
     };
     if !supports_workspace_source_dependency_rename(target.kind) {
@@ -5144,6 +5169,7 @@ fn workspace_source_references_for_dependency_with_open_docs(
     let source_definition = workspace_source_location_for_dependency_target_with_open_docs(
         uri, source, analysis, package, open_docs, &target,
     )?;
+    let interface_path = canonicalize_or_clone(&target.path);
     let mut locations = dependency_references_for_position(
         uri,
         source,
@@ -5188,6 +5214,20 @@ fn workspace_source_references_for_dependency_with_open_docs(
             include_declaration,
         ),
     );
+    if source_definition
+        .uri
+        .to_file_path()
+        .ok()
+        .is_some_and(|path| canonicalize_or_clone(&path) != interface_path)
+    {
+        locations.retain(|location| {
+            location
+                .uri
+                .to_file_path()
+                .ok()
+                .is_none_or(|path| canonicalize_or_clone(&path) != interface_path)
+        });
+    }
 
     Some(locations)
 }
@@ -5940,6 +5980,19 @@ impl LanguageServer for Backend {
                 return Ok(Some(rename));
             }
             let analysis = analyze_source(&source).ok();
+            if let Some(rename_target) = workspace_source_dependency_prepare_rename_with_open_docs(
+                &source,
+                analysis.as_ref(),
+                &package,
+                &open_docs,
+                position,
+            ) && supports_workspace_source_dependency_rename(rename_target.kind)
+            {
+                return Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
+                    range: span_to_range(&source, rename_target.span),
+                    placeholder: rename_target.name,
+                }));
+            }
             if analysis.is_none() {
                 if let Some(rename) =
                     prepare_rename_for_workspace_source_root_symbol_from_import_in_broken_source_with_open_docs(
@@ -6152,6 +6205,7 @@ mod tests {
         workspace_source_definition_for_import_in_broken_source,
         workspace_source_definition_for_import_in_broken_source_with_open_docs,
         workspace_source_definition_for_import_with_open_docs,
+        workspace_source_dependency_prepare_rename_with_open_docs,
         workspace_source_hover_for_dependency,
         workspace_source_hover_for_dependency_with_open_docs, workspace_source_hover_for_import,
         workspace_source_hover_for_import_in_broken_source,
@@ -6269,7 +6323,12 @@ mod tests {
         let changes = edit
             .changes
             .expect("workspace edit should contain direct changes");
-        assert_eq!(changes.len(), expected.len());
+        let actual_uris = changes.keys().cloned().collect::<Vec<_>>();
+        assert_eq!(
+            changes.len(),
+            expected.len(),
+            "workspace edit targeted unexpected URIs: {actual_uris:?}",
+        );
         for (uri, edits) in expected {
             let actual = changes
                 .get(&uri)
@@ -20832,6 +20891,359 @@ impl Config {
                                 ),
                             ),
                             "count".to_owned(),
+                        ),
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn workspace_dependency_member_prepare_rename_prefers_open_local_dependency_source() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-member-prepare-rename");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    let current = build()
+    return current.extra.id + current.pulse().id
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Extra {
+    id: Int,
+}
+
+pub struct Counter {
+    value: Int,
+    extra: Extra,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Extra {
+        return self.extra
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1, extra: Extra { id: 2 } }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let open_docs = file_open_documents(vec![(alpha_uri, open_alpha_source.to_owned())]);
+
+        for (needle, occurrence, kind) in [
+            ("extra", 1usize, AnalysisSymbolKind::Field),
+            ("pulse", 1usize, AnalysisSymbolKind::Method),
+        ] {
+            let offset = nth_offset(&source, needle, occurrence);
+            assert!(
+                package
+                    .dependency_prepare_rename_in_source_at(&source, offset + 1)
+                    .is_none(),
+                "disk-only prepare rename should miss unsaved dependency member {needle}",
+            );
+
+            let rename_target = workspace_source_dependency_prepare_rename_with_open_docs(
+                &source,
+                Some(&analysis),
+                &package,
+                &open_docs,
+                offset_to_position(&source, offset + 1),
+            )
+            .expect("open-doc prepare rename should resolve unsaved dependency member");
+            assert_eq!(rename_target.kind, kind);
+            assert_eq!(rename_target.name, needle);
+            assert_eq!(rename_target.span, Span::new(offset, offset + needle.len()));
+        }
+    }
+
+    #[test]
+    fn workspace_dependency_member_rename_prefers_open_local_dependency_source() {
+        let temp = TempDir::new("ql-lsp-workspace-dependency-open-doc-member-rename");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+
+pub fn main() -> Int {
+    return build().pulse()
+}
+"#,
+        );
+        let task_path = temp.write(
+            "workspace/packages/app/src/task.ql",
+            r#"
+package demo.app
+
+use demo.shared.alpha.build as build
+use demo.shared.alpha.forward as forward
+
+pub fn task() -> Int {
+    return build().pulse() + forward(build())
+}
+"#,
+        );
+        let alpha_source_path = temp.write(
+            "workspace/vendor/alpha/src/lib.ql",
+            r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[dependencies]
+alpha = { path = "../../vendor/alpha" }
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/vendor/alpha/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn ping(self) -> Int
+}
+
+pub fn build() -> Counter
+"#,
+        );
+
+        let open_alpha_source = r#"
+package demo.shared.alpha
+
+pub struct Counter {
+    value: Int,
+}
+
+impl Counter {
+    pub fn pulse(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn forward(counter: Counter) -> Int {
+    return counter.pulse()
+}
+
+pub fn build() -> Counter {
+    return Counter { value: 1 }
+}
+"#;
+        let source = fs::read_to_string(&app_path).expect("app source should read");
+        let analysis = analyze_source(&source).expect("app source should analyze");
+        let package =
+            package_analysis_for_path(&app_path).expect("package analysis should succeed");
+        let uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let task_source = fs::read_to_string(&task_path).expect("task source should read");
+        let task_uri = Url::from_file_path(&task_path).expect("task path should convert to URI");
+        let alpha_uri =
+            Url::from_file_path(&alpha_source_path).expect("alpha path should convert to URI");
+        let pulse_position = offset_to_position(&source, nth_offset(&source, "pulse", 1) + 1);
+
+        let empty_docs = file_open_documents(vec![]);
+        assert!(
+            rename_for_workspace_source_dependency_with_open_docs(
+                &uri,
+                &source,
+                Some(&analysis),
+                &package,
+                &empty_docs,
+                pulse_position,
+                "probe",
+            )
+            .expect("disk-only rename should evaluate")
+            .is_none(),
+            "disk-only rename should miss unsaved dependency member",
+        );
+
+        let open_docs = file_open_documents(vec![
+            (uri.clone(), source.clone()),
+            (task_uri.clone(), task_source.clone()),
+            (alpha_uri.clone(), open_alpha_source.to_owned()),
+        ]);
+        let edit = rename_for_workspace_source_dependency_with_open_docs(
+            &uri,
+            &source,
+            Some(&analysis),
+            &package,
+            &open_docs,
+            pulse_position,
+            "probe",
+        )
+        .expect("rename should succeed")
+        .expect("rename should return workspace edits");
+
+        assert_workspace_edit_changes(
+            edit,
+            vec![
+                (
+                    uri,
+                    vec![TextEdit::new(
+                        span_to_range(
+                            &source,
+                            Span::new(
+                                nth_offset(&source, "pulse", 1),
+                                nth_offset(&source, "pulse", 1) + "pulse".len(),
+                            ),
+                        ),
+                        "probe".to_owned(),
+                    )],
+                ),
+                (
+                    task_uri,
+                    vec![TextEdit::new(
+                        span_to_range(
+                            &task_source,
+                            Span::new(
+                                nth_offset(&task_source, "pulse", 1),
+                                nth_offset(&task_source, "pulse", 1) + "pulse".len(),
+                            ),
+                        ),
+                        "probe".to_owned(),
+                    )],
+                ),
+                (
+                    alpha_uri,
+                    vec![
+                        TextEdit::new(
+                            span_to_range(
+                                open_alpha_source,
+                                Span::new(
+                                    nth_offset(open_alpha_source, "pulse", 1),
+                                    nth_offset(open_alpha_source, "pulse", 1) + "pulse".len(),
+                                ),
+                            ),
+                            "probe".to_owned(),
+                        ),
+                        TextEdit::new(
+                            span_to_range(
+                                open_alpha_source,
+                                Span::new(
+                                    nth_offset(open_alpha_source, "pulse", 2),
+                                    nth_offset(open_alpha_source, "pulse", 2) + "pulse".len(),
+                                ),
+                            ),
+                            "probe".to_owned(),
                         ),
                     ],
                 ),
