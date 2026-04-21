@@ -348,6 +348,10 @@ enum SupportedMatchLowering {
         arms: Vec<SupportedGuardedStringMatchArm>,
         fallback_target: mir::BasicBlockId,
     },
+    Enum {
+        arms: Vec<SupportedEnumMatchArm>,
+        fallback_target: mir::BasicBlockId,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -418,6 +422,14 @@ enum SupportedStringMatchPattern {
     CatchAll,
 }
 
+#[derive(Clone, Debug)]
+struct SupportedEnumMatchArm {
+    variant_index: Option<usize>,
+    pattern: hir::PatternId,
+    guard: SupportedBoolGuard,
+    target: mir::BasicBlockId,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SupportedOrdinaryCapturingClosureCall {
     Branch {
@@ -484,6 +496,35 @@ struct StructFieldLowering {
     name: String,
     ty: Ty,
     llvm_ty: String,
+}
+
+#[derive(Clone, Debug)]
+struct EnumVariantFieldLowering {
+    name: Option<String>,
+    ty: Ty,
+    llvm_ty: String,
+}
+
+#[derive(Clone, Debug)]
+struct EnumVariantLowering {
+    name: String,
+    fields: Vec<EnumVariantFieldLowering>,
+    payload_llvm_ty: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct EnumPayloadStorageLowering {
+    llvm_ty: String,
+    size: u64,
+    align: u64,
+}
+
+#[derive(Clone, Debug)]
+struct EnumLowering {
+    llvm_ty: String,
+    layout: LoadableAbiLayout,
+    storage: Option<EnumPayloadStorageLowering>,
+    variants: Vec<EnumVariantLowering>,
 }
 
 #[derive(Clone, Debug)]
@@ -2479,7 +2520,8 @@ impl<'a> ModuleEmitter<'a> {
                         }
                         SupportedMatchLowering::GuardOnly { .. }
                         | SupportedMatchLowering::BoolGuarded { .. }
-                        | SupportedMatchLowering::IntegerGuarded { .. } => {}
+                        | SupportedMatchLowering::IntegerGuarded { .. }
+                        | SupportedMatchLowering::Enum { .. } => {}
                     }
                 }
                 TerminatorKind::Goto { .. }
@@ -3713,60 +3755,147 @@ impl<'a> ModuleEmitter<'a> {
                             }
                         }
                         Some(scrutinee_ty) => {
-                            let mut ordered_arms = Vec::new();
-                            let mut fallback_target = *else_target;
-                            let mut supported = true;
+                            if matches!(
+                                scrutinee_ty,
+                                Ty::Item { item_id, .. }
+                                    if matches!(&self.input.hir.item(item_id).kind, ItemKind::Enum(_))
+                            ) {
+                                let mut ordered_arms = Vec::new();
+                                let mut fallback_target = *else_target;
+                                let mut supported = true;
 
-                            for arm in arms {
-                                let guard = match arm.guard {
-                                    None => SupportedBoolGuard::Always,
-                                    Some(guard) => match supported_bool_guard(
-                                        self.input.hir,
-                                        self.input.resolution,
-                                        self.input.typeck,
-                                        &self.signatures,
-                                        body,
-                                        &local_types,
-                                        &immutable_place_aliases,
-                                        scrutinee,
-                                        arm.pattern,
-                                        guard,
-                                    ) {
-                                        Some(SupportedBoolGuardAnalysis::Always) => {
-                                            SupportedBoolGuard::Always
+                                for arm in arms {
+                                    let guard = match arm.guard {
+                                        None => SupportedBoolGuard::Always,
+                                        Some(guard) => match supported_bool_guard(
+                                            self.input.hir,
+                                            self.input.resolution,
+                                            self.input.typeck,
+                                            &self.signatures,
+                                            body,
+                                            &local_types,
+                                            &immutable_place_aliases,
+                                            scrutinee,
+                                            arm.pattern,
+                                            guard,
+                                        ) {
+                                            Some(SupportedBoolGuardAnalysis::Always) => {
+                                                SupportedBoolGuard::Always
+                                            }
+                                            Some(SupportedBoolGuardAnalysis::Skip) => continue,
+                                            Some(SupportedBoolGuardAnalysis::Dynamic(expr_id)) => {
+                                                SupportedBoolGuard::Dynamic(expr_id)
+                                            }
+                                            None => {
+                                                supported = false;
+                                                break;
+                                            }
+                                        },
+                                    };
+
+                                    match pattern_kind(self.input.hir, arm.pattern) {
+                                        PatternKind::Binding(_) | PatternKind::Wildcard => {
+                                            if matches!(guard, SupportedBoolGuard::Always) {
+                                                fallback_target = arm.target;
+                                                break;
+                                            }
+                                            ordered_arms.push(SupportedEnumMatchArm {
+                                                variant_index: None,
+                                                pattern: arm.pattern,
+                                                guard,
+                                                target: arm.target,
+                                            });
                                         }
-                                        Some(SupportedBoolGuardAnalysis::Skip) => continue,
-                                        Some(SupportedBoolGuardAnalysis::Dynamic(expr_id)) => {
-                                            SupportedBoolGuard::Dynamic(expr_id)
+                                        PatternKind::Path(_)
+                                        | PatternKind::TupleStruct { .. }
+                                        | PatternKind::Struct { .. } => {
+                                            let Some(variant_index) =
+                                                enum_variant_index_for_pattern(
+                                                    self.input.hir,
+                                                    self.input.resolution,
+                                                    &scrutinee_ty,
+                                                    arm.pattern,
+                                                )
+                                            else {
+                                                supported = false;
+                                                break;
+                                            };
+                                            ordered_arms.push(SupportedEnumMatchArm {
+                                                variant_index: Some(variant_index),
+                                                pattern: arm.pattern,
+                                                guard,
+                                                target: arm.target,
+                                            });
                                         }
-                                        None => {
+                                        _ => {
                                             supported = false;
                                             break;
                                         }
-                                    },
-                                };
+                                    }
+                                }
 
-                                if self.supports_match_catch_all_pattern(arm.pattern, &scrutinee_ty)
-                                {
-                                    if matches!(guard, SupportedBoolGuard::Always) {
-                                        fallback_target = arm.target;
+                                supported.then_some(SupportedMatchLowering::Enum {
+                                    arms: ordered_arms,
+                                    fallback_target,
+                                })
+                            } else {
+                                let mut ordered_arms = Vec::new();
+                                let mut fallback_target = *else_target;
+                                let mut supported = true;
+
+                                for arm in arms {
+                                    let guard = match arm.guard {
+                                        None => SupportedBoolGuard::Always,
+                                        Some(guard) => match supported_bool_guard(
+                                            self.input.hir,
+                                            self.input.resolution,
+                                            self.input.typeck,
+                                            &self.signatures,
+                                            body,
+                                            &local_types,
+                                            &immutable_place_aliases,
+                                            scrutinee,
+                                            arm.pattern,
+                                            guard,
+                                        ) {
+                                            Some(SupportedBoolGuardAnalysis::Always) => {
+                                                SupportedBoolGuard::Always
+                                            }
+                                            Some(SupportedBoolGuardAnalysis::Skip) => continue,
+                                            Some(SupportedBoolGuardAnalysis::Dynamic(expr_id)) => {
+                                                SupportedBoolGuard::Dynamic(expr_id)
+                                            }
+                                            None => {
+                                                supported = false;
+                                                break;
+                                            }
+                                        },
+                                    };
+
+                                    if self.supports_match_catch_all_pattern(
+                                        arm.pattern,
+                                        &scrutinee_ty,
+                                    ) {
+                                        if matches!(guard, SupportedBoolGuard::Always) {
+                                            fallback_target = arm.target;
+                                            break;
+                                        }
+                                        ordered_arms.push(SupportedGuardOnlyMatchArm {
+                                            pattern: arm.pattern,
+                                            guard,
+                                            target: arm.target,
+                                        });
+                                    } else {
+                                        supported = false;
                                         break;
                                     }
-                                    ordered_arms.push(SupportedGuardOnlyMatchArm {
-                                        pattern: arm.pattern,
-                                        guard,
-                                        target: arm.target,
-                                    });
-                                } else {
-                                    supported = false;
-                                    break;
                                 }
-                            }
 
-                            supported.then_some(SupportedMatchLowering::GuardOnly {
-                                arms: ordered_arms,
-                                fallback_target,
-                            })
+                                supported.then_some(SupportedMatchLowering::GuardOnly {
+                                    arms: ordered_arms,
+                                    fallback_target,
+                                })
+                            }
                         }
                         None => None,
                     }) else {
@@ -4679,6 +4808,9 @@ impl<'a> ModuleEmitter<'a> {
                 .iter()
                 .all(|item| self.supports_destructuring_bind_pattern(*item)),
             PatternKind::Array(items) => items
+                .iter()
+                .all(|item| self.supports_destructuring_bind_pattern(*item)),
+            PatternKind::TupleStruct { items, .. } => items
                 .iter()
                 .all(|item| self.supports_destructuring_bind_pattern(*item)),
             PatternKind::Struct { fields, .. } => fields
@@ -6056,11 +6188,69 @@ impl<'a> ModuleEmitter<'a> {
             return None;
         };
 
-        let field_layouts = match self.struct_field_lowerings(&struct_ty, span, "struct value type")
-        {
-            Ok(layouts) => layouts,
-            Err(error) => {
-                ctx.diagnostics.push(error);
+        let field_layouts = match &struct_ty {
+            Ty::Item { item_id, .. } => match &self.input.hir.item(*item_id).kind {
+                ItemKind::Struct(_) => {
+                    match self.struct_field_lowerings(&struct_ty, span, "struct value type") {
+                        Ok(layouts) => layouts,
+                        Err(error) => {
+                            ctx.diagnostics.push(error);
+                            return None;
+                        }
+                    }
+                }
+                ItemKind::Enum(_) => {
+                    let enum_lowering =
+                        match self.enum_lowering(&struct_ty, span, "enum value type") {
+                            Ok(lowering) => lowering,
+                            Err(error) => {
+                                ctx.diagnostics.push(error);
+                                return None;
+                            }
+                        };
+                    let (_, variant) = match self.enum_variant_lowering_for_path(
+                        &enum_lowering,
+                        path,
+                        &struct_ty,
+                        span,
+                        "enum value type",
+                    ) {
+                        Ok(variant) => variant,
+                        Err(error) => {
+                            ctx.diagnostics.push(error);
+                            return None;
+                        }
+                    };
+                    if variant.fields.iter().any(|field| field.name.is_none()) {
+                        ctx.diagnostics.push(unsupported(
+                            span,
+                            "LLVM IR backend foundation only supports enum struct-variant literals here",
+                        ));
+                        return None;
+                    }
+                    variant
+                        .fields
+                        .iter()
+                        .map(|field| StructFieldLowering {
+                            name: field.name.clone().expect("checked named enum field"),
+                            ty: field.ty.clone(),
+                            llvm_ty: field.llvm_ty.clone(),
+                        })
+                        .collect()
+                }
+                _ => {
+                    ctx.diagnostics.push(unsupported(
+                        span,
+                        "LLVM IR backend foundation could not resolve the struct type for this aggregate value",
+                    ));
+                    return None;
+                }
+            },
+            _ => {
+                ctx.diagnostics.push(unsupported(
+                    span,
+                    "LLVM IR backend foundation could not resolve the struct type for this aggregate value",
+                ));
                 return None;
             }
         };
@@ -6650,11 +6840,20 @@ impl<'a> ModuleEmitter<'a> {
                     || pattern_literal_int(self.input.hir, self.input.resolution, pattern).is_some()
                     || pattern_literal_string(self.input.hir, self.input.resolution, pattern)
                         .is_some()
+                    || resolved_enum_variant_index_for_pattern(
+                        self.input.hir,
+                        self.input.resolution,
+                        pattern,
+                    )
+                    .is_some()
             }
             PatternKind::Tuple(items) => items
                 .iter()
                 .all(|item| self.supports_destructuring_bind_pattern(*item)),
             PatternKind::Array(items) => items
+                .iter()
+                .all(|item| self.supports_destructuring_bind_pattern(*item)),
+            PatternKind::TupleStruct { items, .. } => items
                 .iter()
                 .all(|item| self.supports_destructuring_bind_pattern(*item)),
             PatternKind::Struct { fields, .. } => fields
@@ -6666,7 +6865,7 @@ impl<'a> ModuleEmitter<'a> {
         if !supported {
             diagnostics.push(unsupported(
                 span,
-                "LLVM IR backend foundation only supports binding, wildcard, literal, or tuple/struct/fixed-array destructuring binding patterns",
+                "LLVM IR backend foundation only supports binding, wildcard, literal, or tuple/tuple-struct/struct/fixed-array destructuring binding patterns",
             ));
         }
     }
@@ -7490,17 +7689,21 @@ impl<'a> ModuleEmitter<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(format!("{{ {} }}", field_types.join(", ")))
             }
-            Ty::Item { .. } => {
-                let fields = self.struct_field_lowerings(ty, span, context)?;
-                Ok(format!(
-                    "{{ {} }}",
-                    fields
-                        .iter()
-                        .map(|field| field.llvm_ty.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ))
-            }
+            Ty::Item { item_id, .. } => match &self.input.hir.item(*item_id).kind {
+                ItemKind::Struct(_) => {
+                    let fields = self.struct_field_lowerings(ty, span, context)?;
+                    Ok(format!(
+                        "{{ {} }}",
+                        fields
+                            .iter()
+                            .map(|field| field.llvm_ty.clone())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))
+                }
+                ItemKind::Enum(_) => Ok(self.enum_lowering(ty, span, context)?.llvm_ty),
+                _ => lower_llvm_type(ty, span, context),
+            },
             _ => lower_llvm_type(ty, span, context),
         }
     }
@@ -7541,22 +7744,32 @@ impl<'a> ModuleEmitter<'a> {
                     align,
                 })
             }
-            Ty::Item { .. } => {
-                // Keep struct layout recursive so async payloads and projected reads share one
-                // aggregate contract instead of growing per-shape special cases.
-                let mut size = 0;
-                let mut align = 1;
-                for field in self.struct_field_lowerings(ty, span, context)? {
-                    let layout = self.loadable_abi_layout(&field.ty, span, context)?;
-                    size = align_to(size, layout.align);
-                    size += layout.size;
-                    align = align.max(layout.align);
+            Ty::Item { item_id, .. } => match &self.input.hir.item(*item_id).kind {
+                ItemKind::Struct(_) => {
+                    // Keep struct layout recursive so async payloads and projected reads share
+                    // one aggregate contract instead of growing per-shape special cases.
+                    let mut size = 0;
+                    let mut align = 1;
+                    for field in self.struct_field_lowerings(ty, span, context)? {
+                        let layout = self.loadable_abi_layout(&field.ty, span, context)?;
+                        size = align_to(size, layout.align);
+                        size += layout.size;
+                        align = align.max(layout.align);
+                    }
+                    Ok(LoadableAbiLayout {
+                        size: align_to(size, align),
+                        align,
+                    })
                 }
-                Ok(LoadableAbiLayout {
-                    size: align_to(size, align),
-                    align,
-                })
-            }
+                ItemKind::Enum(_) => Ok(self.enum_lowering(ty, span, context)?.layout),
+                _ => {
+                    let layout = scalar_abi_layout(ty, span, context)?;
+                    Ok(LoadableAbiLayout {
+                        size: layout.size,
+                        align: layout.align,
+                    })
+                }
+            },
             _ => {
                 let layout = scalar_abi_layout(ty, span, context)?;
                 Ok(LoadableAbiLayout {
@@ -7621,16 +7834,216 @@ impl<'a> ModuleEmitter<'a> {
             .collect()
     }
 
-    fn resolve_local_struct_path(&self, path: &ql_ast::Path) -> Option<Ty> {
-        let [name] = path.segments.as_slice() else {
-            return None;
+    fn enum_lowering(
+        &self,
+        ty: &Ty,
+        span: Span,
+        context: &str,
+    ) -> Result<EnumLowering, Diagnostic> {
+        let Ty::Item { item_id, args, .. } = ty else {
+            return Err(Diagnostic::error(format!(
+                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+            ))
+            .with_label(Label::new(span)));
         };
+        if !args.is_empty() {
+            return Err(Diagnostic::error(format!(
+                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+            ))
+            .with_label(Label::new(span)));
+        }
+
+        let item = self.input.hir.item(*item_id);
+        let ItemKind::Enum(enum_decl) = &item.kind else {
+            return Err(Diagnostic::error(format!(
+                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+            ))
+            .with_label(Label::new(span)));
+        };
+        if !enum_decl.generics.is_empty() {
+            return Err(Diagnostic::error(format!(
+                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+            ))
+            .with_label(Label::new(span)));
+        }
+
+        let mut variants = Vec::with_capacity(enum_decl.variants.len());
+        let mut max_payload_size = 0;
+        let mut max_payload_align = 1;
+
+        for variant in &enum_decl.variants {
+            let mut fields = Vec::new();
+            let mut payload_size = 0;
+            let mut payload_align = 1;
+
+            match &variant.fields {
+                hir::VariantFields::Unit => {}
+                hir::VariantFields::Tuple(items) => {
+                    for &type_id in items {
+                        let ty = lower_type(self.input.hir, self.input.resolution, type_id);
+                        if is_void_ty(&ty) {
+                            return Err(Diagnostic::error(format!(
+                                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+                            ))
+                            .with_label(Label::new(span)));
+                        }
+                        let llvm_ty = self.lower_llvm_type(&ty, span, context)?;
+                        let layout = self.loadable_abi_layout(&ty, span, context)?;
+                        payload_size = align_to(payload_size, layout.align);
+                        payload_size += layout.size;
+                        payload_align = payload_align.max(layout.align);
+                        fields.push(EnumVariantFieldLowering {
+                            name: None,
+                            ty,
+                            llvm_ty,
+                        });
+                    }
+                }
+                hir::VariantFields::Struct(named_fields) => {
+                    for field in named_fields {
+                        let ty = lower_type(self.input.hir, self.input.resolution, field.ty);
+                        if is_void_ty(&ty) {
+                            return Err(Diagnostic::error(format!(
+                                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+                            ))
+                            .with_label(Label::new(span)));
+                        }
+                        let llvm_ty = self.lower_llvm_type(&ty, span, context)?;
+                        let layout = self.loadable_abi_layout(&ty, span, context)?;
+                        payload_size = align_to(payload_size, layout.align);
+                        payload_size += layout.size;
+                        payload_align = payload_align.max(layout.align);
+                        fields.push(EnumVariantFieldLowering {
+                            name: Some(field.name.clone()),
+                            ty,
+                            llvm_ty,
+                        });
+                    }
+                }
+            }
+
+            let payload_llvm_ty = (!fields.is_empty()).then(|| {
+                format!(
+                    "{{ {} }}",
+                    fields
+                        .iter()
+                        .map(|field| field.llvm_ty.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            });
+            if !fields.is_empty() {
+                max_payload_size = max_payload_size.max(align_to(payload_size, payload_align));
+                max_payload_align = max_payload_align.max(payload_align);
+            }
+
+            variants.push(EnumVariantLowering {
+                name: variant.name.clone(),
+                fields,
+                payload_llvm_ty,
+            });
+        }
+
+        let storage = if max_payload_size == 0 {
+            None
+        } else {
+            Some(self.enum_payload_storage_lowering(
+                max_payload_size,
+                max_payload_align,
+                span,
+                context,
+            )?)
+        };
+
+        let layout = if let Some(storage) = &storage {
+            let size = align_to(8, storage.align) + storage.size;
+            let align = 8u64.max(storage.align);
+            LoadableAbiLayout {
+                size: align_to(size, align),
+                align,
+            }
+        } else {
+            LoadableAbiLayout { size: 8, align: 8 }
+        };
+        let llvm_ty = if let Some(storage) = &storage {
+            format!("{{ i64, {} }}", storage.llvm_ty)
+        } else {
+            "{ i64 }".to_owned()
+        };
+
+        Ok(EnumLowering {
+            llvm_ty,
+            layout,
+            storage,
+            variants,
+        })
+    }
+
+    fn enum_payload_storage_lowering(
+        &self,
+        size: u64,
+        align: u64,
+        span: Span,
+        context: &str,
+    ) -> Result<EnumPayloadStorageLowering, Diagnostic> {
+        let element_llvm_ty = match align {
+            1 => "i8",
+            2 => "i16",
+            4 => "i32",
+            8 => "i64",
+            _ => {
+                return Err(Diagnostic::error(format!(
+                    "LLVM IR backend foundation does not support {context} payload alignment `{align}` yet"
+                ))
+                .with_label(Label::new(span)))
+            }
+        };
+        let count = size.div_ceil(align);
+        Ok(EnumPayloadStorageLowering {
+            llvm_ty: format!("[{count} x {element_llvm_ty}]"),
+            size: count * align,
+            align,
+        })
+    }
+
+    fn enum_variant_lowering_for_path<'b>(
+        &self,
+        enum_lowering: &'b EnumLowering,
+        path: &ql_ast::Path,
+        ty: &Ty,
+        span: Span,
+        context: &str,
+    ) -> Result<(usize, &'b EnumVariantLowering), Diagnostic> {
+        let Some(variant_name) = path.segments.last() else {
+            return Err(Diagnostic::error(format!(
+                "LLVM IR backend foundation does not support {context} `{ty}` yet"
+            ))
+            .with_label(Label::new(span)));
+        };
+        enum_lowering
+            .variants
+            .iter()
+            .enumerate()
+            .find(|(_, variant)| variant.name == *variant_name)
+            .ok_or_else(|| {
+                Diagnostic::error(format!(
+                    "LLVM IR backend foundation could not resolve enum variant `{variant_name}` on `{ty}`"
+                ))
+                .with_label(Label::new(span))
+            })
+    }
+
+    fn resolve_local_struct_path(&self, path: &ql_ast::Path) -> Option<Ty> {
+        let name = path.segments.first()?;
         let mut candidates = HashSet::new();
 
         for item_id in self.input.hir.items.iter().copied() {
             if matches!(
                 &self.input.hir.item(item_id).kind,
-                ItemKind::Struct(struct_decl) if struct_decl.name == *name
+                ItemKind::Struct(struct_decl) if path.segments.len() == 1 && struct_decl.name == *name
+            ) || matches!(
+                &self.input.hir.item(item_id).kind,
+                ItemKind::Enum(enum_decl) if enum_decl.name == *name
             ) {
                 candidates.insert(item_id);
             }
@@ -7653,6 +8066,9 @@ impl<'a> ModuleEmitter<'a> {
                             if matches!(
                                 &self.input.hir.item(item_id).kind,
                                 ItemKind::Struct(struct_decl) if struct_decl.name == *target_name
+                            ) || matches!(
+                                &self.input.hir.item(item_id).kind,
+                                ItemKind::Enum(enum_decl) if enum_decl.name == *target_name
                             ) {
                                 candidates.insert(item_id);
                             }
@@ -7673,6 +8089,11 @@ impl<'a> ModuleEmitter<'a> {
             ItemKind::Struct(struct_decl) => Some(Ty::Item {
                 item_id,
                 name: struct_decl.name.clone(),
+                args: Vec::new(),
+            }),
+            ItemKind::Enum(enum_decl) => Some(Ty::Item {
+                item_id,
+                name: enum_decl.name.clone(),
                 args: Vec::new(),
             }),
             _ => None,
@@ -8717,33 +9138,143 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                     self.bind_pattern_value(output, *item, item_value, span);
                 }
             }
-            PatternKind::Struct { fields, .. } => {
-                let field_layouts = self
+            PatternKind::TupleStruct { path, items } => {
+                let enum_lowering = self
                     .emitter
-                    .struct_field_lowerings(&value.ty, span, "struct pattern")
+                    .enum_lowering(&value.ty, span, "tuple-struct pattern")
                     .unwrap_or_else(|_| {
                         panic!(
-                            "supported bind-pattern lowering at {span:?} should only destructure struct values with struct patterns"
+                            "supported bind-pattern lowering at {span:?} should only destructure enum values with tuple-struct patterns"
                         )
                     });
-                for field in fields {
-                    let (index, field_layout) = field_layouts
-                        .iter()
-                        .enumerate()
-                        .find(|(_, candidate)| candidate.name == field.name)
-                        .unwrap_or_else(|| {
+                let (_, variant) = self
+                    .emitter
+                    .enum_variant_lowering_for_path(
+                        &enum_lowering,
+                        path,
+                        &value.ty,
+                        span,
+                        "tuple-struct pattern",
+                    )
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "supported bind-pattern lowering at {span:?} should only destructure known enum variants"
+                        )
+                    });
+                assert_eq!(
+                    items.len(),
+                    variant.fields.len(),
+                    "supported bind-pattern lowering at {span:?} should only destructure tuple-struct patterns with matching arity"
+                );
+                let enum_slot = self.materialize_loadable_value_slot(output, &value);
+                let payload_ptr =
+                    self.enum_variant_payload_ptr(output, &enum_slot, &enum_lowering, variant);
+                for (index, (item, field)) in items.iter().zip(variant.fields.iter()).enumerate() {
+                    let field_ptr = self.fresh_temp();
+                    let _ = writeln!(
+                        output,
+                        "  {field_ptr} = getelementptr inbounds {}, ptr {payload_ptr}, i32 0, i32 {index}",
+                        variant
+                            .payload_llvm_ty
+                            .as_ref()
+                            .expect("tuple enum patterns should have payloads")
+                    );
+                    let field_value =
+                        self.render_loaded_pointer_value(output, field_ptr, field.ty.clone(), span);
+                    self.bind_pattern_value(output, *item, field_value, span);
+                }
+            }
+            PatternKind::Struct { fields, .. } => {
+                if matches!(
+                    &value.ty,
+                    Ty::Item { item_id, .. }
+                        if matches!(&self.emitter.input.hir.item(*item_id).kind, ItemKind::Enum(_))
+                ) {
+                    let enum_lowering = self
+                        .emitter
+                        .enum_lowering(&value.ty, span, "struct pattern")
+                        .unwrap_or_else(|_| {
                             panic!(
-                                "supported bind-pattern lowering at {span:?} should only destructure struct patterns with known fields"
+                                "supported bind-pattern lowering at {span:?} should only destructure enum values with struct patterns"
                             )
                         });
-                    let field_value = self.extract_aggregate_value(
-                        output,
-                        &value,
-                        index,
-                        field_layout.ty.clone(),
-                        field_layout.llvm_ty.clone(),
-                    );
-                    self.bind_pattern_value(output, field.pattern, field_value, span);
+                    let path = match pattern_kind(self.emitter.input.hir, pattern) {
+                        PatternKind::Struct { path, .. } => path,
+                        _ => unreachable!("checked struct pattern"),
+                    };
+                    let (_, variant) = self
+                        .emitter
+                        .enum_variant_lowering_for_path(
+                            &enum_lowering,
+                            path,
+                            &value.ty,
+                            span,
+                            "struct pattern",
+                        )
+                        .unwrap_or_else(|_| {
+                            panic!(
+                                "supported bind-pattern lowering at {span:?} should only destructure known enum variants"
+                            )
+                        });
+                    let enum_slot = self.materialize_loadable_value_slot(output, &value);
+                    let payload_ptr =
+                        self.enum_variant_payload_ptr(output, &enum_slot, &enum_lowering, variant);
+                    for field in fields {
+                        let (index, field_layout) = variant
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .find(|(_, candidate)| candidate.name.as_deref() == Some(field.name.as_str()))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "supported bind-pattern lowering at {span:?} should only destructure struct patterns with known fields"
+                                )
+                            });
+                        let field_ptr = self.fresh_temp();
+                        let _ = writeln!(
+                            output,
+                            "  {field_ptr} = getelementptr inbounds {}, ptr {payload_ptr}, i32 0, i32 {index}",
+                            variant
+                                .payload_llvm_ty
+                                .as_ref()
+                                .expect("struct enum patterns should have payloads")
+                        );
+                        let field_value = self.render_loaded_pointer_value(
+                            output,
+                            field_ptr,
+                            field_layout.ty.clone(),
+                            span,
+                        );
+                        self.bind_pattern_value(output, field.pattern, field_value, span);
+                    }
+                } else {
+                    let field_layouts = self
+                        .emitter
+                        .struct_field_lowerings(&value.ty, span, "struct pattern")
+                        .unwrap_or_else(|_| {
+                            panic!(
+                                "supported bind-pattern lowering at {span:?} should only destructure struct values with struct patterns"
+                            )
+                        });
+                    for field in fields {
+                        let (index, field_layout) = field_layouts
+                            .iter()
+                            .enumerate()
+                            .find(|(_, candidate)| candidate.name == field.name)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "supported bind-pattern lowering at {span:?} should only destructure struct patterns with known fields"
+                                )
+                            });
+                        let field_value = self.extract_aggregate_value(
+                            output,
+                            &value,
+                            index,
+                            field_layout.ty.clone(),
+                            field_layout.llvm_ty.clone(),
+                        );
+                        self.bind_pattern_value(output, field.pattern, field_value, span);
+                    }
                 }
             }
             PatternKind::Path(_)
@@ -8752,9 +9283,44 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             | PatternKind::Bool(_)
             | PatternKind::Wildcard => {}
             _ => panic!(
-                "supported bind-pattern lowering at {span:?} should only destructure binding, wildcard, tuple, fixed-array, or struct patterns"
+                "supported bind-pattern lowering at {span:?} should only destructure binding, wildcard, tuple, tuple-struct, fixed-array, or struct patterns"
             ),
         }
+    }
+
+    fn materialize_loadable_value_slot(
+        &mut self,
+        output: &mut String,
+        value: &LoweredValue,
+    ) -> String {
+        let slot = self.fresh_temp();
+        let _ = writeln!(output, "  {slot} = alloca {}", value.llvm_ty);
+        let _ = writeln!(
+            output,
+            "  store {} {}, ptr {slot}",
+            value.llvm_ty, value.repr
+        );
+        slot
+    }
+
+    fn enum_variant_payload_ptr(
+        &mut self,
+        output: &mut String,
+        enum_slot: &str,
+        enum_lowering: &EnumLowering,
+        variant: &EnumVariantLowering,
+    ) -> String {
+        assert!(
+            variant.payload_llvm_ty.is_some() && enum_lowering.storage.is_some(),
+            "enum payload pointer requests should only happen for payload-bearing variants"
+        );
+        let payload_storage_ptr = self.fresh_temp();
+        let _ = writeln!(
+            output,
+            "  {payload_storage_ptr} = getelementptr inbounds {}, ptr {enum_slot}, i32 0, i32 1",
+            enum_lowering.llvm_ty
+        );
+        payload_storage_ptr
     }
 
     fn extract_aggregate_value(
@@ -12436,6 +13002,102 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                             }
                         }
                     }
+                    SupportedMatchLowering::Enum {
+                        arms,
+                        fallback_target,
+                    } => {
+                        if arms.is_empty() {
+                            let _ = writeln!(output, "  br label %bb{}", fallback_target.index());
+                            return;
+                        }
+
+                        let tag = self.fresh_temp();
+                        let _ = writeln!(
+                            output,
+                            "  {tag} = extractvalue {} {}, 0",
+                            rendered.llvm_ty, rendered.repr
+                        );
+
+                        for (index, arm) in arms.iter().enumerate() {
+                            if index > 0 {
+                                let _ = writeln!(
+                                    output,
+                                    "{}:",
+                                    integer_match_dispatch_block_name(block_id, index)
+                                );
+                            }
+                            let false_target = if index + 1 == arms.len() {
+                                format!("bb{}", fallback_target.index())
+                            } else {
+                                integer_match_dispatch_block_name(block_id, index + 1)
+                            };
+                            let guard_target = match arm.guard {
+                                SupportedBoolGuard::Always => format!("bb{}", arm.target.index()),
+                                SupportedBoolGuard::Dynamic(_) => {
+                                    integer_match_guard_block_name(block_id, index)
+                                }
+                            };
+
+                            match arm.variant_index {
+                                Some(variant_index) => {
+                                    let compare = self.fresh_temp();
+                                    let _ = writeln!(
+                                        output,
+                                        "  {compare} = icmp eq i64 {tag}, {variant_index}"
+                                    );
+                                    match arm.guard {
+                                        SupportedBoolGuard::Always => {
+                                            let _ = writeln!(
+                                                output,
+                                                "  br i1 {compare}, label %bb{}, label %{false_target}",
+                                                arm.target.index()
+                                            );
+                                        }
+                                        SupportedBoolGuard::Dynamic(_) => {
+                                            let _ = writeln!(
+                                                output,
+                                                "  br i1 {compare}, label %{guard_target}, label %{false_target}"
+                                            );
+                                        }
+                                    }
+                                }
+                                None => match arm.guard {
+                                    SupportedBoolGuard::Always => {
+                                        let _ = writeln!(
+                                            output,
+                                            "  br label %bb{}",
+                                            arm.target.index()
+                                        );
+                                    }
+                                    SupportedBoolGuard::Dynamic(_) => {
+                                        let _ = writeln!(output, "  br label %{guard_target}");
+                                    }
+                                },
+                            }
+
+                            if let SupportedBoolGuard::Dynamic(expr_id) = arm.guard {
+                                let _ = writeln!(output, "{guard_target}:");
+                                self.bind_pattern_value(
+                                    output,
+                                    arm.pattern,
+                                    rendered.clone(),
+                                    terminator.span,
+                                );
+                                let condition = self.render_bool_guard_expr(
+                                    output,
+                                    expr_id,
+                                    terminator.span,
+                                    None,
+                                );
+                                let _ = writeln!(
+                                    output,
+                                    "  br i1 {}, label %bb{}, label %{false_target}",
+                                    condition.repr,
+                                    arm.target.index()
+                                );
+                            }
+                        }
+                    }
                 }
             }
             TerminatorKind::ForLoop { exit_target, .. } => {
@@ -13364,7 +14026,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
     fn render_struct_rvalue(
         &mut self,
         output: &mut String,
-        _path: &ql_ast::Path,
+        path: &ql_ast::Path,
         fields: &[mir::AggregateField],
         expected_ty: Option<&Ty>,
         span: Span,
@@ -13372,6 +14034,12 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         let struct_ty = expected_ty.cloned().or_else(|| {
             panic!("prepared struct aggregate at {span:?} should have an expected lowered type")
         })?;
+        if matches!(
+            &struct_ty,
+            Ty::Item { item_id, .. } if matches!(&self.emitter.input.hir.item(*item_id).kind, ItemKind::Enum(_))
+        ) {
+            return self.render_enum_struct_rvalue(output, path, fields, struct_ty, span);
+        }
         let field_layouts = self
             .emitter
             .struct_field_lowerings(&struct_ty, span, "struct value")
@@ -13416,6 +14084,92 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             llvm_ty,
             repr: aggregate,
         })
+    }
+
+    fn render_enum_struct_rvalue(
+        &mut self,
+        output: &mut String,
+        path: &ql_ast::Path,
+        fields: &[mir::AggregateField],
+        enum_ty: Ty,
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let enum_lowering = self
+            .emitter
+            .enum_lowering(&enum_ty, span, "enum value")
+            .unwrap_or_else(|_| {
+                panic!(
+                    "prepared enum aggregate at {span:?} should have a lowered declaration layout"
+                )
+            });
+        let (variant_index, variant) = self
+            .emitter
+            .enum_variant_lowering_for_path(&enum_lowering, path, &enum_ty, span, "enum value")
+            .unwrap_or_else(|_| {
+                panic!("prepared enum aggregate at {span:?} should reference a known variant")
+            });
+        assert!(
+            variant.fields.iter().all(|field| field.name.is_some()),
+            "prepared enum aggregate at {span:?} should only use struct-style variants"
+        );
+
+        let slot = self.fresh_temp();
+        let _ = writeln!(output, "  {slot} = alloca {}", enum_lowering.llvm_ty);
+        let _ = writeln!(
+            output,
+            "  store {} zeroinitializer, ptr {slot}",
+            enum_lowering.llvm_ty
+        );
+
+        let tag_ptr = self.fresh_temp();
+        let _ = writeln!(
+            output,
+            "  {tag_ptr} = getelementptr inbounds {}, ptr {slot}, i32 0, i32 0",
+            enum_lowering.llvm_ty
+        );
+        let _ = writeln!(output, "  store i64 {variant_index}, ptr {tag_ptr}");
+
+        let mut rendered_fields = HashMap::with_capacity(fields.len());
+        for field in fields {
+            let rendered = self.render_operand(output, &field.value, span);
+            rendered_fields.insert(field.name.clone(), rendered);
+        }
+
+        if !variant.fields.is_empty() {
+            let payload_storage_ptr = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {payload_storage_ptr} = getelementptr inbounds {}, ptr {slot}, i32 0, i32 1",
+                enum_lowering.llvm_ty
+            );
+            let payload_ptr = payload_storage_ptr;
+
+            for (index, field) in variant.fields.iter().enumerate() {
+                let rendered = rendered_fields
+                    .remove(field.name.as_ref().expect("checked named enum field"))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "prepared enum aggregate at {span:?} should provide every declared field"
+                        )
+                    });
+                let field_ptr = self.fresh_temp();
+                let _ = writeln!(
+                    output,
+                    "  {field_ptr} = getelementptr inbounds {}, ptr {payload_ptr}, i32 0, i32 {index}",
+                    variant
+                        .payload_llvm_ty
+                        .as_ref()
+                        .expect("checked enum payload type")
+                );
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {field_ptr}",
+                    rendered.llvm_ty, rendered.repr
+                );
+            }
+        }
+
+        Some(self.render_loaded_pointer_value(output, slot, enum_ty, span))
     }
 
     fn task_handle_info_for_local(
@@ -17944,6 +18698,44 @@ fn supported_string_match_pattern(
         PatternKind::Path(_) => pattern_literal_string(module, resolution, pattern),
         _ => None,
     }
+}
+
+fn resolved_enum_variant_index_for_pattern(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    pattern: hir::PatternId,
+) -> Option<usize> {
+    let path = match pattern_kind(module, pattern) {
+        PatternKind::Path(path)
+        | PatternKind::TupleStruct { path, .. }
+        | PatternKind::Struct { path, .. } => path,
+        _ => return None,
+    };
+    let item_id = local_item_for_value_resolution(module, resolution.pattern_resolution(pattern)?)?;
+    let ItemKind::Enum(enum_decl) = &module.item(item_id).kind else {
+        return None;
+    };
+    let variant_name = path.segments.last()?;
+    enum_decl
+        .variants
+        .iter()
+        .position(|variant| variant.name == *variant_name)
+}
+
+fn enum_variant_index_for_pattern(
+    module: &hir::Module,
+    resolution: &ResolutionMap,
+    scrutinee_ty: &Ty,
+    pattern: hir::PatternId,
+) -> Option<usize> {
+    let Ty::Item { item_id, .. } = scrutinee_ty else {
+        return None;
+    };
+    let resolved_item_id =
+        local_item_for_value_resolution(module, resolution.pattern_resolution(pattern)?)?;
+    (resolved_item_id == *item_id)
+        .then(|| resolved_enum_variant_index_for_pattern(module, resolution, pattern))
+        .flatten()
 }
 
 fn supported_cleanup_bool_match_pattern(

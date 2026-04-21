@@ -7620,7 +7620,22 @@ struct DependencyPublicGlobalBridgeCandidate<'a> {
 #[derive(Clone, Copy)]
 struct DependencyPublicTypeBridgeCandidate<'a> {
     item: &'a ql_ast::Item,
-    struct_decl: &'a ql_ast::StructDecl,
+    decl: DependencyPublicTypeDecl<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum DependencyPublicTypeDecl<'a> {
+    Struct(&'a ql_ast::StructDecl),
+    Enum(&'a ql_ast::EnumDecl),
+}
+
+impl<'a> DependencyPublicTypeDecl<'a> {
+    fn name(self) -> &'a str {
+        match self {
+            Self::Struct(struct_decl) => struct_decl.name.as_str(),
+            Self::Enum(enum_decl) => enum_decl.name.as_str(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -7655,18 +7670,23 @@ fn dependency_public_type_bridge_candidates<'a>(
 ) -> BTreeMap<String, DependencyPublicTypeBridgeCandidate<'a>> {
     let mut candidates = BTreeMap::new();
     for item in &module.items {
-        let struct_decl = match &item.kind {
+        let decl = match &item.kind {
             ItemKind::Struct(struct_decl)
                 if struct_decl.visibility == Visibility::Public
                     && struct_decl.generics.is_empty() =>
             {
-                struct_decl
+                DependencyPublicTypeDecl::Struct(struct_decl)
+            }
+            ItemKind::Enum(enum_decl)
+                if enum_decl.visibility == Visibility::Public && enum_decl.generics.is_empty() =>
+            {
+                DependencyPublicTypeDecl::Enum(enum_decl)
             }
             _ => continue,
         };
         candidates.insert(
-            struct_decl.name.clone(),
-            DependencyPublicTypeBridgeCandidate { item, struct_decl },
+            decl.name().to_owned(),
+            DependencyPublicTypeBridgeCandidate { item, decl },
         );
     }
     candidates
@@ -7833,12 +7853,41 @@ fn dependency_public_type_dependencies<'a>(
 ) -> Option<BTreeSet<String>> {
     let candidate = type_candidates.get(symbol_name)?;
     let mut dependencies = BTreeSet::new();
-    for field in &candidate.struct_decl.fields {
-        collect_dependency_public_type_expr_dependencies(
-            &field.ty,
-            type_candidates,
-            &mut dependencies,
-        );
+    match candidate.decl {
+        DependencyPublicTypeDecl::Struct(struct_decl) => {
+            for field in &struct_decl.fields {
+                collect_dependency_public_type_expr_dependencies(
+                    &field.ty,
+                    type_candidates,
+                    &mut dependencies,
+                );
+            }
+        }
+        DependencyPublicTypeDecl::Enum(enum_decl) => {
+            for variant in &enum_decl.variants {
+                match &variant.fields {
+                    ql_ast::VariantFields::Unit => {}
+                    ql_ast::VariantFields::Tuple(items) => {
+                        for item in items {
+                            collect_dependency_public_type_expr_dependencies(
+                                item,
+                                type_candidates,
+                                &mut dependencies,
+                            );
+                        }
+                    }
+                    ql_ast::VariantFields::Struct(fields) => {
+                        for field in fields {
+                            collect_dependency_public_type_expr_dependencies(
+                                &field.ty,
+                                type_candidates,
+                                &mut dependencies,
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
     Some(dependencies)
 }
@@ -8579,26 +8628,31 @@ fn collect_dependency_module_public_type_declarations(
     let mut emitted = BTreeSet::new();
 
     for item in &module.items {
-        let struct_decl = match &item.kind {
+        let type_name = match &item.kind {
             ItemKind::Struct(struct_decl)
                 if struct_decl.visibility == Visibility::Public
                     && struct_decl.generics.is_empty() =>
             {
-                struct_decl
+                struct_decl.name.as_str()
+            }
+            ItemKind::Enum(enum_decl)
+                if enum_decl.visibility == Visibility::Public && enum_decl.generics.is_empty() =>
+            {
+                enum_decl.name.as_str()
             }
             _ => continue,
         };
         let imported = imported_externs.is_none_or(|imports| {
-            dependency_extern_is_imported(imports, &module_import_path, &struct_decl.name)
+            dependency_extern_is_imported(imports, &module_import_path, type_name)
         });
         let required_by_bridge = required_type_names
-            .is_some_and(|required_type_names| required_type_names.contains(&struct_decl.name));
+            .is_some_and(|required_type_names| required_type_names.contains(type_name));
         if !imported && !required_by_bridge {
             continue;
         }
 
         let Some(ordered_symbols) =
-            dependency_public_type_bridge_order(&struct_decl.name, &type_candidates)
+            dependency_public_type_bridge_order(type_name, &type_candidates)
         else {
             continue;
         };
@@ -13429,8 +13483,9 @@ mod tests {
 
     use super::{
         ProjectTargetSelector, analyze_semantics, analyze_source, build_path, collect_ql_files,
-        dependency_public_struct_method_bridge_candidates, parse_source, render_mir_path,
-        render_ownership_path, render_runtime_requirements,
+        dependency_public_struct_method_bridge_candidates,
+        dependency_public_type_bridge_candidates, dependency_public_type_bridge_order,
+        parse_source, render_mir_path, render_ownership_path, render_runtime_requirements,
     };
 
     struct TestDir {
@@ -13536,6 +13591,29 @@ impl Reader for Box {
         assert_eq!(methods.len(), 1);
         assert_eq!(read.name, "read");
         assert!(read.body.is_some());
+    }
+
+    #[test]
+    fn dependency_public_type_bridge_order_supports_public_enum_payload_dependencies() {
+        let module = parse_source(
+            r#"
+pub struct Issue {
+    code: Int,
+}
+
+pub enum Status {
+    Ready,
+    Failed(Issue),
+}
+"#,
+        )
+        .expect("source should parse");
+
+        let candidates = dependency_public_type_bridge_candidates(&module);
+        let ordered = dependency_public_type_bridge_order("Status", &candidates)
+            .expect("enum payload dependency order should resolve");
+
+        assert_eq!(ordered, vec!["Issue".to_owned(), "Status".to_owned()]);
     }
 
     #[test]
