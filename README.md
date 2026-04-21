@@ -19,6 +19,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - `ql project dependents` 已能直接查询某个 workspace package 当前被哪些 members 依赖，便于清理依赖边或定位删除阻塞。
 - `ql project dependencies` 已能直接查询某个 workspace package 当前依赖了哪些 workspace members，并支持 `--json`；正反向依赖审计都不必再手读 manifest 或 `project graph`。
 - `ql project targets` 现在也支持 `--package`、`--lib`、`--bin`、`--target` 过滤；项目级 target 查询不再只能全量输出，真实 workspace 下排查目标会更直接。
+- `ql project graph` 现在也支持 `--package` 聚焦到单个 workspace member 的包图；workspace 根图查询不再只能看全量成员展开。
 - `ql check` / `ql build` / `ql run` / `ql test` 与 `ql project targets` / `graph` / `lock` 已提供第一版 `--json` 机器输出；`ql run --json` 当前输出 `ql.run.v1`，`ql project lock --json` 当前输出 `ql.project.lock.result.v1`。
 - `ql check` 现在也会在 workspace member 目录或源码路径入口上恢复外层 workspace 语义，不再悄悄退回单 package 检查。
 - `ql test` 直接执行 project `tests/*.ql` 文件时会保留 package/workspace-aware smoke 或 UI test 语义；`ql project graph` / `ql project targets` / `ql project lock` 指向 workspace member 目录或源码文件时都会回到外层 workspace 上下文；`ql project emit-interface` 在不带 `--output` 时，无论 plain / `--changed-only` / `--check`，都会对 workspace member 目录或 `.ql` 源码路径恢复这一视角。
@@ -69,6 +70,7 @@ cargo run -p ql-cli -- project remove-dependency demo-workspace --name core --al
 cargo run -p ql-cli -- project dependencies demo-workspace --name app
 cargo run -p ql-cli -- project dependents demo-workspace --name core
 cargo run -p ql-cli -- project targets demo-workspace --package app --bin main
+cargo run -p ql-cli -- project graph demo-workspace --package app
 cargo run -p ql-cli -- check path/to/workspace/packages/app
 cargo run -p ql-cli -- check path/to/workspace/packages/app/src/lib.ql
 cargo run -p ql-cli -- project graph demo-workspace

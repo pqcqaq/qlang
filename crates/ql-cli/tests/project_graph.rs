@@ -633,6 +633,165 @@ pub fn exported() -> Int
 }
 
 #[test]
+fn project_graph_supports_package_selector_for_workspace_root() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-workspace-package-selector");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages").join("app").join("src"))
+        .expect("create workspace app directory");
+    std::fs::create_dir_all(project_root.join("packages").join("tool").join("src"))
+        .expect("create workspace tool directory");
+    std::fs::create_dir_all(project_root.join("dep")).expect("create dependency directory");
+
+    let app_manifest_path = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/app.qi",
+        r#"
+// qlang interface v1
+// package: app
+
+// source: src/lib.ql
+package demo.app
+
+pub fn run() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph", "--package", "app"])
+        .arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql project graph --package` workspace root");
+    let (stdout, stderr) = expect_success(
+        "project-graph-workspace-package-selector",
+        "workspace root package graph selector",
+        &output,
+    )
+    .expect("workspace root package graph selector should succeed");
+    expect_empty_stderr(
+        "project-graph-workspace-package-selector",
+        "workspace root package graph selector",
+        &stderr,
+    )
+    .expect("workspace root package graph selector should stay silent on stderr");
+
+    let expected = format!(
+        "manifest: {}\npackage: app\nworkspace_members: []\nreferences:\n  - ../../dep\ninterface:\n  path: app.qi\n  status: valid\nreference_interfaces:\n  - reference: ../../dep\n    manifest: dep/qlang.toml\n    package: dep\n    path: dep/dep.qi\n    status: valid\n",
+        app_manifest_path.to_string_lossy().replace('\\', "/")
+    );
+    expect_snapshot_matches(
+        "project-graph-workspace-package-selector",
+        "workspace root package graph selector stdout",
+        &expected,
+        &stdout.replace('\\', "/"),
+    )
+    .expect("workspace root package graph selector should render the selected package graph");
+}
+
+#[test]
+fn project_graph_rejects_missing_workspace_package_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-graph-workspace-package-missing");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages").join("app").join("src"))
+        .expect("create workspace app directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "graph", "--package", "missing"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project graph --package` missing workspace package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-graph-workspace-package-missing",
+        "workspace root package graph selector missing package",
+        &output,
+        1,
+    )
+    .expect("workspace root package graph selector should fail for missing packages");
+    expect_empty_stdout(
+        "project-graph-workspace-package-missing",
+        "workspace root package graph selector missing package",
+        &stdout,
+    )
+    .expect("workspace root package graph selector missing package should not print stdout");
+    expect_stderr_contains(
+        "project-graph-workspace-package-missing",
+        "workspace root package graph selector missing package",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project graph` workspace manifest `{}` does not contain package `missing`",
+            project_root
+                .join("qlang.toml")
+                .to_string_lossy()
+                .replace('\\', "/")
+        ),
+    )
+    .expect(
+        "workspace root package graph selector missing package should report the missing package",
+    );
+}
+
+#[test]
 fn project_graph_source_file_uses_workspace_root_context() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-graph-workspace-source");

@@ -499,11 +499,28 @@ fn run() -> Result<(), u8> {
                 "graph" => {
                     let remaining = args.collect::<Vec<_>>();
                     let mut path = None;
+                    let mut package_name = None;
                     let mut json = false;
                     let mut index = 0;
 
                     while index < remaining.len() {
                         match remaining[index].as_str() {
+                            "--package" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project graph --package` expects a package name"
+                                    );
+                                    return Err(1);
+                                };
+                                if package_name.is_some() {
+                                    eprintln!(
+                                        "error: `ql project graph` received `--package` more than once"
+                                    );
+                                    return Err(1);
+                                }
+                                package_name = Some(value.clone());
+                            }
                             "--json" => {
                                 json = true;
                             }
@@ -528,7 +545,7 @@ fn run() -> Result<(), u8> {
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_graph_path(&path, json)
+                    project_graph_path(&path, package_name.as_deref(), json)
                 }
                 "dependents" => {
                     let remaining = args.collect::<Vec<_>>();
@@ -11600,29 +11617,15 @@ fn resolve_project_workspace_member_command_request_root(path: &Path) -> Option<
     Some(resolve_project_member_request_root(&manifest.manifest_path))
 }
 
-fn project_graph_path(path: &Path, json: bool) -> Result<(), u8> {
+fn project_graph_path(path: &Path, package_name: Option<&str>, json: bool) -> Result<(), u8> {
     let request_root = resolve_project_workspace_member_command_request_root(path);
-    let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path)).map_err(|error| {
-        if let ql_project::ProjectError::ManifestNotFound { start } = &error {
-            eprintln!(
-                "error: `ql project graph` requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
-                normalize_path(start)
-            );
-            report_project_graph_package_context_failure(path);
-        } else if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(&error) {
-            eprintln!(
-                "error: `ql project graph` manifest `{}` does not declare `[package].name`",
-                normalize_path(manifest_path)
-            );
-            report_project_graph_manifest_failure(manifest_path);
-        } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(&error) {
-            eprintln!("error: `ql project graph` {error}");
-            report_project_graph_manifest_failure(manifest_path);
-        } else {
-            eprintln!("error: {error}");
-        }
-        1
-    })?;
+    let manifest = load_project_manifest(request_root.as_deref().unwrap_or(path))
+        .map_err(|error| report_project_graph_load_error(path, &error))?;
+    let manifest = if let Some(package_name) = package_name {
+        resolve_project_graph_package_manifest(path, &manifest, package_name)?
+    } else {
+        manifest
+    };
     let rendered = if json {
         render_project_graph_resolved_json(&manifest)
     } else {
@@ -11634,6 +11637,82 @@ fn project_graph_path(path: &Path, json: bool) -> Result<(), u8> {
     })?;
     print!("{rendered}");
     Ok(())
+}
+
+fn report_project_graph_load_error(path: &Path, error: &ql_project::ProjectError) -> u8 {
+    if let ql_project::ProjectError::ManifestNotFound { start } = error {
+        eprintln!(
+            "error: `ql project graph` requires a package or workspace manifest; could not find `qlang.toml` starting from `{}`",
+            normalize_path(start)
+        );
+        report_project_graph_package_context_failure(path);
+    } else if let Some(manifest_path) = package_missing_name_manifest_path_from_project_error(error)
+    {
+        eprintln!(
+            "error: `ql project graph` manifest `{}` does not declare `[package].name`",
+            normalize_path(manifest_path)
+        );
+        report_project_graph_manifest_failure(manifest_path);
+    } else if let Some(manifest_path) = package_check_manifest_path_from_project_error(error) {
+        eprintln!("error: `ql project graph` {error}");
+        report_project_graph_manifest_failure(manifest_path);
+    } else {
+        eprintln!("error: {error}");
+    }
+    1
+}
+
+fn resolve_project_graph_package_manifest(
+    path: &Path,
+    manifest: &ql_project::ProjectManifest,
+    selected_package_name: &str,
+) -> Result<ql_project::ProjectManifest, u8> {
+    if let Err(message) = validate_project_package_name(selected_package_name) {
+        eprintln!("error: `ql project graph` {message}");
+        return Err(1);
+    }
+
+    if manifest.workspace.is_some() {
+        let member_entries =
+            find_workspace_member_entries_by_package_name(manifest, selected_package_name);
+        if member_entries.is_empty() {
+            eprintln!(
+                "error: `ql project graph` workspace manifest `{}` does not contain package `{selected_package_name}`",
+                normalize_path(&manifest.manifest_path)
+            );
+            return Err(1);
+        }
+        if member_entries.len() > 1 {
+            let matching_members = member_entries
+                .iter()
+                .map(|(member, _)| member.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!(
+                "error: `ql project graph` workspace manifest `{}` contains multiple members for package `{selected_package_name}`: {matching_members}",
+                normalize_path(&manifest.manifest_path)
+            );
+            return Err(1);
+        }
+
+        return load_project_manifest(&member_entries[0].1)
+            .map_err(|error| report_project_graph_load_error(path, &error));
+    }
+
+    let actual_package_name = package_name(manifest).map_err(|error| {
+        eprintln!("error: `ql project graph` {error}");
+        report_project_graph_manifest_failure(&manifest.manifest_path);
+        1
+    })?;
+    if actual_package_name != selected_package_name {
+        eprintln!(
+            "error: `ql project graph` package selector expected `{selected_package_name}` but `{}` resolves to package `{actual_package_name}`",
+            normalize_path(path)
+        );
+        return Err(1);
+    }
+
+    Ok(manifest.clone())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14499,7 +14578,7 @@ fn print_usage() {
     eprintln!(
         "  ql project targets [file-or-dir] [--package <name>] [--lib|--bin <name>|--target <path>] [--json]"
     );
-    eprintln!("  ql project graph [file-or-dir] [--json]");
+    eprintln!("  ql project graph [file-or-dir] [--package <name>] [--json]");
     eprintln!("  ql project dependents [file-or-dir] --name <package> [--json]");
     eprintln!("  ql project dependencies [file-or-dir] --name <package> [--json]");
     eprintln!("  ql project lock [file-or-dir] [--check] [--json]");
