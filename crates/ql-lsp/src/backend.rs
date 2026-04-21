@@ -4766,28 +4766,19 @@ fn visible_manifest_paths_for_package(package_manifest_path: &Path) -> Vec<PathB
 fn visible_source_dependency_occurrence_matches_definition_with_open_docs(
     uri: &Url,
     source: &str,
-    analysis: &Analysis,
+    analysis: Option<&Analysis>,
     package: &ql_analysis::PackageAnalysis,
     open_docs: &OpenDocuments,
     position: tower_lsp::lsp_types::Position,
     source_definition: &Location,
 ) -> bool {
     let Some(target) = dependency_definition_target_with_open_docs_at(
-        source,
-        Some(analysis),
-        package,
-        open_docs,
-        position,
+        source, analysis, package, open_docs, position,
     ) else {
         return false;
     };
     let Some(location) = workspace_source_location_for_dependency_target_with_open_docs(
-        uri,
-        source,
-        Some(analysis),
-        package,
-        open_docs,
-        &target,
+        uri, source, analysis, package, open_docs, &target,
     ) else {
         return false;
     };
@@ -5429,32 +5420,23 @@ fn workspace_visible_source_references_for_definition_with_open_docs(
                 continue;
             }
 
-            let (uri, source, owned_analysis) =
-                if let Some((open_uri, open_source, open_analysis)) =
-                    open_document_snapshot(open_docs, &source_path)
-                {
-                    (open_uri, open_source, Some(open_analysis))
-                } else {
-                    let Some(module) = candidate_package.modules().iter().find(|module| {
-                        canonicalize_or_clone(module.path()) == canonicalize_or_clone(&source_path)
-                    }) else {
-                        continue;
-                    };
-                    let Ok(uri) = Url::from_file_path(&source_path) else {
-                        continue;
-                    };
-                    let Ok(source) = fs::read_to_string(&source_path) else {
-                        continue;
-                    };
-                    (
-                        uri,
-                        source.replace("\r\n", "\n"),
-                        Some(module.analysis().clone()),
-                    )
-                };
-            let Some(analysis) = owned_analysis.as_ref() else {
+            let Some((uri, source)) = open_or_disk_source_snapshot(open_docs, &source_path) else {
                 continue;
             };
+            let owned_analysis = open_document_snapshot(open_docs, &source_path)
+                .map(|(_, _, analysis)| analysis)
+                .or_else(|| {
+                    candidate_package
+                        .modules()
+                        .iter()
+                        .find(|module| {
+                            canonicalize_or_clone(module.path())
+                                == canonicalize_or_clone(&source_path)
+                        })
+                        .map(|module| module.analysis().clone())
+                })
+                .or_else(|| analyze_source(&source).ok());
+            let analysis = owned_analysis.as_ref();
 
             let mut module_locations = lex(&source)
                 .0
@@ -5462,11 +5444,9 @@ fn workspace_visible_source_references_for_definition_with_open_docs(
                 .filter(|token| token.kind == TokenKind::Ident && token.text == target.name)
                 .filter_map(|token| {
                     let position = span_to_range(&source, token.span).start;
-                    let matches_target = occurrence_matches_definition_target(
-                        analysis,
-                        token.span.start,
-                        target,
-                    )
+                    let matches_target = analysis.is_some_and(|analysis| {
+                        occurrence_matches_definition_target(analysis, token.span.start, target)
+                    })
                         || visible_source_dependency_occurrence_matches_definition_with_open_docs(
                             &uri,
                             &source,
@@ -5480,15 +5460,16 @@ fn workspace_visible_source_references_for_definition_with_open_docs(
                         return None;
                     }
                     if !include_declaration
-                        && analysis
-                            .references_at(token.span.start)
-                            .and_then(|references| {
-                                references
-                                    .into_iter()
-                                    .find(|reference| reference.span == token.span)
-                                    .map(|reference| reference.is_definition)
-                            })
-                            == Some(true)
+                        && analysis.and_then(|analysis| {
+                            analysis
+                                .references_at(token.span.start)
+                                .and_then(|references| {
+                                    references
+                                        .into_iter()
+                                        .find(|reference| reference.span == token.span)
+                                        .map(|reference| reference.is_definition)
+                                })
+                        }) == Some(true)
                     {
                         return None;
                     }
@@ -16824,6 +16805,259 @@ impl Config {
             reference.uri == task_uri
                 && reference.range.start
                     == offset_to_position(&task_source, nth_offset(&task_source, "value", 1))
+        }));
+    }
+
+    #[test]
+    fn workspace_root_member_references_include_visible_broken_consumers() {
+        let temp = TempDir::new("ql-lsp-workspace-root-member-references-broken");
+        let app_path = temp.write(
+            "workspace/packages/app/src/main.ql",
+            r#"
+package demo.app
+
+use demo.core.Command as Cmd
+use demo.core.Config as Cfg
+
+pub fn main(config: Cfg) -> Int {
+    let command = Cmd.Retry(1)
+    match command {
+        Cmd.Retry(count) => count + config.get() + config.value,
+        Cmd.Stop => 0,
+"#,
+        );
+        let jobs_path = temp.write(
+            "workspace/packages/jobs/src/job.ql",
+            r#"
+package demo.jobs
+
+use demo.core.Command as Cmd
+use demo.core.Config as JobCfg
+
+pub fn job(config: JobCfg) -> Int {
+    let command = Cmd.Retry(2)
+    match command {
+        Cmd.Retry(count) => count + config.get() + config.value,
+        Cmd.Stop => 0,
+"#,
+        );
+        let core_source_path = temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int {
+        return self.value
+    }
+}
+
+pub fn build() -> Command {
+    return Command.Retry(0)
+}
+
+pub fn read(config: Config) -> Int {
+    return config.get() + config.value
+}
+"#,
+        );
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/jobs", "packages/core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/app/qlang.toml",
+            r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/jobs/qlang.toml",
+            r#"
+[package]
+name = "jobs"
+
+[references]
+packages = ["../core"]
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/core.qi",
+            r#"
+// qlang interface v1
+// package: core
+
+// source: src/lib.ql
+package demo.core
+
+pub enum Command {
+    Retry(Int),
+    Stop,
+}
+
+pub struct Config {
+    value: Int,
+}
+
+impl Config {
+    pub fn get(self) -> Int
+}
+"#,
+        );
+
+        let core_source = fs::read_to_string(&core_source_path).expect("core source should read");
+        let core_analysis = analyze_source(&core_source).expect("core source should analyze");
+        let package =
+            package_analysis_for_path(&core_source_path).expect("package analysis should succeed");
+        let core_uri =
+            Url::from_file_path(&core_source_path).expect("core source path should convert to URI");
+        let app_source = fs::read_to_string(&app_path).expect("app source should read");
+        assert!(analyze_source(&app_source).is_err());
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let jobs_source = fs::read_to_string(&jobs_path).expect("jobs source should read");
+        assert!(analyze_source(&jobs_source).is_err());
+        let jobs_uri = Url::from_file_path(&jobs_path).expect("jobs path should convert to URI");
+        let open_docs = file_open_documents(vec![
+            (core_uri.clone(), core_source.clone()),
+            (app_uri.clone(), app_source.clone()),
+            (jobs_uri.clone(), jobs_source.clone()),
+        ]);
+
+        let variant_references = workspace_source_references_for_root_symbol_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &open_docs,
+            offset_to_position(&core_source, nth_offset(&core_source, "Retry", 2)),
+            true,
+        )
+        .expect("workspace root variant references should exist");
+
+        assert_eq!(variant_references.len(), 6);
+        assert!(variant_references.iter().any(|reference| {
+            reference.uri == core_uri
+                && reference.range.start
+                    == offset_to_position(&core_source, nth_offset(&core_source, "Retry", 1))
+        }));
+        assert!(variant_references.iter().any(|reference| {
+            reference.uri == core_uri
+                && reference.range.start
+                    == offset_to_position(&core_source, nth_offset(&core_source, "Retry", 2))
+        }));
+        assert!(variant_references.iter().any(|reference| {
+            reference.uri == app_uri
+                && reference.range.start
+                    == offset_to_position(&app_source, nth_offset(&app_source, "Retry", 1))
+        }));
+        assert!(variant_references.iter().any(|reference| {
+            reference.uri == app_uri
+                && reference.range.start
+                    == offset_to_position(&app_source, nth_offset(&app_source, "Retry", 2))
+        }));
+        assert!(variant_references.iter().any(|reference| {
+            reference.uri == jobs_uri
+                && reference.range.start
+                    == offset_to_position(&jobs_source, nth_offset(&jobs_source, "Retry", 1))
+        }));
+        assert!(variant_references.iter().any(|reference| {
+            reference.uri == jobs_uri
+                && reference.range.start
+                    == offset_to_position(&jobs_source, nth_offset(&jobs_source, "Retry", 2))
+        }));
+
+        let method_references = workspace_source_references_for_root_symbol_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &open_docs,
+            offset_to_position(&core_source, nth_offset(&core_source, "get", 2)),
+            true,
+        )
+        .expect("workspace root method references should exist");
+
+        assert_eq!(method_references.len(), 4);
+        assert!(method_references.iter().any(|reference| {
+            reference.uri == core_uri
+                && reference.range.start
+                    == offset_to_position(&core_source, nth_offset(&core_source, "get", 1))
+        }));
+        assert!(method_references.iter().any(|reference| {
+            reference.uri == core_uri
+                && reference.range.start
+                    == offset_to_position(&core_source, nth_offset(&core_source, "get", 2))
+        }));
+        assert!(method_references.iter().any(|reference| {
+            reference.uri == app_uri
+                && reference.range.start
+                    == offset_to_position(&app_source, nth_offset(&app_source, "get", 1))
+        }));
+        assert!(method_references.iter().any(|reference| {
+            reference.uri == jobs_uri
+                && reference.range.start
+                    == offset_to_position(&jobs_source, nth_offset(&jobs_source, "get", 1))
+        }));
+
+        let field_references = workspace_source_references_for_root_symbol_with_open_docs(
+            &core_uri,
+            &core_source,
+            &core_analysis,
+            &package,
+            &open_docs,
+            offset_to_position(&core_source, nth_offset(&core_source, "value", 3)),
+            true,
+        )
+        .expect("workspace root field references should exist");
+
+        assert_eq!(field_references.len(), 5);
+        assert!(field_references.iter().any(|reference| {
+            reference.uri == core_uri
+                && reference.range.start
+                    == offset_to_position(&core_source, nth_offset(&core_source, "value", 1))
+        }));
+        assert!(field_references.iter().any(|reference| {
+            reference.uri == core_uri
+                && reference.range.start
+                    == offset_to_position(&core_source, nth_offset(&core_source, "value", 2))
+        }));
+        assert!(field_references.iter().any(|reference| {
+            reference.uri == core_uri
+                && reference.range.start
+                    == offset_to_position(&core_source, nth_offset(&core_source, "value", 3))
+        }));
+        assert!(field_references.iter().any(|reference| {
+            reference.uri == app_uri
+                && reference.range.start
+                    == offset_to_position(&app_source, nth_offset(&app_source, "value", 1))
+        }));
+        assert!(field_references.iter().any(|reference| {
+            reference.uri == jobs_uri
+                && reference.range.start
+                    == offset_to_position(&jobs_source, nth_offset(&jobs_source, "value", 1))
         }));
     }
 

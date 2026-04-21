@@ -31,6 +31,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - healthy workspace import semantic tokens 这一轮也补上了 open-doc 路径；healthy 与 parse-error fallback 两条着色路径都会直接读取未保存的导出 workspace 源码。
 - workspace import references 现在会聚合当前文件、open unsaved 的导出源码与其他 workspace consumer 源码；workspace root `function / const / static / struct / enum / trait / type alias` 的 references / rename 已覆盖定义点、同文件使用点与 import/use 位置。
 - healthy workspace 下，workspace root source-backed `enum variant / struct field / receiver method` 的 references 现在也会补回当前 package 可见的 analyzed workspace consumers；可以直接从导出包源码侧回收其他 members 里的真实成员使用。
+- broken-source / parse-error 下，workspace root source-backed `enum variant / struct field / receiver method` 的 references 现在也会补回当前 package 可见的 broken workspace consumers；从导出包源码定义点或同文件使用点发起时，不再只看到 healthy members。
 - 这一轮补齐了 open-doc 一致性：healthy workspace import/use `prepareRename`、broken-source workspace root import/use `prepareRename`，以及 broken-source workspace import alias rename，都会优先读取已打开但未落盘的 workspace 源码，而不是回退到磁盘旧内容。
 - broken-source / parse-error 下，workspace import `hover/definition/typeDefinition`、direct imported-result member hover / completion / query / `documentHighlight`、dependency enum variant / struct field 的保守 fallback、workspace import references / query，以及 source-backed dependency rename 仍保留可用；workspace root `function / const / static / struct / enum / trait / type alias` 也允许从当前 broken consumer 的 import/use 发起 rename，并保守联动当前文件、当前 package、可见 workspace consumers 与导出包源码。
 - `qlsp` 现在会声明 `.` completion trigger，VSCode 中输入成员访问或点分路径时可直接自动弹出补全。
