@@ -30,6 +30,7 @@
 - `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里摘除；若仍被其他 workspace member 依赖会先拒绝删除，也支持 `--cascade` 自动清理这些 members 指向目标包的本地依赖边，并保留原包目录，先支持安全退出 dependency graph，再由用户决定是否清理文件。
 - `ql project add-dependency` / `ql project remove-dependency` 已能直接修改已有 workspace member 的本地依赖；`remove-dependency` 现在也会兼容清理旧的 `[references].packages` 入口，并支持 `--all` 按 package 名批量清理所有 dependents，先补齐已有包依赖接线的 CLI 闭环。
 - `ql project dependents` 已能直接反查某个 workspace package 的反向本地依赖成员，并支持 `--json`；删除前定位阻塞和脚本化清理路径已不必手扫 manifest。
+- `ql project dependencies` 已能直接正查某个 workspace package 的直接本地依赖成员，并支持 `--json`；正反向依赖排查都不必再手扫 manifest 或解析 `ql project graph`。
 - `ql project targets`、`ql project graph`、`ql project lock`、`ql project emit-interface` 已落地。
 - `qlang.toml` 当前只稳定支持：
   - `[package].name`
