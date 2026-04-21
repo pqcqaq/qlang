@@ -29,6 +29,7 @@
 - `ql project target add --bin <name>` 现在也已落地；真实项目里新增 bin target 不必再手建 `src/bin/*.ql` 和手改 `qlang.toml`，第一次显式写入 `[[bin]]` 时也会保留当前默认发现到的 targets。
 - `ql project graph` 现在也支持 `--package` 聚焦到单个 workspace member 的包图；workspace 根图查询已不必再总是展开全部成员。
 - `ql project add-dependency` / `remove-dependency` 现在也支持从 workspace 根配合 `--package` 直接指定目标 member；真实项目里批量查看依赖后可直接在根目录继续修改，不必先切到 member 路径。
+- `ql check` 现在也支持在 workspace 入口配合 `--package` 只检查单个 member；大 workspace 下做增量排查不必继续全量扫描全部包。
 - `ql project remove --cascade` 现在也已落地；当目标包仍被其他 members 引用时，CLI 已可自动清理这些本地依赖边并继续移除 member。`ql project remove-dependency` 同时兼容 `[dependencies]` 和旧的 `[references].packages` 清理路径。
 - `ql project add-dependency` / `remove-dependency` 现在也可直接维护已有 workspace member 的本地 `[dependencies]`；`remove-dependency --all` 还能按 package 名批量清理全部 dependents，创建后补依赖和移除依赖都不必再手改 manifest。
 - project-aware `ql build` / `ql run` / `ql test` 已可在 package/workspace 根目录工作。

@@ -57,13 +57,27 @@ fn run() -> Result<(), u8> {
             let mut path = None;
             let mut sync_interfaces = false;
             let mut json = false;
-            for arg in remaining {
-                match arg.as_str() {
+            let mut package_name = None;
+            let mut index = 0;
+            while index < remaining.len() {
+                match remaining[index].as_str() {
                     "--sync-interfaces" => {
                         sync_interfaces = true;
                     }
                     "--json" => {
                         json = true;
+                    }
+                    "--package" => {
+                        index += 1;
+                        let Some(value) = remaining.get(index) else {
+                            eprintln!("error: `ql check --package` expects a package name");
+                            return Err(1);
+                        };
+                        if package_name.is_some() {
+                            eprintln!("error: `ql check` received multiple `--package` selectors");
+                            return Err(1);
+                        }
+                        package_name = Some(value.to_owned());
                     }
                     other if other.starts_with('-') => {
                         eprintln!("error: unknown `ql check` option `{other}`");
@@ -77,12 +91,18 @@ fn run() -> Result<(), u8> {
                         path = Some(other.to_owned());
                     }
                 }
+                index += 1;
             }
             let Some(path) = path else {
                 eprintln!("error: `ql check` expects a file or directory path");
                 return Err(1);
             };
-            check_path(Path::new(&path), sync_interfaces, json)
+            check_path(
+                Path::new(&path),
+                sync_interfaces,
+                json,
+                package_name.as_deref(),
+            )
         }
         "fmt" => {
             let mut write = false;
@@ -1275,9 +1295,24 @@ fn run() -> Result<(), u8> {
     }
 }
 
-fn check_path(path: &Path, sync_interfaces: bool, json: bool) -> Result<(), u8> {
+fn check_path(
+    path: &Path,
+    sync_interfaces: bool,
+    json: bool,
+    package_name: Option<&str>,
+) -> Result<(), u8> {
     let request_root = resolve_project_workspace_member_command_request_root(path);
     let manifest_request_path = request_root.as_deref().unwrap_or(path);
+    if let Some(package_name) = package_name {
+        let Ok(manifest) = load_project_manifest(manifest_request_path) else {
+            report_check_package_selector_requires_workspace_context(package_name);
+            return Err(1);
+        };
+        if manifest.workspace.is_none() {
+            report_check_package_selector_requires_workspace_context(package_name);
+            return Err(1);
+        }
+    }
     let use_package_check = should_use_package_check(manifest_request_path)
         || (is_ql_source_file(path) && load_project_manifest(manifest_request_path).is_ok());
     if use_package_check {
@@ -1286,7 +1321,13 @@ fn check_path(path: &Path, sync_interfaces: bool, json: bool) -> Result<(), u8> 
         let mut json_report = None;
         if let Ok(manifest) = load_project_manifest(manifest_request_path) {
             if manifest.package.is_none() && manifest.workspace.is_some() {
-                return check_workspace_manifest(&manifest, sync_interfaces, json);
+                return check_workspace_manifest(
+                    &manifest,
+                    manifest_request_path,
+                    sync_interfaces,
+                    json,
+                    package_name,
+                );
             }
             package_manifest_path = Some(manifest.manifest_path.clone());
             if json {
@@ -1482,15 +1523,23 @@ fn check_path(path: &Path, sync_interfaces: bool, json: bool) -> Result<(), u8> 
 
 fn check_workspace_manifest(
     manifest: &ql_project::ProjectManifest,
+    request_path: &Path,
     sync_interfaces: bool,
     json: bool,
+    selected_package_name: Option<&str>,
 ) -> Result<(), u8> {
-    let Some(workspace) = &manifest.workspace else {
+    let Some(_) = &manifest.workspace else {
         return Ok(());
     };
 
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
     let check_command_label = format_check_command_label(sync_interfaces);
+    let selected_members = select_workspace_check_members(
+        manifest,
+        request_path,
+        selected_package_name,
+        &check_command_label,
+    )?;
     let mut sync_visited = BTreeSet::new();
     let mut synced_interfaces = BTreeSet::new();
     let mut failing_members = 0usize;
@@ -1499,7 +1548,7 @@ fn check_workspace_manifest(
         .then(|| CheckJsonReport::new("workspace", sync_interfaces, Some(&manifest.manifest_path)));
     let mut json_supported_failure_only = true;
 
-    for member in &workspace.members {
+    for member in &selected_members {
         let member_path = manifest_dir.join(member);
         let member_manifest = match load_project_manifest(&member_path) {
             Ok(manifest) => manifest,
@@ -1733,6 +1782,60 @@ fn check_workspace_manifest(
     }
 
     Ok(())
+}
+
+fn select_workspace_check_members(
+    manifest: &ql_project::ProjectManifest,
+    request_path: &Path,
+    package_name: Option<&str>,
+    command_label: &str,
+) -> Result<Vec<String>, u8> {
+    let Some(workspace) = &manifest.workspace else {
+        return Ok(Vec::new());
+    };
+    let Some(package_name) = package_name else {
+        return Ok(workspace.members.clone());
+    };
+    if let Err(message) = validate_project_package_name(package_name) {
+        eprintln!("error: `{command_label}` {message}");
+        return Err(1);
+    }
+
+    let matching_members = find_workspace_member_entries_by_package_name(manifest, package_name);
+    if matching_members.is_empty() {
+        let normalized_path = normalize_path(request_path);
+        let rerun_command = format!("{} {normalized_path}", command_label.trim_matches('`'));
+        eprintln!(
+            "error: {command_label} package selector matched no workspace members under `{normalized_path}`"
+        );
+        eprintln!("note: selector: package `{package_name}`");
+        eprintln!(
+            "hint: rerun `{rerun_command}` to inspect all workspace members, or adjust `--package`"
+        );
+        return Err(1);
+    }
+    if matching_members.len() > 1 {
+        let manifest_path = normalize_path(&manifest.manifest_path);
+        let rendered_members = matching_members
+            .iter()
+            .map(|(member, member_manifest)| {
+                format!("{member} ({})", normalize_path(member_manifest))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!(
+            "error: {command_label} workspace manifest `{manifest_path}` contains multiple members for package `{package_name}`: {rendered_members}"
+        );
+        return Err(1);
+    }
+
+    Ok(vec![
+        matching_members
+            .into_iter()
+            .next()
+            .expect("non-empty workspace check package matches should contain one entry")
+            .0,
+    ])
 }
 
 fn report_workspace_member_failure(manifest_path: &Path, hint_line: Option<&str>) {
@@ -5203,6 +5306,11 @@ fn report_test_failure(failure: &TestFailure) {
 
 fn report_test_package_selector_requires_project_context(package_name: &str) {
     eprintln!("error: `ql test` package selectors require a package or workspace path");
+    eprintln!("note: selector: package `{package_name}`");
+}
+
+fn report_check_package_selector_requires_workspace_context(package_name: &str) {
+    eprintln!("error: `ql check` package selectors require a workspace path");
     eprintln!("note: selector: package `{package_name}`");
 }
 

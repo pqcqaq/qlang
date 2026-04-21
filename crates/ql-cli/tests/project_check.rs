@@ -2449,6 +2449,193 @@ pub fn main() -> Int {
 }
 
 #[test]
+fn check_workspace_root_supports_package_selectors() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-workspace-package-selector");
+    let dep_root = temp.path().join("workspace").join("dep");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+    let tool_root = temp.path().join("workspace").join("packages").join("tool");
+    let workspace_manifest = temp.path().join("workspace").join("qlang.toml");
+    let app_source = app_root.join("src").join("lib.ql");
+    let tool_source = tool_root.join("src").join("lib.ql");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source directory");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+    std::fs::create_dir_all(tool_root.join("src")).expect("create tool source directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace/dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "workspace/dep/dep.qi",
+        r#"
+// qlang interface v1
+// package: dep
+
+// source: src/lib.ql
+package demo.dep
+
+pub fn exported() -> Int
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[references]
+packages = ["../../dep"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn main() -> Int {
+    return 2
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["check"])
+        .arg(&workspace_manifest)
+        .args(["--package", "app"]);
+    let output = run_command_capture(&mut command, "`ql check` workspace root package selector");
+    let (stdout, stderr) = expect_success(
+        "project-check-workspace-package-selector",
+        "workspace-root ql check package selector",
+        &output,
+    )
+    .expect("workspace-root ql check package selector should succeed");
+    let normalized_stdout = stdout.replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-check-workspace-package-selector",
+        &normalized_stdout,
+        &[
+            &format!(
+                "ok: {}",
+                app_source.display().to_string().replace('\\', "/")
+            ),
+            "loaded interface: ",
+            "dep.qi",
+        ],
+    )
+    .expect("workspace-root ql check package selector should report the selected member");
+    assert!(
+        !normalized_stdout.contains(&tool_source.display().to_string().replace('\\', "/")),
+        "workspace-root ql check package selector should skip unselected members, got:\n{normalized_stdout}"
+    );
+    assert!(
+        stderr.trim().is_empty(),
+        "expected workspace-root ql check package selector stderr to stay empty, got:\n{stderr}"
+    );
+}
+
+#[test]
+fn check_workspace_root_package_selector_reports_missing_packages() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-check-workspace-package-selector-missing");
+    let app_root = temp.path().join("workspace").join("packages").join("app");
+    let workspace_manifest = temp.path().join("workspace").join("qlang.toml");
+    std::fs::create_dir_all(app_root.join("src")).expect("create app source directory");
+
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn main() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["check"])
+        .arg(&workspace_manifest)
+        .args(["--package", "missing"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql check` workspace root package selector missing package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-check-workspace-package-selector-missing",
+        "workspace-root ql check package selector missing package",
+        &output,
+        1,
+    )
+    .expect("workspace-root ql check package selector should fail when the package is missing");
+    assert!(
+        stdout.trim().is_empty(),
+        "expected workspace-root ql check package selector missing stdout to stay empty, got:\n{stdout}"
+    );
+    let normalized_stderr = stderr.replace('\\', "/");
+    let manifest_display = workspace_manifest.display().to_string().replace('\\', "/");
+    expect_stderr_contains(
+        "project-check-workspace-package-selector-missing",
+        "workspace-root ql check package selector missing package",
+        &normalized_stderr,
+        &format!(
+            "error: `ql check` package selector matched no workspace members under `{manifest_display}`"
+        ),
+    )
+    .expect("workspace-root ql check package selector should surface the missing-package error");
+    expect_stderr_contains(
+        "project-check-workspace-package-selector-missing",
+        "workspace-root ql check package selector missing package",
+        &normalized_stderr,
+        "note: selector: package `missing`",
+    )
+    .expect("workspace-root ql check package selector should include the selector note");
+}
+
+#[test]
 fn check_workspace_member_directory_uses_enclosing_workspace() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-check-workspace-member-dir");
