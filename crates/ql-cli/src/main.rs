@@ -519,6 +519,64 @@ fn run() -> Result<(), u8> {
                         .unwrap_or_else(|| PathBuf::from("."));
                     project_graph_path(&path, json)
                 }
+                "dependents" => {
+                    let remaining = args.collect::<Vec<_>>();
+                    let mut path = None;
+                    let mut package_name = None;
+                    let mut json = false;
+                    let mut index = 0;
+
+                    while index < remaining.len() {
+                        match remaining[index].as_str() {
+                            "--name" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project dependents --name` expects a package name"
+                                    );
+                                    return Err(1);
+                                };
+                                if package_name.is_some() {
+                                    eprintln!(
+                                        "error: `ql project dependents` received `--name` more than once"
+                                    );
+                                    return Err(1);
+                                }
+                                package_name = Some(value.clone());
+                            }
+                            "--json" => {
+                                json = true;
+                            }
+                            other if other.starts_with('-') => {
+                                eprintln!(
+                                    "error: unknown `ql project dependents` option `{other}`"
+                                );
+                                return Err(1);
+                            }
+                            other => {
+                                if path.is_some() {
+                                    eprintln!(
+                                        "error: unknown `ql project dependents` argument `{other}`"
+                                    );
+                                    return Err(1);
+                                }
+                                path = Some(PathBuf::from(other));
+                            }
+                        }
+
+                        index += 1;
+                    }
+
+                    let Some(package_name) = package_name else {
+                        eprintln!("error: `ql project dependents` requires `--name <package>`");
+                        return Err(1);
+                    };
+
+                    let path = path
+                        .or_else(|| env::current_dir().ok())
+                        .unwrap_or_else(|| PathBuf::from("."));
+                    project_dependents_path(&path, &package_name, json)
+                }
                 "lock" => {
                     let remaining = args.collect::<Vec<_>>();
                     let mut path = None;
@@ -10751,7 +10809,7 @@ fn remove_workspace_project_member(
     if !dependent_members.is_empty() {
         let dependent_members = dependent_members
             .iter()
-            .map(|(member, package_name)| format!("{member} ({package_name})"))
+            .map(|dependent| format!("{} ({})", dependent.member, dependent.package_name))
             .collect::<Vec<_>>()
             .join(", ");
         return Err(format!(
@@ -10791,7 +10849,7 @@ fn remove_workspace_project_member(
 fn find_workspace_member_dependents(
     workspace_manifest: &ql_project::ProjectManifest,
     dependency_manifest_path: &Path,
-) -> Result<Vec<(String, String)>, String> {
+) -> Result<Vec<ProjectDependentMember>, String> {
     let Some(workspace) = workspace_manifest.workspace.as_ref() else {
         return Ok(Vec::new());
     };
@@ -10830,7 +10888,11 @@ fn find_workspace_member_dependents(
             .iter()
             .any(|reference| normalize_path(&reference.manifest_path) == dependency_manifest_path)
         {
-            dependents.push((member.clone(), member_package_name.to_owned()));
+            dependents.push(ProjectDependentMember {
+                member: member.clone(),
+                package_name: member_package_name.to_owned(),
+                manifest_path: member_manifest.manifest_path,
+            });
         }
     }
 
@@ -11142,6 +11204,13 @@ fn project_graph_path(path: &Path, json: bool) -> Result<(), u8> {
     })?;
     print!("{rendered}");
     Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProjectDependentMember {
+    member: String,
+    package_name: String,
+    manifest_path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -11476,6 +11545,53 @@ fn project_targets_path(path: &Path, json: bool) -> Result<(), u8> {
     Ok(())
 }
 
+fn project_dependents_path(path: &Path, package_name: &str, json: bool) -> Result<(), u8> {
+    if let Err(message) = validate_project_package_name(package_name) {
+        eprintln!("error: `ql project dependents` {message}");
+        return Err(1);
+    }
+
+    let workspace_manifest = resolve_project_workspace_manifest(path).map_err(|message| {
+        eprintln!("error: `ql project dependents` {message}");
+        1
+    })?;
+    let member_entries =
+        find_workspace_member_entries_by_package_name(&workspace_manifest, package_name);
+    if member_entries.is_empty() {
+        eprintln!(
+            "error: `ql project dependents` workspace manifest `{}` does not contain package `{package_name}`",
+            normalize_path(&workspace_manifest.manifest_path)
+        );
+        return Err(1);
+    }
+    if member_entries.len() > 1 {
+        let matching_members = member_entries
+            .iter()
+            .map(|(member, _)| member.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!(
+            "error: `ql project dependents` workspace manifest `{}` contains multiple members for package `{package_name}`: {matching_members}",
+            normalize_path(&workspace_manifest.manifest_path)
+        );
+        return Err(1);
+    }
+
+    let (_, member_manifest_path) = &member_entries[0];
+    let dependents = find_workspace_member_dependents(&workspace_manifest, member_manifest_path)
+        .map_err(|message| {
+            eprintln!("error: `ql project dependents` {message}");
+            1
+        })?;
+    let rendered = if json {
+        render_project_dependents_json(path, &workspace_manifest, package_name, &dependents)
+    } else {
+        render_project_dependents(&workspace_manifest, package_name, &dependents)
+    };
+    print!("{rendered}");
+    Ok(())
+}
+
 fn print_project_target_member(manifest_path: &Path, package_name: &str, targets: &[BuildTarget]) {
     println!("manifest: {}", normalize_path(manifest_path));
     println!("package: {package_name}");
@@ -11558,6 +11674,56 @@ fn render_project_targets_json(members: &[WorkspaceBuildTargets]) -> String {
 
     rendered.push_str("\n  ]\n}\n");
     rendered
+}
+
+fn render_project_dependents(
+    workspace_manifest: &ql_project::ProjectManifest,
+    package_name: &str,
+    dependents: &[ProjectDependentMember],
+) -> String {
+    let mut rendered = String::new();
+    rendered.push_str(&format!(
+        "workspace_manifest: {}\n",
+        normalize_path(&workspace_manifest.manifest_path)
+    ));
+    rendered.push_str(&format!("package: {package_name}\n"));
+    if dependents.is_empty() {
+        rendered.push_str("dependents: []\n");
+        return rendered;
+    }
+
+    rendered.push_str("dependents:\n");
+    for dependent in dependents {
+        rendered.push_str(&format!(
+            "  - {} ({})\n",
+            dependent.member, dependent.package_name
+        ));
+    }
+    rendered
+}
+
+fn render_project_dependents_json(
+    path: &Path,
+    workspace_manifest: &ql_project::ProjectManifest,
+    package_name: &str,
+    dependents: &[ProjectDependentMember],
+) -> String {
+    let rendered = serde_json::to_string_pretty(&json!({
+        "schema": "ql.project.dependents.v1",
+        "path": normalize_path(path),
+        "workspace_manifest_path": normalize_path(&workspace_manifest.manifest_path),
+        "package_name": package_name,
+        "dependents": dependents
+            .iter()
+            .map(|dependent| json!({
+                "member": dependent.member,
+                "package_name": dependent.package_name,
+                "manifest_path": normalize_path(&dependent.manifest_path),
+            }))
+            .collect::<Vec<_>>(),
+    }))
+    .expect("project dependents json should serialize");
+    format!("{rendered}\n")
 }
 
 fn project_emit_interface_path(
@@ -13785,6 +13951,7 @@ fn print_usage() {
     );
     eprintln!("  ql project targets [file-or-dir] [--json]");
     eprintln!("  ql project graph [file-or-dir] [--json]");
+    eprintln!("  ql project dependents [file-or-dir] --name <package> [--json]");
     eprintln!("  ql project lock [file-or-dir] [--check] [--json]");
     eprintln!("  ql project init [dir] [--workspace] [--name <package>]");
     eprintln!("  ql project add [file-or-dir] --name <package> [--dependency <package> ...]");
