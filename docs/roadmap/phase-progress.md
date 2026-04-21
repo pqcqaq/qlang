@@ -27,6 +27,7 @@
 - `ql project dependencies` 现在也已落地，并支持 `--json`；workspace package 当前直接依赖了哪些 members 已可直接查询，正反向依赖审计不必再手读 manifest 或 `project graph`。
 - `ql project targets` 现在也支持 `--package`、`--lib`、`--bin`、`--target` 过滤；真实 workspace 下排查某个 package 或单一 target 已不必再看全量列表。
 - `ql project graph` 现在也支持 `--package` 聚焦到单个 workspace member 的包图；workspace 根图查询已不必再总是展开全部成员。
+- `ql project add-dependency` / `remove-dependency` 现在也支持从 workspace 根配合 `--package` 直接指定目标 member；真实项目里批量查看依赖后可直接在根目录继续修改，不必先切到 member 路径。
 - `ql project remove --cascade` 现在也已落地；当目标包仍被其他 members 引用时，CLI 已可自动清理这些本地依赖边并继续移除 member。`ql project remove-dependency` 同时兼容 `[dependencies]` 和旧的 `[references].packages` 清理路径。
 - `ql project add-dependency` / `remove-dependency` 现在也可直接维护已有 workspace member 的本地 `[dependencies]`；`remove-dependency --all` 还能按 package 名批量清理全部 dependents，创建后补依赖和移除依赖都不必再手改 manifest。
 - project-aware `ql build` / `ql run` / `ql test` 已可在 package/workspace 根目录工作。

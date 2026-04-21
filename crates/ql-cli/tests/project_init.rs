@@ -949,6 +949,111 @@ fn project_add_dependency_updates_existing_package_manifest_from_member_source_p
 }
 
 #[test]
+fn project_add_dependency_supports_workspace_root_package_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-add-dependency-selector");
+    let project_root = temp.path().join("workspace");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut init,
+        "`ql project init` workspace for selected add-dependency",
+    );
+    let (_stdout, stderr) = expect_success(
+        "project-add-dependency-selector",
+        "workspace init for selected add-dependency",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-dependency-selector",
+        "workspace init for selected add-dependency",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut add_core = ql_command(&workspace_root);
+    add_core.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(
+        &mut add_core,
+        "`ql project add` workspace member for selected add-dependency",
+    );
+    let (_stdout, stderr) = expect_success(
+        "project-add-dependency-selector",
+        "add workspace member for selected add-dependency",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-dependency-selector",
+        "add workspace member for selected add-dependency",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut add_dependency = ql_command(&workspace_root);
+    add_dependency.args([
+        "project",
+        "add-dependency",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(
+        &mut add_dependency,
+        "`ql project add-dependency --package` workspace root",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-add-dependency-selector",
+        "add dependency from workspace root with package selector",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-add-dependency-selector",
+        "add dependency from workspace root with package selector",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-add-dependency-selector",
+        &stdout,
+        &[&format!(
+            "updated: {}",
+            project_root
+                .join("packages/app/qlang.toml")
+                .to_string_lossy()
+                .replace('\\', "/")
+        )],
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/app/qlang.toml"),
+            "workspace member manifest after selected add-dependency"
+        ),
+        "[dependencies]\ncore = \"../core\"\n\n[package]\nname = \"app\"\n"
+    );
+}
+
+#[test]
 fn project_add_dependency_refuses_missing_workspace_package() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-add-dependency-missing");
@@ -1089,6 +1194,73 @@ fn project_remove_dependency_updates_existing_package_manifest() {
 }
 
 #[test]
+fn project_remove_dependency_supports_workspace_root_package_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-remove-dependency-selector");
+    let project_root = temp.path().join("workspace");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/core\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n\n[dependencies]\ncore = \"../core\"\n",
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+
+    let mut remove_dependency = ql_command(&workspace_root);
+    remove_dependency.args([
+        "project",
+        "remove-dependency",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(
+        &mut remove_dependency,
+        "`ql project remove-dependency --package` workspace root",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-remove-dependency-selector",
+        "remove dependency from workspace root with package selector",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-remove-dependency-selector",
+        "remove dependency from workspace root with package selector",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-remove-dependency-selector",
+        &stdout,
+        &[&format!(
+            "updated: {}",
+            project_root
+                .join("packages/app/qlang.toml")
+                .to_string_lossy()
+                .replace('\\', "/")
+        )],
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/app/qlang.toml"),
+            "workspace member manifest after selected remove-dependency"
+        ),
+        "[package]\nname = \"app\"\n"
+    );
+}
+
+#[test]
 fn project_remove_dependency_removes_legacy_reference_entry() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-remove-dependency-legacy");
@@ -1156,6 +1328,62 @@ fn project_remove_dependency_removes_legacy_reference_entry() {
         ),
         "[package]\nname = \"app\"\n"
     );
+}
+
+#[test]
+fn project_remove_dependency_all_refuses_package_selector() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-remove-dependency-all-package");
+    let project_root = temp.path().join("workspace");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/core\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n\n[dependencies]\ncore = \"../core\"\n",
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+
+    let mut remove_dependency = ql_command(&workspace_root);
+    remove_dependency.args([
+        "project",
+        "remove-dependency",
+        &project_root.to_string_lossy(),
+        "--package",
+        "app",
+        "--name",
+        "core",
+        "--all",
+    ]);
+    let output = run_command_capture(
+        &mut remove_dependency,
+        "`ql project remove-dependency --all --package` workspace root",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-remove-dependency-all-package",
+        "remove dependency all with package selector",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-remove-dependency-all-package",
+        "remove dependency all with package selector",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-remove-dependency-all-package",
+        "remove dependency all with package selector",
+        &stderr,
+        "error: `ql project remove-dependency --all` does not accept `--package`; bulk cleanup already targets all dependents of `--name`",
+    )
+    .unwrap();
 }
 
 #[test]

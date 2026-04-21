@@ -48,7 +48,7 @@
 完成标准：
 
 - 新脚手架能开箱进入 `graph/check/build/run/test`。
-- 已创建的 workspace 能继续用 `ql project add/remove/add-dependency/remove-dependency/dependencies/dependents` 维护成员和本地依赖；新增 scaffold、纳管现有 package、补依赖、减依赖、按包名批量清理全部 dependents、查询正反向依赖，以及安全或级联移除 member 都不必手改 manifest。
+- 已创建的 workspace 能继续用 `ql project add/remove/add-dependency/remove-dependency/dependencies/dependents` 维护成员和本地依赖；新增 scaffold、纳管现有 package、从 workspace 根直接给指定 member 补/减依赖、按包名批量清理全部 dependents、查询正反向依赖，以及安全或级联移除 member 都不必手改 manifest。
 - target 发现、graph/package 聚焦、selector 过滤、member 目录/源码路径入口语义、profile 规则、默认输出目录和测试入口都有明确文档和回归保护。
 
 ### B. 真实项目依赖后端
