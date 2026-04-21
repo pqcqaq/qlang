@@ -1082,6 +1082,138 @@ fn project_remove_updates_workspace_members_from_member_source_path() {
 }
 
 #[test]
+fn project_remove_refuses_workspace_member_with_dependents() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-remove-dependent");
+    let project_root = temp.path().join("workspace");
+    let request_path = project_root.join("packages/core/src/main.ql");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(
+        &mut init,
+        "`ql project init` workspace for dependent remove",
+    );
+    let (_stdout, stderr) = expect_success(
+        "project-remove-dependent",
+        "workspace init for dependent remove",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-remove-dependent",
+        "workspace init for dependent remove",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut add_core = ql_command(&workspace_root);
+    add_core.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(&mut add_core, "`ql project add` core for dependent remove");
+    let (_stdout, stderr) = expect_success(
+        "project-remove-dependent",
+        "workspace core add for dependent remove",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-remove-dependent",
+        "workspace core add for dependent remove",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut add_tools = ql_command(&workspace_root);
+    add_tools.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "tools",
+        "--dependency",
+        "core",
+    ]);
+    let output = run_command_capture(
+        &mut add_tools,
+        "`ql project add` tools for dependent remove",
+    );
+    let (_stdout, stderr) = expect_success(
+        "project-remove-dependent",
+        "workspace tools add for dependent remove",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-remove-dependent",
+        "workspace tools add for dependent remove",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut remove = ql_command(&workspace_root);
+    remove.args([
+        "project",
+        "remove",
+        &request_path.to_string_lossy(),
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(
+        &mut remove,
+        "`ql project remove` workspace member with dependents",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-remove-dependent",
+        "remove workspace member with dependents",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-remove-dependent",
+        "remove workspace member with dependents",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-remove-dependent",
+        "remove workspace member with dependents",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project remove` cannot remove member package `core` from workspace manifest `{}` because other members still depend on it: packages/tools (tools); remove those edges first with `ql project remove-dependency <member> --name core`",
+            project_root.join("qlang.toml").to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+
+    let workspace_manifest = read_normalized_file(
+        &project_root.join("qlang.toml"),
+        "workspace manifest after refused dependent remove",
+    );
+    assert!(
+        workspace_manifest.contains("packages/core"),
+        "workspace manifest should keep dependent member after refused remove"
+    );
+    assert!(
+        project_root.join("packages/core").is_dir(),
+        "refused remove should keep member directory on disk"
+    );
+}
+
+#[test]
 fn project_remove_refuses_unknown_workspace_member_package() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-remove-missing");

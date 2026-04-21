@@ -14,7 +14,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - `ql build` / `ql run` 已支持从 package 根目录和已声明 target 的源码路径进入 project-aware 流程；workspace member 源码路径会继承外层 workspace profile 和输出目录语义。
 - `ql build --list` / `ql run --list` 已可直接列出当前 package / workspace 下的 build targets；workspace member 目录或源码路径也会回到外层 workspace 视角；`--json` 复用 `ql.project.targets.v1`，`ql run --list` 只展示 runnable targets。
 - `ql project add` 已能向现有 workspace 增量加入 `packages/<name>` member scaffold，并可在创建时直接写入 workspace 内本地依赖到 `[dependencies]`。
-- `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里安全摘除，并保留磁盘上的包目录，便于渐进式重构。
+- `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里安全摘除；若仍被其他 workspace member 依赖会先拒绝删除，并保留磁盘上的包目录，便于渐进式重构。
 - `ql project add-dependency` / `remove-dependency` 已能直接维护已有 workspace member 的本地 `[dependencies]`，不必再手改 `qlang.toml`。
 - `ql check` / `ql build` / `ql run` / `ql test` 与 `ql project targets` / `graph` / `lock` 已提供第一版 `--json` 机器输出；`ql run --json` 当前输出 `ql.run.v1`，`ql project lock --json` 当前输出 `ql.project.lock.result.v1`。
 - `ql check` 现在也会在 workspace member 目录或源码路径入口上恢复外层 workspace 语义，不再悄悄退回单 package 检查。

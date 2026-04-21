@@ -10746,6 +10746,19 @@ fn remove_workspace_project_member(
     }
 
     let (member_entry, member_manifest_path) = &member_entries[0];
+    let dependent_members =
+        find_workspace_member_dependents(workspace_manifest, member_manifest_path)?;
+    if !dependent_members.is_empty() {
+        let dependent_members = dependent_members
+            .iter()
+            .map(|(member, package_name)| format!("{member} ({package_name})"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "cannot remove member package `{package_name}` from workspace manifest `{}` because other members still depend on it: {dependent_members}; remove those edges first with `ql project remove-dependency <member> --name {package_name}`",
+            normalize_path(&workspace_manifest.manifest_path)
+        ));
+    }
     let workspace_manifest_source =
         fs::read_to_string(&workspace_manifest.manifest_path).map_err(|error| {
             format!(
@@ -10773,6 +10786,55 @@ fn remove_workspace_project_member(
             .unwrap_or(Path::new("."))
             .to_path_buf(),
     ))
+}
+
+fn find_workspace_member_dependents(
+    workspace_manifest: &ql_project::ProjectManifest,
+    dependency_manifest_path: &Path,
+) -> Result<Vec<(String, String)>, String> {
+    let Some(workspace) = workspace_manifest.workspace.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let workspace_root = workspace_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    let dependency_manifest_path = normalize_path(dependency_manifest_path);
+    let mut dependents = Vec::new();
+
+    for member in &workspace.members {
+        let member_manifest = load_project_manifest(&workspace_root.join(member)).map_err(|error| {
+            format!(
+                "failed to inspect workspace member `{member}` while checking whether `{}` can be removed: {error}",
+                dependency_manifest_path
+            )
+        })?;
+        if normalize_path(&member_manifest.manifest_path) == dependency_manifest_path {
+            continue;
+        }
+
+        let member_package_name = package_name(&member_manifest).map_err(|error| {
+            format!(
+                "failed to inspect workspace member `{member}` while checking whether `{}` can be removed: {error}",
+                dependency_manifest_path
+            )
+        })?;
+        let references = load_reference_manifests(&member_manifest).map_err(|error| {
+            format!(
+                "failed to inspect local dependencies for workspace member `{member}` while checking whether `{}` can be removed: {error}",
+                dependency_manifest_path
+            )
+        })?;
+        if references
+            .iter()
+            .any(|reference| normalize_path(&reference.manifest_path) == dependency_manifest_path)
+        {
+            dependents.push((member.clone(), member_package_name.to_owned()));
+        }
+    }
+
+    Ok(dependents)
 }
 
 fn resolve_project_existing_dependency_entry(
