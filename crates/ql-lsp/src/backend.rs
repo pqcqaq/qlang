@@ -9,7 +9,10 @@ use ql_analysis::{
 };
 use ql_diagnostics::{UNRESOLVED_TYPE_CODE, UNRESOLVED_VALUE_CODE};
 use ql_lexer::{Token, TokenKind, is_keyword, is_valid_identifier, lex};
-use ql_project::{collect_package_sources, load_project_manifest};
+use ql_project::{
+    collect_package_sources, load_project_manifest, package_name as manifest_package_name,
+    render_manifest_with_added_local_dependency,
+};
 use ql_span::Span;
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::{Error, Result};
@@ -1003,6 +1006,13 @@ enum AutoImportKind {
     Type,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AutoImportMissingDependencyEdit {
+    dependency_name: String,
+    manifest_uri: Url,
+    edit: TextEdit,
+}
+
 fn auto_import_code_actions_for_source(
     uri: &Url,
     source: &str,
@@ -1038,11 +1048,29 @@ fn auto_import_code_actions_for_source(
             }
 
             let edit = auto_import_insertion_edit(source, &import_path);
+            let missing_dependency_edit = auto_import_missing_workspace_dependency_edit(
+                uri,
+                &symbol.location.uri,
+                &document_sources,
+            );
             let mut changes = HashMap::new();
             changes.insert(uri.clone(), vec![edit]);
+            let title = if let Some(missing_dependency_edit) = &missing_dependency_edit {
+                changes.insert(
+                    missing_dependency_edit.manifest_uri.clone(),
+                    vec![missing_dependency_edit.edit.clone()],
+                );
+                format!(
+                    "Import `{}` and add dependency `{}`",
+                    import_path.join("."),
+                    missing_dependency_edit.dependency_name
+                )
+            } else {
+                format!("Import `{}`", import_path.join("."))
+            };
 
             actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                title: format!("Import `{}`", import_path.join(".")),
+                title,
                 kind: Some(CodeActionKind::QUICKFIX),
                 diagnostics: Some(vec![diagnostic.clone()]),
                 edit: Some(WorkspaceEdit::new(changes)),
@@ -1117,23 +1145,144 @@ fn package_path_segments_for_uri(
     uri: &Url,
     document_sources: &HashMap<Url, String>,
 ) -> Option<Vec<String>> {
-    if let Some(source) = document_sources.get(uri) {
-        return package_path_segments(source).map(|segments| {
-            segments
-                .into_iter()
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        });
-    }
-
-    let path = uri.to_file_path().ok()?;
-    let source = fs::read_to_string(path).ok()?;
+    let source = source_for_uri(uri, document_sources)?;
     package_path_segments(&source).map(|segments| {
         segments
             .into_iter()
             .map(ToOwned::to_owned)
             .collect::<Vec<_>>()
     })
+}
+
+fn auto_import_missing_workspace_dependency_edit(
+    current_uri: &Url,
+    symbol_uri: &Url,
+    document_sources: &HashMap<Url, String>,
+) -> Option<AutoImportMissingDependencyEdit> {
+    let current_manifest = package_manifest_for_uri(current_uri)?;
+    let symbol_manifest = package_manifest_for_uri(symbol_uri)?;
+    let current_manifest_canonical = canonicalize_or_clone(&current_manifest.manifest_path);
+    let symbol_manifest_canonical = canonicalize_or_clone(&symbol_manifest.manifest_path);
+
+    if current_manifest_canonical == symbol_manifest_canonical {
+        return None;
+    }
+
+    if !workspace_member_manifest_paths_for_package(&current_manifest.manifest_path)
+        .into_iter()
+        .any(|manifest_path| canonicalize_or_clone(&manifest_path) == symbol_manifest_canonical)
+    {
+        return None;
+    }
+
+    if package_manifest_references_target(&current_manifest, &symbol_manifest_canonical) {
+        return None;
+    }
+
+    let dependency_name = manifest_package_name(&symbol_manifest).ok()?.to_owned();
+    let current_manifest_dir = current_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    let symbol_manifest_dir = symbol_manifest
+        .manifest_path
+        .parent()
+        .unwrap_or(Path::new("."));
+    let dependency_path = relative_path_from(current_manifest_dir, symbol_manifest_dir);
+    let manifest_uri = Url::from_file_path(&current_manifest.manifest_path).ok()?;
+    let manifest_source = source_for_uri(&manifest_uri, document_sources)?;
+    let updated_manifest = render_manifest_with_added_local_dependency(
+        &manifest_source,
+        &dependency_name,
+        &dependency_path,
+    )
+    .ok()?;
+
+    if updated_manifest == manifest_source {
+        return None;
+    }
+
+    Some(AutoImportMissingDependencyEdit {
+        dependency_name,
+        manifest_uri,
+        edit: TextEdit::new(
+            span_to_range(&manifest_source, Span::new(0, manifest_source.len())),
+            updated_manifest,
+        ),
+    })
+}
+
+fn source_for_uri(uri: &Url, document_sources: &HashMap<Url, String>) -> Option<String> {
+    if let Some(source) = document_sources.get(uri) {
+        return Some(source.clone());
+    }
+
+    let path = uri.to_file_path().ok()?;
+    fs::read_to_string(path).ok()
+}
+
+fn package_manifest_for_uri(uri: &Url) -> Option<ql_project::ProjectManifest> {
+    let path = uri.to_file_path().ok()?;
+    let manifest = load_project_manifest(&path).ok()?;
+    manifest.package.as_ref()?;
+    Some(manifest)
+}
+
+fn package_manifest_references_target(
+    manifest: &ql_project::ProjectManifest,
+    target_manifest_canonical: &Path,
+) -> bool {
+    let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    manifest.references.packages.iter().any(|reference| {
+        load_project_manifest(&manifest_dir.join(reference))
+            .ok()
+            .is_some_and(|dependency_manifest| {
+                canonicalize_or_clone(&dependency_manifest.manifest_path)
+                    == target_manifest_canonical
+            })
+    })
+}
+
+fn relative_path_from(from: &Path, to: &Path) -> String {
+    let from = normalize_path(from);
+    let to = normalize_path(to);
+    let from_parts = from
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>();
+    let to_parts = to
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>();
+
+    let mut common = 0usize;
+    while common < from_parts.len()
+        && common < to_parts.len()
+        && from_parts[common] == to_parts[common]
+    {
+        common += 1;
+    }
+
+    if common == 0 && !from_parts.is_empty() && !to_parts.is_empty() && from_parts[0] != to_parts[0]
+    {
+        return to;
+    }
+
+    let mut relative = Vec::new();
+    relative.extend(std::iter::repeat_n(
+        "..",
+        from_parts.len().saturating_sub(common),
+    ));
+    relative.extend_from_slice(&to_parts[common..]);
+    if relative.is_empty() {
+        ".".to_owned()
+    } else {
+        relative.join("/")
+    }
+}
+
+fn normalize_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn source_already_imports_path(source: &str, import_path: &[String]) -> bool {
@@ -6703,6 +6852,51 @@ pub fn exported(value: Int) -> Int {
         (workspace_root, app_path)
     }
 
+    fn setup_auto_import_workspace_missing_dependency_fixture(
+        temp: &TempDir,
+        app_source: &str,
+    ) -> (PathBuf, PathBuf, PathBuf, String) {
+        let workspace_root = temp.path().join("workspace");
+        temp.write(
+            "workspace/qlang.toml",
+            r#"
+[workspace]
+members = ["packages/app", "packages/core"]
+"#,
+        );
+        let app_manifest_source = r#"
+[package]
+name = "app"
+"#
+        .to_owned();
+        let app_manifest_path =
+            temp.write("workspace/packages/app/qlang.toml", &app_manifest_source);
+        let app_path = temp.write("workspace/packages/app/src/main.ql", app_source);
+        temp.write(
+            "workspace/packages/core/qlang.toml",
+            r#"
+[package]
+name = "core"
+"#,
+        );
+        temp.write(
+            "workspace/packages/core/src/lib.ql",
+            r#"
+package demo.core
+
+pub fn exported(value: Int) -> Int {
+    return value
+}
+"#,
+        );
+        (
+            workspace_root,
+            app_path,
+            app_manifest_path,
+            app_manifest_source,
+        )
+    }
+
     fn unresolved_symbol_diagnostic(
         source: &str,
         name: &str,
@@ -6793,6 +6987,81 @@ pub fn main() -> Int {
         );
 
         assert!(actions.is_empty(), "actual actions: {actions:#?}");
+    }
+
+    #[test]
+    fn auto_import_code_actions_add_workspace_dependency_for_missing_member_dependency() {
+        let temp = TempDir::new("ql-lsp-auto-import-add-missing-workspace-dependency");
+        let app_source = r#"package demo.app
+
+pub fn main() -> Int {
+    return exported(1)
+}
+"#;
+        let (workspace_root, app_path, app_manifest_path, app_manifest_source) =
+            setup_auto_import_workspace_missing_dependency_fixture(&temp, app_source);
+        let app_uri = Url::from_file_path(&app_path).expect("app path should convert to URI");
+        let app_manifest_uri =
+            Url::from_file_path(&app_manifest_path).expect("manifest path should convert to URI");
+        let diagnostic =
+            unresolved_symbol_diagnostic(app_source, "exported", UNRESOLVED_VALUE_CODE, "value");
+
+        let actions = auto_import_code_actions_for_source(
+            &app_uri,
+            app_source,
+            &[diagnostic.clone()],
+            vec![(app_uri.clone(), app_source.to_owned())],
+            &[workspace_root],
+        );
+
+        assert_eq!(actions.len(), 1, "actual actions: {actions:#?}");
+        let action = match &actions[0] {
+            CodeActionOrCommand::CodeAction(action) => action,
+            other => panic!("expected code action, got {other:#?}"),
+        };
+        assert_eq!(
+            action.title,
+            "Import `demo.core.exported` and add dependency `core`"
+        );
+        assert_eq!(action.diagnostics, Some(vec![diagnostic]));
+
+        let changes = action
+            .edit
+            .clone()
+            .expect("code action should contain workspace edit")
+            .changes
+            .expect("workspace edit should contain direct changes");
+        assert_eq!(changes.len(), 2, "actual changes: {changes:#?}");
+        assert_eq!(
+            changes.get(&app_uri),
+            Some(&vec![TextEdit::new(
+                Range::new(Position::new(1, 0), Position::new(1, 0)),
+                "use demo.core.exported\n".to_owned(),
+            )]),
+        );
+
+        let manifest_edits = changes
+            .get(&app_manifest_uri)
+            .expect("workspace edit should update the app manifest");
+        assert_eq!(
+            manifest_edits.len(),
+            1,
+            "actual manifest edits: {manifest_edits:#?}"
+        );
+        assert_eq!(
+            manifest_edits[0].range,
+            span_to_range(
+                &app_manifest_source,
+                Span::new(0, app_manifest_source.len())
+            )
+        );
+        assert!(
+            manifest_edits[0]
+                .new_text
+                .contains("[dependencies]\ncore = \"../core\"\n"),
+            "actual manifest edit: {:#?}",
+            manifest_edits[0]
+        );
     }
 
     fn assert_workspace_edit_changes(edit: WorkspaceEdit, expected: Vec<(Url, Vec<TextEdit>)>) {

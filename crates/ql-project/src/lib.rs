@@ -1637,6 +1637,40 @@ pub fn load_reference_manifests(
     Ok(references)
 }
 
+pub fn render_manifest_with_added_local_dependency(
+    source: &str,
+    dependency_name: &str,
+    dependency_path: &str,
+) -> Result<String, String> {
+    let mut value = toml::from_str::<Value>(source)
+        .map_err(|error| format!("failed to parse package manifest: {error}"))?;
+    let Some(root) = value.as_table_mut() else {
+        return Err("package manifest must be a TOML table".to_owned());
+    };
+    if root.get("package").and_then(Value::as_table).is_none() {
+        return Err("package manifest must declare `[package]`".to_owned());
+    }
+
+    let dependencies = root
+        .entry("dependencies")
+        .or_insert_with(|| Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| {
+            "package manifest must declare `[dependencies]` as a TOML table".to_owned()
+        })?;
+    dependencies.insert(
+        dependency_name.to_owned(),
+        Value::String(dependency_path.to_owned()),
+    );
+
+    let mut rendered = toml::to_string(&value)
+        .map_err(|error| format!("failed to render package manifest: {error}"))?;
+    if !rendered.ends_with('\n') {
+        rendered.push('\n');
+    }
+    Ok(rendered)
+}
+
 pub fn render_module_interface(module: &Module) -> Option<String> {
     let rendered_items = module
         .items
