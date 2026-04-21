@@ -454,10 +454,21 @@ fn run() -> Result<(), u8> {
                 "targets" => {
                     let remaining = args.collect::<Vec<_>>();
                     let mut path = None;
+                    let mut selector = ProjectTargetSelector::default();
                     let mut json = false;
                     let mut index = 0;
 
                     while index < remaining.len() {
+                        if parse_project_target_selector_option(
+                            "`ql project targets`",
+                            &remaining,
+                            &mut index,
+                            &mut selector,
+                        )? {
+                            index += 1;
+                            continue;
+                        }
+
                         match remaining[index].as_str() {
                             "--json" => {
                                 json = true;
@@ -483,7 +494,7 @@ fn run() -> Result<(), u8> {
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_targets_path(&path, json)
+                    project_targets_path(&path, &selector, json)
                 }
                 "graph" => {
                     let remaining = args.collect::<Vec<_>>();
@@ -11964,9 +11975,20 @@ fn load_workspace_build_targets_for_command_from_request_root(
     })
 }
 
-fn project_targets_path(path: &Path, json: bool) -> Result<(), u8> {
+fn project_targets_path(
+    path: &Path,
+    selector: &ProjectTargetSelector,
+    json: bool,
+) -> Result<(), u8> {
     let members =
         load_project_target_members_for_workspace_member_path(path, "`ql project targets`")?;
+    let members = select_workspace_build_targets(
+        path,
+        &members,
+        selector,
+        "`ql project targets`",
+        "build targets",
+    )?;
     render_project_target_members(&members, json);
     Ok(())
 }
@@ -14474,7 +14496,9 @@ fn print_usage() {
     eprintln!(
         "  ql test <file-or-dir> [--profile debug|release|--release] [--package <name>] [--target <tests/...ql>] [--list] [--filter <substring>]"
     );
-    eprintln!("  ql project targets [file-or-dir] [--json]");
+    eprintln!(
+        "  ql project targets [file-or-dir] [--package <name>] [--lib|--bin <name>|--target <path>] [--json]"
+    );
     eprintln!("  ql project graph [file-or-dir] [--json]");
     eprintln!("  ql project dependents [file-or-dir] --name <package> [--json]");
     eprintln!("  ql project dependencies [file-or-dir] --name <package> [--json]");

@@ -1,8 +1,9 @@
 mod support;
 
 use support::{
-    TempDir, expect_empty_stderr, expect_exit_code, expect_snapshot_matches,
-    expect_stdout_contains_all, expect_success, ql_command, run_command_capture, workspace_root,
+    TempDir, expect_empty_stderr, expect_empty_stdout, expect_exit_code, expect_snapshot_matches,
+    expect_stderr_contains, expect_stdout_contains_all, expect_success, ql_command,
+    run_command_capture, workspace_root,
 };
 
 #[test]
@@ -194,6 +195,71 @@ path = "src/tools/repl.ql"
         &stdout.replace('\\', "/"),
     )
     .expect("declared target json output should match the stable contract");
+}
+
+#[test]
+fn project_targets_supports_target_selector_for_package_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-targets-selector-package");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/bin/tools"))
+        .expect("create package source tree for targets selector test");
+
+    let manifest_path = temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn util() -> Int { return 1 }\n");
+    temp.write("app/src/main.ql", "fn main() -> Int { return 0 }\n");
+    temp.write("app/src/bin/admin.ql", "fn main() -> Int { return 1 }\n");
+    temp.write(
+        "app/src/bin/tools/repl.ql",
+        "fn main() -> Int { return 2 }\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "targets", "--bin", "admin"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project targets --bin` package target selector",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-targets-selector-package",
+        "package target selector",
+        &output,
+    )
+    .expect("package target selector should succeed");
+    expect_empty_stderr(
+        "project-targets-selector-package",
+        "package target selector",
+        &stderr,
+    )
+    .expect("package target selector should not print stderr");
+
+    let normalized_stdout = stdout.replace('\\', "/");
+    let manifest_display = manifest_path.to_string_lossy().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-targets-selector-package",
+        &normalized_stdout,
+        &[
+            &format!("manifest: {manifest_display}"),
+            "package: app",
+            "targets:",
+            "  - bin: src/bin/admin.ql",
+        ],
+    )
+    .expect("package target selector output should include the selected bin target");
+    assert!(
+        !normalized_stdout.contains("src/lib.ql")
+            && !normalized_stdout.contains("src/main.ql")
+            && !normalized_stdout.contains("src/bin/tools/repl.ql"),
+        "package target selector should filter out non-selected targets, got:\n{stdout}"
+    );
 }
 
 #[test]
@@ -446,6 +512,85 @@ members = ["packages/app", "packages/worker"]
 }
 
 #[test]
+fn project_targets_supports_package_selector_for_workspace_members() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-targets-selector-workspace");
+    let project_root = temp.path().join("workspace");
+    std::fs::create_dir_all(project_root.join("packages/app/src"))
+        .expect("create app package source tree");
+    std::fs::create_dir_all(project_root.join("packages/worker/src"))
+        .expect("create worker package source tree");
+
+    let app_manifest = temp.write(
+        "workspace/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace/packages/worker/qlang.toml",
+        r#"
+[package]
+name = "worker"
+"#,
+    );
+    temp.write(
+        "workspace/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/worker"]
+"#,
+    );
+    temp.write(
+        "workspace/packages/app/src/lib.ql",
+        "pub fn run() -> Int { return 0 }\n",
+    );
+    temp.write(
+        "workspace/packages/worker/src/job.ql",
+        "pub fn run() -> Int { return 1 }\n",
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "targets", "--package", "app"])
+        .arg(&project_root);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project targets --package` workspace selector",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-targets-selector-workspace",
+        "workspace package selector",
+        &output,
+    )
+    .expect("workspace package selector should succeed");
+    expect_empty_stderr(
+        "project-targets-selector-workspace",
+        "workspace package selector",
+        &stderr,
+    )
+    .expect("workspace package selector should not print stderr");
+
+    let normalized_stdout = stdout.replace('\\', "/");
+    let app_manifest_display = app_manifest.to_string_lossy().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-targets-selector-workspace",
+        &normalized_stdout,
+        &[
+            &format!("manifest: {app_manifest_display}"),
+            "package: app",
+            "  - lib: src/lib.ql",
+        ],
+    )
+    .expect("workspace package selector should include the selected package targets");
+    assert!(
+        !normalized_stdout.contains("package: worker"),
+        "workspace package selector should filter out unselected workspace members, got:\n{stdout}"
+    );
+}
+
+#[test]
 fn project_targets_lists_workspace_members_in_dependency_order() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-targets-workspace-dependency-order");
@@ -680,6 +825,62 @@ app = "../app"
             ),
         "expected cycle diagnostic for workspace member local dependencies, got:\n{stderr}"
     );
+}
+
+#[test]
+fn project_targets_rejects_selectors_that_match_no_targets() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-targets-selector-miss");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(project_root.join("src/bin/tools"))
+        .expect("create package source tree for selector miss test");
+
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write("app/src/lib.ql", "pub fn util() -> Int { return 1 }\n");
+    temp.write("app/src/main.ql", "fn main() -> Int { return 0 }\n");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "targets", "--bin", "missing"])
+        .arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql project targets --bin` selector miss");
+    let (stdout, stderr) = expect_exit_code(
+        "project-targets-selector-miss",
+        "project target selector miss",
+        &output,
+        1,
+    )
+    .expect("project target selector miss should fail");
+    expect_empty_stdout(
+        "project-targets-selector-miss",
+        "project target selector miss",
+        &stdout,
+    )
+    .expect("project target selector miss should not print stdout");
+    let normalized_stderr = stderr.replace('\\', "/");
+    expect_stderr_contains(
+        "project-targets-selector-miss",
+        "project target selector miss",
+        &normalized_stderr,
+        &format!(
+            "error: `ql project targets` target selector matched no build targets under `{}`",
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .expect("project target selector miss should report the selector failure");
+    expect_stderr_contains(
+        "project-targets-selector-miss",
+        "project target selector miss",
+        &normalized_stderr,
+        "note: selector: binary `missing`",
+    )
+    .expect("project target selector miss should print the selector description");
 }
 
 #[test]
