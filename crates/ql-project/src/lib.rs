@@ -1679,6 +1679,7 @@ pub fn render_manifest_with_added_local_dependency(
 pub fn render_manifest_with_removed_local_dependency(
     source: &str,
     dependency_name: &str,
+    dependency_path: &str,
 ) -> Result<String, String> {
     let mut value = toml::from_str::<Value>(source)
         .map_err(|error| format!("failed to parse package manifest: {error}"))?;
@@ -1689,23 +1690,51 @@ pub fn render_manifest_with_removed_local_dependency(
         return Err("package manifest must declare `[package]`".to_owned());
     }
 
-    let dependencies = root
-        .get_mut("dependencies")
-        .ok_or_else(|| {
-            format!("package manifest does not declare local dependency `{dependency_name}`")
-        })?
-        .as_table_mut()
-        .ok_or_else(|| {
+    let dependency_path = normalize_path(Path::new(dependency_path));
+    let mut removed = false;
+
+    if let Some(dependencies) = root.get_mut("dependencies") {
+        let dependencies = dependencies.as_table_mut().ok_or_else(|| {
             "package manifest must declare `[dependencies]` as a TOML table".to_owned()
         })?;
-    if dependencies.remove(dependency_name).is_none() {
+        let removed_keys = dependencies
+            .iter()
+            .filter_map(|(key, value)| {
+                dependency_value_matches_path(value, &dependency_path).then_some(key.clone())
+            })
+            .collect::<Vec<_>>();
+        for key in removed_keys {
+            removed |= dependencies.remove(&key).is_some();
+        }
+        if dependencies.is_empty() {
+            root.remove("dependencies");
+        }
+    }
+
+    if let Some(references) = root.get_mut("references") {
+        let references = references.as_table_mut().ok_or_else(|| {
+            "package manifest must declare `[references]` as a TOML table".to_owned()
+        })?;
+        if let Some(packages) = references.get_mut("packages") {
+            let packages = packages.as_array_mut().ok_or_else(|| {
+                "package manifest must declare `[references].packages` as an array".to_owned()
+            })?;
+            let original_len = packages.len();
+            packages.retain(|value| !reference_value_matches_path(value, &dependency_path));
+            removed |= packages.len() != original_len;
+            if packages.is_empty() {
+                references.remove("packages");
+            }
+        }
+        if references.is_empty() {
+            root.remove("references");
+        }
+    }
+
+    if !removed {
         return Err(format!(
             "package manifest does not declare local dependency `{dependency_name}`"
         ));
-    }
-    let remove_dependencies_table = dependencies.is_empty();
-    if remove_dependencies_table {
-        root.remove("dependencies");
     }
 
     let mut rendered = toml::to_string(&value)
@@ -1714,6 +1743,23 @@ pub fn render_manifest_with_removed_local_dependency(
         rendered.push('\n');
     }
     Ok(rendered)
+}
+
+fn dependency_value_matches_path(value: &Value, dependency_path: &Path) -> bool {
+    match value {
+        Value::String(path) => normalize_path(Path::new(path)) == dependency_path,
+        Value::Table(table) => table
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some_and(|path| normalize_path(Path::new(path)) == dependency_path),
+        _ => false,
+    }
+}
+
+fn reference_value_matches_path(value: &Value, dependency_path: &Path) -> bool {
+    value
+        .as_str()
+        .is_some_and(|path| normalize_path(Path::new(path)) == dependency_path)
 }
 
 pub fn render_module_interface(module: &Module) -> Option<String> {

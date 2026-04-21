@@ -858,11 +858,15 @@ fn project_remove_dependency_updates_existing_package_manifest() {
 
     temp.write(
         "workspace/qlang.toml",
-        "[workspace]\nmembers = [\"packages/app\"]\n",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/core\"]\n",
     );
     temp.write(
         "workspace/packages/app/qlang.toml",
         "[package]\nname = \"app\"\n\n[dependencies]\ncore = \"../core\"\n",
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
     );
     temp.write(
         "workspace/packages/app/src/main.ql",
@@ -910,6 +914,76 @@ fn project_remove_dependency_updates_existing_package_manifest() {
         read_normalized_file(
             &project_root.join("packages/app/qlang.toml"),
             "workspace member manifest after remove-dependency"
+        ),
+        "[package]\nname = \"app\"\n"
+    );
+}
+
+#[test]
+fn project_remove_dependency_removes_legacy_reference_entry() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-remove-dependency-legacy");
+    let project_root = temp.path().join("workspace");
+    let request_path = project_root.join("packages/app/src/main.ql");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/core\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n\n[references]\npackages = [\"../core\"]\n",
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+    temp.write(
+        "workspace/packages/app/src/main.ql",
+        "fn main() -> Int {\n    return 0\n}\n",
+    );
+
+    let mut remove_dependency = ql_command(&workspace_root);
+    remove_dependency.args([
+        "project",
+        "remove-dependency",
+        &request_path.to_string_lossy(),
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(
+        &mut remove_dependency,
+        "`ql project remove-dependency` legacy reference entry",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-remove-dependency-legacy",
+        "remove legacy reference dependency from existing package manifest",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-remove-dependency-legacy",
+        "remove legacy reference dependency from existing package manifest",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-remove-dependency-legacy",
+        &stdout,
+        &[&format!(
+            "updated: {}",
+            project_root
+                .join("packages/app/qlang.toml")
+                .to_string_lossy()
+                .replace('\\', "/")
+        )],
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/app/qlang.toml"),
+            "workspace member manifest after legacy remove-dependency"
         ),
         "[package]\nname = \"app\"\n"
     );
@@ -1082,6 +1156,163 @@ fn project_remove_updates_workspace_members_from_member_source_path() {
 }
 
 #[test]
+fn project_remove_cascade_updates_dependents_and_workspace_members() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-remove-cascade");
+    let project_root = temp.path().join("workspace");
+    let request_path = project_root.join("packages/core/src/main.ql");
+    let removed_member_root = project_root.join("packages/core");
+
+    let mut init = ql_command(&workspace_root);
+    init.args([
+        "project",
+        "init",
+        &project_root.to_string_lossy(),
+        "--workspace",
+        "--name",
+        "app",
+    ]);
+    let output = run_command_capture(&mut init, "`ql project init` workspace for cascade remove");
+    let (_stdout, stderr) = expect_success(
+        "project-remove-cascade",
+        "workspace init for cascade remove",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-remove-cascade",
+        "workspace init for cascade remove",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut add_core = ql_command(&workspace_root);
+    add_core.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "core",
+    ]);
+    let output = run_command_capture(&mut add_core, "`ql project add` core for cascade remove");
+    let (_stdout, stderr) = expect_success(
+        "project-remove-cascade",
+        "workspace core add for cascade remove",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-remove-cascade",
+        "workspace core add for cascade remove",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut add_tools = ql_command(&workspace_root);
+    add_tools.args([
+        "project",
+        "add",
+        &project_root.to_string_lossy(),
+        "--name",
+        "tools",
+        "--dependency",
+        "core",
+    ]);
+    let output = run_command_capture(&mut add_tools, "`ql project add` tools for cascade remove");
+    let (_stdout, stderr) = expect_success(
+        "project-remove-cascade",
+        "workspace tools add for cascade remove",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-remove-cascade",
+        "workspace tools add for cascade remove",
+        &stderr,
+    )
+    .unwrap();
+
+    let mut remove = ql_command(&workspace_root);
+    remove.args([
+        "project",
+        "remove",
+        &request_path.to_string_lossy(),
+        "--name",
+        "core",
+        "--cascade",
+    ]);
+    let output = run_command_capture(
+        &mut remove,
+        "`ql project remove --cascade` workspace member with dependents",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-remove-cascade",
+        "remove workspace member with cascading dependency cleanup",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-remove-cascade",
+        "remove workspace member with cascading dependency cleanup",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-remove-cascade",
+        &stdout.replace('\\', "/"),
+        &[
+            &format!(
+                "updated: {}",
+                project_root
+                    .join("qlang.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "updated: {}",
+                project_root
+                    .join("packages/tools/qlang.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "removed: {}",
+                removed_member_root.to_string_lossy().replace('\\', "/")
+            ),
+        ],
+    )
+    .unwrap();
+
+    let workspace_manifest = read_normalized_file(
+        &project_root.join("qlang.toml"),
+        "workspace manifest after cascade remove",
+    );
+    assert!(
+        workspace_manifest.contains("packages/app"),
+        "workspace manifest should keep unrelated members after cascade remove"
+    );
+    assert!(
+        workspace_manifest.contains("packages/tools"),
+        "workspace manifest should keep dependents after cascade remove"
+    );
+    assert!(
+        !workspace_manifest.contains("packages/core"),
+        "workspace manifest should drop the removed member entry after cascade remove"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/tools/qlang.toml"),
+            "dependent manifest after cascade remove"
+        ),
+        "[package]\nname = \"tools\"\n"
+    );
+    assert!(
+        removed_member_root.is_dir(),
+        "project remove --cascade should keep the removed member files on disk"
+    );
+}
+
+#[test]
 fn project_remove_refuses_workspace_member_with_dependents() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-remove-dependent");
@@ -1193,7 +1424,7 @@ fn project_remove_refuses_workspace_member_with_dependents() {
         "remove workspace member with dependents",
         &stderr.replace('\\', "/"),
         &format!(
-            "error: `ql project remove` cannot remove member package `core` from workspace manifest `{}` because other members still depend on it: packages/tools (tools); remove those edges first with `ql project remove-dependency <member> --name core`",
+            "error: `ql project remove` cannot remove member package `core` from workspace manifest `{}` because other members still depend on it: packages/tools (tools); remove those edges first with `ql project remove-dependency <member> --name core` or rerun with `ql project remove <file-or-dir> --name core --cascade`",
             project_root.join("qlang.toml").to_string_lossy().replace('\\', "/")
         ),
     )

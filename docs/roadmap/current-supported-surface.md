@@ -27,8 +27,8 @@
 - 已实现：`ql check`、`ql fmt`、`ql mir`、`ql ownership`、`ql runtime`、`ql build`、`ql run`、`ql test`、`ql project`、`ql ffi`。
 - `ql project init` 已能生成最小 package / workspace 脚手架，并附带 `src/lib.ql`、`src/main.ql`、`tests/smoke.ql`。
 - `ql project add` 已能向现有 workspace 增量加入 `packages/<name>` member scaffold，并可在创建时直接写入 workspace 内本地依赖到 `[dependencies]`。
-- `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里摘除；若仍被其他 workspace member 依赖会先拒绝删除，并保留原包目录，先支持安全退出 dependency graph，再由用户决定是否清理文件。
-- `ql project add-dependency` / `ql project remove-dependency` 已能直接修改已有 workspace member 的本地 `[dependencies]`，先补齐已有包依赖接线的 CLI 闭环。
+- `ql project remove` 已能按 package 名把现有 member 从 `[workspace].members` 里摘除；若仍被其他 workspace member 依赖会先拒绝删除，也支持 `--cascade` 自动清理这些 members 指向目标包的本地依赖边，并保留原包目录，先支持安全退出 dependency graph，再由用户决定是否清理文件。
+- `ql project add-dependency` / `ql project remove-dependency` 已能直接修改已有 workspace member 的本地依赖；`remove-dependency` 现在也会兼容清理旧的 `[references].packages` 入口，先补齐已有包依赖接线的 CLI 闭环。
 - `ql project dependents` 已能直接反查某个 workspace package 的反向本地依赖成员，并支持 `--json`；删除前定位阻塞和脚本化清理路径已不必手扫 manifest。
 - `ql project targets`、`ql project graph`、`ql project lock`、`ql project emit-interface` 已落地。
 - `qlang.toml` 当前只稳定支持：

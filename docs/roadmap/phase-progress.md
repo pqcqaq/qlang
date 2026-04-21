@@ -24,6 +24,7 @@
 - `ql project add` 现在也可在创建 member 时直接写入 workspace 内本地依赖；真实 workspace 已不再只能“先手写 manifest 再接依赖图”。
 - `ql project remove` 现在会先审计反向本地依赖；仍被其他 members 引用的包会直接拒绝删除，同时保留磁盘上的包目录；真实项目里 workspace 成员已形成更安全的 `init/add/remove` 闭环。
 - `ql project dependents` 现在也已落地，并支持 `--json`；当 `ql project remove` 因反向依赖阻塞时，CLI 已能直接列出依赖它的 members，便于继续清理依赖边。
+- `ql project remove --cascade` 现在也已落地；当目标包仍被其他 members 引用时，CLI 已可自动清理这些本地依赖边并继续移除 member。`ql project remove-dependency` 同时兼容 `[dependencies]` 和旧的 `[references].packages` 清理路径。
 - `ql project add-dependency` / `remove-dependency` 现在也可直接维护已有 workspace member 的本地 `[dependencies]`；创建后补依赖和移除依赖都不必再手改 manifest。
 - project-aware `ql build` / `ql run` / `ql test` 已可在 package/workspace 根目录工作。
 - `ql check` 现在也会在 workspace member 目录或源码路径入口上恢复外层 workspace 视角；真实项目里不再出现 `build/run/graph/lock` 是 workspace-aware、但 `check` 静默退回单 member package 的不一致。
