@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use ql_ast::BinaryOp;
+use ql_ast::{BinaryOp, Path};
 use ql_diagnostics::{Diagnostic, Label};
 use ql_hir::{
     BlockId, CallArg, EnumVariant, ExprId, ExprKind, Function, ItemId, ItemKind, LocalId, MatchArm,
@@ -1705,6 +1705,30 @@ impl<'a> Checker<'a> {
         args: &[CallArg],
         _expected: Option<&Ty>,
     ) -> Ty {
+        if let Some(signature) = match self.enum_tuple_variant_call_signature(callee) {
+            Ok(signature) => signature,
+            Err(message) => {
+                self.diagnostics.push(Diagnostic::error(message).with_label(
+                    Label::new(self.module.expr(callee).span).with_message("callee here"),
+                ));
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(expr) => {
+                            self.check_expr(*expr, None);
+                        }
+                        CallArg::Named { value, .. } => {
+                            self.check_expr(*value, None);
+                        }
+                    }
+                }
+                return Ty::Unknown;
+            }
+        } {
+            let return_ty = signature.ret.clone();
+            self.check_call_args(expr_id, &signature, args);
+            return return_ty;
+        }
+
         let mut callee_ty = self.check_expr(callee, None);
         if let Some(refined) = self.refine_closure_callee_type_from_args(callee, &callee_ty, args) {
             callee_ty = refined;
@@ -1741,6 +1765,18 @@ impl<'a> Checker<'a> {
     }
 
     fn check_member(&mut self, expr_id: ExprId, object: ExprId, field: &str) -> Ty {
+        if let Some(ty) = match self.enum_unit_variant_expr_ty(expr_id) {
+            Ok(ty) => ty,
+            Err(message) => {
+                self.diagnostics.push(Diagnostic::error(message).with_label(
+                    Label::new(self.module.expr(expr_id).span).with_message("enum variant here"),
+                ));
+                return Ty::Unknown;
+            }
+        } {
+            return ty;
+        }
+
         let object_ty = self.check_expr(object, None);
         let Ty::Item { .. } = &object_ty else {
             if self.should_report_invalid_member_receiver(&object_ty) {
@@ -2043,6 +2079,88 @@ impl<'a> Checker<'a> {
                 );
             }
         }
+    }
+
+    fn expr_path(&self, expr_id: ExprId) -> Option<Path> {
+        match &self.module.expr(expr_id).kind {
+            ExprKind::Name(name) => Some(Path::with_spans(
+                vec![name.clone()],
+                vec![self.module.expr(expr_id).span],
+            )),
+            ExprKind::Member {
+                object,
+                field,
+                field_span,
+            } => {
+                let mut path = self.expr_path(*object)?;
+                path.segments.push(field.clone());
+                path.segment_spans.push(*field_span);
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    fn enum_variant_for_expr_path(
+        &self,
+        expr_id: ExprId,
+    ) -> Result<Option<(ItemId, &EnumVariant, Path)>, String> {
+        let Some(path) = self.expr_path(expr_id) else {
+            return Ok(None);
+        };
+        if path.segments.len() != 2 {
+            return Ok(None);
+        }
+
+        let Some(item_id) = self
+            .resolution
+            .expr_resolution(expr_id)
+            .and_then(|resolution| self.item_id_for_value_resolution(resolution))
+        else {
+            return Ok(None);
+        };
+
+        self.enum_variant_for_item_path(item_id, &path)
+            .map(|variant| variant.map(|variant| (item_id, variant, path)))
+    }
+
+    fn enum_root_ty(&self, item_id: ItemId) -> Ty {
+        Ty::Item {
+            item_id,
+            name: item_display_name(self.module, item_id),
+            args: Vec::new(),
+        }
+    }
+
+    fn enum_unit_variant_expr_ty(&self, expr_id: ExprId) -> Result<Option<Ty>, String> {
+        let Some((item_id, variant, _)) = self.enum_variant_for_expr_path(expr_id)? else {
+            return Ok(None);
+        };
+        Ok(matches!(&variant.fields, VariantFields::Unit).then(|| self.enum_root_ty(item_id)))
+    }
+
+    fn enum_tuple_variant_call_signature(
+        &self,
+        callee: ExprId,
+    ) -> Result<Option<Signature>, String> {
+        let Some((item_id, variant, _)) = self.enum_variant_for_expr_path(callee)? else {
+            return Ok(None);
+        };
+        let VariantFields::Tuple(types) = &variant.fields else {
+            return Ok(None);
+        };
+
+        Ok(Some(Signature {
+            is_async: false,
+            params: types
+                .iter()
+                .map(|&type_id| SignatureParam {
+                    name: None,
+                    ty: lower_type(self.module, self.resolution, type_id),
+                })
+                .collect(),
+            ret: self.enum_root_ty(item_id),
+        }))
     }
 
     fn item_id_for_value_resolution(&self, resolution: &ValueResolution) -> Option<ItemId> {

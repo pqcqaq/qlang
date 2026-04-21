@@ -1732,6 +1732,89 @@ dep = "../dep"
 }
 
 #[test]
+fn run_package_path_supports_direct_dependency_public_tuple_enums() {
+    if !toolchain_available("`ql run` dependency public tuple enum test") {
+        return;
+    }
+
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-run-dependency-public-tuple-enum");
+    let dep_root = temp.path().join("dep");
+    let project_root = temp.path().join("app");
+    std::fs::create_dir_all(dep_root.join("src")).expect("create dependency source tree");
+    std::fs::create_dir_all(project_root.join("src")).expect("create package source tree");
+    temp.write(
+        "dep/qlang.toml",
+        r#"
+[package]
+name = "dep"
+"#,
+    );
+    temp.write(
+        "dep/src/lib.ql",
+        "pub struct Issue { code: Int }\n\npub enum Status {\n    Ready,\n    Failed(Issue),\n}\n\npub fn load_status() -> Status {\n    return Status.Failed(Issue { code: 3 })\n}\n",
+    );
+    temp.write(
+        "app/qlang.toml",
+        r#"
+[package]
+name = "app"
+
+[dependencies]
+dep = "../dep"
+"#,
+    );
+    temp.write(
+        "app/src/main.ql",
+        "use dep.load_status as load\n\nfn main() -> Int {\n    return match load() {\n        Status.Ready => 1,\n        Status.Failed(issue) => issue.code + 4,\n    }\n}\n",
+    );
+
+    let interface_output = dep_root.join("dep.qi");
+    let dependency_output = static_library_output_path(&dep_root.join("target/ql/debug"), "lib");
+    let executable_output = executable_output_path(&project_root.join("target/ql/debug"), "main");
+
+    let mut command = ql_command(&workspace_root);
+    command.current_dir(temp.path());
+    command.args(["run"]).arg(&project_root);
+    let output = run_command_capture(&mut command, "`ql run` dependency public tuple enum");
+    let (stdout, stderr) = expect_exit_code(
+        "project-run-dependency-public-tuple-enum",
+        "package path run with dependency public tuple enum",
+        &output,
+        7,
+    )
+    .expect("package-path `ql run` should support direct dependency public tuple enums");
+    expect_silent_output(
+        "project-run-dependency-public-tuple-enum",
+        "package path run with dependency public tuple enum",
+        &stdout,
+        &stderr,
+    )
+    .expect("dependency public tuple enum run should leave stdout/stderr to the program");
+    expect_file_exists(
+        "project-run-dependency-public-tuple-enum",
+        &interface_output,
+        "synced dependency interface",
+        "package path run with dependency public tuple enum",
+    )
+    .expect("dependency public tuple enum run should emit the dependency interface");
+    expect_file_exists(
+        "project-run-dependency-public-tuple-enum",
+        &dependency_output,
+        "dependency package artifact",
+        "package path run with dependency public tuple enum",
+    )
+    .expect("dependency public tuple enum run should also build the dependency package artifact");
+    expect_file_exists(
+        "project-run-dependency-public-tuple-enum",
+        &executable_output,
+        "package executable",
+        "package path run with dependency public tuple enum",
+    )
+    .expect("dependency public tuple enum run should still emit the executable artifact");
+}
+
+#[test]
 fn run_package_path_supports_direct_dependency_public_trait_methods() {
     if !toolchain_available("`ql run` dependency public trait method test") {
         return;

@@ -1094,6 +1094,11 @@ impl<'a> ModuleEmitter<'a> {
             Rvalue::Unary { operand, .. } => {
                 self.collect_operand_function_values(operand, queue);
             }
+            Rvalue::AggregateTupleStruct { items, .. } => {
+                for item in items {
+                    self.collect_operand_function_values(item, queue);
+                }
+            }
             Rvalue::AggregateStruct { fields, .. } => {
                 for field in fields {
                     self.collect_operand_function_values(&field.value, queue);
@@ -2132,6 +2137,17 @@ impl<'a> ModuleEmitter<'a> {
                     );
                 }
             }
+            Rvalue::AggregateTupleStruct { items, .. } => {
+                for item in items {
+                    self.validate_direct_local_capturing_closure_operand(
+                        item,
+                        false,
+                        supported,
+                        closure_spans,
+                        diagnostics,
+                    );
+                }
+            }
             Rvalue::AggregateStruct { fields, .. } => {
                 for field in fields {
                     self.validate_direct_local_capturing_closure_operand(
@@ -2863,6 +2879,19 @@ impl<'a> ModuleEmitter<'a> {
                     );
                 }
             }
+            Rvalue::AggregateTupleStruct { items, .. } => {
+                for item in items {
+                    self.validate_ordinary_control_flow_capturing_closure_operand(
+                        block_id,
+                        item,
+                        false,
+                        ordinary_calls,
+                        conflicting_temps,
+                        closure_spans,
+                        diagnostics,
+                    );
+                }
+            }
             Rvalue::AggregateStruct { fields, .. } => {
                 for field in fields {
                     self.validate_ordinary_control_flow_capturing_closure_operand(
@@ -3063,6 +3092,11 @@ impl<'a> ModuleEmitter<'a> {
             }
             Rvalue::Unary { operand, .. } => {
                 self.collect_const_closure_targets_in_operand(operand, queue, seen);
+            }
+            Rvalue::AggregateTupleStruct { items, .. } => {
+                for item in items {
+                    self.collect_const_closure_targets_in_operand(item, queue, seen);
+                }
             }
             Rvalue::AggregateStruct { fields, .. } => {
                 for field in fields {
@@ -4302,6 +4336,7 @@ impl<'a> ModuleEmitter<'a> {
             Rvalue::Array(items) => {
                 self.seed_expected_temp_from_array_items(body, items, expected_ty, local_types);
             }
+            Rvalue::AggregateTupleStruct { .. } => {}
             Rvalue::AggregateStruct { fields, .. } => {
                 self.seed_expected_temp_from_struct_fields(body, fields, expected_ty, local_types);
             }
@@ -6145,6 +6180,9 @@ impl<'a> ModuleEmitter<'a> {
                 Some(Ty::Tuple(item_types))
             }
             Rvalue::Array(items) => self.infer_array_rvalue_type(items, expected_ty, ctx, span),
+            Rvalue::AggregateTupleStruct { path, items } => {
+                self.infer_tuple_struct_rvalue_type(path, items, expected_ty, ctx, span)
+            }
             Rvalue::AggregateStruct { path, fields } => {
                 self.infer_struct_rvalue_type(path, fields, expected_ty, ctx, span)
             }
@@ -6283,6 +6321,83 @@ impl<'a> ModuleEmitter<'a> {
         }
 
         Some(struct_ty)
+    }
+
+    fn infer_tuple_struct_rvalue_type(
+        &self,
+        path: &ql_ast::Path,
+        items: &[Operand],
+        expected_ty: Option<&Ty>,
+        ctx: &mut TypeInferenceContext<'_>,
+        span: Span,
+    ) -> Option<Ty> {
+        let enum_ty = expected_ty
+            .filter(|ty| matches!(ty, Ty::Item { .. }))
+            .cloned()
+            .or_else(|| self.resolve_local_struct_path(path));
+        let Some(enum_ty) = enum_ty else {
+            ctx.diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation could not resolve the enum type for this aggregate value",
+            ));
+            return None;
+        };
+
+        let enum_lowering = match self.enum_lowering(&enum_ty, span, "enum value type") {
+            Ok(lowering) => lowering,
+            Err(error) => {
+                ctx.diagnostics.push(error);
+                return None;
+            }
+        };
+        let (_, variant) = match self.enum_variant_lowering_for_path(
+            &enum_lowering,
+            path,
+            &enum_ty,
+            span,
+            "enum value type",
+        ) {
+            Ok(variant) => variant,
+            Err(error) => {
+                ctx.diagnostics.push(error);
+                return None;
+            }
+        };
+        if variant.fields.iter().any(|field| field.name.is_some()) {
+            ctx.diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation only supports enum unit/tuple-variant literals here",
+            ));
+            return None;
+        }
+        if items.len() != variant.fields.len() {
+            ctx.diagnostics.push(unsupported(
+                span,
+                "LLVM IR backend foundation encountered an enum variant literal with the wrong arity",
+            ));
+            return None;
+        }
+
+        for (item, expected_field) in items.iter().zip(variant.fields.iter()) {
+            let Some(actual_ty) = self.infer_operand_type(
+                ctx.body,
+                item,
+                ctx.local_types,
+                ctx.async_task_handles,
+                ctx.diagnostics,
+                span,
+            ) else {
+                continue;
+            };
+            if !expected_field.ty.compatible_with(&actual_ty) {
+                ctx.diagnostics.push(unsupported(
+                    span,
+                    "LLVM IR backend foundation encountered an enum variant value whose lowered type did not match the declaration",
+                ));
+            }
+        }
+
+        Some(enum_ty)
     }
 
     fn infer_array_rvalue_type(
@@ -8179,6 +8294,7 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                 PatternKind::Binding(_)
                 | PatternKind::Tuple(_)
                 | PatternKind::Array(_)
+                | PatternKind::TupleStruct { .. }
                 | PatternKind::Struct { .. } => {
                     let rendered = self.render_operand(output, source, statement.span);
                     self.bind_pattern_value(output, *pattern, rendered, statement.span);
@@ -13871,6 +13987,9 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
             },
             Rvalue::Tuple(items) => self.render_tuple_rvalue(output, items, expected_ty, span),
             Rvalue::Array(items) => self.render_array_rvalue(output, items, expected_ty, span),
+            Rvalue::AggregateTupleStruct { path, items } => {
+                self.render_tuple_struct_rvalue(output, path, items, expected_ty, span)
+            }
             Rvalue::AggregateStruct { path, fields } => {
                 self.render_struct_rvalue(output, path, fields, expected_ty, span)
             }
@@ -14086,6 +14205,20 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
         })
     }
 
+    fn render_tuple_struct_rvalue(
+        &mut self,
+        output: &mut String,
+        path: &ql_ast::Path,
+        items: &[Operand],
+        expected_ty: Option<&Ty>,
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let enum_ty = expected_ty.cloned().or_else(|| {
+            panic!("prepared enum aggregate at {span:?} should have an expected lowered type")
+        })?;
+        self.render_enum_tuple_rvalue(output, path, items, enum_ty, span)
+    }
+
     fn render_enum_struct_rvalue(
         &mut self,
         output: &mut String,
@@ -14152,6 +14285,85 @@ impl<'a, 'b> FunctionRenderer<'a, 'b> {
                             "prepared enum aggregate at {span:?} should provide every declared field"
                         )
                     });
+                let field_ptr = self.fresh_temp();
+                let _ = writeln!(
+                    output,
+                    "  {field_ptr} = getelementptr inbounds {}, ptr {payload_ptr}, i32 0, i32 {index}",
+                    variant
+                        .payload_llvm_ty
+                        .as_ref()
+                        .expect("checked enum payload type")
+                );
+                let _ = writeln!(
+                    output,
+                    "  store {} {}, ptr {field_ptr}",
+                    rendered.llvm_ty, rendered.repr
+                );
+            }
+        }
+
+        Some(self.render_loaded_pointer_value(output, slot, enum_ty, span))
+    }
+
+    fn render_enum_tuple_rvalue(
+        &mut self,
+        output: &mut String,
+        path: &ql_ast::Path,
+        items: &[Operand],
+        enum_ty: Ty,
+        span: Span,
+    ) -> Option<LoweredValue> {
+        let enum_lowering = self
+            .emitter
+            .enum_lowering(&enum_ty, span, "enum value")
+            .unwrap_or_else(|_| {
+                panic!(
+                    "prepared enum aggregate at {span:?} should have a lowered declaration layout"
+                )
+            });
+        let (variant_index, variant) = self
+            .emitter
+            .enum_variant_lowering_for_path(&enum_lowering, path, &enum_ty, span, "enum value")
+            .unwrap_or_else(|_| {
+                panic!("prepared enum aggregate at {span:?} should reference a known variant")
+            });
+        assert!(
+            variant.fields.iter().all(|field| field.name.is_none()),
+            "prepared enum aggregate at {span:?} should only use unit/tuple-style variants"
+        );
+        assert_eq!(
+            items.len(),
+            variant.fields.len(),
+            "prepared enum aggregate at {span:?} should provide every declared tuple field"
+        );
+
+        let slot = self.fresh_temp();
+        let _ = writeln!(output, "  {slot} = alloca {}", enum_lowering.llvm_ty);
+        let _ = writeln!(
+            output,
+            "  store {} zeroinitializer, ptr {slot}",
+            enum_lowering.llvm_ty
+        );
+
+        let tag_ptr = self.fresh_temp();
+        let _ = writeln!(
+            output,
+            "  {tag_ptr} = getelementptr inbounds {}, ptr {slot}, i32 0, i32 0",
+            enum_lowering.llvm_ty
+        );
+        let _ = writeln!(output, "  store i64 {variant_index}, ptr {tag_ptr}");
+
+        if !items.is_empty() {
+            let payload_storage_ptr = self.fresh_temp();
+            let _ = writeln!(
+                output,
+                "  {payload_storage_ptr} = getelementptr inbounds {}, ptr {slot}, i32 0, i32 1",
+                enum_lowering.llvm_ty
+            );
+            let payload_ptr = payload_storage_ptr;
+
+            for (index, item) in items.iter().enumerate() {
+                let rendered = self.render_operand(output, item, span);
                 let field_ptr = self.fresh_temp();
                 let _ = writeln!(
                     output,

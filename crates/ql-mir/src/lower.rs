@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use ql_ast::{BinaryOp, ReceiverKind, UnaryOp};
+use ql_ast::{BinaryOp, Path, ReceiverKind, UnaryOp};
 use ql_hir::{
     self as hir, CallArg, ExprId, ExprKind, Function, ItemId, ItemKind, Param, PatternId,
     PatternKind, StmtKind,
@@ -1249,7 +1249,19 @@ impl<'a> BodyBuilder<'a> {
             ExprKind::Bool(value) => (current, Operand::Constant(Constant::Bool(*value))),
             ExprKind::NoneLiteral => (current, Operand::Constant(Constant::None)),
             ExprKind::Member { field, .. } => {
-                if let Some(MemberTarget::Method(target)) = self.typeck.member_target(expr_id) {
+                if let Some(path) = self.unit_enum_variant_expr_path(expr_id) {
+                    self.materialize_rvalue(
+                        current,
+                        scope,
+                        expr.span,
+                        Rvalue::AggregateTupleStruct {
+                            path,
+                            items: Vec::new(),
+                        },
+                    )
+                } else if let Some(MemberTarget::Method(target)) =
+                    self.typeck.member_target(expr_id)
+                {
                     (
                         current,
                         Operand::Constant(Constant::Function {
@@ -1664,6 +1676,11 @@ impl<'a> BodyBuilder<'a> {
         current: BasicBlockId,
         scope: ScopeId,
     ) -> (BasicBlockId, Rvalue) {
+        if let Some(path) = self.tuple_enum_variant_call_path(callee) {
+            let (current, items) = self.lower_call_arg_operands(args, current, scope);
+            return (current, Rvalue::AggregateTupleStruct { path, items });
+        }
+
         let (mut current, callee, mut lowered) =
             if let Some((member_expr, target)) = self.resolve_method_value_expr(callee) {
                 let hir::ExprKind::Member { object, field, .. } = &self.hir.expr(member_expr).kind
@@ -1715,6 +1732,26 @@ impl<'a> BodyBuilder<'a> {
         )
     }
 
+    fn lower_call_arg_operands(
+        &mut self,
+        args: &[CallArg],
+        mut current: BasicBlockId,
+        scope: ScopeId,
+    ) -> (BasicBlockId, Vec<Operand>) {
+        let mut lowered = Vec::with_capacity(args.len());
+        for arg in args {
+            let (next, value) = match arg {
+                CallArg::Positional(expr_id) => {
+                    self.lower_expr_to_operand(*expr_id, current, scope)
+                }
+                CallArg::Named { value, .. } => self.lower_expr_to_operand(*value, current, scope),
+            };
+            current = next;
+            lowered.push(value);
+        }
+        (current, lowered)
+    }
+
     fn resolve_method_value_expr(&self, expr_id: ExprId) -> Option<(ExprId, MethodTarget)> {
         let mut current = expr_id;
         let mut visited = HashSet::new();
@@ -1747,6 +1784,73 @@ impl<'a> BodyBuilder<'a> {
                 }
                 _ => return None,
             };
+        }
+    }
+
+    fn tuple_enum_variant_call_path(&self, expr_id: ExprId) -> Option<Path> {
+        let (_, variant, path) = self.enum_variant_for_expr_path(expr_id)?;
+        matches!(&variant.fields, hir::VariantFields::Tuple(_)).then_some(path)
+    }
+
+    fn unit_enum_variant_expr_path(&self, expr_id: ExprId) -> Option<Path> {
+        let (_, variant, path) = self.enum_variant_for_expr_path(expr_id)?;
+        matches!(&variant.fields, hir::VariantFields::Unit).then_some(path)
+    }
+
+    fn enum_variant_for_expr_path(
+        &self,
+        expr_id: ExprId,
+    ) -> Option<(ItemId, &hir::EnumVariant, Path)> {
+        let path = self.expr_path(expr_id)?;
+        if path.segments.len() != 2 {
+            return None;
+        }
+
+        let item_id = self
+            .resolution
+            .expr_resolution(expr_id)
+            .and_then(|resolution| self.item_id_for_value_resolution(resolution))?;
+        let ItemKind::Enum(enum_decl) = &self.hir.item(item_id).kind else {
+            return None;
+        };
+        let variant_name = path.segments.last()?;
+        let variant = enum_decl
+            .variants
+            .iter()
+            .find(|candidate| candidate.name == *variant_name)?;
+        Some((item_id, variant, path))
+    }
+
+    fn item_id_for_value_resolution(&self, resolution: &ValueResolution) -> Option<ItemId> {
+        match resolution {
+            ValueResolution::Item(item_id) => Some(*item_id),
+            ValueResolution::Import(import_binding) => {
+                local_item_for_import_binding(self.hir, import_binding)
+            }
+            ValueResolution::Local(_)
+            | ValueResolution::Param(_)
+            | ValueResolution::SelfValue
+            | ValueResolution::Function(_) => None,
+        }
+    }
+
+    fn expr_path(&self, expr_id: ExprId) -> Option<Path> {
+        match &self.hir.expr(expr_id).kind {
+            ExprKind::Name(name) => Some(Path::with_spans(
+                vec![name.clone()],
+                vec![self.hir.expr(expr_id).span],
+            )),
+            ExprKind::Member {
+                object,
+                field,
+                field_span,
+            } => {
+                let mut path = self.expr_path(*object)?;
+                path.segments.push(field.clone());
+                path.segment_spans.push(*field_span);
+                Some(path)
+            }
+            _ => None,
         }
     }
 

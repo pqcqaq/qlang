@@ -330,6 +330,10 @@ pub enum Rvalue {
     Use(Operand),
     Tuple(Vec<Operand>),
     Array(Vec<Operand>),
+    AggregateTupleStruct {
+        path: Path,
+        items: Vec<Operand>,
+    },
     Call {
         callee: Operand,
         args: Vec<CallArgument>,

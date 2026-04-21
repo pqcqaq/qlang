@@ -264,6 +264,21 @@ fn render_rvalue(hir: &hir::Module, body: &crate::MirBody, value: &Rvalue) -> St
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        Rvalue::AggregateTupleStruct { path, items } => {
+            if items.is_empty() {
+                render_path(path)
+            } else {
+                format!(
+                    "{}({})",
+                    render_path(path),
+                    items
+                        .iter()
+                        .map(|item| render_operand(body, item))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
         Rvalue::Call { callee, args } => format!(
             "{}({})",
             render_operand(body, callee),

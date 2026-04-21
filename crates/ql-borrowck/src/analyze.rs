@@ -721,6 +721,12 @@ impl<'a> BodyAnalyzer<'a> {
             Rvalue::Question(operand) => {
                 self.read_operand(states, refinements, operand, span, reporter)
             }
+            Rvalue::AggregateTupleStruct { items, .. } => {
+                let mut reporter = reporter;
+                for item in items {
+                    self.read_operand(states, refinements, item, span, reporter.as_deref_mut());
+                }
+            }
             Rvalue::AggregateStruct { fields, .. } => {
                 let mut reporter = reporter;
                 for field in fields {
@@ -2637,6 +2643,10 @@ impl<'a> BodyAnalyzer<'a> {
             Rvalue::Unary { operand, .. } | Rvalue::Question(operand) => {
                 self.closure_ids_in_operand(states, operand)
             }
+            Rvalue::AggregateTupleStruct { items, .. } => items
+                .iter()
+                .flat_map(|item| self.closure_ids_in_operand(states, item))
+                .collect(),
             Rvalue::AggregateStruct { fields, .. } => fields
                 .iter()
                 .flat_map(|field| self.closure_ids_in_operand(states, &field.value))
