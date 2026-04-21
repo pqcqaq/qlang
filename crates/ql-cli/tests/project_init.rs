@@ -1473,6 +1473,150 @@ fn project_remove_dependency_all_updates_all_workspace_dependents() {
 }
 
 #[test]
+fn project_remove_dependency_all_derives_package_name_from_member_source_path() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-remove-dependency-all-derived-name");
+    let project_root = temp.path().join("workspace");
+    let request_path = project_root.join("packages/core/src/main.ql");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/tools\", \"packages/core\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n\n[dependencies]\ncore = \"../core\"\n",
+    );
+    temp.write(
+        "workspace/packages/tools/qlang.toml",
+        "[package]\nname = \"tools\"\n\n[references]\npackages = [\"../core\"]\n",
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+    temp.write(
+        "workspace/packages/core/src/main.ql",
+        "fn main() -> Int {\n    return 0\n}\n",
+    );
+
+    let mut remove_dependency = ql_command(&workspace_root);
+    remove_dependency.args([
+        "project",
+        "remove-dependency",
+        &request_path.to_string_lossy(),
+        "--all",
+    ]);
+    let output = run_command_capture(
+        &mut remove_dependency,
+        "`ql project remove-dependency --all` derived package name",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-remove-dependency-all-derived-name",
+        "remove dependency from all workspace dependents with derived package name",
+        &output,
+    )
+    .unwrap();
+    expect_empty_stderr(
+        "project-remove-dependency-all-derived-name",
+        "remove dependency from all workspace dependents with derived package name",
+        &stderr,
+    )
+    .unwrap();
+    expect_stdout_contains_all(
+        "project-remove-dependency-all-derived-name",
+        &stdout.replace('\\', "/"),
+        &[
+            &format!(
+                "updated: {}",
+                project_root
+                    .join("packages/app/qlang.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+            &format!(
+                "updated: {}",
+                project_root
+                    .join("packages/tools/qlang.toml")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            ),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/app/qlang.toml"),
+            "workspace app manifest after derived remove-dependency --all"
+        ),
+        "[package]\nname = \"app\"\n"
+    );
+    assert_eq!(
+        read_normalized_file(
+            &project_root.join("packages/tools/qlang.toml"),
+            "workspace tools manifest after derived remove-dependency --all"
+        ),
+        "[package]\nname = \"tools\"\n"
+    );
+}
+
+#[test]
+fn project_remove_dependency_all_requires_name_for_workspace_root() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-cli-project-remove-dependency-all-derived-name-missing");
+    let project_root = temp.path().join("workspace");
+
+    temp.write(
+        "workspace/qlang.toml",
+        "[workspace]\nmembers = [\"packages/app\", \"packages/core\"]\n",
+    );
+    temp.write(
+        "workspace/packages/app/qlang.toml",
+        "[package]\nname = \"app\"\n\n[dependencies]\ncore = \"../core\"\n",
+    );
+    temp.write(
+        "workspace/packages/core/qlang.toml",
+        "[package]\nname = \"core\"\n",
+    );
+
+    let mut remove_dependency = ql_command(&workspace_root);
+    remove_dependency.args([
+        "project",
+        "remove-dependency",
+        &project_root.to_string_lossy(),
+        "--all",
+    ]);
+    let output = run_command_capture(
+        &mut remove_dependency,
+        "`ql project remove-dependency --all` ambiguous workspace root",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-remove-dependency-all-derived-name-missing",
+        "remove dependency from all workspace dependents with ambiguous workspace root",
+        &output,
+        1,
+    )
+    .unwrap();
+    expect_empty_stdout(
+        "project-remove-dependency-all-derived-name-missing",
+        "remove dependency from all workspace dependents with ambiguous workspace root",
+        &stdout,
+    )
+    .unwrap();
+    expect_stderr_contains(
+        "project-remove-dependency-all-derived-name-missing",
+        "remove dependency from all workspace dependents with ambiguous workspace root",
+        &stderr.replace('\\', "/"),
+        &format!(
+            "error: `ql project remove-dependency --all` could not derive a package name from `{}`; rerun with `--name <package>`",
+            project_root.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
 fn project_remove_dependency_all_refuses_workspace_package_without_dependents() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-cli-project-remove-dependency-all-empty");

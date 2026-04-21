@@ -1213,16 +1213,28 @@ fn run() -> Result<(), u8> {
                         index += 1;
                     }
 
-                    let Some(package_name) = package_name else {
-                        eprintln!(
-                            "error: `ql project remove-dependency` requires `--name <package>`"
-                        );
-                        return Err(1);
-                    };
-
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
+                    let package_name = if remove_all {
+                        if let Some(package_name) = package_name {
+                            package_name
+                        } else {
+                            resolve_project_workspace_member_package_name(
+                                &path,
+                                None,
+                                "`ql project remove-dependency --all`",
+                            )?
+                        }
+                    } else {
+                        let Some(package_name) = package_name else {
+                            eprintln!(
+                                "error: `ql project remove-dependency` requires `--name <package>`"
+                            );
+                            return Err(1);
+                        };
+                        package_name
+                    };
                     project_remove_dependency_path(
                         &path,
                         target_package_name.as_deref(),
@@ -15212,7 +15224,7 @@ fn print_usage() {
     eprintln!("  ql project remove [file-or-dir] --name <package> [--cascade]");
     eprintln!("  ql project add-dependency [file-or-dir] [--package <name>] --name <package>");
     eprintln!(
-        "  ql project remove-dependency [file-or-dir] [--package <name>] --name <package> [--all]"
+        "  ql project remove-dependency [file-or-dir] [--package <name>] [--name <package>] [--all]"
     );
     eprintln!(
         "  ql project emit-interface [file-or-dir] [--package <name>] [-o <output>] [--changed-only] [--check]"
