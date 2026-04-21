@@ -4002,6 +4002,36 @@ fn workspace_source_implementation_for_dependency_with_open_docs(
     }
 }
 
+fn workspace_source_method_implementation_for_dependency_with_open_docs(
+    uri: &Url,
+    source: &str,
+    analysis: &Analysis,
+    package: &ql_analysis::PackageAnalysis,
+    open_docs: &OpenDocuments,
+    position: tower_lsp::lsp_types::Position,
+) -> Option<GotoImplementationResponse> {
+    let target = dependency_definition_target_with_open_docs_at(
+        source,
+        Some(analysis),
+        package,
+        open_docs,
+        position,
+    )?;
+    if target.kind != ql_analysis::SymbolKind::Method {
+        return None;
+    }
+
+    workspace_source_location_for_dependency_target_with_open_docs(
+        uri,
+        source,
+        Some(analysis),
+        package,
+        open_docs,
+        &target,
+    )
+    .map(GotoImplementationResponse::Scalar)
+}
+
 fn workspace_source_definition_for_dependency(
     uri: &Url,
     source: &str,
@@ -6959,6 +6989,13 @@ impl LanguageServer for Backend {
                 return Ok(Some(implementation));
             }
             if let Some(implementation) =
+                workspace_source_method_implementation_for_dependency_with_open_docs(
+                    &uri, &source, &analysis, &package, &open_docs, position,
+                )
+            {
+                return Ok(Some(implementation));
+            }
+            if let Some(implementation) =
                 workspace_source_implementation_for_dependency_with_open_docs(
                     &source, &analysis, &package, &open_docs, position,
                 )
@@ -7526,6 +7563,7 @@ mod tests {
         workspace_source_implementation_for_dependency_with_open_docs,
         workspace_source_member_field_completions, workspace_source_method_completions,
         workspace_source_method_completions_with_open_docs,
+        workspace_source_method_implementation_for_dependency_with_open_docs,
         workspace_source_references_for_dependency,
         workspace_source_references_for_dependency_in_broken_source,
         workspace_source_references_for_dependency_in_broken_source_with_open_docs,
@@ -7554,6 +7592,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tower_lsp::lsp_types::request::GotoImplementationResponse;
     use tower_lsp::lsp_types::{
         CodeActionOrCommand, CompletionItemKind, CompletionResponse, Diagnostic,
         GotoDefinitionResponse, HoverContents, Location, NumberOrString, Position,
@@ -27639,6 +27678,21 @@ pub fn build() -> Counter {
         };
         assert!(markup.value.contains("fn pulse(self) -> Int"));
         assert!(!markup.value.contains("fn ping(self) -> Int"));
+
+        assert_eq!(
+            workspace_source_method_implementation_for_dependency_with_open_docs(
+                &uri,
+                &source,
+                &analysis,
+                &package,
+                &open_docs,
+                pulse_position,
+            ),
+            Some(GotoImplementationResponse::Scalar(Location::new(
+                alpha_uri,
+                span_to_range(open_alpha_source, nth_span(open_alpha_source, "pulse", 1)),
+            ))),
+        );
     }
 
     #[test]

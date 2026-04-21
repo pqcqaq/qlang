@@ -5,12 +5,13 @@ use ql_diagnostics::{Diagnostic as CompilerDiagnostic, Label};
 use ql_lsp::bridge::{
     async_context_for_analysis, completion_for_analysis, definition_for_analysis,
     diagnostics_to_lsp, document_symbols_for_analysis, hover_for_analysis,
-    loop_control_context_for_analysis, position_to_offset, prepare_rename_for_analysis,
-    references_for_analysis, rename_for_analysis, semantic_tokens_for_analysis,
-    semantic_tokens_legend, span_to_range, type_definition_for_analysis,
-    workspace_symbols_for_analysis,
+    implementation_for_analysis, loop_control_context_for_analysis, position_to_offset,
+    prepare_rename_for_analysis, references_for_analysis, rename_for_analysis,
+    semantic_tokens_for_analysis, semantic_tokens_legend, span_to_range,
+    type_definition_for_analysis, workspace_symbols_for_analysis,
 };
 use ql_span::Span;
+use tower_lsp::lsp_types::request::GotoImplementationResponse;
 use tower_lsp::lsp_types::request::GotoTypeDefinitionResponse;
 use tower_lsp::lsp_types::{
     CompletionItemKind, CompletionResponse, DiagnosticSeverity, DocumentSymbolResponse,
@@ -1146,6 +1147,21 @@ fn main() -> Int {
             uri,
             span_to_range(source, nth_span(source, "read", 3))
         )]
+    );
+
+    let implementation = implementation_for_analysis(
+        &Url::parse("file:///sample.ql").expect("URI should parse"),
+        source,
+        &analysis,
+        method_position,
+    )
+    .expect("method implementation should exist");
+    let GotoImplementationResponse::Scalar(location) = implementation else {
+        panic!("concrete method call should resolve to one implementation")
+    };
+    assert_eq!(
+        location.range,
+        span_to_range(source, nth_span(source, "read", 1))
     );
 }
 

@@ -376,11 +376,21 @@ pub fn implementation_for_analysis(
     position: Position,
 ) -> Option<GotoImplementationResponse> {
     let offset = position_to_offset(source, position)?;
-    let targets = analysis.implementations_at(offset)?;
-    let locations = targets
-        .into_iter()
-        .map(|target| Location::new(uri.clone(), span_to_range(source, target.span)))
-        .collect::<Vec<_>>();
+    let locations = if let Some(targets) = analysis.implementations_at(offset) {
+        targets
+            .into_iter()
+            .map(|target| Location::new(uri.clone(), span_to_range(source, target.span)))
+            .collect::<Vec<_>>()
+    } else {
+        let definition = analysis.definition_at(offset)?;
+        if definition.kind != ql_analysis::SymbolKind::Method || definition.span.contains(offset) {
+            return None;
+        }
+        vec![Location::new(
+            uri.clone(),
+            span_to_range(source, definition.span),
+        )]
+    };
 
     if locations.len() == 1 {
         Some(GotoImplementationResponse::Scalar(

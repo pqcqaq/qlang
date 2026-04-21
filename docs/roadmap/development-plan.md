@@ -96,6 +96,12 @@
 - `ql` / `qlsp` / VSIX 的安装与版本绑定有清晰文档。
 - 仓库外用户可以按文档完成 CLI 安装、LSP 连接和 VSIX 安装，而不是必须读源码猜流程。
 
+## 下一轮（已排定）
+
+- LSP：继续把 `textDocument/implementation` 从 trait/type surface、trait method definition、已唯一解析的 concrete method call，扩到更多 workspace root/source-backed concrete member call surface 与 broken-source fallback。
+- backend：继续扩 direct local dependency 下真实项目高频的 public value/type/member 调用面，优先补会直接阻断 workspace `build/run/test` 的路径。
+- 文档：继续只保留入口结论、支持边界和最近 checkpoint；不再追加长流水账。
+
 ## 明确后置
 
 - cross-file rename / workspace edits / 更完整 code actions
