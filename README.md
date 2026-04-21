@@ -21,6 +21,7 @@ Qlang 是一门独立设计的编译型系统语言。当前编译器、CLI、LS
 - `ql project targets` 现在也支持 `--package`、`--lib`、`--bin`、`--target` 过滤；项目级 target 查询不再只能全量输出，真实 workspace 下排查目标会更直接。
 - `ql project target add --bin <name>` 现在也已落地；新增 bin target 时会自动创建 `src/bin/<name>.ql`，并在第一次显式写入 `[[bin]]` 时保留当前默认发现到的 `src/main.ql` / `src/bin/**/*.ql` targets，workspace 根也可配合 `--package` 直接改指定 member。
 - `ql project graph` 现在也支持 `--package` 聚焦到单个 workspace member 的包图；workspace 根图查询不再只能看全量成员展开。
+- `ql project emit-interface` 现在也支持在 workspace 入口配合 `--package <name>` 只发射或检查单个 member；当前仍限默认 per-package 输出路径，也就是不带 `--output` 的 plain / `--changed-only` / `--check` 路径。
 - `ql check` / `ql build` / `ql run` / `ql test` 与 `ql project targets` / `graph` / `lock` 已提供第一版 `--json` 机器输出；`ql run --json` 当前输出 `ql.run.v1`，`ql project lock --json` 当前输出 `ql.project.lock.result.v1`。
 - `ql check` 现在也会在 workspace member 目录或源码路径入口上恢复外层 workspace 语义，不再悄悄退回单 package 检查。
 - `ql check` 现在也支持在 workspace 入口配合 `--package <name>` 只检查单个 member；排查大型 workspace 时不必再全量跑所有包。
@@ -84,6 +85,7 @@ cargo run -p ql-cli -- check demo-workspace --package app
 cargo run -p ql-cli -- project graph demo-workspace
 cargo run -p ql-cli -- project lock demo-workspace --json
 cargo run -p ql-cli -- project emit-interface path/to/workspace/packages/app
+cargo run -p ql-cli -- project emit-interface demo-workspace --package app
 cargo run -p ql-cli -- project emit-interface path/to/workspace/packages/app --changed-only
 cargo run -p ql-cli -- project emit-interface path/to/workspace/packages/app --check
 cargo run -p ql-cli -- build path/to/workspace/packages/app --list --json

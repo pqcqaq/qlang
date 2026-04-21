@@ -29,6 +29,7 @@
 - `ql project target add --bin <name>` 现在也已落地；真实项目里新增 bin target 不必再手建 `src/bin/*.ql` 和手改 `qlang.toml`，第一次显式写入 `[[bin]]` 时也会保留当前默认发现到的 targets。
 - `ql project graph` 现在也支持 `--package` 聚焦到单个 workspace member 的包图；workspace 根图查询已不必再总是展开全部成员。
 - `ql project add-dependency` / `remove-dependency` 现在也支持从 workspace 根配合 `--package` 直接指定目标 member；真实项目里批量查看依赖后可直接在根目录继续修改，不必先切到 member 路径。
+- `ql project emit-interface` 现在也支持在 workspace 入口配合 `--package` 只发射或检查单个 member；大 workspace 下做接口增量刷新时不必继续全量扫所有包。
 - `ql check` 现在也支持在 workspace 入口配合 `--package` 只检查单个 member；大 workspace 下做增量排查不必继续全量扫描全部包。
 - `ql project remove --cascade` 现在也已落地；当目标包仍被其他 members 引用时，CLI 已可自动清理这些本地依赖边并继续移除 member。`ql project remove-dependency` 同时兼容 `[dependencies]` 和旧的 `[references].packages` 清理路径。
 - `ql project add-dependency` / `remove-dependency` 现在也可直接维护已有 workspace member 的本地 `[dependencies]`；`remove-dependency --all` 还能按 package 名批量清理全部 dependents，创建后补依赖和移除依赖都不必再手改 manifest。
@@ -38,7 +39,7 @@
 - `ql build --list` / `ql run --list` 已落地，真实 workspace 里现在可以直接在命令内查看 discovered build targets；workspace member 目录或源码路径入口也会继承外层 workspace 视角；`ql run --list` 只展示 runnable targets，`--json` 复用 `ql.project.targets.v1`。
 - `ql test` 新增 exact target rerun：`--target` 可精确选择已发现测试，直接运行 project `tests/` 下的单个测试文件时也会保留 project-aware 语义，workspace member 入口也不再掉回 package-only profile。
 - `ql project graph` / `ql project targets` / `ql project lock` 现在也会在 workspace member 目录或源码路径入口上继承外层 workspace 上下文。
-- `ql project emit-interface` 现在也支持从 workspace member 目录或 `.ql` 路径恢复外层 workspace 视角；当前保守边界是不带 `--output`，并已覆盖 plain、`--changed-only`、`--check`。
+- `ql project emit-interface` 现在也支持从 workspace member 目录或 `.ql` 路径恢复外层 workspace 视角；当前保守边界是不带 `--output`，并已覆盖 plain、`--changed-only`、`--check`，workspace 根还可继续用 `--package` 收敛到单个 member。
 - `qlang.toml` 已支持最小本地依赖、target path 和默认 profile。
 - 第一版 `qlang.lock`、`ql.check --json`、`ql.build --json`、`ql.run --json`、`ql.test --json` 已落地。
 - `ql project lock --json` 已补齐，真实项目现在可以在写锁文件和 `--check` 两条路径上稳定拿到机器可消费结果，而不必继续解析终端文本。

@@ -813,12 +813,29 @@ fn run() -> Result<(), u8> {
                     let remaining = args.collect::<Vec<_>>();
                     let mut path = None;
                     let mut output = None;
+                    let mut package_name = None;
                     let mut changed_only = false;
                     let mut check_only = false;
                     let mut index = 0;
 
                     while index < remaining.len() {
                         match remaining[index].as_str() {
+                            "--package" => {
+                                index += 1;
+                                let Some(value) = remaining.get(index) else {
+                                    eprintln!(
+                                        "error: `ql project emit-interface --package` expects a package name"
+                                    );
+                                    return Err(1);
+                                };
+                                if package_name.is_some() {
+                                    eprintln!(
+                                        "error: `ql project emit-interface` received `--package` more than once"
+                                    );
+                                    return Err(1);
+                                }
+                                package_name = Some(value.clone());
+                            }
                             "-o" | "--output" => {
                                 index += 1;
                                 let Some(value) = remaining.get(index) else {
@@ -858,7 +875,13 @@ fn run() -> Result<(), u8> {
                     let path = path
                         .or_else(|| env::current_dir().ok())
                         .unwrap_or_else(|| PathBuf::from("."));
-                    project_emit_interface_path(&path, output.as_deref(), changed_only, check_only)
+                    project_emit_interface_path(
+                        &path,
+                        output.as_deref(),
+                        package_name.as_deref(),
+                        changed_only,
+                        check_only,
+                    )
                 }
                 "init" => {
                     let remaining = args.collect::<Vec<_>>();
@@ -1534,7 +1557,7 @@ fn check_workspace_manifest(
 
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
     let check_command_label = format_check_command_label(sync_interfaces);
-    let selected_members = select_workspace_check_members(
+    let selected_members = select_workspace_members(
         manifest,
         request_path,
         selected_package_name,
@@ -1784,7 +1807,7 @@ fn check_workspace_manifest(
     Ok(())
 }
 
-fn select_workspace_check_members(
+fn select_workspace_members(
     manifest: &ql_project::ProjectManifest,
     request_path: &Path,
     package_name: Option<&str>,
@@ -12792,6 +12815,7 @@ fn render_project_dependencies_json(
 fn project_emit_interface_path(
     path: &Path,
     output: Option<&Path>,
+    selected_package_name: Option<&str>,
     changed_only: bool,
     check_only: bool,
 ) -> Result<(), u8> {
@@ -12803,6 +12827,17 @@ fn project_emit_interface_path(
     let emit_command_label =
         format_project_emit_interface_command_label(output, changed_only, false);
     let check_command_label = format_project_emit_interface_command_label(None, changed_only, true);
+    let command_label = if check_only {
+        check_command_label.as_str()
+    } else {
+        emit_command_label.as_str()
+    };
+    if let Some(package_name) = selected_package_name
+        && let Err(message) = validate_project_package_name(package_name)
+    {
+        eprintln!("error: {command_label} {message}");
+        return Err(1);
+    }
     let request_root = if output.is_none() {
         resolve_project_workspace_member_command_request_root(path)
     } else {
@@ -12880,6 +12915,33 @@ fn project_emit_interface_path(
     })?;
 
     if manifest.package.is_some() {
+        if let Some(selected_package_name) = selected_package_name {
+            let actual_package_name = package_name(&manifest).map_err(|error| {
+                eprintln!("error: {command_label} {error}");
+                if check_only {
+                    report_package_interface_check_manifest_failure(
+                        &manifest.manifest_path,
+                        changed_only,
+                    );
+                } else {
+                    report_package_interface_manifest_failure(
+                        &manifest.manifest_path,
+                        None,
+                        output,
+                        changed_only,
+                        None,
+                    );
+                }
+                1
+            })?;
+            if actual_package_name != selected_package_name {
+                eprintln!(
+                    "error: {command_label} package selector expected `{selected_package_name}` but `{}` resolves to package `{actual_package_name}`",
+                    normalize_path(path)
+                );
+                return Err(1);
+            }
+        }
         if check_only {
             let result = match check_package_interface_artifact(
                 &manifest,
@@ -12989,16 +13051,18 @@ fn project_emit_interface_path(
         return Err(1);
     }
 
-    let Some(workspace) = &manifest.workspace else {
+    let Some(_) = &manifest.workspace else {
         eprintln!("error: `ql project emit-interface` requires `[package]` or `[workspace]`");
         return Err(1);
     };
 
     let manifest_dir = manifest.manifest_path.parent().unwrap_or(Path::new("."));
+    let selected_members =
+        select_workspace_members(&manifest, path, selected_package_name, command_label)?;
     let mut failing_member_count = 0usize;
     let mut emission_failure_count = 0usize;
     let mut first_failing_member_manifest = None;
-    for member in &workspace.members {
+    for member in &selected_members {
         let member_manifest_path = workspace_member_manifest_path(&manifest_dir.join(member));
         if check_only {
             let member_manifest = match load_project_manifest(&manifest_dir.join(member)) {
@@ -15028,7 +15092,9 @@ fn print_usage() {
     eprintln!(
         "  ql project remove-dependency [file-or-dir] [--package <name>] --name <package> [--all]"
     );
-    eprintln!("  ql project emit-interface [file-or-dir] [-o <output>] [--changed-only] [--check]");
+    eprintln!(
+        "  ql project emit-interface [file-or-dir] [--package <name>] [-o <output>] [--changed-only] [--check]"
+    );
     eprintln!("  ql ffi header <file> [--surface exports|imports|both] [-o <output>]");
     eprintln!("  ql fmt <file> [--write]");
     eprintln!("  ql mir <file>");

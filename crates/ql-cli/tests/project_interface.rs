@@ -2467,6 +2467,196 @@ pub struct Config {
 }
 
 #[test]
+fn project_emit_interface_workspace_root_supports_package_selectors() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-package-selector");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    let tool_root = project_root.join("packages").join("tool");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for workspace package selector test");
+    std::fs::create_dir_all(tool_root.join("src"))
+        .expect("create tool package source directory for workspace package selector test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app", "packages/tool"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/qlang.toml",
+        r#"
+[package]
+name = "tool"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/tool/src/lib.ql",
+        r#"
+package demo.tool
+
+pub fn exported() -> Int {
+    return 2
+}
+"#,
+    );
+    let app_interface = app_root.join("app.qi");
+    let tool_interface = tool_root.join("tool.qi");
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root)
+        .args(["--package", "app"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` workspace root package selector",
+    );
+    let (stdout, stderr) = expect_success(
+        "project-interface-workspace-package-selector",
+        "workspace root interface emission package selector",
+        &output,
+    )
+    .expect("workspace root interface emission package selector should succeed");
+    let normalized_stdout = stdout.replace('\\', "/");
+    let normalized_app_interface = app_interface.display().to_string().replace('\\', "/");
+    let normalized_tool_interface = tool_interface.display().to_string().replace('\\', "/");
+    expect_stdout_contains_all(
+        "project-interface-workspace-package-selector",
+        &normalized_stdout,
+        &[&format!("wrote interface: {normalized_app_interface}")],
+    )
+    .expect("workspace root interface emission package selector should emit the selected member");
+    assert!(
+        !normalized_stdout.contains(&normalized_tool_interface),
+        "workspace root interface emission package selector should skip unselected members, got:\n{normalized_stdout}"
+    );
+    expect_snapshot_matches(
+        "project-interface-workspace-package-selector",
+        "workspace root interface emission package selector stderr",
+        "",
+        &stderr,
+    )
+    .expect("workspace root interface emission package selector should stay silent on stderr");
+    expect_file_exists(
+        "project-interface-workspace-package-selector",
+        &app_interface,
+        "workspace app qi",
+        "workspace root interface emission package selector",
+    )
+    .expect(
+        "workspace root interface emission package selector should create the selected artifact",
+    );
+    assert!(
+        !tool_interface.exists(),
+        "workspace root interface emission package selector should not create `{}`",
+        tool_interface.display()
+    );
+}
+
+#[test]
+fn project_emit_interface_workspace_root_package_selector_reports_missing_packages() {
+    let workspace_root = workspace_root();
+    let temp = TempDir::new("ql-project-interface-workspace-package-selector-missing");
+    let project_root = temp.path().join("workspace-only");
+    let app_root = project_root.join("packages").join("app");
+    std::fs::create_dir_all(app_root.join("src"))
+        .expect("create app package source directory for missing workspace package selector test");
+    temp.write(
+        "workspace-only/qlang.toml",
+        r#"
+[workspace]
+members = ["packages/app"]
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/qlang.toml",
+        r#"
+[package]
+name = "app"
+"#,
+    );
+    temp.write(
+        "workspace-only/packages/app/src/lib.ql",
+        r#"
+package demo.app
+
+pub fn exported() -> Int {
+    return 1
+}
+"#,
+    );
+
+    let mut command = ql_command(&workspace_root);
+    command
+        .args(["project", "emit-interface"])
+        .arg(&project_root)
+        .args(["--package", "missing"]);
+    let output = run_command_capture(
+        &mut command,
+        "`ql project emit-interface` workspace root package selector missing package",
+    );
+    let (stdout, stderr) = expect_exit_code(
+        "project-interface-workspace-package-selector-missing",
+        "workspace root interface emission package selector missing package",
+        &output,
+        1,
+    )
+    .expect("workspace root interface emission package selector should fail when the package is missing");
+    expect_empty_stdout(
+        "project-interface-workspace-package-selector-missing",
+        "workspace root interface emission package selector missing package",
+        &stdout,
+    )
+    .expect("missing workspace package selector should not emit interface output");
+    let normalized_stderr = stderr.replace('\\', "/");
+    let project_root_display = project_root.display().to_string().replace('\\', "/");
+    expect_stderr_contains(
+        "project-interface-workspace-package-selector-missing",
+        "workspace root interface emission package selector missing package",
+        &normalized_stderr,
+        &format!(
+            "error: `ql project emit-interface` package selector matched no workspace members under `{project_root_display}`"
+        ),
+    )
+    .expect("missing workspace package selector should surface the missing-package error");
+    expect_stderr_contains(
+        "project-interface-workspace-package-selector-missing",
+        "workspace root interface emission package selector missing package",
+        &normalized_stderr,
+        "note: selector: package `missing`",
+    )
+    .expect("missing workspace package selector should include the selector note");
+    expect_stderr_contains(
+        "project-interface-workspace-package-selector-missing",
+        "workspace root interface emission package selector missing package",
+        &normalized_stderr,
+        &format!(
+            "hint: rerun `ql project emit-interface {project_root_display}` to inspect all workspace members, or adjust `--package`"
+        ),
+    )
+    .expect("missing workspace package selector should preserve the rerun hint");
+}
+
+#[test]
 fn project_emit_interface_member_directory_uses_workspace_root_context() {
     let workspace_root = workspace_root();
     let temp = TempDir::new("ql-project-interface-workspace-member-dir");
